@@ -11,9 +11,11 @@ A local course planner for Bar-Ilan CS students: degree Plan across Semesters pl
 
 ## Project conventions
 
-Development happens on temporary machines. The project lives on GitHub at `Cub11k/biu-cs-planner` (public, default branch `master`), so a new machine gets it with a clone.
+Development happens on temporary machines. The project lives on GitHub at `Cub11k/biu-cs-planner` (public, default branch `dev`), so a new machine gets it with a clone.
 
 - Node and npm come from the machine. The only project-local things are `package.json`, the npm workspaces and `node_modules/`; a clean slate is `rm -rf node_modules && npm install`.
+- **Branching follows git flow.** `dev` is the default branch and where work lands; `master` holds releases only. A feature branches off `dev`, is named `<issue number>-<slug>`, and opens a pull request back into `dev`. A release is `dev` merged into `master`, and a tag on `master` is what triggers CI to test, build and publish.
+- Every pull request that touches code gets a generated report posted to it: the module and call graphs, every test title, coverage, and the functions no test entered. Read that before reading a diff — it is derived from the source, so it cannot drift from it. `npm run report` builds the same thing locally.
 - Project knowledge lives in this folder (this file, `docs/`) rather than in `~/.claude` memory.
 - `.sessions/` holds copies of Claude Code session transcripts. They contain personal data (email, home paths), so `.gitignore` keeps them untracked and they stay out of anything published. To resume a session on another machine, copy `<id>.jsonl` and the `<id>/` folder into `~/.claude/projects/<project path with every / replaced by ->/`, then run `claude --resume <id>`.
 - Crawled data lives outside this repo, in the sibling folder `../biu-cs-planner-crawl/data/` (`raw/` and `build/`). [ADR-0005](docs/adr/0005-crawler-separate-repo-near-raw-output.md) keeps the crawler next to its Raw Crawl output and [ADR-0006](docs/adr/0006-data-repo-separate-from-code.md) keeps published Catalogs and Requirements Files out of the code repo, which is public.
