@@ -4,7 +4,7 @@ Issues and specs for this repo live as GitHub issues. Use the `gh` CLI for all o
 
 ## Repo
 
-`Cub11k/biu-cs-planner`, **public**, default branch `master`. The `origin` remote uses the
+`Cub11k/biu-cs-planner`, **public**, default branch `dev`; `master` holds releases only. The `origin` remote uses the
 `github:` SSH alias from `~/.ssh/config`; `gh` resolves that to `github.com/Cub11k/biu-cs-planner`
 correctly, so no `-R` flag is needed when running inside the clone.
 
