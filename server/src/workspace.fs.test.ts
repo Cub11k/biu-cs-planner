@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
@@ -150,4 +150,24 @@ it("reads nothing, rather than throwing, before the layout exists", async () => 
 
   // the port promises absence is not an error, and a query must not become a 500
   await expect(workspace.read({ kind: "catalog", academicYear: 2027 })).resolves.toBeUndefined();
+});
+
+it("leaves the previous Catalog intact when the write itself fails", async () => {
+  const workspace = fileSystemWorkspace(root);
+  await workspace.create();
+  await workspace.write({ kind: "catalog", academicYear: 2027 }, CATALOG);
+
+  // the value serialises fine; the filesystem is what refuses, so the temporary file
+  // is attempted and the failure happens with a good file already in place
+  await chmod(join(root, "catalogs"), 0o500);
+  try {
+    await expect(
+      workspace.write({ kind: "catalog", academicYear: 2027 }, { ...CATALOG, academicYear: 9999 }),
+    ).rejects.toThrow();
+  } finally {
+    await chmod(join(root, "catalogs"), 0o700);
+  }
+
+  expect(await workspace.read({ kind: "catalog", academicYear: 2027 })).toEqual(CATALOG);
+  expect(await readdir(join(root, "catalogs"))).toEqual(["2027.json"]);
 });

@@ -199,3 +199,45 @@ it("reports a Catalog that resolves outside the Workspace, rather than failing",
     await rm(outside, { recursive: true, force: true });
   }
 });
+
+it("reports a refusal the same way for one Offering as for a list", async () => {
+  const outside = await mkdtemp(join(tmpdir(), "biu-api-outside-"));
+  try {
+    await post("/api/workspace", {});
+    await writeFile(join(outside, "secret.json"), "{}");
+    await symlink(join(outside, "secret.json"), join(root, "catalogs", "2027.json"));
+
+    const one = await api.request("/api/catalog/2027/offerings/89-110");
+
+    expect(one.status).toBe(409);
+    await expect(one.json()).resolves.toMatchObject({
+      warnings: [{ kind: "workspace-refused" }],
+    });
+  } finally {
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
+it("caps the body on every write route, not only the import", async () => {
+  const response = await api.request("/api/workspace", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pad: "x".repeat(20 * 1024 * 1024) }),
+  });
+
+  expect(response.status).toBe(413);
+});
+
+it("says what is wrong with a stored Catalog it will not overwrite", async () => {
+  await post("/api/workspace", {});
+  await writeFile(join(root, "catalogs", "2027.json"), '{"hand":"edited badly"}');
+
+  const response = await post("/api/catalog/2027/import", CRAWL);
+
+  expect(response.status).toBe(409);
+  // the reason alone leaves the student nothing to act on
+  await expect(response.json()).resolves.toEqual({
+    reason: "stored-catalog-unreadable",
+    warnings: [{ kind: "file-unreadable" }],
+  });
+});

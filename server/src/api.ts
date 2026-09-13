@@ -6,6 +6,7 @@ import {
   importCrawl,
   listOfferings,
   workspaceStatus,
+  type QueryWarning,
   type Workspace,
 } from "@biu-cs-planner/app";
 import {
@@ -30,6 +31,20 @@ export type ApiDependencies = { workspace: Workspace };
 const MAX_BODY_BYTES = 16 * 1024 * 1024;
 
 const yearSchema = z.coerce.number().int().min(1900).max(2200);
+
+/** Every write route is capped, not just the one that carries a crawl. */
+const capped = bodyLimit({
+  maxSize: MAX_BODY_BYTES,
+  onError: (c) => c.json({ error: "body-too-large" }, 413),
+});
+
+/**
+ * A Catalog could not be produced. A refusal is a conflict with the state of the
+ * Workspace; absence is a plain 404, which would otherwise claim a refused Catalog
+ * simply was not there.
+ */
+const notServed = (warnings: QueryWarning[]): 409 | 404 =>
+  warnings.some((w) => w.kind === "workspace-refused") ? 409 : 404;
 
 /**
  * `__proto__` and `constructor` are rejected outright rather than stripped, so a body
@@ -57,14 +72,11 @@ export function createApi({ workspace }: ApiDependencies) {
 
     // Creating the layout is an explicit act, which is why it is a POST and not a
     // side effect of the GET above: nothing is written until the student asks.
-    .post("/api/workspace", async (c) => c.json(await createWorkspace(workspace)))
+    .post("/api/workspace", capped, async (c) => c.json(await createWorkspace(workspace)))
 
     .post(
       "/api/catalog/:year/import",
-      bodyLimit({
-        maxSize: MAX_BODY_BYTES,
-        onError: (c) => c.json({ error: "body-too-large" }, 413),
-      }),
+      capped,
       async (c) => {
         const year = yearSchema.safeParse(c.req.param("year"));
         if (!year.success) return c.json({ error: "bad-year" }, 400);
@@ -83,7 +95,16 @@ export function createApi({ workspace }: ApiDependencies) {
         const result = await importCrawl(workspace, crawl.data, {
           academicYear: year.data,
         });
-        if (!result.stored) return c.json({ reason: result.reason }, 409);
+        if (!result.stored) {
+          // the reason alone leaves the student nothing to act on, so the Warnings
+          // explaining what is wrong with the stored file travel with it
+          return c.json(
+            result.fileWarnings
+              ? { reason: result.reason, warnings: result.fileWarnings }
+              : { reason: result.reason },
+            409,
+          );
+        }
 
         return c.json({ summary: result.summary, warnings: result.warnings });
       },
@@ -98,11 +119,7 @@ export function createApi({ workspace }: ApiDependencies) {
         academicYear: year.data,
         semester: semester.data,
       });
-      if (!result.offerings) {
-        // A refusal is a conflict with the Workspace's state; absence is a plain 404.
-        const refused = result.warnings.some((w) => w.kind === "workspace-refused");
-        return c.json({ warnings: result.warnings }, refused ? 409 : 404);
-      }
+      if (!result.offerings) return c.json({ warnings: result.warnings }, notServed(result.warnings));
 
       return c.json({ offerings: result.offerings, warnings: result.warnings });
     })
@@ -115,7 +132,7 @@ export function createApi({ workspace }: ApiDependencies) {
         academicYear: year.data,
         courseNumber: c.req.param("courseNumber"),
       });
-      if (!result.offering) return c.json({ warnings: result.warnings }, 404);
+      if (!result.offering) return c.json({ warnings: result.warnings }, notServed(result.warnings));
 
       return c.json({ offering: result.offering, warnings: result.warnings });
     });

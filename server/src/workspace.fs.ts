@@ -159,7 +159,7 @@ export function fileSystemWorkspace(rootPath: string): Workspace {
 
       const temporary = join(
         folderPath(ref),
-        `.${ref.academicYear}.json.${process.pid}.tmp`,
+        `.tmp-${ref.academicYear}-${process.pid}.json`,
       );
       try {
         await writeFile(temporary, json, "utf8");
@@ -181,9 +181,11 @@ function folderFor(ref: { kind: WorkspaceRef["kind"] }): WorkspaceFolder {
 }
 
 /**
- * Only `.json` is read or written. Every name this module builds already ends in it, so
- * this is a guard against a future caller rather than against today's one — which is
- * the point: the rule should not depend on remembering it.
+ * Only `.json` is read or written, the temporary file a write goes through included —
+ * which is why that one is named `.tmp-<year>-<pid>.json` rather than ending in `.tmp`.
+ * Every name this module builds satisfies the rule, so this guards a future caller
+ * rather than today's one. That is the point: the rule should not depend on being
+ * remembered.
  */
 function requireJsonName(path: string): void {
   if (!path.endsWith(".json")) {

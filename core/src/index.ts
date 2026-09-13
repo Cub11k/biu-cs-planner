@@ -9,7 +9,6 @@ export {
   catalogSchema,
   offeringSchema,
   semesterSchema,
-  daySchema,
 } from "./catalog/schema.ts";
 export type {
   Catalog,
