@@ -38,7 +38,7 @@ A Course whose Offering spans Fall and Spring as one unit (שנתי).
 _Avoid_: annual course
 
 **Group**:
-One two-digit-numbered section of an Offering, with a single Lesson Type, a lecturer and zero or more Meetings.
+One two-digit-numbered section of an Offering, with a single Lesson Type, zero or more lecturers and zero or more Meetings.
 _Avoid_: section, class
 
 **Lesson Type**:
