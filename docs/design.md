@@ -36,7 +36,7 @@ Three kinds of file, each with its own lifecycle, each carrying a `schemaVersion
 - The crawler lives in **its own repo** with a README covering how to run it and why it respects the site. It is not part of the app deliverable.
 - **Flow:** the student opens Shoham in a browser, runs a query by hand, then pastes the crawler script into the console. The script walks every results page and requests each Course's detail page one at a time with a delay, and can resume if interrupted.
 - **Output:** a Raw Crawl file with string fields as Shoham shows them, plus provenance (query parameters, crawl time, crawler version).
-- **Import:** the app's Shoham Importer turns a Raw Crawl into Catalog data, showing a preview with counts and parse Warnings before writing. Importing merges by Academic Year and course number, so crawls of several departments (e.g. for a double major) combine into one Catalog.
+- **Import:** the app's Shoham Importer turns a Raw Crawl into Catalog data, showing a preview with counts and parse Warnings before writing. Importing merges by Academic Year and course number, so crawls of several departments (e.g. for a double major) combine into one Catalog. A Raw Crawl is a **part** of a year and the app merges parts; several can be imported in one action. See [ADR-0010](adr/0010-raw-crawl-is-a-part-the-app-merges.md).
 - **Re-import:** before confirming, the importer shows what changed (Groups added, removed, moved). Afterwards, every Variant is compared against the new Catalog using its Pick snapshots:
   - a moved Group gets a "changed since picked" badge showing old and new times
   - a removed Group becomes "no longer offered" and its Course returns to unassigned
@@ -123,7 +123,7 @@ The three states need to differ in more than one property at once. Border style 
   - A **Group drawer** above the grid lists the selected Course's Groups as cards with times, lecturer and either "fits" or what it Clashes with. Hovering a card previews it on the week; clicking it Picks.
 - A Group with several Meetings is picked as a whole; hovering highlights all its Meetings.
 - **Complete and incomplete Courses:** a Course needs one Pick per Lesson Type it has, all in the same Semester. Until then it is marked incomplete.
-- **Year-long Courses:** one Pick per year. That a Year-long Course keeps the same Group in both Semesters is still to be confirmed when crawling.
+- **Year-long Courses:** one Pick per year, and the same Group covers both Semesters — confirmed from a real crawl, see [`research/shoham-raw-shape.md`](research/shoham-raw-shape.md).
 - **Untimed Groups** sit in a "No fixed time" strip under the grid. They count toward credits and Exams and never Clash.
 - **Clashes:** picked blocks that overlap sit side by side with a red border, as a Warning only.
 - **Tray contents:** the Semester's planned Attempts plus Courses added directly. Each Tray entry carries one chip per Lesson Type the Course has, filled with the Group number once picked and empty while missing, so what is still needed is visible without opening the Course.
@@ -287,6 +287,9 @@ The rejected options (cookies, TLS, sockets) are in [ADR 0004](adr/0004-localhos
 
 ## Open facts
 
-- Does a Year-long Course keep the same Group in both Semesters? Confirm from Shoham when crawling.
 - Is a minimum-grade Prerequisite checked against the best or the latest passing Attempt? A policy setting in the Requirements File until the author checks.
-- How Shoham shows Year-long Courses. Confirm when crawling.
+
+Answered on 2026-09-13 from a real crawl, in [`research/shoham-raw-shape.md`](research/shoham-raw-shape.md):
+
+- **How Shoham shows Year-long Courses:** the Semester cell lists Fall and Spring on two lines, with no `שנתי` marker.
+- **Does a Year-long Course keep the same Group in both Semesters:** yes — one row, one Group number, weekly hours repeated per Semester.

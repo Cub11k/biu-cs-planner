@@ -1,5 +1,9 @@
 # BIU data sources
 
+Researched 2026-09-11 by a web research agent. **For the grid and detail pages, prefer
+[`shoham-raw-shape.md`](shoham-raw-shape.md)**: it was read off a real crawl rather than
+Wayback snapshots, and supersedes this file wherever the two disagree.
+
 Researched 2026-09-11 by a web research agent. Most BIU hosts sat behind Radware bot protection that blocked automated fetches, so statements about Shoham's page structure come from Wayback Machine snapshots (2021–2023). Treat them as likely, not confirmed. `cs.biu.ac.il` fetched normally.
 
 ## Shoham course catalog (Catalog source)
