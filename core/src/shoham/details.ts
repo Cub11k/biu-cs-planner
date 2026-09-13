@@ -1,25 +1,9 @@
 import { isClockTime, parseCourseNumber, parseSemesters } from "./dialect.ts";
 import type { Exam, Semester } from "../catalog/schema.ts";
+import type { RawDetail, RawGroupDetail } from "./raw-crawl.ts";
 
-/**
- * The Course-wide facts: credits and Exams. They are keyed by course number and Semester,
- * and the Semester inside that key is written in more than one way across files, so the
- * key is normalised before anything is matched against it (ADR-0010).
- */
-export type RawDetail = {
-  points?: string;
-  code?: string;
-  hours?: string;
-  terms?: Array<{ type: string; date: string; hour: string }>;
-};
+export type { RawDetail, RawGroupDetail };
 
-/**
- * A detail page keyed by the `lid` of the one Group it was read from, which is how the
- * 2026-09-13 crawl records them, in a block it calls `sections`. Same page as a `RawDetail`,
- * read per Group rather than per (course, Semester), so its `points` speak for a Group that
- * is known by name rather than one that has to be guessed at from `code`.
- */
-export type RawGroupDetail = RawDetail & { name_en?: string };
 
 export type DetailKey = { courseNumber: string; semesters: Semester[] };
 

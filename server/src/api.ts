@@ -12,7 +12,6 @@ import {
   CURRENT_CATALOG_SCHEMA_VERSION,
   rawCrawlSchema,
   semesterSchema,
-  type RawCrawl,
 } from "@biu-cs-planner/core";
 import { z } from "zod";
 
@@ -77,7 +76,7 @@ export function createApi({ workspace }: ApiDependencies) {
         const crawl = rawCrawlSchema.safeParse(body);
         if (!crawl.success) return c.json({ error: "not-a-raw-crawl" }, 400);
 
-        const result = await importCrawl(workspace, crawl.data as RawCrawl, {
+        const result = await importCrawl(workspace, crawl.data, {
           academicYear: year.data,
         });
         if (!result.stored) return c.json({ reason: result.reason }, 409);

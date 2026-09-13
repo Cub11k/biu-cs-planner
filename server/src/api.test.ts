@@ -153,3 +153,27 @@ it("says a folder with no Workspace has no Catalog, rather than failing", async 
 it("404s an unknown route", async () => {
   expect((await api.request("/api/nope")).status).toBe(404);
 });
+
+it("carries a crawl's sections and meta through the schema, not just its rows", async () => {
+  // The request schema strips unknown keys, so a Raw Crawl field it does not name is
+  // dropped on the way in. This is the guard for that: credits and an English name can
+  // only come from `sections`, and provenance only from `meta`.
+  await post("/api/workspace", {});
+
+  const imported = await post("/api/catalog/2027/import", {
+    ...CRAWL,
+    sections: { "808655": { points: "3.00", code: "89110-01", name_en: "Intro to Computers" } },
+    meta: { scraped_at: "2026-09-13T13:53:03.017Z", label: "2027-cs", reported_total: 513 },
+  });
+  expect(imported.status).toBe(200);
+  // provenance came from the meta block, so nothing is missing
+  await expect(imported.json()).resolves.toMatchObject({ warnings: [] });
+
+  const one = await api.request("/api/catalog/2027/offerings/89-110");
+  await expect(one.json()).resolves.toMatchObject({
+    offering: {
+      nameEnglish: "Intro to Computers",
+      credits: { known: true, total: 3 },
+    },
+  });
+});

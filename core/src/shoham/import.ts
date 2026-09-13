@@ -4,10 +4,11 @@ import {
   parseExams,
   parseSampledGroup,
   parseWeeklyHours,
-  type RawDetail,
-  type RawGroupDetail,
 } from "./details.ts";
-import { provenanceFromMeta, type RawCrawlMeta } from "./meta.ts";
+import { provenanceFromMeta } from "./meta.ts";
+import type { RawCrawl, RawCrawlRow } from "./raw-crawl.ts";
+
+export type { RawCrawl, RawCrawlRow };
 import {
   CURRENT_CATALOG_SCHEMA_VERSION,
   type Catalog,
@@ -16,32 +17,6 @@ import {
   type Semester,
 } from "../catalog/schema.ts";
 
-export type RawCrawlRow = {
-  code: string;
-  name: string;
-  group: string;
-  teachers: string;
-  kind: string;
-  semester: string;
-  day: string;
-  hours: string;
-  /** Shoham's id for the row, and the only thing that matches it to a per-Group record. */
-  lid?: string;
-};
-
-export type RawCrawl = {
-  rows?: RawCrawlRow[];
-  details?: Record<string, RawDetail>;
-  /**
-   * One detail record per Group, keyed by the `lid` its row carries. The key is the crawl's
-   * own word for the block; what a record describes is a Group.
-   */
-  sections?: Record<string, RawGroupDetail>;
-  /** Where the crawl came from, as the crawler writes it. */
-  meta?: RawCrawlMeta;
-  /** An already-shaped Provenance, from before a crawl recorded its own. */
-  provenance?: Provenance;
-};
 
 export type Warning =
   | { kind: MeetingWarning | "semester-unreadable"; courseNumber: string; group: string }
