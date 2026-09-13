@@ -56,14 +56,21 @@ export function parseGroupSchedule(row: {
 
   // A Year-long Group repeats its weekly hours once per Semester, so the ranges arrive as
   // one block per Semester. Cut them back into blocks before pairing them with the days.
-  // The ranges should arrive as one block of `days.length` per Semester. Anything else is
-  // reported rather than guessed at; what can be read is still kept.
-  const divides = ranges.length === days.length * semesters.length;
+  // A Year-long Group writes its hours one of two ways, and both are common: repeated once
+  // per Semester (ranges = days x Semesters), or written once and meant for every Semester
+  // (ranges = days). Anything else is reported rather than guessed at.
+  const repeated = ranges.length === days.length * semesters.length;
+  const shared = ranges.length === days.length;
+  const divides = repeated || shared;
   const warnings: ScheduleWarning[] = divides ? [] : ["hours-do-not-divide"];
 
   const meetings: Meeting[] = [];
   let unreadable = false;
-  semesters.forEach((semester, blockIndex) => {
+  semesters.forEach((semester, semesterIndex) => {
+    // When the counts do not divide either way, nothing past the first block can be trusted,
+    // so the later Semesters are left without Meetings rather than given invented ones.
+    if (!divides && semesterIndex > 0) return;
+    const blockIndex = shared ? 0 : semesterIndex;
     const block = ranges.slice(blockIndex * days.length, (blockIndex + 1) * days.length);
     days.forEach((dayLabel, index) => {
       const day = DAYS[dayLabel];

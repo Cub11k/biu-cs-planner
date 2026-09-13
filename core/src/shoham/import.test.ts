@@ -177,7 +177,8 @@ it("merges a details-only part into a Catalog already imported", () => {
 });
 
 it("warns when a Year-long Group's hours do not divide evenly across its Semesters", () => {
-  // Two Semesters, three days, but only one block of ranges: the Spring half is missing.
+  // Three days and four ranges divides no way at all: neither one block per Semester nor
+  // one block shared by both. Three ranges would have been the legitimate shared form.
   const { catalog, warnings } = importRawCrawl(
     {
       rows: [
@@ -186,7 +187,7 @@ it("warns when a Year-long Group's hours do not divide evenly across its Semeste
           group: "01",
           semester: "סמסטר א'\nסמסטר ב'",
           day: "א',ה',ו'",
-          hours: "09:00 - 11:00\n09:00 - 11:00\n08:00 - 13:00",
+          hours: "09:00 - 11:00\n09:00 - 11:00\n08:00 - 13:00\n10:00 - 12:00",
         }),
       ],
     },
@@ -269,4 +270,28 @@ it("warns about a course number with an unusual tail, and imports it as its own 
     { kind: "unusual-course-number", courseNumber: "89-12000" },
   ]);
   expect(catalog.offerings[0]!.courseNumber).toBe("89-12000");
+});
+
+it("applies a Year-long Group's single schedule to both Semesters", () => {
+  // 89-1100 as Shoham sends it: both Semesters, one day, one range, no repetition.
+  // Eight of the fifteen timed Year-long rows look like this, not like 89-099.
+  const { catalog, warnings } = importRawCrawl(
+    {
+      rows: [
+        row({
+          code: "891100",
+          semester: "סמסטר א'\nסמסטר ב'",
+          day: "ב'",
+          hours: "15:00 - 18:00",
+        }),
+      ],
+    },
+    { academicYear: YEAR_2027 },
+  );
+
+  expect(warnings).toEqual([]);
+  expect(catalog.offerings[0]!.groups[0]!.meetings).toEqual([
+    { semester: "fall", day: "monday", start: "15:00", end: "18:00" },
+    { semester: "spring", day: "monday", start: "15:00", end: "18:00" },
+  ]);
 });

@@ -68,7 +68,19 @@ day:   "א',ג'"                          2 days, comma-separated
 hours: "13:00 - 15:00\n15:00 - 17:00"    2 ranges, newline-separated
 ```
 
-But a Year-long Group repeats its ranges once per Semester:
+A Year-long Group writes its hours **one of two ways, and both are common**. Of the 74 Year-long
+rows only 15 are timed at all; of those, 7 repeat their ranges once per Semester and 8 write them
+once and mean them for both. Reading only the first kind loses the Spring half of the second.
+
+Written once, meant for both Semesters — 89-1100's lecture, and 7 rows like it:
+
+```
+891100  semester: Fall + Spring
+day:    "ב'"                    1 day
+hours:  "15:00 - 18:00"         1 range = 1 x 1, not 1 x 2
+```
+
+Repeated once per Semester — 89-099, and 6 rows like it:
 
 ```
 89099  semester: Fall + Spring
@@ -77,9 +89,19 @@ hours: "09:00 - 11:00\n09:00 - 11:00\n08:00 - 13:00\n09:00 - 11:00\n09:00 - 11:0
                                          6 ranges = 3 x 2
 ```
 
-So: split `day` on commas and `hours` on newlines, cut the ranges into one block per Semester
-when the count divides evenly by the day count, then zip each block against the days. A count that does not divide evenly is a Warning, not a
-guess.
+So: split `day` on commas and `hours` on newlines, then
+
+- `ranges = days × Semesters` — cut into one block per Semester and zip each block to the days;
+- `ranges = days` — zip the one block to the days and apply it to every Semester;
+- anything else — a Warning, keeping only the first block rather than inventing the rest.
+
+Run over all 510 rows, those three cases cover every one: the whole crawl imports with a single
+Warning, and that one is about an odd course number rather than a schedule.
+
+One row stays genuinely ambiguous. 89-375 is Year-long with two days and two ranges (`"ב',א'"`
+against `17:00 - 19:00` and `16:00 - 18:00`), which reads either as two weekly Meetings held all
+year, or as one Meeting in Fall and a different one in Spring. It is taken as the former, since
+that is what the shared form means everywhere else.
 
 ## A detail record
 
@@ -154,7 +176,8 @@ For the Importer:
 
 - Parse the Semester field into a **set**; two entries mean Year-long.
 - Accept both Year-long spellings and treat them as equivalent, not as an error.
-- Split hours per Semester before zipping to days; warn on a count that does not divide evenly.
+- Split hours per Semester before zipping to days, accepting both the repeated and the shared
+  form; warn only when the count fits neither.
 - Empty `day` and `hours` is an Untimed Group — normal, and not a Warning.
 - Merge details by (course number, Semester) after normalising the key, preferring the record that
   has Exams. Treat an absent Exam list as *unknown* rather than *none*, unless the record came from
