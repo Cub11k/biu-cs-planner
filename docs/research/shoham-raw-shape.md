@@ -48,8 +48,14 @@ Nine string fields, exactly as the page renders them:
   סמינריון, סדנה, פרויקט, תיזה, דיסרטציה, הדרכה, תגבור, ש.מחלקה, קולוקויום חובה,
   קולוקויום רשות, and two that are not teaching at all — בחינה and רישום, one row each.
 - **`semester`** — `סמסטר א'` (Fall, 225 rows), `סמסטר ב'` (Spring, 207), `סמסטר ק'` (Summer, 4),
-  or **both Fall and Spring on two lines** (74), which is how Shoham shows a Year-long Course.
-  There is no `שנתי` marker.
+  or **both Fall and Spring** (74). **Naming two Semesters means the Course is Year-long. That is
+  the whole rule** — there is no `שנתי` marker, and no separate "offered in either Semester" case
+  to tell apart.
+
+  The markup gives nothing further to go on, so do not go looking: every Semester cell is one
+  span with `<br>` between the labels, `<span …>סמסטר א'<br>סמסטר ב'<br></span>`, and single-Semester
+  cells carry a trailing `<br>` too. The run-together spelling in some files is a crawl artifact
+  and nothing more.
 - **`day`** — comma-separated day letters, `א'` through `ו'`; Friday does occur. **Empty means the
   Group has no Meetings** — 144 of 510 rows.
 - **`hours`** — one `HH:MM - HH:MM` range per line, **newline-separated**, positionally paired
@@ -122,11 +128,10 @@ Keyed `"<code>|<semester>"`, using whatever the Semester cell said:
   `"סמסטר א' - 2.00"` and `"סמסטר ב' - 2.00"` on two lines while `points` holds their sum, `4.00`.
   So `points` is always the total of the `hours` lines for that one Group.
 
-  Summing one Group per Lesson Type reproduces the department's own figures: 89-1262 comes to
-  3 + 2 = 5 against the yedion's `total_h 5.0`. One case does not agree — 89-385, Year-long,
-  where Shoham gives `4.00` (2.00 per Semester) while the yedion says `total_h 2.0`. Most likely
-  the yedion counts a Year-long Course's weekly hours once rather than per Semester. Worth
-  settling before Progress counts credits.
+  Summing one Group per Lesson Type reproduces the department's own figures. 89-1262 comes to
+  3 + 2 = 5 against the yedion's `total_h 5.0`. A Year-long Course agrees too, once the yedion is
+  read correctly: it lists 89-385 **once per Semester**, 2.0 each, so its year total is 4.0 —
+  the same figure Shoham gives as `points`.
 - **`code`** — course **plus the Group the page was read from**, e.g. `89132-01`. It reflects
   which Group happened to be sampled, so it is **not** the Offering's identity and must not be
   used as one.
