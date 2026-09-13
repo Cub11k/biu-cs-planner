@@ -5,6 +5,14 @@ import { importRawCrawl } from "./import.ts";
 // crawl on hand records it. The caller supplies it.
 const YEAR_2027 = 2027;
 
+/**
+ * No crawl on hand carries provenance, so every import of these fixtures warns about it.
+ * Tests that are not about provenance say so by looking past it.
+ */
+function exceptProvenance(warnings: ReturnType<typeof importRawCrawl>["warnings"]) {
+  return warnings.filter((w) => w.kind !== "provenance-missing");
+}
+
 /** A timed lecture row of 89-110; each test overrides only the fields it is about. */
 function row(overrides: Partial<Parameters<typeof importRawCrawl>[0]["rows"] extends
   (infer R)[] | undefined ? R : never> = {}) {
@@ -43,7 +51,7 @@ it("imports a timed lecture row as one Offering with one Group and one Meeting",
     { academicYear: YEAR_2027 },
   );
 
-  expect(warnings).toEqual([]);
+  expect(exceptProvenance(warnings)).toEqual([]);
   expect(catalog.academicYear).toBe(YEAR_2027);
   expect(catalog.offerings).toEqual([
     {
@@ -119,7 +127,7 @@ it("splits a Year-long Group's repeated hours across its two Semesters", () => {
     { academicYear: YEAR_2027 },
   );
 
-  expect(warnings).toEqual([]);
+  expect(exceptProvenance(warnings)).toEqual([]);
   const offering = catalog.offerings[0]!;
   expect(offering.semesters).toEqual(["fall", "spring"]);
   expect(offering.groups[0]!.meetings).toEqual([
@@ -148,7 +156,7 @@ it("takes credits and Exams from the Course-wide detail record", () => {
     { academicYear: YEAR_2027 },
   );
 
-  expect(warnings).toEqual([]);
+  expect(exceptProvenance(warnings)).toEqual([]);
   const offering = catalog.offerings[0]!;
   expect(offering.credits).toBe(4);
   expect(offering.exams).toEqual({
@@ -194,7 +202,7 @@ it("warns when a Year-long Group's hours do not divide evenly across its Semeste
     { academicYear: YEAR_2027 },
   );
 
-  expect(warnings).toEqual([
+  expect(exceptProvenance(warnings)).toEqual([
     { kind: "hours-do-not-divide", courseNumber: "89-099", group: "01" },
   ]);
   // what could be read is kept; the edit is never blocked
@@ -211,7 +219,7 @@ it("warns on a Meeting it cannot read, and keeps the rest of the Group", () => {
     { academicYear: YEAR_2027 },
   );
 
-  expect(warnings).toEqual([
+  expect(exceptProvenance(warnings)).toEqual([
     { kind: "meeting-unreadable", courseNumber: "89-110", group: "01" },
   ]);
   expect(catalog.offerings[0]!.groups[0]!.meetings).toEqual([
@@ -225,7 +233,7 @@ it("imports an Untimed Group without complaint", () => {
     { academicYear: YEAR_2027 },
   );
 
-  expect(warnings).toEqual([]);
+  expect(exceptProvenance(warnings)).toEqual([]);
   expect(catalog.offerings[0]!.groups[0]!.meetings).toEqual([]);
 });
 
@@ -266,7 +274,7 @@ it("warns about a course number with an unusual tail, and imports it as its own 
     { academicYear: YEAR_2027 },
   );
 
-  expect(warnings).toEqual([
+  expect(exceptProvenance(warnings)).toEqual([
     { kind: "unusual-course-number", courseNumber: "89-12000" },
   ]);
   expect(catalog.offerings[0]!.courseNumber).toBe("89-12000");
@@ -289,9 +297,59 @@ it("applies a Year-long Group's single schedule to both Semesters", () => {
     { academicYear: YEAR_2027 },
   );
 
-  expect(warnings).toEqual([]);
+  expect(exceptProvenance(warnings)).toEqual([]);
   expect(catalog.offerings[0]!.groups[0]!.meetings).toEqual([
     { semester: "fall", day: "monday", start: "15:00", end: "18:00" },
     { semester: "spring", day: "monday", start: "15:00", end: "18:00" },
   ]);
+});
+
+it("warns when a part carries no provenance, and keeps it when it does", () => {
+  const without = importRawCrawl({ rows: [row()] }, { academicYear: YEAR_2027 });
+  expect(without.warnings).toEqual([{ kind: "provenance-missing" }]);
+  expect(without.catalog.sources).toEqual([]);
+
+  const provenance = {
+    query: "department=84&year=2027",
+    crawledAt: "2026-09-13T10:00:00Z",
+    crawlerVersion: "2",
+  };
+  const withIt = importRawCrawl({ rows: [row()], provenance }, { academicYear: YEAR_2027 });
+  expect(withIt.warnings).toEqual([]);
+  expect(withIt.catalog.sources).toEqual([provenance]);
+});
+
+it("keeps the provenance of every part it merges", () => {
+  const first = importRawCrawl(
+    { rows: [row()], provenance: { crawlerVersion: "2" } },
+    { academicYear: YEAR_2027 },
+  ).catalog;
+
+  const { catalog } = importRawCrawl(
+    { details: { "89110|סמסטר א'": DETAIL_89110_FALL }, provenance: { crawlerVersion: "3" } },
+    { academicYear: YEAR_2027, into: first },
+  );
+
+  expect(catalog.sources).toEqual([{ crawlerVersion: "2" }, { crawlerVersion: "3" }]);
+});
+
+it("merges a second rows part, adding a Group here and an Offering there", () => {
+  const first = importRawCrawl({ rows: [row()] }, { academicYear: YEAR_2027 }).catalog;
+
+  const { catalog, summary } = importRawCrawl(
+    {
+      rows: [
+        row({ group: "03", kind: "תרגיל", hours: "18:00 - 20:00" }),
+        // another department entirely: this is how a double major is covered
+        row({ code: "10123", name: "יסודות", group: "01", teachers: "" }),
+      ],
+    },
+    { academicYear: YEAR_2027, into: first },
+  );
+
+  expect(catalog.offerings.map((o) => [o.courseNumber, o.groups.length])).toEqual([
+    ["89-110", 2],
+    ["10-123", 1],
+  ]);
+  expect(summary).toEqual({ offerings: 2, groups: 3, meetings: 3, exams: 0 });
 });

@@ -64,3 +64,12 @@ it("exports JSON Schema, so a hand-written Catalog gets editor support", () => {
     expect.arrayContaining(["schemaVersion", "academicYear", "offerings"]),
   );
 });
+
+it("refuses a file older than any migration it has", () => {
+  const ancient = { ...(catalogOnDisk() as object), schemaVersion: 0 };
+
+  const result = parseCatalogFile(ancient);
+
+  expect(result.catalog).toBeUndefined();
+  expect(result.warnings).toEqual([{ kind: "schema-version-unsupported", found: 0 }]);
+});

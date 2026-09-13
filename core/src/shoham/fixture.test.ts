@@ -12,7 +12,7 @@ const crawl = JSON.parse(
   readFileSync(join(import.meta.dirname, "__fixtures__/raw-crawl-2027-trimmed.json"), "utf8"),
 );
 
-const { catalog, warnings } = importRawCrawl(crawl, { academicYear: 2027 });
+const { catalog, warnings, summary } = importRawCrawl(crawl, { academicYear: 2027 });
 
 const find = (courseNumber: string): Offering =>
   catalog.offerings.find((o) => o.courseNumber === courseNumber)!;
@@ -86,6 +86,17 @@ it("records Exams as unknown where the crawl published none", () => {
   expect(find("89-081").credits).toBe(2);
 });
 
-it("reports only the odd course number, and nothing about the schedules", () => {
-  expect(warnings).toEqual([{ kind: "unusual-course-number", courseNumber: "89-12000" }]);
+it("reports the missing provenance and the odd course number, and nothing else", () => {
+  // Nothing about the schedules: all eight real rows read cleanly.
+  expect(warnings).toEqual([
+    { kind: "provenance-missing" },
+    { kind: "unusual-course-number", courseNumber: "89-12000" },
+  ]);
+});
+
+it("summarises the import for the preview shown before anything is written", () => {
+  // Counted off the fixture by hand: 6 Offerings over 8 Groups. Meetings are 89-099's six,
+  // 89-110's two, 89-132's two and 89-12000's one; the three Untimed Groups add none.
+  // Exams are two Moadim each for 89-110, 89-132 and 89-12000.
+  expect(summary).toEqual({ offerings: 6, groups: 8, meetings: 11, exams: 6 });
 });

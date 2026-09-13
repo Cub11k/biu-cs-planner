@@ -4,6 +4,7 @@ import {
   CURRENT_CATALOG_SCHEMA_VERSION,
   type Catalog,
   type Offering,
+  type Provenance,
 } from "../catalog/schema.ts";
 
 export type RawCrawlRow = {
@@ -21,11 +22,13 @@ export type RawCrawlRow = {
 export type RawCrawl = {
   rows?: RawCrawlRow[];
   details?: Record<string, RawDetail>;
+  provenance?: Provenance;
 };
 
 export type Warning =
   | { kind: "hours-do-not-divide" | "meeting-unreadable"; courseNumber: string; group: string }
-  | { kind: "unusual-course-number"; courseNumber: string };
+  | { kind: "unusual-course-number"; courseNumber: string }
+  | { kind: "provenance-missing" };
 
 /** Shoham writes a course number without its hyphen: 89110 is 89-110, 891195 is 89-1195. */
 function courseNumberFrom(code: string): string {
@@ -47,10 +50,33 @@ function offeringKey(courseNumber: string, semesters: Semester[]): string {
   return `${courseNumber}|${semesters.join("+")}`;
 }
 
+/**
+ * What the Catalog holds after the import. The import screen shows this, with the Warnings,
+ * before anything is written to the Workspace.
+ */
+export type ImportSummary = {
+  offerings: number;
+  groups: number;
+  meetings: number;
+  exams: number;
+};
+
+function summarise(catalog: Catalog): ImportSummary {
+  let groups = 0;
+  let meetings = 0;
+  let exams = 0;
+  for (const offering of catalog.offerings) {
+    groups += offering.groups.length;
+    for (const group of offering.groups) meetings += group.meetings.length;
+    exams += offering.exams.sittings.length;
+  }
+  return { offerings: catalog.offerings.length, groups, meetings, exams };
+}
+
 export function importRawCrawl(
   crawl: RawCrawl,
   options: { academicYear: number; into?: Catalog },
-): { catalog: Catalog; warnings: Warning[] } {
+): { catalog: Catalog; warnings: Warning[]; summary: ImportSummary } {
   // One Offering per Course and Semester set. A Year-long row names two Semesters and so
   // forms its own Offering, separate from the same Course given only in Fall.
   // A part is merged into what is already there rather than replacing it, and the Catalog
@@ -67,6 +93,12 @@ export function importRawCrawl(
 
   const warnings: Warning[] = [];
   const reportedNumbers = new Set<string>();
+
+  // Provenance is optional, because no crawl on hand carries it, but a part that cannot say
+  // where it came from is worth saying so about.
+  const sources = [...(options.into?.sources ?? [])];
+  if (crawl.provenance) sources.push(crawl.provenance);
+  else warnings.push({ kind: "provenance-missing" });
 
   for (const row of crawl.rows ?? []) {
     const { semesters, meetings, warnings: scheduleWarnings } = parseGroupSchedule(row);
@@ -115,12 +147,12 @@ export function importRawCrawl(
     if (sittings.length) offering.exams = { known: true, sittings };
   }
 
-  return {
-    catalog: {
-      schemaVersion: CURRENT_CATALOG_SCHEMA_VERSION,
-      academicYear: options.academicYear,
-      offerings: [...offerings.values()],
-    },
-    warnings,
+  const catalog: Catalog = {
+    schemaVersion: CURRENT_CATALOG_SCHEMA_VERSION,
+    academicYear: options.academicYear,
+    sources,
+    offerings: [...offerings.values()],
   };
+
+  return { catalog, warnings, summary: summarise(catalog) };
 }

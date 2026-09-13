@@ -5,7 +5,18 @@ export { CURRENT_CATALOG_SCHEMA_VERSION };
 
 export type CatalogFileWarning =
   | { kind: "file-unreadable" }
-  | { kind: "schema-version-too-new"; found: number };
+  | { kind: "schema-version-too-new"; found: number }
+  | { kind: "schema-version-unsupported"; found: number };
+
+/**
+ * Migrations that bring an older file up to the current version, keyed by the version they
+ * read. There are none yet because there has only ever been one version; as versions accrue,
+ * each new one adds the migration that reads the version before it, and OLDEST_READABLE stays
+ * the lowest version a chain still reaches.
+ */
+const MIGRATIONS: Record<number, (file: unknown) => unknown> = {};
+
+const OLDEST_READABLE = CURRENT_CATALOG_SCHEMA_VERSION;
 
 const versionProbe = z.object({ schemaVersion: z.number() });
 
@@ -32,8 +43,18 @@ export function parseCatalogFile(input: unknown): {
   if (found > CURRENT_CATALOG_SCHEMA_VERSION) {
     return { warnings: [{ kind: "schema-version-too-new", found }] };
   }
+  if (found < OLDEST_READABLE) {
+    return { warnings: [{ kind: "schema-version-unsupported", found }] };
+  }
 
-  const parsed = catalogSchema.safeParse(input);
+  let migrated = input;
+  for (let version = found; version < CURRENT_CATALOG_SCHEMA_VERSION; version++) {
+    const migrate = MIGRATIONS[version];
+    if (!migrate) return { warnings: [{ kind: "schema-version-unsupported", found }] };
+    migrated = migrate(migrated);
+  }
+
+  const parsed = catalogSchema.safeParse(migrated);
   if (!parsed.success) return { warnings: [{ kind: "file-unreadable" }] };
 
   return { catalog: parsed.data, warnings: [] };

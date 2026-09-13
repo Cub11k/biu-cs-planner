@@ -50,9 +50,21 @@ export const offeringSchema = z.object({
   exams: z.object({ known: z.boolean(), sittings: z.array(examSchema) }),
 });
 
+/**
+ * Where a part came from. Every field is optional because no crawl on hand records any of
+ * them, and an Academic Year that cannot say how it was gathered is still worth importing.
+ */
+export const provenanceSchema = z.object({
+  query: z.string().optional(),
+  crawledAt: z.string().optional(),
+  crawlerVersion: z.string().optional(),
+});
+
 export const catalogSchema = z.object({
   schemaVersion: z.number(),
   academicYear: z.number(),
+  /** One entry per part merged in, in the order they were imported. */
+  sources: z.array(provenanceSchema),
   offerings: z.array(offeringSchema),
 });
 
@@ -62,4 +74,5 @@ export type Meeting = z.infer<typeof meetingSchema>;
 export type Exam = z.infer<typeof examSchema>;
 export type Group = z.infer<typeof groupSchema>;
 export type Offering = z.infer<typeof offeringSchema>;
+export type Provenance = z.infer<typeof provenanceSchema>;
 export type Catalog = z.infer<typeof catalogSchema>;
