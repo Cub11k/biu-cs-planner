@@ -1,4 +1,9 @@
-import { parseGroupSchedule, type Semester } from "./dialect.ts";
+import {
+  parseCourseNumber,
+  parseGroupSchedule,
+  type ScheduleWarning,
+  type Semester,
+} from "./dialect.ts";
 import { parseCredits, parseDetailKey, parseExams, type RawDetail } from "./details.ts";
 import {
   CURRENT_CATALOG_SCHEMA_VERSION,
@@ -26,14 +31,14 @@ export type RawCrawl = {
 };
 
 export type Warning =
-  | { kind: "hours-do-not-divide" | "meeting-unreadable"; courseNumber: string; group: string }
+  | { kind: ScheduleWarning | "semester-unreadable"; courseNumber: string; group: string }
   | { kind: "unusual-course-number"; courseNumber: string }
+  | { kind: "course-number-unreadable"; code: string }
+  | { kind: "detail-key-unreadable"; key: string }
+  | { kind: "detail-without-offering"; courseNumber: string; semesters: Semester[] }
+  | { kind: "credits-unreadable"; courseNumber: string }
+  | { kind: "academic-year-mismatch"; catalog: number; part: number }
   | { kind: "provenance-missing" };
-
-/** Shoham writes a course number without its hyphen: 89110 is 89-110, 891195 is 89-1195. */
-function courseNumberFrom(code: string): string {
-  return `${code.slice(0, 2)}-${code.slice(2)}`;
-}
 
 /** Tails run to three or four digits. Anything else is reported and imported as it stands. */
 function hasUnusualTail(code: string): boolean {
@@ -45,9 +50,19 @@ function lecturersFrom(teachers: string): string[] {
   return teachers.split("\n").map((t) => t.trim()).filter(Boolean);
 }
 
+/**
+ * Semesters in a fixed order. A cell can name them either way round, and the merge key must
+ * not depend on which: otherwise one Year-long Course becomes two Offerings.
+ */
+const SEMESTER_ORDER: Semester[] = ["fall", "spring", "summer"];
+
+function canonical(semesters: Semester[]): Semester[] {
+  return [...semesters].sort((a, b) => SEMESTER_ORDER.indexOf(a) - SEMESTER_ORDER.indexOf(b));
+}
+
 /** The key an Offering is merged on: a Course plus the Semesters it spans. */
 function offeringKey(courseNumber: string, semesters: Semester[]): string {
-  return `${courseNumber}|${semesters.join("+")}`;
+  return `${courseNumber}|${canonical(semesters).join("+")}`;
 }
 
 /**
@@ -94,6 +109,18 @@ export function importRawCrawl(
   const warnings: Warning[] = [];
   const reportedNumbers = new Set<string>();
 
+  // A Catalog holds one Academic Year. Merging a part from another year would relabel the
+  // Offerings already in it, so the part is refused and the Catalog handed back untouched.
+  if (options.into && options.into.academicYear !== options.academicYear) {
+    return {
+      catalog: options.into,
+      warnings: [
+        { kind: "academic-year-mismatch", catalog: options.into.academicYear, part: options.academicYear },
+      ],
+      summary: summarise(options.into),
+    };
+  }
+
   // Provenance is optional, because no crawl on hand carries it, but a part that cannot say
   // where it came from is worth saying so about.
   const sources = [...(options.into?.sources ?? [])];
@@ -102,22 +129,30 @@ export function importRawCrawl(
 
   for (const row of crawl.rows ?? []) {
     const { semesters, meetings, warnings: scheduleWarnings } = parseGroupSchedule(row);
-    const courseNumber = courseNumberFrom(row.code);
+    const courseNumber = parseCourseNumber(row.code);
     for (const kind of scheduleWarnings) {
       warnings.push({ kind, courseNumber, group: row.group });
     }
+    if (!semesters.length) {
+      warnings.push({ kind: "semester-unreadable", courseNumber, group: row.group });
+    }
+    if (row.code.length < 3 && !reportedNumbers.has(courseNumber)) {
+      reportedNumbers.add(courseNumber);
+      warnings.push({ kind: "course-number-unreadable", code: row.code });
+    }
     const key = offeringKey(courseNumber, semesters);
+
+    if (hasUnusualTail(row.code) && !reportedNumbers.has(courseNumber)) {
+      reportedNumbers.add(courseNumber);
+      warnings.push({ kind: "unusual-course-number", courseNumber });
+    }
 
     let offering = offerings.get(key);
     if (!offering) {
-      if (hasUnusualTail(row.code) && !reportedNumbers.has(courseNumber)) {
-        reportedNumbers.add(courseNumber);
-        warnings.push({ kind: "unusual-course-number", courseNumber });
-      }
       offering = {
         courseNumber,
         nameHebrew: row.name,
-        semesters,
+        semesters: canonical(semesters),
         groups: [],
         exams: { known: false, sittings: [] },
       };
@@ -134,12 +169,27 @@ export function importRawCrawl(
 
   for (const [key, detail] of Object.entries(crawl.details ?? {})) {
     const parsed = parseDetailKey(key);
-    if (!parsed) continue;
+    if (!parsed) {
+      warnings.push({ kind: "detail-key-unreadable", key });
+      continue;
+    }
     const offering = offerings.get(offeringKey(parsed.courseNumber, parsed.semesters));
-    if (!offering) continue;
+    if (!offering) {
+      // Normal when a details-only part arrives before its rows, but the student has to be
+      // told, or the import reads as a success that recorded nothing.
+      warnings.push({
+        kind: "detail-without-offering",
+        courseNumber: parsed.courseNumber,
+        semesters: canonical(parsed.semesters),
+      });
+      continue;
+    }
 
     const credits = parseCredits(detail.points);
     if (credits !== undefined) offering.credits = credits;
+    else if (detail.points !== undefined) {
+      warnings.push({ kind: "credits-unreadable", courseNumber: parsed.courseNumber });
+    }
 
     // An absent Exam list means "not published for the Group this was read from", never
     // "this Offering has no Exam", so only a record that carries Exams settles the question.

@@ -23,6 +23,11 @@ const DAYS: Readonly<Record<string, Day>> = {
   "ו'": "friday",
 };
 
+/** Shoham writes a course number without its hyphen: 89110 is 89-110, 891195 is 89-1195. */
+export function parseCourseNumber(code: string): string {
+  return `${code.slice(0, 2)}-${code.slice(2)}`;
+}
+
 /**
  * A cell naming two Semesters is how Shoham shows a Year-long Course; there is no שנתי marker.
  *

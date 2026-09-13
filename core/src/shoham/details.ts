@@ -1,4 +1,4 @@
-import { parseSemesters } from "./dialect.ts";
+import { parseCourseNumber, parseSemesters } from "./dialect.ts";
 import type { Exam, Semester } from "../catalog/schema.ts";
 
 export type { Exam };
@@ -31,7 +31,7 @@ export function parseDetailKey(key: string): DetailKey | undefined {
   const code = key.slice(0, separator);
   const semesters = parseSemesters(key.slice(separator + 1));
   if (!semesters.length) return undefined;
-  return { courseNumber: `${code.slice(0, 2)}-${code.slice(2)}`, semesters };
+  return { courseNumber: parseCourseNumber(code), semesters };
 }
 
 export function parseCredits(points: string | undefined): number | undefined {

@@ -32,22 +32,7 @@ function row(overrides: Partial<Parameters<typeof importRawCrawl>[0]["rows"] ext
 
 it("imports a timed lecture row as one Offering with one Group and one Meeting", () => {
   const { catalog, warnings } = importRawCrawl(
-    {
-      rows: [
-        {
-          code: "89110",
-          name: "מבוא למדעי המחשב",
-          group: "01",
-          teachers: "פרופ' נועה אגמון",
-          kind: "הרצאה",
-          semester: "סמסטר א'",
-          day: "ג'",
-          hours: "15:00 - 18:00",
-          lid: "808655",
-        },
-      ],
-      details: {},
-    },
+    { rows: [row()], details: {} },
     { academicYear: YEAR_2027 },
   );
 
@@ -352,4 +337,81 @@ it("merges a second rows part, adding a Group here and an Offering there", () =>
     ["10-123", 1],
   ]);
   expect(summary).toEqual({ offerings: 2, groups: 3, meetings: 3, exams: 0 });
+});
+
+// --- findings from the review: the import path dropped things quietly ---------
+
+it("warns when a detail record matches no Offering, instead of importing nothing quietly", () => {
+  // ADR-0010 makes this a supported flow: a details-only part can arrive before its rows.
+  const { catalog, summary, warnings } = importRawCrawl(
+    { details: { "89110|סמסטר א'": DETAIL_89110_FALL } },
+    { academicYear: YEAR_2027 },
+  );
+
+  expect(catalog.offerings).toEqual([]);
+  expect(summary.offerings).toBe(0);
+  expect(exceptProvenance(warnings)).toEqual([
+    { kind: "detail-without-offering", courseNumber: "89-110", semesters: ["fall"] },
+  ]);
+});
+
+it("warns on a detail key it cannot read", () => {
+  const { warnings } = importRawCrawl(
+    { rows: [row()], details: { "no-separator-here": DETAIL_89110_FALL } },
+    { academicYear: YEAR_2027 },
+  );
+
+  expect(exceptProvenance(warnings)).toEqual([
+    { kind: "detail-key-unreadable", key: "no-separator-here" },
+  ]);
+});
+
+it("warns on a Semester cell it cannot read", () => {
+  const { catalog, warnings } = importRawCrawl(
+    { rows: [row({ semester: "שנתי" })] },
+    { academicYear: YEAR_2027 },
+  );
+
+  expect(exceptProvenance(warnings)).toEqual([
+    { kind: "semester-unreadable", courseNumber: "89-110", group: "01" },
+  ]);
+  expect(catalog.offerings[0]!.semesters).toEqual([]);
+});
+
+it("warns on a course code it cannot read", () => {
+  const { warnings } = importRawCrawl({ rows: [row({ code: "" })] }, { academicYear: YEAR_2027 });
+
+  expect(exceptProvenance(warnings)).toContainEqual({ kind: "course-number-unreadable", code: "" });
+});
+
+it("merges a Year-long Offering however its Semester labels are ordered", () => {
+  const first = importRawCrawl(
+    { rows: [row({ semester: "סמסטר א'\nסמסטר ב'", day: "", hours: "" })] },
+    { academicYear: YEAR_2027 },
+  ).catalog;
+
+  const { catalog } = importRawCrawl(
+    { rows: [row({ group: "02", semester: "סמסטר ב'סמסטר א'", day: "", hours: "" })] },
+    { academicYear: YEAR_2027, into: first },
+  );
+
+  expect(catalog.offerings).toHaveLength(1);
+  expect(catalog.offerings[0]!.semesters).toEqual(["fall", "spring"]);
+  expect(catalog.offerings[0]!.groups.map((g) => g.number)).toEqual(["01", "02"]);
+});
+
+it("refuses to merge a part into a Catalog of another Academic Year", () => {
+  const first = importRawCrawl({ rows: [row()] }, { academicYear: YEAR_2027 }).catalog;
+
+  const { catalog, warnings } = importRawCrawl(
+    { rows: [row({ group: "03" })] },
+    { academicYear: 2030, into: first },
+  );
+
+  expect(exceptProvenance(warnings)).toEqual([
+    { kind: "academic-year-mismatch", catalog: YEAR_2027, part: 2030 },
+  ]);
+  // the Catalog is left exactly as it was rather than relabelled
+  expect(catalog.academicYear).toBe(YEAR_2027);
+  expect(catalog.offerings[0]!.groups).toHaveLength(1);
 });
