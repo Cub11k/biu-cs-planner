@@ -1,5 +1,11 @@
 import { parseCourseNumber, parseGroupMeetings, type MeetingWarning } from "./dialect.ts";
-import { parseCredits, parseDetailKey, parseExams, type RawDetail } from "./details.ts";
+import {
+  parseDetailKey,
+  parseExams,
+  parseSampledGroup,
+  parseWeeklyHours,
+  type RawDetail,
+} from "./details.ts";
 import {
   CURRENT_CATALOG_SCHEMA_VERSION,
   type Catalog,
@@ -32,7 +38,8 @@ export type Warning =
   | { kind: "course-number-unreadable"; code: string }
   | { kind: "detail-key-unreadable"; key: string }
   | { kind: "detail-without-offering"; courseNumber: string; semesters: Semester[] }
-  | { kind: "credits-unreadable"; courseNumber: string }
+  | { kind: "weekly-hours-unreadable"; courseNumber: string }
+  | { kind: "detail-group-unknown"; courseNumber: string }
   | { kind: "exam-unreadable"; courseNumber: string }
   | { kind: "academic-year-mismatch"; catalog: number; part: number }
   | { kind: "provenance-missing" };
@@ -72,6 +79,24 @@ export type ImportSummary = {
   meetings: number;
   exams: number;
 };
+
+/**
+ * An Offering's credits are one Group's weekly hours per Lesson Type, added up. Shoham
+ * publishes hours per Group, so this is only settled once every Lesson Type is covered --
+ * 89-132 is its lecture's 4 plus a tirgul's 2, and a single detail record cannot say so.
+ */
+function creditsOf(offering: Offering): Offering["credits"] {
+  const perLessonType = new Map<string, number | undefined>();
+  for (const group of offering.groups) {
+    if (!perLessonType.get(group.lessonType)) {
+      perLessonType.set(group.lessonType, group.weeklyHours);
+    }
+  }
+
+  const hours = [...perLessonType.values()];
+  if (!hours.length || hours.some((h) => h === undefined)) return { known: false };
+  return { known: true, total: (hours as number[]).reduce((sum, h) => sum + h, 0) };
+}
 
 function summarise(catalog: Catalog): ImportSummary {
   let groups = 0;
@@ -151,6 +176,7 @@ export function importRawCrawl(
         nameHebrew: row.name,
         semesters: canonical(semesters),
         groups: [],
+        credits: { known: false },
         exams: { known: false, sittings: [] },
       };
       offerings.set(key, offering);
@@ -182,10 +208,14 @@ export function importRawCrawl(
       continue;
     }
 
-    const credits = parseCredits(detail.points);
-    if (credits !== undefined) offering.credits = credits;
-    else if (detail.points !== undefined) {
-      warnings.push({ kind: "credits-unreadable", courseNumber: parsed.courseNumber });
+    const hours = parseWeeklyHours(detail.points);
+    if (hours === undefined && detail.points !== undefined) {
+      warnings.push({ kind: "weekly-hours-unreadable", courseNumber: parsed.courseNumber });
+    } else if (hours !== undefined) {
+      const sampled = parseSampledGroup(detail.code);
+      const group = sampled && offering.groups.find((g) => g.number === sampled);
+      if (group) group.weeklyHours = hours;
+      else warnings.push({ kind: "detail-group-unknown", courseNumber: parsed.courseNumber });
     }
 
     // An absent Exam list means "not published for the Group this was read from", never
@@ -194,6 +224,8 @@ export function importRawCrawl(
     if (unreadable) warnings.push({ kind: "exam-unreadable", courseNumber: parsed.courseNumber });
     if (sittings.length) offering.exams = { known: true, sittings };
   }
+
+  for (const offering of offerings.values()) offering.credits = creditsOf(offering);
 
   const catalog: Catalog = {
     schemaVersion: CURRENT_CATALOG_SCHEMA_VERSION,

@@ -51,6 +51,7 @@ it("imports a timed lecture row as one Offering with one Group and one Meeting",
           meetings: [{ semester: "fall", day: "tuesday", start: "15:00", end: "18:00" }],
         },
       ],
+      credits: { known: false },
       exams: { known: false, sittings: [] },
     },
   ]);
@@ -135,7 +136,7 @@ const DETAIL_89110_FALL = {
   ],
 };
 
-it("takes credits and Exams from the Course-wide detail record", () => {
+it("takes weekly hours and Exams from the detail record", () => {
   const { catalog, warnings } = importRawCrawl(
     { rows: [row()], details: { "89110|סמסטר א'": DETAIL_89110_FALL } },
     { academicYear: YEAR_2027 },
@@ -143,7 +144,10 @@ it("takes credits and Exams from the Course-wide detail record", () => {
 
   expect(exceptProvenance(warnings)).toEqual([]);
   const offering = catalog.offerings[0]!;
-  expect(offering.credits).toBe(4);
+  // the record was read from Group 01, so its hours belong to that Group
+  expect(offering.groups[0]!.weeklyHours).toBe(4);
+  // one Lesson Type, and it has hours, so the Offering's credits are settled
+  expect(offering.credits).toEqual({ known: true, total: 4 });
   expect(offering.exams).toEqual({
     known: true,
     sittings: [
@@ -163,7 +167,7 @@ it("merges a details-only part into a Catalog already imported", () => {
   );
 
   expect(catalog.offerings).toHaveLength(1);
-  expect(catalog.offerings[0]!.credits).toBe(4);
+  expect(catalog.offerings[0]!.groups[0]!.weeklyHours).toBe(4);
   expect(catalog.offerings[0]!.exams.known).toBe(true);
   // the part that was imported first is left alone
   expect(first.offerings[0]!.exams).toEqual({ known: false, sittings: [] });
@@ -435,6 +439,7 @@ it("warns on an Exam date it cannot read, rather than storing it", () => {
       details: {
         "89110|סמסטר א'": {
           points: "3.00",
+          code: "89110-01",
           terms: [
             { type: "מועד א'", date: "32/13/2027", hour: "09:00" },
             { type: "מועד ב'", date: "11/02/2027", hour: "16:00" },
@@ -453,4 +458,61 @@ it("warns on an Exam date it cannot read, rather than storing it", () => {
     known: true,
     sittings: [{ moed: "מועד ב'", date: "2027-02-11", time: "16:00" }],
   });
+});
+
+it("leaves credits unknown while a Lesson Type has no hours of its own", () => {
+  // A detail record covers the one Group it was read from. 89-132's real credits are the
+  // lecture's 4 plus a tirgul's 2; one record cannot say that, so it must not pretend to.
+  const { catalog } = importRawCrawl(
+    {
+      rows: [
+        row({ code: "89132", group: "01", kind: "הרצאה" }),
+        row({ code: "89132", group: "03", kind: "תרגיל" }),
+      ],
+      details: {
+        "89132|סמסטר א'": { points: "4.00", code: "89132-01", terms: [] },
+      },
+    },
+    { academicYear: YEAR_2027 },
+  );
+
+  const offering = catalog.offerings[0]!;
+  expect(offering.groups.map((g) => [g.number, g.weeklyHours])).toEqual([
+    ["01", 4],
+    ["03", undefined],
+  ]);
+  expect(offering.credits).toEqual({ known: false });
+});
+
+it("settles credits once every Lesson Type has hours, summing one per type", () => {
+  const first = importRawCrawl(
+    {
+      rows: [
+        row({ code: "89132", group: "01", kind: "הרצאה" }),
+        row({ code: "89132", group: "03", kind: "תרגיל" }),
+      ],
+      details: { "89132|סמסטר א'": { points: "4.00", code: "89132-01", terms: [] } },
+    },
+    { academicYear: YEAR_2027 },
+  ).catalog;
+
+  // a later part, read from the tirgul Group this time
+  const { catalog } = importRawCrawl(
+    { details: { "89132|סמסטר א'": { points: "2.00", code: "89132-03", terms: [] } } },
+    { academicYear: YEAR_2027, into: first },
+  );
+
+  expect(catalog.offerings[0]!.credits).toEqual({ known: true, total: 6 });
+});
+
+it("warns when a detail record does not say which Group it came from", () => {
+  const { catalog, warnings } = importRawCrawl(
+    { rows: [row()], details: { "89110|סמסטר א'": { points: "4.00", terms: [] } } },
+    { academicYear: YEAR_2027 },
+  );
+
+  expect(exceptProvenance(warnings)).toEqual([
+    { kind: "detail-group-unknown", courseNumber: "89-110" },
+  ]);
+  expect(catalog.offerings[0]!.groups[0]!.weeklyHours).toBeUndefined();
 });

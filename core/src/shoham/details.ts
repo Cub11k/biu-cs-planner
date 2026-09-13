@@ -39,10 +39,17 @@ export function parseDetailKey(key: string): DetailKey | undefined {
   return { courseNumber: parseCourseNumber(code), semesters };
 }
 
-export function parseCredits(points: string | undefined): number | undefined {
+/** `points` is the weekly hours of the one Group the page was read from, not Course credits. */
+export function parseWeeklyHours(points: string | undefined): number | undefined {
   if (points === undefined) return undefined;
-  const credits = Number(points);
-  return Number.isFinite(credits) ? credits : undefined;
+  const hours = Number(points);
+  return Number.isFinite(hours) ? hours : undefined;
+}
+
+/** A detail record's `code` is `<course>-<group>`: the Group the page was read from. */
+export function parseSampledGroup(code: string | undefined): string | undefined {
+  const group = code?.split("-")[1]?.trim();
+  return group ? group : undefined;
 }
 
 export function parseExams(detail: RawDetail): { exams: Exam[]; unreadable: number } {

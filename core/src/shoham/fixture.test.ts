@@ -32,12 +32,15 @@ it("reads 89-110's lecture and tirgul, its credits and both Moadim", () => {
   const offering = find("89-110");
 
   expect(offering.nameHebrew).toBe("מבוא למדעי המחשב");
-  expect(offering.credits).toBe(3);
+  // the detail record was read from Group 01, so only that Group has hours; the tirgul has
+  // none, so the Offering's credits stay unsettled rather than claiming the lecture's 3.
+  expect(offering.credits).toEqual({ known: false });
   expect(offering.groups).toEqual([
     {
       number: "01",
       lessonType: "הרצאה",
       lecturers: ["פרופ' נועה אגמון"],
+      weeklyHours: 3,
       meetings: [{ semester: "fall", day: "tuesday", start: "15:00", end: "18:00" }],
     },
     {
@@ -83,7 +86,8 @@ it("keeps 89-132's timed and Untimed lecture Groups side by side", () => {
 it("records Exams as unknown where the crawl published none", () => {
   expect(find("89-6878").exams).toEqual({ known: false, sittings: [] });
   expect(find("89-081").exams).toEqual({ known: false, sittings: [] });
-  expect(find("89-081").credits).toBe(2);
+  // one Group, one Lesson Type, and it has hours: settled
+  expect(find("89-081").credits).toEqual({ known: true, total: 2 });
 });
 
 it("reports the missing provenance and the odd course number, and nothing else", () => {

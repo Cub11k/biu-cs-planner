@@ -40,6 +40,11 @@ export const groupSchema = z.object({
   number: z.string(),
   lessonType: z.string(),
   lecturers: z.array(z.string()),
+  /**
+   * Weekly hours of this Group, which is what Shoham publishes per Group rather than a
+   * Course-wide credit figure. Present only for Groups a detail record was read from.
+   */
+  weeklyHours: z.number().optional(),
   meetings: z.array(meetingSchema),
 });
 
@@ -48,7 +53,11 @@ export const offeringSchema = z.object({
   nameHebrew: z.string(),
   /** Only the detail page carries it, and not for every Course. */
   nameEnglish: z.string().optional(),
-  credits: z.number().optional(),
+  /**
+   * The sum of one Group's weekly hours per Lesson Type. `known: false` until every Lesson
+   * Type the Offering has is covered, because one detail record only speaks for one Group.
+   */
+  credits: z.object({ known: z.boolean(), total: z.number().optional() }),
   semesters: z.array(semesterSchema),
   groups: z.array(groupSchema),
   /** `known: false` means no part has published them yet, not that there are none. */

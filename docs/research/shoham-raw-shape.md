@@ -19,7 +19,7 @@ Shoham gives up its Catalog through two different pages, carrying different thin
 | Source | Granularity | Carries |
 | --- | --- | --- |
 | **Grid** (`CoursesView.aspx`) | one row per **Group** | course number, names, Group number, lecturers, Lesson Type, Semester, days, hours |
-| **Detail** (`CourseDetails.aspx?lid=<id>`) | one page per **Group** | credits and Exams, which are **course-wide**, plus the code of the Group it was read from |
+| **Detail** (`CourseDetails.aspx?lid=<id>`) | one page per **Group** | that Group's weekly hours, the English Course name, the Exams, and the code of the Group it was read from |
 
 The grid is the bulk source: every Group of every Course, in one paged listing. The detail page
 costs a request per Group, so in practice one Group per (course, Semester) is read and what it
@@ -113,18 +113,32 @@ Keyed `"<code>|<semester>"`, using whatever the Semester cell said:
                               { type: "מועד ב'", date: "26/02/2027", hour: "09:00" } ] }
 ```
 
-- **`points`** — credits, course-wide. `0.00` to `6.00` here; `0.00` is real.
-- **`hours`** — the Semester and the credits again, e.g. `"סמסטר א' - 4.00"`. Redundant.
+- **`points`** — **the weekly hours of the Group the page was read from, not the Course's credits.**
+  Confirmed against live pages: 89-132 reads `4.00` from its lecture Group and `2.00` from a tirgul
+  Group, and the department's own yedion gives that Course `lecture_h 4.0`, `exercise_h 2.0`,
+  `total_h 6.0`. An Offering's credits are therefore the **sum across its Lesson Types**, which a
+  single detail record cannot give. `0.00` to `6.00` here; `0.00` is real.
+- **`hours`** — the Semester and that same figure, one line per Semester. A Year-long Group shows
+  `"סמסטר א' - 2.00"` and `"סמסטר ב' - 2.00"` on two lines while `points` holds their sum, `4.00`.
+  So `points` is always the total of the `hours` lines for that one Group.
+
+  Summing one Group per Lesson Type reproduces the department's own figures: 89-1262 comes to
+  3 + 2 = 5 against the yedion's `total_h 5.0`. One case does not agree — 89-385, Year-long,
+  where Shoham gives `4.00` (2.00 per Semester) while the yedion says `total_h 2.0`. Most likely
+  the yedion counts a Year-long Course's weekly hours once rather than per Semester. Worth
+  settling before Progress counts credits.
 - **`code`** — course **plus the Group the page was read from**, e.g. `89132-01`. It reflects
   which Group happened to be sampled, so it is **not** the Offering's identity and must not be
   used as one.
 - **`terms`** — the Exams. Only `מועד א'` and `מועד ב'` appear in this data. A `מועד ג'` exists at
   BIU but is not offered to every student and is not generally published in the Catalog, so the
   model accepts any Moed label and requires none of them.
-- **English name** — the detail page generally *has* this field, but it is not captured by any
-  crawl on hand and is not reliably filled. It is the only route to an English Course name: the
-  grid does not carry one. The Catalog must treat it as optional, which is what design already
-  assumes — in English mode a Course with no English name shows its Hebrew name.
+- **English name** — the detail page carries it in `tdLessonEnglishName`, and **it is filled**:
+  live pages give `General Probability` for 89-1262 and `Infinitesimal Math` for 89-132, the same
+  English name on every Group of a Course. No crawl on hand captured the field, so today's data has
+  none, but it costs no extra request — it sits on the page already fetched for Exams. The grid has
+  no English column, so this is the only route. The Catalog still treats it as optional, since
+  design falls back to the Hebrew name when it is absent.
 
 ### Exams are not always shown
 
@@ -152,6 +166,11 @@ and not the missing Meetings.
 152 of this crawl's 184 detail records have no `terms`, overwhelmingly for this reason rather than
 because the Offering has no Exam. When two Raw Crawls are merged, a record **with** Exams must win
 over one without, whichever arrived later.
+
+**Confirmed against live pages on 2026-09-13.** All four Groups of 89-132 in Fall were read: the
+first lecture Group carries both Moadim, while the second lecture Group and both tirgul Groups have
+**no exam table element on the page at all** — not an empty one. So an absent Exam list is silence,
+never a statement that the Offering has no Exam.
 
 ## The raw files on hand
 
@@ -182,7 +201,10 @@ For the Importer:
 - Merge details by (course number, Semester) after normalising the key, preferring the record that
   has Exams. Treat an absent Exam list as *unknown* rather than *none*, unless the record came from
   the course's first lecture Group.
-- Treat an English Course name as optional and absent from today's data.
+- Treat an English Course name as optional and absent from today's data, though a crawl that
+  captures `tdLessonEnglishName` would fill it for the whole Catalog at no extra cost.
+- Do not read an Offering's credits from one detail record: `points` is one Group's weekly
+  hours, and the Offering's credits are the sum across its Lesson Types.
 - Never read identity out of a detail record's `code`.
 - Accept a Raw Crawl with no rows, since details-only files exist.
 
