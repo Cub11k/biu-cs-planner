@@ -2,6 +2,7 @@ import { mkdir, readdir, readFile, realpath, rename, rm, writeFile } from "node:
 import { dirname, join, resolve, sep } from "node:path";
 import {
   WORKSPACE_LAYOUT,
+  WorkspaceRefusedError,
   type Workspace,
   type WorkspaceFolder,
   type WorkspaceRef,
@@ -25,7 +26,7 @@ const DIRECTORY: Record<WorkspaceFolder, string> = {
 
 const CATALOG_FILE = /^(\d{4})\.json$/;
 
-class OutsideWorkspaceError extends Error {
+class OutsideWorkspaceError extends WorkspaceRefusedError {
   constructor(what: string) {
     super(`refusing ${what}: it resolves outside the Workspace`);
   }
@@ -186,6 +187,6 @@ function folderFor(ref: { kind: WorkspaceRef["kind"] }): WorkspaceFolder {
  */
 function requireJsonName(path: string): void {
   if (!path.endsWith(".json")) {
-    throw new Error(`refusing ${path}: only .json files are read or written`);
+    throw new WorkspaceRefusedError(`refusing ${path}: only .json files are read or written`);
   }
 }

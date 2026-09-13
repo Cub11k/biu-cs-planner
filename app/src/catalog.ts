@@ -6,7 +6,7 @@ import {
   type RawCrawl,
   type Warning,
 } from "@biu-cs-planner/core";
-import type { Workspace } from "./workspace.ts";
+import { WorkspaceRefusedError, type Workspace } from "./workspace.ts";
 
 /**
  * Importing a Raw Crawl: `core` turns it into a Catalog, and the Workspace stores it.
@@ -20,7 +20,7 @@ export type ImportResult =
   | { stored: true; summary: ImportSummary; warnings: Warning[] }
   | {
       stored: false;
-      reason: "workspace-not-ready" | "stored-catalog-unreadable";
+      reason: "workspace-not-ready" | "stored-catalog-unreadable" | "workspace-refused";
       fileWarnings?: CatalogFileWarning[];
     };
 
@@ -33,7 +33,14 @@ export async function importCrawl(
   if (!status.ready) return { stored: false, reason: "workspace-not-ready" };
 
   const ref = { kind: "catalog", academicYear: options.academicYear } as const;
-  const existing = await workspace.read(ref);
+
+  let existing: unknown;
+  try {
+    existing = await workspace.read(ref);
+  } catch (error) {
+    if (error instanceof WorkspaceRefusedError) return { stored: false, reason: "workspace-refused" };
+    throw error;
+  }
 
   // A file read is untrusted input, whoever wrote it. Absent is fine; unreadable is not.
   let into;
@@ -54,6 +61,11 @@ export async function importCrawl(
     ...(into ? { into } : {}),
   });
 
-  await workspace.write(ref, catalog);
+  try {
+    await workspace.write(ref, catalog);
+  } catch (error) {
+    if (error instanceof WorkspaceRefusedError) return { stored: false, reason: "workspace-refused" };
+    throw error;
+  }
   return { stored: true, summary, warnings };
 }

@@ -19,13 +19,29 @@ export type WorkspaceStatus = {
 
 export const WORKSPACE_LAYOUT: WorkspaceFolder[] = ["catalogs", "requirements", "backups"];
 
+/**
+ * A Workspace refused an operation: the target resolves outside it, or is not a kind of
+ * file a Workspace holds. Distinct from absence, which is not an error — the port's
+ * `read` returns undefined for that. A refusal is a Warning the student can act on, and
+ * never a crashed server (docs/design.md, "API and data rules").
+ */
+export class WorkspaceRefusedError extends Error {
+  override readonly name = "WorkspaceRefusedError";
+}
+
 export type Workspace = {
   status(): Promise<WorkspaceStatus>;
   /** Creates the layout. Called only after the student accepts. */
   create(): Promise<void>;
   list(kind: WorkspaceRef["kind"]): Promise<WorkspaceRef[]>;
-  /** Parsed JSON, or undefined when the file is not there. Never throws for absence. */
+  /**
+   * Parsed JSON, or undefined when the file is not there. Never throws for absence;
+   * throws `WorkspaceRefusedError` when the target is one a Workspace will not touch.
+   */
   read(ref: WorkspaceRef): Promise<unknown>;
-  /** Atomic: an interrupted write leaves the previous file intact. */
+  /**
+   * Atomic: an interrupted write leaves the previous file intact. Throws
+   * `WorkspaceRefusedError` on a target a Workspace will not touch.
+   */
   write(ref: WorkspaceRef, data: unknown): Promise<void>;
 };

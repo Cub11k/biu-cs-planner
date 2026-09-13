@@ -4,14 +4,18 @@ import {
   type Offering,
   type Semester,
 } from "@biu-cs-planner/core";
-import type { Workspace } from "./workspace.ts";
+import { WorkspaceRefusedError, type Workspace } from "./workspace.ts";
 
 /**
  * Reading the Catalog. Every read goes through the schema, because a file on disk is
  * untrusted whoever wrote it — a hand-edited or half-synced Catalog is a Warning the
  * student can act on, never a crashed server (docs/design.md, "API and data rules").
  */
-export type QueryWarning = CatalogFileWarning | { kind: "no-catalog-for-year"; academicYear: number };
+export type QueryWarning =
+  | CatalogFileWarning
+  | { kind: "no-catalog-for-year"; academicYear: number }
+  /** The Workspace would not touch the file. Never carries what was out there. */
+  | { kind: "workspace-refused"; reason: string };
 
 export type ListResult = { offerings?: Offering[]; warnings: QueryWarning[] };
 export type OfferingResult = { offering?: Offering; warnings: QueryWarning[] };
@@ -20,7 +24,15 @@ async function loadCatalog(
   workspace: Workspace,
   academicYear: number,
 ): Promise<{ offerings?: Offering[]; warnings: QueryWarning[] }> {
-  const stored = await workspace.read({ kind: "catalog", academicYear });
+  let stored: unknown;
+  try {
+    stored = await workspace.read({ kind: "catalog", academicYear });
+  } catch (error) {
+    if (error instanceof WorkspaceRefusedError) {
+      return { warnings: [{ kind: "workspace-refused", reason: error.message }] };
+    }
+    throw error;
+  }
   if (stored === undefined) {
     return { warnings: [{ kind: "no-catalog-for-year", academicYear }] };
   }

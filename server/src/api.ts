@@ -19,6 +19,10 @@ import { z } from "zod";
  * The HTTP API. It exposes domain operations — a year, a Semester, a course number —
  * and never a file path: where a Catalog lives is the Workspace adapter's business, and
  * nothing in a request or a response names it (ADR-0002, docs/design.md).
+ *
+ * Not here yet, and deliberately: the bearer token, the Host and Origin checks, and the
+ * JSON-only rule for writes. They are ADR-0004's, and issue #3 builds them. Until then
+ * these routes are reachable by anything that can reach the port.
  */
 export type ApiDependencies = { workspace: Workspace };
 
@@ -94,7 +98,11 @@ export function createApi({ workspace }: ApiDependencies) {
         academicYear: year.data,
         semester: semester.data,
       });
-      if (!result.offerings) return c.json({ warnings: result.warnings }, 404);
+      if (!result.offerings) {
+        // A refusal is a conflict with the Workspace's state; absence is a plain 404.
+        const refused = result.warnings.some((w) => w.kind === "workspace-refused");
+        return c.json({ warnings: result.warnings }, refused ? 409 : 404);
+      }
 
       return c.json({ offerings: result.offerings, warnings: result.warnings });
     })

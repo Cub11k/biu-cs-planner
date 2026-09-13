@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
@@ -176,4 +176,26 @@ it("carries a crawl's sections and meta through the schema, not just its rows", 
       credits: { known: true, total: 3 },
     },
   });
+});
+
+it("reports a Catalog that resolves outside the Workspace, rather than failing", async () => {
+  const outside = await mkdtemp(join(tmpdir(), "biu-api-outside-"));
+  try {
+    await post("/api/workspace", {});
+    await writeFile(join(outside, "secret.json"), JSON.stringify({ secret: "leaked" }));
+    await symlink(join(outside, "secret.json"), join(root, "catalogs", "2027.json"));
+
+    const listed = await api.request("/api/catalog/2027/offerings?semester=fall");
+    expect(listed.status).toBe(409);
+    const body = await listed.text();
+    expect(JSON.parse(body)).toMatchObject({ warnings: [{ kind: "workspace-refused" }] });
+    // and the refusal never hands back what was out there
+    expect(body).not.toContain("leaked");
+
+    const imported = await post("/api/catalog/2027/import", CRAWL);
+    expect(imported.status).toBe(409);
+    await expect(imported.json()).resolves.toEqual({ reason: "workspace-refused" });
+  } finally {
+    await rm(outside, { recursive: true, force: true });
+  }
 });
