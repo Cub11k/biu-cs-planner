@@ -5,7 +5,7 @@ import {
   parseSampledGroup,
   parseWeeklyHours,
   type RawDetail,
-  type RawSection,
+  type RawGroupDetail,
 } from "./details.ts";
 import { provenanceFromMeta, type RawCrawlMeta } from "./meta.ts";
 import {
@@ -25,14 +25,18 @@ export type RawCrawlRow = {
   semester: string;
   day: string;
   hours: string;
-  lid: string;
+  /** Shoham's id for the row, and the only thing that matches it to a per-Group record. */
+  lid?: string;
 };
 
 export type RawCrawl = {
   rows?: RawCrawlRow[];
   details?: Record<string, RawDetail>;
-  /** One record per Group, keyed by the `lid` its row carries. */
-  sections?: Record<string, RawSection>;
+  /**
+   * One detail record per Group, keyed by the `lid` its row carries. The key is the crawl's
+   * own word for the block; what a record describes is a Group.
+   */
+  sections?: Record<string, RawGroupDetail>;
   /** Where the crawl came from, as the crawler writes it. */
   meta?: RawCrawlMeta;
   /** An already-shaped Provenance, from before a crawl recorded its own. */
@@ -47,7 +51,8 @@ export type Warning =
   | { kind: "detail-without-offering"; courseNumber: string; semesters: Semester[] }
   | { kind: "weekly-hours-unreadable"; courseNumber: string }
   | { kind: "detail-group-unknown"; courseNumber: string }
-  | { kind: "section-without-group"; lid: string }
+  | { kind: "detail-without-group"; lid: string }
+  | { kind: "lid-not-unique"; lid: string }
   | { kind: "exam-unreadable"; courseNumber: string }
   | { kind: "academic-year-mismatch"; catalog: number; part: number }
   | { kind: "provenance-missing" };
@@ -60,6 +65,22 @@ function hasUnusualTail(code: string): boolean {
 
 function lecturersFrom(teachers: string): string[] {
   return teachers.split("\n").map((t) => t.trim()).filter(Boolean);
+}
+
+/**
+ * The weekly hours a detail page states, from wherever it was read. A figure that is there
+ * but unreadable is reported; a page carrying none at all is not, because most carry none.
+ */
+function readWeeklyHours(
+  points: string | undefined,
+  courseNumber: string,
+  warnings: Warning[],
+): number | undefined {
+  const hours = parseWeeklyHours(points);
+  if (hours === undefined && points !== undefined) {
+    warnings.push({ kind: "weekly-hours-unreadable", courseNumber });
+  }
+  return hours;
 }
 
 /**
@@ -139,9 +160,9 @@ export function importRawCrawl(
     });
   }
 
-  // A section record names its Group by `lid`, so the rows of this part are what match it
-  // to one. A Group carries no `lid` of its own, so a section only reaches the Group whose
-  // row travelled with it.
+  // A per-Group record names its Group by `lid`, so the rows of this part are what match it
+  // to one. A Group carries no `lid` of its own, so such a record only reaches the Group
+  // whose row travelled with it.
   const groupsByLid = new Map<string, { offering: Offering; group: Offering["groups"][number] }>();
 
   const warnings: Warning[] = [];
@@ -207,7 +228,13 @@ export function importRawCrawl(
       meetings,
     };
     offering.groups.push(group);
-    if (row.lid) groupsByLid.set(row.lid, { offering, group });
+    // A row's identity is its lid, so two rows claiming one is the crawl contradicting
+    // itself. The later row keeps the lid, and the earlier Group is left without the hours
+    // its record would have carried -- which is worth saying rather than losing quietly.
+    if (row.lid) {
+      if (groupsByLid.has(row.lid)) warnings.push({ kind: "lid-not-unique", lid: row.lid });
+      groupsByLid.set(row.lid, { offering, group });
+    }
   }
 
   for (const [key, detail] of Object.entries(crawl.details ?? {})) {
@@ -228,10 +255,8 @@ export function importRawCrawl(
       continue;
     }
 
-    const hours = parseWeeklyHours(detail.points);
-    if (hours === undefined && detail.points !== undefined) {
-      warnings.push({ kind: "weekly-hours-unreadable", courseNumber: parsed.courseNumber });
-    } else if (hours !== undefined) {
+    const hours = readWeeklyHours(detail.points, parsed.courseNumber, warnings);
+    if (hours !== undefined) {
       const sampled = parseSampledGroup(detail.code);
       const group = sampled && offering.groups.find((g) => g.number === sampled);
       if (group) group.weeklyHours = hours;
@@ -245,30 +270,22 @@ export function importRawCrawl(
     if (sittings.length) offering.exams = { known: true, sittings };
   }
 
-  // Sections last: a record read from the Group it names settles that Group's hours, and
-  // it does so over anything the course-wide detail record guessed from its sampled Group.
-  for (const [lid, section] of Object.entries(crawl.sections ?? {})) {
+  // The per-Group records last: one read from the Group it names settles that Group's hours,
+  // and does so over anything the course-wide record guessed from whichever Group it sampled.
+  for (const [lid, record] of Object.entries(crawl.sections ?? {})) {
     const found = groupsByLid.get(lid);
     if (!found) {
-      warnings.push({ kind: "section-without-group", lid });
+      warnings.push({ kind: "detail-without-group", lid });
       continue;
     }
-    const hours = parseWeeklyHours(section.points);
-    if (hours === undefined) {
-      if (section.points !== undefined) {
-        warnings.push({
-          kind: "weekly-hours-unreadable",
-          courseNumber: found.offering.courseNumber,
-        });
-      }
-    } else {
-      found.group.weeklyHours = hours;
-    }
+
+    const hours = readWeeklyHours(record.points, found.offering.courseNumber, warnings);
+    if (hours !== undefined) found.group.weeklyHours = hours;
 
     // The same English name sits on every Group of a Course, so whichever record is read
     // last says the same thing. The results grid has no English column at all, which makes
     // this the only route to one; a Catalog without it falls back to the Hebrew name.
-    const english = section.name_en?.trim();
+    const english = record.name_en?.trim();
     if (english) found.offering.nameEnglish = english;
   }
 

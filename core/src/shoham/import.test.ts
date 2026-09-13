@@ -16,7 +16,7 @@ function exceptProvenance(warnings: ReturnType<typeof importRawCrawl>["warnings"
 /** A timed lecture row of 89-110; each test overrides only the fields it is about. */
 function row(overrides: Partial<Parameters<typeof importRawCrawl>[0]["rows"] extends
   (infer R)[] | undefined ? R : never> = {}) {
-  return {
+  const merged = {
     code: "89110",
     name: "מבוא למדעי המחשב",
     group: "01",
@@ -25,9 +25,12 @@ function row(overrides: Partial<Parameters<typeof importRawCrawl>[0]["rows"] ext
     semester: "סמסטר א'",
     day: "ג'",
     hours: "15:00 - 18:00",
-    lid: "808655",
     ...overrides,
   };
+  // Shoham gives every row its own lid, and `code|group|kind|semester` is unique across all
+  // 510 rows of the crawl. A test that says nothing about lids still gets distinct ones, so
+  // that two ordinary rows never read as the crawl contradicting itself.
+  return { ...merged, lid: merged.lid ?? `${merged.code}-${merged.group}-${merged.semester}` };
 }
 
 it("imports a timed lecture row as one Offering with one Group and one Meeting", () => {
@@ -517,9 +520,9 @@ it("warns when a detail record does not say which Group it came from", () => {
   expect(catalog.offerings[0]!.groups[0]!.weeklyHours).toBeUndefined();
 });
 
-// --- what the 2026-09-13 crawl added: sections, English names and provenance ----
+// --- what the 2026-09-13 crawl added: per-Group records, English names, provenance ---
 
-it("takes a Group's weekly hours from the section record keyed by its own lid", () => {
+it("takes a Group's weekly hours from the detail record keyed by its own lid", () => {
   // 89-110 Fall as the crawl really sends it: the lecture reads 3.00 and the tirgul 2.00,
   // and the department's yedion gives the Course lecture_h 3.0, exercise_h 2.0, total_h 5.0.
   const { catalog, warnings } = importRawCrawl(
@@ -545,9 +548,9 @@ it("takes a Group's weekly hours from the section record keyed by its own lid", 
   expect(offering.credits).toEqual({ known: true, total: 5 });
 });
 
-it("lets a section record's hours win over the figure the detail record sampled", () => {
-  // The detail record speaks for whichever Group Shoham happened to hand back; the section
-  // record names its Group outright. Where they disagree, the one that knows wins.
+it("lets a per-Group record's hours win over the figure a sampled record gave", () => {
+  // A course-wide record speaks for whichever Group Shoham happened to hand back; a
+  // per-Group record names its Group outright. Where they disagree, the one that knows wins.
   const { catalog } = importRawCrawl(
     {
       rows: [row({ group: "01", lid: "808655" })],
@@ -560,8 +563,8 @@ it("lets a section record's hours win over the figure the detail record sampled"
   expect(catalog.offerings[0]!.groups[0]!.weeklyHours).toBe(3);
 });
 
-it("warns about a section record whose lid matches no row, rather than dropping it", () => {
-  // A Group carries no lid of its own, so a sections-only part has nothing to match against.
+it("warns about a detail record whose lid matches no Group, rather than dropping it", () => {
+  // A Group carries no lid of its own, so a part of records alone has nothing to match on.
   // ADR-0010 allows such a part to arrive, and it must say it recorded nothing.
   const first = importRawCrawl({ rows: [row({ lid: "808655" })] }, { academicYear: YEAR_2027 })
     .catalog;
@@ -571,12 +574,12 @@ it("warns about a section record whose lid matches no row, rather than dropping 
     { academicYear: YEAR_2027, into: first },
   );
 
-  expect(exceptProvenance(warnings)).toEqual([{ kind: "section-without-group", lid: "808655" }]);
+  expect(exceptProvenance(warnings)).toEqual([{ kind: "detail-without-group", lid: "808655" }]);
   expect(catalog.offerings[0]!.groups[0]!.weeklyHours).toBeUndefined();
 });
 
-it("takes an Offering's English name from the section record, and leaves it out otherwise", () => {
-  // The results grid has no English column, so a section record is the only source of one.
+it("takes an Offering's English name from its per-Group records, and leaves it out otherwise", () => {
+  // The results grid has no English column, so these records are the only source of one.
   const { catalog } = importRawCrawl(
     {
       rows: [
@@ -668,6 +671,28 @@ it("still warns when a meta block carries nothing worth recording", () => {
 
   expect(warnings).toEqual([{ kind: "provenance-missing" }]);
   expect(catalog.sources).toEqual([]);
+});
+
+it("warns when two rows claim one lid, instead of letting one Group lose its record", () => {
+  // A row's identity is its lid. Two rows claiming one is the crawl contradicting itself,
+  // and the Group that loses the match would otherwise be left short of its hours silently.
+  const { catalog, warnings } = importRawCrawl(
+    {
+      rows: [
+        row({ group: "01", kind: "הרצאה", lid: "808655" }),
+        row({ group: "03", kind: "תרגיל", lid: "808655" }),
+      ],
+      sections: { "808655": { points: "2.00", code: "89110-03" } },
+    },
+    { academicYear: YEAR_2027 },
+  );
+
+  expect(exceptProvenance(warnings)).toEqual([{ kind: "lid-not-unique", lid: "808655" }]);
+  // the later row keeps the lid, so its Group is the one the record reaches
+  expect(catalog.offerings[0]!.groups.map((g) => [g.number, g.weeklyHours])).toEqual([
+    ["01", undefined],
+    ["03", 2],
+  ]);
 });
 
 it("settles credits at zero hours, rather than letting a later Group unsettle them", () => {

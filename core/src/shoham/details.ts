@@ -15,10 +15,11 @@ export type RawDetail = {
 
 /**
  * A detail page keyed by the `lid` of the one Group it was read from, which is how the
- * 2026-09-13 crawl records them. Same page as a `RawDetail`, read per Group rather than
- * per (course, Semester), so its `points` speak for a Group that is known by name.
+ * 2026-09-13 crawl records them, in a block it calls `sections`. Same page as a `RawDetail`,
+ * read per Group rather than per (course, Semester), so its `points` speak for a Group that
+ * is known by name rather than one that has to be guessed at from `code`.
  */
-export type RawSection = RawDetail & { name_en?: string };
+export type RawGroupDetail = RawDetail & { name_en?: string };
 
 export type DetailKey = { courseNumber: string; semesters: Semester[] };
 

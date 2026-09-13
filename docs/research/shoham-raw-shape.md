@@ -4,10 +4,10 @@ Observed 2026-09-13 from a real crawl of the CS department for Academic Year 202
 510 grid rows.
 
 The counts below are that crawl's unless a passage says otherwise. A fuller crawl of the same
-query, taken later the same day, carries **513 rows, 186 detail records, 272 section records and
-a meta block**; the two blocks the earlier files do not have are described under
-[A section record](#a-section-record) and [A meta block](#a-meta-block), and the per-row findings
-hold for both.
+query, taken later the same day, carries **513 rows, 186 course-wide detail records, 272
+per-Group detail records and a meta block**. The two blocks the earlier files do not have are
+described under [A per-Group detail record](#a-per-group-detail-record) and
+[A meta block](#a-meta-block); every per-row finding holds for both.
 
 The crawler itself lives in a **separate repo next to this one** and is not part of the app
 deliverable ([ADR-0005](../adr/0005-crawler-separate-repo-near-raw-output.md)); how it works is
@@ -153,7 +153,7 @@ Keyed `"<code>|<semester>"`, using whatever the Semester cell said:
   **The 2026-09-13 crawl captures it**, in the `sections` block described below: filled for all
   **272 of 272** records, which reaches every one of the year's 186 Offerings.
 
-### A section record
+### A per-Group detail record
 
 The 2026-09-13 crawl adds a third block, `sections`, alongside `rows` and `details`. It is the
 same detail page, kept **per Group** and keyed by that Group's own `lid` rather than by
@@ -169,7 +169,7 @@ same detail page, kept **per Group** and keyed by that Group's own `lid` rather 
 ```
 
 The key is what makes it worth having. A `details` record says only which Group it *happened* to
-be sampled from, in a `code` that must not be read as identity; a section record is addressed by
+be sampled from, in a `code` that must not be read as identity; a per-Group record is addressed by
 the `lid` its grid row already carries, so its `points` belong to a **named** Group. Nothing has
 to be parsed out of `code`.
 
@@ -181,12 +181,13 @@ covered by a sibling Group.
 sampled `details` record, so a Course whose tirgul hours were never read could not state its
 credits at all — 100 of 186 Offerings managed it. Reading `sections` settles **all 186**.
 
-Every section record here carries `terms` too, but they add nothing: the `details` block already
+Every per-Group record here carries `terms` too, but they add nothing: the `details` block already
 carries the same Exams for all 186 (course, Semester) pairs.
 
 **The word.** `CONTEXT.md` reserves *section* as a term to avoid for a **Group**, and that stands.
-`sections` here names a block of the raw file, the way `rows` and `details` do; the thing a record
-describes is still a Group.
+`sections` survives only where this file and the code quote the crawl's own key, the way `points`
+and `name_en` do. Everywhere else — prose, type names, Warnings — a record of this kind is a
+**per-Group detail record**, because a Group is what it describes.
 
 ### A meta block
 
@@ -252,8 +253,9 @@ The raw files for 2027 live in the sibling crawl repo, and they are not intercha
   while other files use the two-line form. Merging details across files means normalising the
   Semester inside the key first, or the same (course, Semester) lands twice.
 - The most complete picture of 2027 is no longer assembled from several files:
-  `biu-2027-cs-full-2026-09-13.json` carries all 513 rows, 186 details, 272 sections and a meta
-  block in one, and imports on its own with a **single Warning** — the odd course number 89-12000.
+  `biu-2027-cs-full-2026-09-13.json` carries all 513 rows, 186 course-wide records, 272 per-Group
+  records and a meta block in one, and imports on its own with a **single Warning** — the odd
+  course number 89-12000.
   The older files still have to keep importing, and do.
 
 ### Against the department's own figures
@@ -279,13 +281,13 @@ For the Importer:
 - Merge details by (course number, Semester) after normalising the key, preferring the record that
   has Exams. Treat an absent Exam list as *unknown* rather than *none*, unless the record came from
   the course's first lecture Group.
-- Take an English Course name from a section record's `name_en`, and treat it as optional: the
+- Take an English Course name from a per-Group record's `name_en`, and treat it as optional: the
   older crawls have none, and the Catalog falls back to the Hebrew name.
 - Do not read an Offering's credits from one detail record: `points` is one Group's weekly
   hours, and the Offering's credits are the sum across its Lesson Types.
-- Match a section record to its Group by the `lid` both it and the grid row carry, and let its
-  hours win over anything the sampled detail record gave. A section whose `lid` matches no row
-  is a Warning, not a silent drop.
+- Match a per-Group record to its Group by the `lid` both it and the grid row carry, and let its
+  hours win over anything the sampled record gave. A record whose `lid` matches no row is a
+  Warning, not a silent drop, and two rows claiming one `lid` is another.
 - **Zero weekly hours is a figure, not a blank.** A קולוקויום, a הדרכה and a תגבור all read
   `0.00`, so only an absent reading leaves a Lesson Type still waiting to be settled. Six
   Offerings of the 186 hang on this alone.
