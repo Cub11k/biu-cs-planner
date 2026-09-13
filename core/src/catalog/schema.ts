@@ -18,17 +18,22 @@ export const daySchema = z.enum([
   "friday",
 ]);
 
+/** Literal patterns, never built from data (ADR-0007). */
+const CLOCK_TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
 export const meetingSchema = z.object({
   semester: semesterSchema,
   day: daySchema,
-  start: z.string(),
-  end: z.string(),
+  start: z.string().regex(CLOCK_TIME),
+  end: z.string().regex(CLOCK_TIME),
 });
 
 export const examSchema = z.object({
+  /** The label Shoham publishes, an open set: see the decision recorded on issue #1. */
   moed: z.string(),
-  date: z.string(),
-  time: z.string(),
+  date: z.string().regex(ISO_DATE),
+  time: z.string().regex(CLOCK_TIME),
 });
 
 export const groupSchema = z.object({

@@ -87,7 +87,7 @@ it("records Exams as unknown where the crawl published none", () => {
 });
 
 it("reports the missing provenance and the odd course number, and nothing else", () => {
-  // Nothing about the schedules: all eight real rows read cleanly.
+  // Nothing about the Meetings: all eight real rows read cleanly.
   expect(warnings).toEqual([
     { kind: "provenance-missing" },
     { kind: "unusual-course-number", courseNumber: "89-12000" },

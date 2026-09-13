@@ -6,8 +6,6 @@
  */
 import type { Day, Meeting, Semester } from "../catalog/schema.ts";
 
-export type { Day, Meeting, Semester };
-
 const SEMESTERS: ReadonlyArray<readonly [string, Semester]> = [
   ["סמסטר א'", "fall"],
   ["סמסטר ב'", "spring"],
@@ -24,6 +22,16 @@ const DAYS: Readonly<Record<string, Day>> = {
 };
 
 /** Shoham writes a course number without its hyphen: 89110 is 89-110, 891195 is 89-1195. */
+/**
+ * A literal pattern, never one built from data: ADR-0007 and the Code guardrails forbid
+ * regular expressions assembled from Catalog or Requirements content.
+ */
+const CLOCK_TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+export function isClockTime(value: string): boolean {
+  return CLOCK_TIME.test(value);
+}
+
 export function parseCourseNumber(code: string): string {
   return `${code.slice(0, 2)}-${code.slice(2)}`;
 }
@@ -45,14 +53,14 @@ export function parseSemesters(cell: string): Semester[] {
   return found.sort((a, b) => a.at - b.at).map((f) => f.semester);
 }
 
-/** Why a Group's schedule could not be read in full. Never blocks the import. */
-export type ScheduleWarning = "hours-do-not-divide" | "meeting-unreadable";
+/** Why a Group's Meetings could not be read in full. Never blocks the import. */
+export type MeetingWarning = "hours-do-not-divide" | "meeting-unreadable";
 
-export function parseGroupSchedule(row: {
+export function parseGroupMeetings(row: {
   day: string;
   hours: string;
   semester: string;
-}): { semesters: Semester[]; meetings: Meeting[]; warnings: ScheduleWarning[] } {
+}): { semesters: Semester[]; meetings: Meeting[]; warnings: MeetingWarning[] } {
   const semesters = parseSemesters(row.semester);
   if (!row.day.trim()) return { semesters, meetings: [], warnings: [] };
 
@@ -67,7 +75,7 @@ export function parseGroupSchedule(row: {
   const repeated = ranges.length === days.length * semesters.length;
   const shared = ranges.length === days.length;
   const divides = repeated || shared;
-  const warnings: ScheduleWarning[] = divides ? [] : ["hours-do-not-divide"];
+  const warnings: MeetingWarning[] = divides ? [] : ["hours-do-not-divide"];
 
   const meetings: Meeting[] = [];
   let unreadable = false;
@@ -85,7 +93,7 @@ export function parseGroupSchedule(row: {
         return;
       }
       const [start, end] = range.split("-").map((t) => t.trim());
-      if (!start || !end) {
+      if (!start || !end || !isClockTime(start) || !isClockTime(end)) {
         unreadable = true;
         return;
       }

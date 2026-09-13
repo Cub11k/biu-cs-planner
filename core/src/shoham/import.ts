@@ -1,15 +1,11 @@
-import {
-  parseCourseNumber,
-  parseGroupSchedule,
-  type ScheduleWarning,
-  type Semester,
-} from "./dialect.ts";
+import { parseCourseNumber, parseGroupMeetings, type MeetingWarning } from "./dialect.ts";
 import { parseCredits, parseDetailKey, parseExams, type RawDetail } from "./details.ts";
 import {
   CURRENT_CATALOG_SCHEMA_VERSION,
   type Catalog,
   type Offering,
   type Provenance,
+  type Semester,
 } from "../catalog/schema.ts";
 
 export type RawCrawlRow = {
@@ -31,12 +27,13 @@ export type RawCrawl = {
 };
 
 export type Warning =
-  | { kind: ScheduleWarning | "semester-unreadable"; courseNumber: string; group: string }
+  | { kind: MeetingWarning | "semester-unreadable"; courseNumber: string; group: string }
   | { kind: "unusual-course-number"; courseNumber: string }
   | { kind: "course-number-unreadable"; code: string }
   | { kind: "detail-key-unreadable"; key: string }
   | { kind: "detail-without-offering"; courseNumber: string; semesters: Semester[] }
   | { kind: "credits-unreadable"; courseNumber: string }
+  | { kind: "exam-unreadable"; courseNumber: string }
   | { kind: "academic-year-mismatch"; catalog: number; part: number }
   | { kind: "provenance-missing" };
 
@@ -128,9 +125,9 @@ export function importRawCrawl(
   else warnings.push({ kind: "provenance-missing" });
 
   for (const row of crawl.rows ?? []) {
-    const { semesters, meetings, warnings: scheduleWarnings } = parseGroupSchedule(row);
+    const { semesters, meetings, warnings: meetingWarnings } = parseGroupMeetings(row);
     const courseNumber = parseCourseNumber(row.code);
-    for (const kind of scheduleWarnings) {
+    for (const kind of meetingWarnings) {
       warnings.push({ kind, courseNumber, group: row.group });
     }
     if (!semesters.length) {
@@ -193,7 +190,8 @@ export function importRawCrawl(
 
     // An absent Exam list means "not published for the Group this was read from", never
     // "this Offering has no Exam", so only a record that carries Exams settles the question.
-    const sittings = parseExams(detail);
+    const { exams: sittings, unreadable } = parseExams(detail);
+    if (unreadable) warnings.push({ kind: "exam-unreadable", courseNumber: parsed.courseNumber });
     if (sittings.length) offering.exams = { known: true, sittings };
   }
 

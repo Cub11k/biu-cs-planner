@@ -265,7 +265,7 @@ it("warns about a course number with an unusual tail, and imports it as its own 
   expect(catalog.offerings[0]!.courseNumber).toBe("89-12000");
 });
 
-it("applies a Year-long Group's single schedule to both Semesters", () => {
+it("applies a Year-long Group's single set of Meetings to both Semesters", () => {
   // 89-1100 as Shoham sends it: both Semesters, one day, one range, no repetition.
   // Eight of the fifteen timed Year-long rows look like this, not like 89-099.
   const { catalog, warnings } = importRawCrawl(
@@ -414,4 +414,43 @@ it("refuses to merge a part into a Catalog of another Academic Year", () => {
   // the Catalog is left exactly as it was rather than relabelled
   expect(catalog.academicYear).toBe(YEAR_2027);
   expect(catalog.offerings[0]!.groups).toHaveLength(1);
+});
+
+it("warns on a time that is not a real clock time, rather than storing it", () => {
+  const { catalog, warnings } = importRawCrawl(
+    { rows: [row({ day: "ג'", hours: "25:99 - 30:00" })] },
+    { academicYear: YEAR_2027 },
+  );
+
+  expect(exceptProvenance(warnings)).toEqual([
+    { kind: "meeting-unreadable", courseNumber: "89-110", group: "01" },
+  ]);
+  expect(catalog.offerings[0]!.groups[0]!.meetings).toEqual([]);
+});
+
+it("warns on an Exam date it cannot read, rather than storing it", () => {
+  const { catalog, warnings } = importRawCrawl(
+    {
+      rows: [row()],
+      details: {
+        "89110|סמסטר א'": {
+          points: "3.00",
+          terms: [
+            { type: "מועד א'", date: "32/13/2027", hour: "09:00" },
+            { type: "מועד ב'", date: "11/02/2027", hour: "16:00" },
+          ],
+        },
+      },
+    },
+    { academicYear: YEAR_2027 },
+  );
+
+  expect(exceptProvenance(warnings)).toEqual([
+    { kind: "exam-unreadable", courseNumber: "89-110" },
+  ]);
+  // the readable sitting still lands
+  expect(catalog.offerings[0]!.exams).toEqual({
+    known: true,
+    sittings: [{ moed: "מועד ב'", date: "2027-02-11", time: "16:00" }],
+  });
 });

@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
-import { parseCatalogFile, catalogJsonSchema, CURRENT_CATALOG_SCHEMA_VERSION } from "./file.ts";
+import { parseCatalogFile, catalogJsonSchema } from "./file.ts";
+import { CURRENT_CATALOG_SCHEMA_VERSION } from "./schema.ts";
 import { importRawCrawl } from "../shoham/import.ts";
 
 function catalogOnDisk() {

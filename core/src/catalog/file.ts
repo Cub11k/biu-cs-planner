@@ -1,8 +1,6 @@
 import { z } from "zod";
 import { catalogSchema, CURRENT_CATALOG_SCHEMA_VERSION, type Catalog } from "./schema.ts";
 
-export { CURRENT_CATALOG_SCHEMA_VERSION };
-
 export type CatalogFileWarning =
   | { kind: "file-unreadable" }
   | { kind: "schema-version-too-new"; found: number }

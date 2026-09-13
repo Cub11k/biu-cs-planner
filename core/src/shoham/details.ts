@@ -1,7 +1,5 @@
-import { parseCourseNumber, parseSemesters } from "./dialect.ts";
+import { isClockTime, parseCourseNumber, parseSemesters } from "./dialect.ts";
 import type { Exam, Semester } from "../catalog/schema.ts";
-
-export type { Exam };
 
 /**
  * The Course-wide facts: credits and Exams. They are keyed by course number and Semester,
@@ -17,12 +15,19 @@ export type RawDetail = {
 
 export type DetailKey = { courseNumber: string; semesters: Semester[] };
 
-/** Shoham writes dates as DD/MM/YYYY. */
+/** Shoham writes dates as DD/MM/YYYY. Returns undefined unless it really is one. */
 function isoDate(date: string): string | undefined {
   const parts = date.split("/");
   if (parts.length !== 3) return undefined;
-  const [day, month, year] = parts as [string, string, string];
-  return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+  const [day, month, year] = parts.map(Number) as [number, number, number];
+  if (!Number.isInteger(day) || !Number.isInteger(month) || !Number.isInteger(year)) return undefined;
+  if (month < 1 || month > 12 || day < 1 || day > 31 || year < 1000) return undefined;
+
+  const iso = new Date(Date.UTC(year, month - 1, day));
+  // rejects the 31st of a 30-day month, which the range checks above let through
+  if (iso.getUTCMonth() !== month - 1 || iso.getUTCDate() !== day) return undefined;
+
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
 export function parseDetailKey(key: string): DetailKey | undefined {
@@ -40,9 +45,16 @@ export function parseCredits(points: string | undefined): number | undefined {
   return Number.isFinite(credits) ? credits : undefined;
 }
 
-export function parseExams(detail: RawDetail): Exam[] {
-  return (detail.terms ?? []).flatMap((term) => {
+export function parseExams(detail: RawDetail): { exams: Exam[]; unreadable: number } {
+  const exams: Exam[] = [];
+  let unreadable = 0;
+  for (const term of detail.terms ?? []) {
     const date = isoDate(term.date);
-    return date ? [{ moed: term.type, date, time: term.hour }] : [];
-  });
+    if (!date || !isClockTime(term.hour)) {
+      unreadable += 1;
+      continue;
+    }
+    exams.push({ moed: term.type, date, time: term.hour });
+  }
+  return { exams, unreadable };
 }
