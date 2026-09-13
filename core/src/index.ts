@@ -1,12 +1,15 @@
 export { importRawCrawl } from "./shoham/import.ts";
 export type { ImportSummary, RawCrawl, RawCrawlRow, Warning } from "./shoham/import.ts";
 export { parseSemesters, parseGroupMeetings } from "./shoham/dialect.ts";
+export { rawCrawlSchema, rawDetailSchema, rawCrawlRowSchema } from "./shoham/raw-crawl.ts";
 export { parseCatalogFile, catalogJsonSchema } from "./catalog/file.ts";
 export type { CatalogFileWarning } from "./catalog/file.ts";
 export {
   CURRENT_CATALOG_SCHEMA_VERSION,
   catalogSchema,
   offeringSchema,
+  semesterSchema,
+  daySchema,
 } from "./catalog/schema.ts";
 export type {
   Catalog,
