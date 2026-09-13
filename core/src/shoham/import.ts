@@ -5,7 +5,9 @@ import {
   parseSampledGroup,
   parseWeeklyHours,
   type RawDetail,
+  type RawSection,
 } from "./details.ts";
+import { provenanceFromMeta, type RawCrawlMeta } from "./meta.ts";
 import {
   CURRENT_CATALOG_SCHEMA_VERSION,
   type Catalog,
@@ -29,6 +31,11 @@ export type RawCrawlRow = {
 export type RawCrawl = {
   rows?: RawCrawlRow[];
   details?: Record<string, RawDetail>;
+  /** One record per Group, keyed by the `lid` its row carries. */
+  sections?: Record<string, RawSection>;
+  /** Where the crawl came from, as the crawler writes it. */
+  meta?: RawCrawlMeta;
+  /** An already-shaped Provenance, from before a crawl recorded its own. */
   provenance?: Provenance;
 };
 
@@ -40,6 +47,7 @@ export type Warning =
   | { kind: "detail-without-offering"; courseNumber: string; semesters: Semester[] }
   | { kind: "weekly-hours-unreadable"; courseNumber: string }
   | { kind: "detail-group-unknown"; courseNumber: string }
+  | { kind: "section-without-group"; lid: string }
   | { kind: "exam-unreadable"; courseNumber: string }
   | { kind: "academic-year-mismatch"; catalog: number; part: number }
   | { kind: "provenance-missing" };
@@ -88,7 +96,10 @@ export type ImportSummary = {
 function creditsOf(offering: Offering): Offering["credits"] {
   const perLessonType = new Map<string, number | undefined>();
   for (const group of offering.groups) {
-    if (!perLessonType.get(group.lessonType)) {
+    // The first Group of a Lesson Type that has hours speaks for the type. Zero hours is a
+    // figure Shoham really publishes -- a קולוקויום or a הדרכה reads 0.00 -- so only an
+    // absent reading, never a zero one, leaves the type still waiting to be settled.
+    if (perLessonType.get(group.lessonType) === undefined) {
       perLessonType.set(group.lessonType, group.weeklyHours);
     }
   }
@@ -128,6 +139,11 @@ export function importRawCrawl(
     });
   }
 
+  // A section record names its Group by `lid`, so the rows of this part are what match it
+  // to one. A Group carries no `lid` of its own, so a section only reaches the Group whose
+  // row travelled with it.
+  const groupsByLid = new Map<string, { offering: Offering; group: Offering["groups"][number] }>();
+
   const warnings: Warning[] = [];
   const reportedNumbers = new Set<string>();
 
@@ -143,10 +159,12 @@ export function importRawCrawl(
     };
   }
 
-  // Provenance is optional, because no crawl on hand carries it, but a part that cannot say
-  // where it came from is worth saying so about.
+  // Provenance is optional, because the older crawls carry none, but a part that cannot say
+  // where it came from is worth saying so about. The meta block is where a crawl really
+  // records it; a Provenance handed in already shaped is the older way and gives way to it.
   const sources = [...(options.into?.sources ?? [])];
-  if (crawl.provenance) sources.push(crawl.provenance);
+  const provenance = provenanceFromMeta(crawl.meta) ?? crawl.provenance;
+  if (provenance) sources.push(provenance);
   else warnings.push({ kind: "provenance-missing" });
 
   for (const row of crawl.rows ?? []) {
@@ -182,12 +200,14 @@ export function importRawCrawl(
       offerings.set(key, offering);
     }
 
-    offering.groups.push({
+    const group = {
       number: row.group,
       lessonType: row.kind,
       lecturers: lecturersFrom(row.teachers),
       meetings,
-    });
+    };
+    offering.groups.push(group);
+    if (row.lid) groupsByLid.set(row.lid, { offering, group });
   }
 
   for (const [key, detail] of Object.entries(crawl.details ?? {})) {
@@ -223,6 +243,33 @@ export function importRawCrawl(
     const { exams: sittings, unreadable } = parseExams(detail);
     if (unreadable) warnings.push({ kind: "exam-unreadable", courseNumber: parsed.courseNumber });
     if (sittings.length) offering.exams = { known: true, sittings };
+  }
+
+  // Sections last: a record read from the Group it names settles that Group's hours, and
+  // it does so over anything the course-wide detail record guessed from its sampled Group.
+  for (const [lid, section] of Object.entries(crawl.sections ?? {})) {
+    const found = groupsByLid.get(lid);
+    if (!found) {
+      warnings.push({ kind: "section-without-group", lid });
+      continue;
+    }
+    const hours = parseWeeklyHours(section.points);
+    if (hours === undefined) {
+      if (section.points !== undefined) {
+        warnings.push({
+          kind: "weekly-hours-unreadable",
+          courseNumber: found.offering.courseNumber,
+        });
+      }
+    } else {
+      found.group.weeklyHours = hours;
+    }
+
+    // The same English name sits on every Group of a Course, so whichever record is read
+    // last says the same thing. The results grid has no English column at all, which makes
+    // this the only route to one; a Catalog without it falls back to the Hebrew name.
+    const english = section.name_en?.trim();
+    if (english) found.offering.nameEnglish = english;
   }
 
   for (const offering of offerings.values()) offering.credits = creditsOf(offering);

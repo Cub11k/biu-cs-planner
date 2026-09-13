@@ -3,6 +3,12 @@
 Observed 2026-09-13 from a real crawl of the CS department for Academic Year 2027 (תשפ"ז),
 510 grid rows.
 
+The counts below are that crawl's unless a passage says otherwise. A fuller crawl of the same
+query, taken later the same day, carries **513 rows, 186 detail records, 272 section records and
+a meta block**; the two blocks the earlier files do not have are described under
+[A section record](#a-section-record) and [A meta block](#a-meta-block), and the per-row findings
+hold for both.
+
 The crawler itself lives in a **separate repo next to this one** and is not part of the app
 deliverable ([ADR-0005](../adr/0005-crawler-separate-repo-near-raw-output.md)); how it works is
 recorded there, not here. This file describes only the shape of what comes out, which is what the
@@ -140,10 +146,64 @@ Keyed `"<code>|<semester>"`, using whatever the Semester cell said:
   model accepts any Moed label and requires none of them.
 - **English name** — the detail page carries it in `tdLessonEnglishName`, and **it is filled**:
   live pages give `General Probability` for 89-1262 and `Infinitesimal Math` for 89-132, the same
-  English name on every Group of a Course. No crawl on hand captured the field, so today's data has
-  none, but it costs no extra request — it sits on the page already fetched for Exams. The grid has
-  no English column, so this is the only route. The Catalog still treats it as optional, since
-  design falls back to the Hebrew name when it is absent.
+  English name on every Group of a Course. It costs no extra request — it sits on the page already
+  fetched for Exams. The grid has no English column, so this is the only route. The Catalog still
+  treats it as optional, since design falls back to the Hebrew name when it is absent.
+
+  **The 2026-09-13 crawl captures it**, in the `sections` block described below: filled for all
+  **272 of 272** records, which reaches every one of the year's 186 Offerings.
+
+### A section record
+
+The 2026-09-13 crawl adds a third block, `sections`, alongside `rows` and `details`. It is the
+same detail page, kept **per Group** and keyed by that Group's own `lid` rather than by
+(course, Semester):
+
+```
+"808655": { points: "3.00", code: "89110-01", hours: "סמסטר א' - 3.00",
+            terms: [ { type: "מועד א'", date: "21/01/2027", hour: "16:00" }, … ],
+            title: "מבוא למדעי המחשב", name_en: "Intro to Computers",
+            kind: "הרצאה", teachers: "פרופ' נועה אגמון", day: "ג'",
+            session_hours: "15:00 - 18:00", department: …, faculty: …,
+            remark: "", clusters: …, syllabus: "CourseSylabusView.aspx?lid=808655" }
+```
+
+The key is what makes it worth having. A `details` record says only which Group it *happened* to
+be sampled from, in a `code` that must not be read as identity; a section record is addressed by
+the `lid` its grid row already carries, so its `points` belong to a **named** Group. Nothing has
+to be parsed out of `code`.
+
+272 of the crawl's 513 rows have one — roughly one per (course, Semester, Lesson Type), which is
+exactly what credits need. A row without one is ordinary, not a gap: the Lesson Type is already
+covered by a sibling Group.
+
+**This is what settles credits.** Weekly hours previously reached a Group only through the
+sampled `details` record, so a Course whose tirgul hours were never read could not state its
+credits at all — 100 of 186 Offerings managed it. Reading `sections` settles **all 186**.
+
+Every section record here carries `terms` too, but they add nothing: the `details` block already
+carries the same Exams for all 186 (course, Semester) pairs.
+
+**The word.** `CONTEXT.md` reserves *section* as a term to avoid for a **Group**, and that stands.
+`sections` here names a block of the raw file, the way `rows` and `details` do; the thing a record
+describes is still a Group.
+
+### A meta block
+
+The 2026-09-13 crawl heads the file with what the older ones could not say:
+
+```
+{ schema: 1, script: "scripts/crawl/v1-crawl.js", label: "2027-cs", mode: "all",
+  scraped_at: "2026-09-13T13:53:03.017Z", source: "https://courses.biu.ac.il/CoursesView.aspx",
+  reported_total: 513, captured: 513, pages_walked: 26, page_size: 20,
+  rows_per_page: { … }, detail_sections_expected: 272, detail_sections_captured: 272,
+  detail_pairs_expected: 186, detail_pairs_captured: 186, delay_ms: 1500, complete: true }
+```
+
+Four fields are a Catalog's provenance: `label` is what was asked for, `scraped_at` when,
+`script` which crawler, `source` against what. `complete` says whether the run reached the end
+of its query, which is worth keeping because a part that stopped early holds fewer Offerings
+than the year really has. The counters describe one run and are not carried into a Catalog.
 
 ### Exams are not always shown
 
@@ -191,8 +251,21 @@ The raw files for 2027 live in the sibling crawl repo, and they are not intercha
 - The artifact reaches **detail keys** too: 24 Year-long keys appear run-together in one file
   while other files use the two-line form. Merging details across files means normalising the
   Semester inside the key first, or the same (course, Semester) lands twice.
-- The most complete picture of 2027 is the clean rows from one file plus the details of two
-  others, the later overriding the earlier.
+- The most complete picture of 2027 is no longer assembled from several files:
+  `biu-2027-cs-full-2026-09-13.json` carries all 513 rows, 186 details, 272 sections and a meta
+  block in one, and imports on its own with a **single Warning** — the odd course number 89-12000.
+  The older files still have to keep importing, and do.
+
+### Against the department's own figures
+
+Credits from the full crawl were checked against `build/curriculum.csv`, the yedion converted by
+hand. The yedion states hours for **82** of the 186 Offerings; **81 agree exactly**, Year-long
+Courses included once their per-Semester rows are summed.
+
+The one that differs is **89-679**, and it is a disagreement between the sources rather than a
+misreading. Shoham gives it two Groups in Fall — a סדנה and a הרצאה, 2.00 each — so summing one
+Group per Lesson Type comes to 4. The yedion books only `workshop_h 2.0`. The Importer stays
+faithful to Shoham.
 
 ## Consequences
 
@@ -206,12 +279,20 @@ For the Importer:
 - Merge details by (course number, Semester) after normalising the key, preferring the record that
   has Exams. Treat an absent Exam list as *unknown* rather than *none*, unless the record came from
   the course's first lecture Group.
-- Treat an English Course name as optional and absent from today's data, though a crawl that
-  captures `tdLessonEnglishName` would fill it for the whole Catalog at no extra cost.
+- Take an English Course name from a section record's `name_en`, and treat it as optional: the
+  older crawls have none, and the Catalog falls back to the Hebrew name.
 - Do not read an Offering's credits from one detail record: `points` is one Group's weekly
   hours, and the Offering's credits are the sum across its Lesson Types.
+- Match a section record to its Group by the `lid` both it and the grid row carry, and let its
+  hours win over anything the sampled detail record gave. A section whose `lid` matches no row
+  is a Warning, not a silent drop.
+- **Zero weekly hours is a figure, not a blank.** A קולוקויום, a הדרכה and a תגבור all read
+  `0.00`, so only an absent reading leaves a Lesson Type still waiting to be settled. Six
+  Offerings of the 186 hang on this alone.
 - Never read identity out of a detail record's `code`.
 - Accept a Raw Crawl with no rows, since details-only files exist.
+- Read provenance from the `meta` block, and warn only when there is none to read. The older
+  crawls have no `meta`, and that is not an error.
 
 For the domain model: `CONTEXT.md` defines a Group as having "a lecturer", but the data has **zero
 or more**, and Untimed Groups are 144 of 510 rather than an edge case.

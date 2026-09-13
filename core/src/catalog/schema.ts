@@ -65,13 +65,20 @@ export const offeringSchema = z.object({
 });
 
 /**
- * Where a part came from. Every field is optional because no crawl on hand records any of
+ * Where a part came from. Every field is optional because the older crawls record none of
  * them, and an Academic Year that cannot say how it was gathered is still worth importing.
  */
 export const provenanceSchema = z.object({
   query: z.string().optional(),
   crawledAt: z.string().optional(),
   crawlerVersion: z.string().optional(),
+  /** The page the part was gathered from, so a Catalog can name what it is derived from. */
+  source: z.string().optional(),
+  /**
+   * Whether the crawl reached the end of its query. A part that stopped early holds fewer
+   * Offerings than the year really has, which is worth seeing rather than guessing at.
+   */
+  complete: z.boolean().optional(),
 });
 
 export const catalogSchema = z.object({
