@@ -1,12 +1,34 @@
 {
   "name": "biu-cs-planner",
-  "version": "0.0.0",
-  "description": "A local course planner for Bar-Ilan CS students: a degree Plan across Semesters and a Timetable per Academic Year.",
+  "version": "0.0.1",
+  "description": "A local course planner for Bar-Ilan University Computer Science students: a degree Plan across Semesters and a Timetable per Academic Year. Early work in progress, not yet usable.",
+  "keywords": [
+    "bar-ilan",
+    "biu",
+    "university",
+    "course-planner",
+    "timetable",
+    "degree-planner",
+    "scheduler",
+    "hebrew"
+  ],
   "license": "MIT",
+  "homepage": "https://github.com/Cub11k/biu-cs-planner#readme",
+  "bugs": {
+    "url": "https://github.com/Cub11k/biu-cs-planner/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Cub11k/biu-cs-planner.git"
+  },
   "type": "module",
   "engines": {
     "node": ">=22"
   },
+  "files": [
+    "README.md",
+    "LICENSE"
+  ],
   "workspaces": [
     "core",
     "app",
