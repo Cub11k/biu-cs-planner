@@ -1,0 +1,18 @@
+{
+  "name": "@biu-cs-planner/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@biu-cs-planner/app": "*",
+    "@biu-cs-planner/core": "*",
+    "@hono/node-server": "^1",
+    "hono": "^4"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25"
+  }
+}

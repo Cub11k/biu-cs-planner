@@ -1,0 +1,29 @@
+{
+  "name": "biu-cs-planner",
+  "version": "0.0.0",
+  "description": "A local course planner for Bar-Ilan CS students: a degree Plan across Semesters and a Timetable per Academic Year.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "workspaces": [
+    "core",
+    "app",
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json && tsc -p web/tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dev:server": "node --experimental-strip-types server/src/serve.ts",
+    "dev:web": "npm run dev --workspace web",
+    "build": "npm run build --workspaces --if-present"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "typescript": "^5",
+    "vitest": "^5.0.0"
+  }
+}

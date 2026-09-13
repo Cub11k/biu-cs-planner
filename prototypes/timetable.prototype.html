@@ -1,0 +1,1329 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Timetable screen — prototype</title>
+<!--
+  THROWAWAY PROTOTYPE. Not production code: no tests, no error handling, no build step.
+  Question: what should the Timetable screen look like?
+  ANSWER: layout E. Grid-first, three panes: Tray with Plan Diffs, centre column of Variant tabs /
+  hint line / Clash strip / Group drawer / week grid, and a vertical exam rail on the side.
+  A, B, C, D and F are the road there and are kept only for reference.
+  Layouts switch via ?variant=E|F|D|A|B|C and the floating bar at the bottom.
+  Terms follow ../CONTEXT.md.
+  Fixture data is invented: course numbers are real BIU CS numbers, names and times are not.
+-->
+<style>
+  :root {
+    --ruled: #eef1f4;
+    --paper: #ffffff;
+    --ink: #16324f;
+    --ink-soft: #3d5a7a;
+    --pencil: #8b97a6;
+    --rule: #cfd8e3;
+    --rule-soft: #e3e9f0;
+    --pen: #b3261e;
+    --teal: #0f6e63;
+    --ochre: #8a5a00;
+    --violet: #53478f;
+    --amber-bg: #fdf6e3;
+    --surface-2: #f6f9fc;
+    --surface-3: #eef3f8;
+    --hint-bg: #f6fafc;
+    --clash-bg: #fdf3f2;
+    --tag-bg: #f6f8fa;
+    --bad-bg: #fdf0ef;
+    --good-bg: #eef7f5;
+    --hatch-a: #e1e8ee;
+    --hatch-b: #f3f6f9;
+    --warn-border: #e7cf9b;
+    --warn-fg: #7a5300;
+    --btn-bg: var(--ink);
+    --btn-fg: #ffffff;
+    color-scheme: light dark;
+    font-synthesis: none;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--ruled);
+    color: var(--ink);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans Hebrew", sans-serif;
+    font-size: 15px;
+    line-height: 1.45;
+    font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1, h2, h3 { margin: 0; font-weight: 620; letter-spacing: -0.01em; }
+  h1 { font-size: 19px; }
+  h2 { font-size: 15px; }
+  h3 { font-size: 13px; color: var(--ink-soft); font-weight: 600; }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  :focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+  /* ---------- shared app chrome ---------- */
+  .app { min-height: 100vh; display: flex; flex-direction: column; }
+  .topbar {
+    display: flex; align-items: center; gap: 16px;
+    padding: 10px 18px; background: var(--paper);
+    border-bottom: 1px solid var(--rule);
+  }
+  .topbar .spacer { flex: 1; }
+  .crumb { color: var(--pencil); font-size: 13px; }
+  .seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 3px; overflow: hidden; background: var(--paper); }
+  .seg button {
+    border: 0; background: transparent; padding: 5px 11px; font-size: 13px; color: var(--ink-soft);
+    border-inline-end: 1px solid var(--rule-soft);
+  }
+  .seg button:last-child { border-inline-end: 0; }
+  .seg button[aria-pressed="true"] { background: var(--btn-bg); color: var(--btn-fg); }
+  .ghostbtn {
+    border: 1px solid var(--rule); background: var(--paper); border-radius: 3px;
+    padding: 5px 11px; font-size: 13px; color: var(--ink-soft);
+  }
+  .ghostbtn:hover { border-color: var(--ink-soft); color: var(--ink); }
+
+  /* ---------- week grid (shared component, styled per variant) ---------- */
+  .week { display: grid; background: var(--paper); }
+  .week.compact { font-size: 11px; }
+  .week .colhead {
+    padding: 6px 8px; font-size: 12px; color: var(--ink-soft); font-weight: 600;
+    border-bottom: 1px solid var(--rule); border-inline-start: 1px solid var(--rule-soft);
+    position: sticky; top: 0; background: var(--paper); z-index: 3;
+  }
+  .week .colhead:first-child { border-inline-start: 0; }
+  .week .hours { position: relative; }
+  .week .hours .h {
+    position: absolute; inset-inline: 0; text-align: end; padding-inline-end: 6px;
+    font-size: 11px; color: var(--pencil); transform: translateY(-0.6em);
+  }
+  .week .day {
+    position: relative; border-inline-start: 1px solid var(--rule-soft);
+    background-image:
+      repeating-linear-gradient(to bottom, var(--rule) 0 1px, transparent 1px var(--hour)),
+      repeating-linear-gradient(to bottom, var(--rule-soft) 0 1px, transparent 1px var(--half));
+  }
+  .blk {
+    position: absolute; inset-inline: 3px; border-radius: 3px; padding: 4px 6px;
+    font-size: 12px; line-height: 1.25; overflow: hidden; text-align: start;
+    border: 1px solid transparent; background: var(--paper);
+    transition: transform .12s ease;
+  }
+  .blk .num { font-weight: 650; }
+  .blk .nm {
+    font-weight: 620; line-height: 1.2; overflow: hidden;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  }
+  .blk.oneline .nm { -webkit-line-clamp: 1; }
+  .blk .sub { color: var(--ink-soft); font-size: 11px; }
+  /* pencil = an option you have not taken */
+  .blk.ghost {
+    border: 1px dashed var(--pencil); color: var(--ink-soft);
+    background: color-mix(in srgb, var(--paper) 76%, transparent);
+  }
+  .blk.ghost:hover { border-color: var(--ink); color: var(--ink); transform: translateY(-1px); }
+  .blk.ghost.blocked {
+    background-image: repeating-linear-gradient(45deg, transparent 0 5px, rgba(179,38,30,.16) 5px 10px);
+    border-color: rgba(179,38,30,.5);
+  }
+  /* ink = a Pick */
+  .blk.pick { border-color: var(--rule); border-inline-start: 3px solid var(--type); box-shadow: 0 1px 0 rgba(22,50,79,.06); }
+  .blk.pick.clash { border-color: var(--pen); }
+  .blk.pick.clash::after {
+    content: ""; position: absolute; inset-block-start: 0; inset-inline-end: 0;
+    border-block-start: 12px solid var(--pen); border-inline-start: 12px solid transparent;
+  }
+  .blk.busy {
+    background-image: repeating-linear-gradient(45deg, var(--hatch-b) 0 6px, var(--hatch-a) 6px 12px);
+    border: 1px solid var(--rule); color: var(--pencil);
+  }
+  .blk.preview {
+    border: 1px solid var(--ink); background: var(--paper);
+    box-shadow: 0 2px 7px color-mix(in srgb, var(--ink) 24%, transparent);
+  }
+  .blk.preview.clash { border: 2px solid var(--pen); background-image: repeating-linear-gradient(45deg, rgba(179,38,30,.14) 0 7px, transparent 7px 14px); }
+  .blk.preview.clash::after {
+    content: ""; position: absolute; inset-block-start: 0; inset-inline-end: 0;
+    border-block-start: 15px solid var(--pen); border-inline-start: 15px solid transparent;
+  }
+  [data-type="lecture"] { --type: var(--ink); --tint: #e9eff6; }
+  [data-type="tirgul"] { --type: var(--teal); --tint: #e6f3f0; }
+  [data-type="lab"] { --type: var(--ochre); --tint: #f8efdc; }
+  [data-type="other"] { --type: var(--violet); --tint: #edebf7; }
+  .untimed { display: flex; gap: 8px; flex-wrap: wrap; padding: 8px 10px; border-top: 1px solid var(--rule); background: var(--paper); }
+  .untimed .blk { position: static; inset: auto; min-width: 150px; }
+
+  /* ---------- tray / chips ---------- */
+  .trayitem {
+    width: 100%; text-align: start; background: var(--paper); border: 1px solid var(--rule);
+    border-radius: 3px; padding: 8px 10px; display: grid; gap: 3px; margin-bottom: 7px;
+  }
+  .trayitem[aria-selected="true"] { border-color: var(--ink); box-shadow: inset 2px 0 0 var(--ink); }
+  .trayitem .row { display: flex; gap: 8px; align-items: baseline; }
+  .trayitem .name { font-weight: 560; }
+  .trayitem .meta { color: var(--pencil); font-size: 12px; }
+  .tag {
+    font-size: 11px; padding: 1px 6px; border-radius: 2px; border: 1px solid var(--rule);
+    color: var(--ink-soft); background: var(--tag-bg); white-space: nowrap;
+  }
+  .tag.warn { border-color: var(--warn-border); background: var(--amber-bg); color: var(--warn-fg); }
+  .tag.bad { border-color: color-mix(in srgb, var(--pen) 42%, transparent); background: var(--bad-bg); color: var(--pen); }
+  .tag.done { border-color: color-mix(in srgb, var(--teal) 38%, transparent); background: var(--good-bg); color: var(--teal); }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--type, var(--pencil)); display: inline-block; }
+
+  /* ---------- side panel pieces ---------- */
+  .panelsec { border-bottom: 1px solid var(--rule); padding: 12px 14px; }
+  .panelsec:last-child { border-bottom: 0; }
+  .panelsec h3 { margin-bottom: 7px; }
+  .line { display: flex; gap: 8px; align-items: baseline; font-size: 13px; padding: 3px 0; }
+  .line .t { color: var(--pencil); min-width: 74px; }
+  .line.bad .t, .line.bad b { color: var(--pen); }
+  .empty { color: var(--pencil); font-size: 13px; }
+  .diff { border: 1px solid var(--rule); border-radius: 3px; padding: 8px 9px; margin-bottom: 8px; background: var(--paper); }
+  .diff p { margin: 0 0 6px; font-size: 13px; }
+  .diff .acts { display: flex; gap: 6px; }
+  .diff .acts button { border: 1px solid var(--ink-soft); background: var(--btn-bg); color: var(--btn-fg); border-radius: 3px; padding: 4px 9px; font-size: 12px; }
+  .diff .acts button.alt { background: var(--paper); color: var(--ink-soft); border-color: var(--rule); }
+
+  /* ---------- layout A: three panes ---------- */
+  .A { display: grid; grid-template-columns: 272px minmax(0,1fr) 296px; flex: 1; min-height: 0; }
+  .A .tray { background: var(--ruled); border-inline-end: 1px solid var(--rule); padding: 12px; overflow: auto; }
+  .A .center { display: flex; flex-direction: column; min-width: 0; }
+  .A .gridwrap { flex: 1; overflow: auto; }
+  .A .checks { background: var(--paper); border-inline-start: 1px solid var(--rule); overflow: auto; }
+  .tabs { display: flex; gap: 2px; padding: 8px 12px 0; background: var(--paper); border-bottom: 1px solid var(--rule); }
+  .tabs button {
+    border: 1px solid var(--rule); border-bottom: 0; background: var(--ruled); color: var(--ink-soft);
+    padding: 6px 13px; font-size: 13px; border-radius: 3px 3px 0 0; transform: translateY(1px);
+  }
+  .tabs button[aria-pressed="true"] { background: var(--paper); color: var(--ink); font-weight: 600; }
+
+  /* ---------- layout B: course-led decision list ---------- */
+  .B { flex: 1; display: grid; grid-template-columns: minmax(0,1fr) 360px; min-height: 0; }
+  .B .list { overflow: auto; padding: 16px 20px 40px; }
+  .B .course { background: var(--paper); border: 1px solid var(--rule); border-radius: 4px; margin-bottom: 10px; }
+  .B .chead { display: flex; gap: 10px; align-items: center; padding: 11px 13px; width: 100%; background: none; border: 0; text-align: start; }
+  .B .chead .nm { flex: 1; }
+  .B .chead .nm b { font-weight: 600; }
+  .B .chead .nm div { font-size: 12px; color: var(--pencil); }
+  .B .opts { border-top: 1px solid var(--rule-soft); padding: 4px 0 8px; }
+  .B .opt {
+    display: grid; grid-template-columns: 20px 96px 1fr auto auto; gap: 10px; align-items: center;
+    width: 100%; background: none; border: 0; padding: 7px 13px; text-align: start; font-size: 13px;
+  }
+  .B .opt:hover { background: var(--surface-2); }
+  .B .opt[aria-pressed="true"] { background: var(--surface-3); }
+  .B .opt .g { font-weight: 600; }
+  .B .opt .tm { color: var(--ink-soft); }
+  .B .opt .who { color: var(--pencil); font-size: 12px; }
+  .B .opt .verdict { font-size: 12px; color: var(--teal); }
+  .B .opt .verdict.bad { color: var(--pen); }
+  .B .aside { border-inline-start: 1px solid var(--rule); background: var(--paper); overflow: auto; }
+  .B .aside .mini { padding: 10px; }
+  .B .aside .mini .week { border: 1px solid var(--rule); }
+  .B .hint { font-size: 12px; color: var(--pencil); padding: 0 10px 10px; }
+
+  /* ---------- layout C: full-bleed grid, rail + drawer ---------- */
+  .C { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  .C .rail { display: flex; gap: 7px; padding: 9px 14px; background: var(--paper); border-bottom: 1px solid var(--rule); overflow-x: auto; }
+  .C .chip {
+    display: flex; align-items: center; gap: 7px; border: 1px solid var(--rule); background: var(--paper);
+    border-radius: 999px; padding: 5px 12px; font-size: 13px; white-space: nowrap;
+  }
+  .C .chip[aria-pressed="true"] { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
+  .C .chip.incomplete { border-style: dashed; }
+  .C .chip .n { font-weight: 600; }
+  .C .gridwrap { flex: 1; overflow: auto; }
+  .timeline { background: var(--paper); border-top: 1px solid var(--rule); padding: 10px 14px 12px; }
+  .tl { position: relative; height: 46px; margin-top: 6px; border-top: 1px solid var(--rule); }
+  .tl .mark { position: absolute; transform: translateX(-50%); text-align: center; font-size: 11px; color: var(--ink-soft); }
+  .tl .mark i { display: block; width: 1px; height: 9px; background: var(--ink-soft); margin: 0 auto 3px; }
+  .tl .mark.b i { background: var(--pencil); }
+  .tl .mark.tight i { background: var(--pen); height: 14px; }
+  .tl .mark.tight { color: var(--pen); }
+  .drawer { background: var(--paper); border-top: 1px solid var(--rule); padding: 10px 14px 14px; }
+  .drawer .head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
+  .optsrow { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
+  .optcard {
+    min-width: 178px; text-align: start; background: var(--paper); border: 1px dashed var(--pencil);
+    border-radius: 3px; padding: 8px 10px; display: grid; gap: 2px;
+  }
+  .optcard[aria-pressed="true"] { border: 1px solid var(--ink); border-inline-start: 3px solid var(--type); }
+  .optcard.clashing { border-color: color-mix(in srgb, var(--pen) 55%, transparent); background: var(--bad-bg); }
+  .optcard .k { font-weight: 620; font-size: 13px; }
+  .optcard .v { font-size: 12px; color: var(--ink-soft); }
+  .optcard .w { font-size: 11px; color: var(--pen); }
+
+
+  /* ---------- louder tiles: pencil vs ink vs red pen, turned up ---------- */
+  .week.loud .blk { inset-inline: 4px; border-radius: 4px; padding: 6px 8px; font-size: 13px; }
+  .week.loud .blk .sub { font-size: 12px; }
+  .week.loud .blk .nm { font-size: 13px; }
+  .week.loud .blk.pick {
+    border: 1px solid var(--type); border-inline-start: 5px solid var(--type);
+    background: var(--tint); box-shadow: 0 1px 2px rgba(22,50,79,.10);
+  }
+  .week.loud .blk.pick .sub { color: var(--ink-soft); }
+  .week.loud .blk.ghost {
+    border: 2px dashed var(--pencil); background: var(--paper); color: var(--ink-soft);
+  }
+  .week.loud .blk.ghost:hover { border-color: var(--type); background: var(--tint); color: var(--ink); }
+  .week.loud .blk.ghost .pill {
+    float: inline-end; font-size: 11px; border: 1px solid var(--type); color: var(--type);
+    border-radius: 999px; padding: 0 7px; opacity: 0; transition: opacity .12s ease;
+  }
+  .week.loud .blk.ghost:hover .pill { opacity: 1; }
+  .week.loud .blk.ghost.blocked {
+    border: 2px dashed rgba(179,38,30,.6); color: var(--pen);
+    background-image: repeating-linear-gradient(45deg, rgba(179,38,30,.1) 0 6px, rgba(179,38,30,.22) 6px 12px);
+  }
+  .week.loud .blk.pick.clash {
+    border: 2px solid var(--pen);
+    background-image: repeating-linear-gradient(45deg, rgba(179,38,30,.13) 0 7px, transparent 7px 14px);
+  }
+  .week.loud .blk.pick.clash::after { border-block-start-width: 15px; border-inline-start-width: 15px; }
+  .week.loud .blk.busy {
+    border: 1px solid var(--rule); color: var(--ink-soft);
+    background-image: repeating-linear-gradient(45deg, var(--hatch-a) 0 7px, var(--hatch-b) 7px 14px);
+  }
+  .week.loud .colhead { padding: 9px 10px; font-size: 13px; color: var(--ink); }
+
+  /* ---------- layout D: variant A, spacious, with the drawer and timeline from C ---------- */
+  .D { display: grid; grid-template-columns: 300px minmax(0,1fr) 300px; flex: 1; min-height: 0; }
+  .D .tray { background: var(--ruled); border-inline-end: 1px solid var(--rule); padding: 16px; overflow: auto; }
+  .D .tray h3 { margin-bottom: 10px; }
+  .D .center { display: flex; flex-direction: column; min-width: 0; }
+  .D .gridwrap { flex: 1; overflow: auto; min-height: 180px; }
+  .D .checks { background: var(--paper); border-inline-start: 1px solid var(--rule); overflow: auto; }
+  .D .trayitem { padding: 12px 13px; gap: 7px; border-radius: 4px; }
+  .D .trayitem .name { font-size: 15px; }
+  .D .needs { display: flex; gap: 6px; flex-wrap: wrap; }
+  .D .need {
+    font-size: 11px; padding: 2px 8px; border-radius: 2px; border: 1px dashed var(--pencil);
+    color: var(--pencil); background: var(--paper);
+  }
+  .D .need.on { border: 1px solid var(--type); border-inline-start-width: 3px; color: var(--ink); background: var(--tint); font-weight: 600; }
+  .D .panelsec { padding: 14px 16px; }
+  .D .drawer { border-block-start: 1px solid var(--rule); }
+  .D .optcard { min-width: 196px; padding: 10px 12px; }
+  .hintbar {
+    display: flex; align-items: center; gap: 12px; padding: 10px 16px;
+    background: var(--hint-bg); border-block: 1px solid var(--rule); font-size: 13px; color: var(--ink-soft);
+  }
+  .hintbar b { color: var(--ink); font-weight: 620; }
+  .hintbar .legend { display: flex; gap: 12px; margin-inline-start: auto; align-items: center; }
+  .hintbar .legend span { display: flex; align-items: center; gap: 5px; }
+  .hintbar .swatch { width: 15px; height: 11px; border-radius: 2px; display: inline-block; }
+  .hintbar .swatch.ink { border: 1px solid var(--ink); border-inline-start: 4px solid var(--ink); background: color-mix(in srgb, var(--ink) 14%, var(--paper)); }
+  .hintbar .swatch.pencil { border: 2px dashed var(--pencil); background: var(--paper); }
+  .hintbar .swatch.pen { border: 2px solid var(--pen); background: repeating-linear-gradient(45deg, rgba(179,38,30,.16) 0 3px, transparent 3px 6px); }
+
+
+  /* ---------- vertical exam rail (the right pane, filled) ---------- */
+  .examrail { background: var(--paper); border-inline-start: 1px solid var(--rule); overflow: auto; padding: 14px 14px 28px; }
+  .vtl { position: relative; margin-block-start: 12px; padding-inline-start: 18px; }
+  .vtl::before { content: ""; position: absolute; inset-block: 8px 8px; inset-inline-start: 4px; width: 2px; background: var(--rule); }
+  .vtl .ex { position: relative; }
+  .vtl .ex i {
+    position: absolute; inset-inline-start: -18px; inset-block-start: 7px; width: 9px; height: 9px;
+    border-radius: 50%; background: var(--ink); border: 2px solid var(--paper); box-shadow: 0 0 0 1px var(--ink);
+  }
+  .vtl .ex.b i { background: var(--pencil); box-shadow: 0 0 0 1px var(--pencil); }
+  .vtl .ex.tight i { background: var(--pen); box-shadow: 0 0 0 1px var(--pen); }
+  .vtl .ex .c { font-weight: 620; font-size: 13px; }
+  .vtl .ex .d { font-size: 12px; color: var(--ink-soft); }
+  .vtl .gap { font-size: 11px; color: var(--pencil); }
+  .vtl .ex.tight .gap { color: var(--pen); font-weight: 600; }
+
+  /* ---------- clash strip: what the side panel used to say ---------- */
+  .clashstrip {
+    display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center;
+    padding: 8px 16px; background: var(--clash-bg); border-block-end: 1px solid color-mix(in srgb, var(--pen) 30%, transparent);
+    font-size: 13px; color: var(--pen);
+  }
+  .clashstrip b { font-weight: 620; }
+  .clashstrip .note { color: color-mix(in srgb, var(--pen) 78%, var(--paper)); margin-inline-start: auto; font-size: 12px; }
+
+  /* ---------- plan differences, moved onto the tray ---------- */
+  .trayblock { margin-bottom: 9px; }
+  .trayblock .trayitem { margin-bottom: 0; }
+  .trayacts { display: flex; gap: 5px; padding: 6px 2px 0; flex-wrap: wrap; }
+  .trayacts button { border: 1px solid var(--ink-soft); background: var(--btn-bg); color: var(--btn-fg); border-radius: 3px; padding: 3px 9px; font-size: 12px; }
+  .trayacts button.alt { background: var(--paper); color: var(--ink-soft); border-color: var(--rule); }
+
+  /* ---------- layout E: drawer on top, exam rail on the side ---------- */
+  .E { display: grid; grid-template-columns: 300px minmax(0,1fr) 236px; flex: 1; min-height: 0; }
+  .E .tray { background: var(--ruled); border-inline-end: 1px solid var(--rule); padding: 16px; overflow: auto; }
+  .E .center { display: flex; flex-direction: column; min-width: 0; }
+  .E .gridwrap { flex: 1; overflow: auto; min-height: 200px; }
+  .E .drawer { border-block-end: 1px solid var(--rule); border-block-start: 0; }
+
+  /* ---------- layout F: two panes, nothing on the side ---------- */
+  .F { display: grid; grid-template-columns: 300px minmax(0,1fr); flex: 1; min-height: 0; }
+  .F .tray { background: var(--ruled); border-inline-end: 1px solid var(--rule); padding: 16px; overflow: auto; }
+  .F .center { display: flex; flex-direction: column; min-width: 0; }
+  .F .gridwrap { flex: 1; overflow: auto; min-height: 200px; }
+  .F .drawer { border-block-end: 1px solid var(--rule); border-block-start: 0; }
+
+
+  /* ---------- dark scheme: chalk on slate ----------
+     Same idea as the light one, inverted: the ground is a dark desk, "paper" is a raised
+     surface, and the pencil / ink / red-pen language survives because the Lesson Type hues
+     are lifted until they read on a dark tile. Follows the OS unless the switcher overrides. */
+  :root[data-theme="dark"], :root:not([data-theme="light"]) {
+    --dark-ruled: #0e141b;  --dark-paper: #161e27;  --dark-ink: #dbe6f2;  --dark-ink-soft: #a3b4c7;
+    --dark-pencil: #6e8093; --dark-rule: #2c3744;   --dark-rule-soft: #212b36;
+    --dark-pen: #f0796c;    --dark-teal: #46b3a2;   --dark-ochre: #d3a45c; --dark-violet: #a093e0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ruled: var(--dark-ruled); --paper: var(--dark-paper); --ink: var(--dark-ink);
+      --ink-soft: var(--dark-ink-soft); --pencil: var(--dark-pencil);
+      --rule: var(--dark-rule); --rule-soft: var(--dark-rule-soft);
+      --pen: var(--dark-pen); --teal: var(--dark-teal); --ochre: var(--dark-ochre); --violet: var(--dark-violet);
+      --amber-bg: #2a2416; --surface-2: #1b242f; --surface-3: #202b38; --hint-bg: #141d26;
+      --clash-bg: #2a1a1a; --tag-bg: #1b242f; --bad-bg: #2a1a1a; --good-bg: #13241f;
+      --hatch-a: #1d2834; --hatch-b: #141c25;
+      --warn-border: #5a4a22; --warn-fg: #e3bd72; --btn-bg: #34507a; --btn-fg: #eaf2fb;
+    }
+    :root:not([data-theme="light"]) [data-type="lecture"] { --type: #7fa8d8; --tint: #1a2737; }
+    :root:not([data-theme="light"]) [data-type="tirgul"] { --type: #46b3a2; --tint: #122623; }
+    :root:not([data-theme="light"]) [data-type="lab"] { --type: #d3a45c; --tint: #292217; }
+    :root:not([data-theme="light"]) [data-type="other"] { --type: #a093e0; --tint: #211f33; }
+  }
+  :root[data-theme="dark"] {
+    --ruled: var(--dark-ruled); --paper: var(--dark-paper); --ink: var(--dark-ink);
+    --ink-soft: var(--dark-ink-soft); --pencil: var(--dark-pencil);
+    --rule: var(--dark-rule); --rule-soft: var(--dark-rule-soft);
+    --pen: var(--dark-pen); --teal: var(--dark-teal); --ochre: var(--dark-ochre); --violet: var(--dark-violet);
+    --amber-bg: #2a2416; --surface-2: #1b242f; --surface-3: #202b38; --hint-bg: #141d26;
+    --clash-bg: #2a1a1a; --tag-bg: #1b242f; --bad-bg: #2a1a1a; --good-bg: #13241f;
+    --hatch-a: #1d2834; --hatch-b: #141c25;
+    --warn-border: #5a4a22; --warn-fg: #e3bd72; --btn-bg: #34507a; --btn-fg: #eaf2fb;
+  }
+  :root[data-theme="dark"] [data-type="lecture"] { --type: #7fa8d8; --tint: #1a2737; }
+  :root[data-theme="dark"] [data-type="tirgul"] { --type: #46b3a2; --tint: #122623; }
+  :root[data-theme="dark"] [data-type="lab"] { --type: #d3a45c; --tint: #292217; }
+  :root[data-theme="dark"] [data-type="other"] { --type: #a093e0; --tint: #211f33; }
+  :root[data-theme="dark"] .switcher, :root:not([data-theme="light"]) .switcher { border: 1px solid #2c3744; }
+
+  /* ---------- prototype switcher (deliberately not part of the design) ---------- */
+  .switcher {
+    position: fixed; inset-block-end: 14px; inset-inline-start: 50%; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 4px; background: #101820; color: #fff;
+    border-radius: 999px; padding: 5px 7px; z-index: 50; box-shadow: 0 6px 20px rgba(16,24,32,.35);
+    font-size: 13px;
+  }
+  .switcher button { background: transparent; border: 0; color: #fff; padding: 4px 9px; border-radius: 999px; }
+  .switcher button:hover { background: rgba(255,255,255,.16); }
+  .switcher .lbl { padding: 0 6px; opacity: .95; }
+  .statepane {
+    position: fixed; inset-block-end: 60px; inset-inline-end: 14px; width: 330px; max-height: 44vh; overflow: auto;
+    background: #101820; color: #d7e2ee; border-radius: 4px; padding: 10px 12px; z-index: 50;
+    font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap;
+  }
+  [dir="rtl"] .blk { text-align: start; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<div id="switcher"></div>
+<script>
+/* ============================ fixture data ============================
+   Invented Catalog for Semester A of Academic Year 2027, plus one Spring-only
+   Offering and one Course missing from the Catalog, so the Plan Diffs have
+   something to show. Course numbers are real BIU CS numbers; everything else
+   is made up. */
+
+const DAYS = [0, 1, 2, 3, 4]; // Sunday..Thursday
+const DAY_NAMES = {
+  en: ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
+  he: ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי"],
+};
+const GRID_START = 8 * 60, GRID_END = 20 * 60;
+
+const m = (day, from, to) => ({ day, from: t2m(from), to: t2m(to) });
+function t2m(s) { const [h, mi] = s.split(":").map(Number); return h * 60 + mi; }
+function m2t(v) { return String(Math.floor(v / 60)).padStart(2, "0") + ":" + String(v % 60).padStart(2, "0"); }
+
+const CATALOG = [
+  {
+    id: "89-110", credits: 5, nameEn: "Introduction to Computer Science", nameHe: "מבוא למדעי המחשב",
+    exams: [{ moed: "א", date: "2027-01-26" }, { moed: "ב", date: "2027-02-16" }],
+    groups: [
+      { id: "01", type: "lecture", who: "Prof. Ben-Ami", meetings: [m(0, "10:00", "12:00"), m(2, "10:00", "12:00")] },
+      { id: "02", type: "lecture", who: "Dr. Shalev", meetings: [m(1, "16:00", "18:00"), m(3, "16:00", "18:00")] },
+      { id: "11", type: "tirgul", who: "N. Aviram", meetings: [m(0, "12:00", "14:00")] },
+      { id: "12", type: "tirgul", who: "Y. Cohen", meetings: [m(2, "14:00", "16:00")] },
+      { id: "13", type: "tirgul", who: "R. Levi", meetings: [m(4, "10:00", "12:00")] },
+    ],
+  },
+  {
+    id: "89-132", credits: 5, nameEn: "Infinitesimal Calculus 1", nameHe: "חשבון אינפיניטסימלי 1",
+    exams: [{ moed: "א", date: "2027-01-24" }, { moed: "ב", date: "2027-02-14" }],
+    groups: [
+      { id: "01", type: "lecture", who: "Prof. Gutman", meetings: [m(0, "08:00", "10:00"), m(2, "08:00", "10:00")] },
+      { id: "02", type: "lecture", who: "Dr. Amzaleg", meetings: [m(1, "08:00", "10:00"), m(3, "08:00", "10:00")] },
+      { id: "11", type: "tirgul", who: "T. Barak", meetings: [m(2, "12:00", "14:00")] },
+      { id: "12", type: "tirgul", who: "S. Noy", meetings: [m(4, "08:00", "10:00")] },
+    ],
+  },
+  {
+    id: "89-112", credits: 4, nameEn: "Discrete Mathematics", nameHe: "מתמטיקה דיסקרטית",
+    exams: [{ moed: "א", date: "2027-01-28" }, { moed: "ב", date: "2027-02-18" }],
+    groups: [
+      { id: "01", type: "lecture", who: "Dr. Peretz", meetings: [m(1, "10:00", "12:00"), m(3, "10:00", "12:00")] },
+      { id: "02", type: "lecture", who: "Prof. Dayan", meetings: [m(0, "14:00", "16:00"), m(4, "14:00", "16:00")] },
+      { id: "11", type: "tirgul", who: "A. Mizrahi", meetings: [m(1, "12:00", "14:00")] },
+      { id: "12", type: "tirgul", who: "D. Weiss", meetings: [m(3, "14:00", "16:00")] },
+    ],
+  },
+  {
+    id: "89-133", credits: 4, nameEn: "Linear Algebra", nameHe: "אלגברה לינארית",
+    exams: [{ moed: "א", date: "2027-02-01" }, { moed: "ב", date: "2027-02-22" }],
+    groups: [
+      { id: "01", type: "lecture", who: "Prof. Hirsch", meetings: [m(2, "16:00", "18:00"), m(4, "12:00", "14:00")] },
+      { id: "11", type: "tirgul", who: "E. Tal", meetings: [m(4, "14:00", "16:00")] },
+    ],
+  },
+  {
+    id: "89-1195", credits: 3, nameEn: "Digital Systems", nameHe: "מערכות ספרתיות",
+    exams: [{ moed: "א", date: "2027-01-31" }, { moed: "ב", date: "2027-02-21" }],
+    groups: [
+      { id: "01", type: "lecture", who: "Dr. Bar-On", meetings: [m(4, "08:00", "10:00")] },
+      { id: "21", type: "lab", who: "Lab 305", meetings: [m(3, "10:00", "13:00")] },
+      { id: "22", type: "lab", who: "Lab 305", meetings: [m(4, "16:00", "19:00")] },
+    ],
+  },
+  {
+    id: "89-230", credits: 4, nameEn: "Data Structures", nameHe: "מבני נתונים",
+    exams: [{ moed: "א", date: "2027-02-04" }, { moed: "ב", date: "2027-02-25" }],
+    groups: [
+      { id: "01", type: "lecture", who: "Prof. Salomon", meetings: [m(0, "16:00", "18:00"), m(2, "18:00", "20:00")] },
+      { id: "11", type: "tirgul", who: "M. Dagan", meetings: [m(0, "18:00", "20:00")] },
+    ],
+  },
+  {
+    id: "19-001", credits: 2, yearLong: true, nameEn: "Jewish Thought (year-long)", nameHe: "מחשבת ישראל (שנתי)",
+    exams: [], groups: [{ id: "01", type: "other", who: "Dr. Regev", meetings: [m(1, "18:00", "20:00")] }],
+  },
+  {
+    id: "89-390", credits: 2, nameEn: "Cyber Security, online", nameHe: "סייבר, מקוון",
+    exams: [{ moed: "א", date: "2027-02-08" }],
+    groups: [{ id: "01", type: "other", who: "self-paced", meetings: [] }],
+  },
+];
+
+/* Courses the Plan puts in this Semester that the Catalog disagrees about. */
+const PLAN_ONLY = [
+  { id: "89-213", nameEn: "Computer Architecture", nameHe: "ארכיטקטורת מחשבים", credits: 4, issue: "spring" },
+  { id: "89-2511", nameEn: "Operating Systems", nameHe: "מערכות הפעלה", credits: 4, issue: "missing" },
+];
+
+const BLOCKED = [
+  { label: { en: "Work", he: "עבודה" }, day: 2, from: t2m("16:00"), to: t2m("20:00") },
+  { label: { en: "Commute", he: "נסיעה" }, day: 4, from: t2m("19:00"), to: t2m("20:00") },
+];
+
+const TYPE_NAMES = {
+  en: { lecture: "Lecture", tirgul: "Tirgul", lab: "Lab", other: "Meeting" },
+  he: { lecture: "הרצאה", tirgul: "תרגיל", lab: "מעבדה", other: "מפגש" },
+};
+
+const T = {
+  en: {
+    tray: "To schedule", week: "Week", checks: "Checks", clashes: "Clashes", exams: "Exams",
+    diffs: "Differences from plan", pickPrompt: "Pick a course to see its groups",
+    credits: "cr", group: "Group", noFixedTime: "No fixed time", blocked: "Blocked",
+    incomplete: "needs", complete: "scheduled", spring: "Catalog has it in Spring",
+    missing: "Not in this year's catalog", notInPlan: "Not in plan", yearLong: "Year-long",
+    moveToSpring: "Move to Spring in plan", keep: "Leave as is", addToPlan: "Add to plan",
+    drop: "Remove from plan", noClashes: "Nothing overlaps", noExams: "No exams yet",
+    days: "days apart", variantMain: "Main", variantBackup: "Backup", lang: "עברית",
+    moed: "Moed", sameDay: "same day", inRed: "marked in red on the week", examRail: "Exam period", pickLabel: "pick", groupsFor: "Groups for", hintStart: "Choose a course on the left, then click a dashed block on the week to pick its group.", hintNeeds: "still needs", hintDone: "Everything in the tray is scheduled.", legendInk: "picked", legendPencil: "option", legendPen: "clash", examsCount: "exams", tightGaps: "tight gaps", registered: "Mark as registered", semester: "Semester A · 2026-27", hoverHint: "Hover a group to preview it on the week",
+    examTimeline: "Exam period", tightGap: "tight", fits: "fits", clashesWith: "clashes with",
+    addCourse: "Add a course", picked: "Picked", totalCredits: "credits picked",
+  },
+  he: {
+    tray: "לשיבוץ", week: "שבוע", checks: "בדיקות", clashes: "התנגשויות", exams: "בחינות",
+    diffs: "הפרשים מהתכנית", pickPrompt: "בחרו קורס כדי לראות את הקבוצות",
+    credits: 'נ"ז', group: "קבוצה", noFixedTime: "ללא שעה קבועה", blocked: "חסום",
+    incomplete: "חסר", complete: "משובץ", spring: "בקטלוג מופיע בסמסטר ב",
+    missing: "לא בקטלוג של השנה", notInPlan: "לא בתכנית", yearLong: "שנתי",
+    moveToSpring: "העבירו לסמסטר ב בתכנית", keep: "השאירו כמו שזה", addToPlan: "הוסיפו לתכנית",
+    drop: "הסירו מהתכנית", noClashes: "אין חפיפות", noExams: "אין בחינות",
+    days: "ימים ביניהן", variantMain: "ראשית", variantBackup: "גיבוי", lang: "English",
+    moed: "מועד", sameDay: "אותו יום", inRed: "מסומן באדום בשבוע", examRail: "תקופת הבחינות", pickLabel: "בחרו", groupsFor: "קבוצות —", hintStart: "בחרו קורס מהרשימה, ואז לחצו על משבצת מקווקוות בשבוע כדי לבחור קבוצה.", hintNeeds: "עוד חסר", hintDone: "כל הקורסים לשיבוץ שובצו.", legendInk: "נבחר", legendPencil: "אפשרות", legendPen: "התנגשות", examsCount: "בחינות", tightGaps: "מרווחים צפופים", registered: "סמנו כנרשם", semester: "סמסטר א · תשפ״ז", hoverHint: "עברו עם העכבר על קבוצה לתצוגה מקדימה",
+    examTimeline: "תקופת הבחינות", tightGap: "צפוף", fits: "מתאים", clashesWith: "מתנגש עם",
+    addCourse: "הוספת קורס", picked: "נבחר", totalCredits: 'נ"ז נבחרו',
+  },
+};
+
+/* ============================ state ============================ */
+
+const state = {
+  layout: new URLSearchParams(location.search).get("variant")?.toUpperCase() || "E",
+  lang: "en",
+  tt: "main",                       // which domain Variant is open
+  picks: { main: {}, backup: {} },  // courseId -> { lessonType: groupId }
+  selected: "89-110",
+  preview: null,                    // { courseId, groupId } while hovering
+  showState: false,
+  theme: "system",   // system | light | dark
+};
+if (!["A", "B", "C", "D", "E", "F"].includes(state.layout)) state.layout = "E";
+
+/* pre-pick a few groups so the screen opens with something to judge */
+state.picks.main = {
+  "89-110": { lecture: "01", tirgul: "12" },
+  "89-132": { lecture: "02" },          /* still missing its tirgul */
+  "89-112": { lecture: "01" },          /* clashes with the 89-1195 lab on Wednesday */
+  "89-1195": { lecture: "01", lab: "21" },
+  "89-230": { lecture: "01" },          /* Tuesday evening runs into blocked work time */
+  "19-001": { other: "01" },
+};
+state.picks.backup = { "89-110": { lecture: "02", tirgul: "13" } };
+
+const L = () => T[state.lang];
+const course = (id) => CATALOG.find((c) => c.id === id);
+const cname = (c) => (state.lang === "he" ? c.nameHe : c.nameEn);
+const typeName = (t) => TYPE_NAMES[state.lang][t];
+const lessonTypes = (c) => [...new Set(c.groups.map((g) => g.type))];
+const picksOf = () => state.picks[state.tt];
+
+/* Tray: Courses the Plan puts in this Semester, plus one added outside the Plan. */
+const TRAY = [
+  { id: "89-110", inPlan: true }, { id: "89-132", inPlan: true }, { id: "89-112", inPlan: true },
+  { id: "89-133", inPlan: true }, { id: "89-1195", inPlan: true }, { id: "89-230", inPlan: true },
+  { id: "19-001", inPlan: true }, { id: "89-390", inPlan: false },
+];
+
+function pickedGroups() {
+  const out = [];
+  for (const [cid, byType] of Object.entries(picksOf())) {
+    const c = course(cid); if (!c) continue;
+    for (const gid of Object.values(byType)) {
+      const g = c.groups.find((x) => x.id === gid); if (g) out.push({ course: c, group: g });
+    }
+  }
+  return out;
+}
+
+function overlaps(a, b) { return a.day === b.day && a.from < b.to && b.from < a.to; }
+
+/* Clashes: picked Meetings against each other and against Blocked Times. */
+function clashes() {
+  const blocks = [];
+  for (const { course: c, group: g } of pickedGroups())
+    for (const mt of g.meetings) blocks.push({ c, g, mt });
+  const out = [];
+  for (let i = 0; i < blocks.length; i++) {
+    for (let j = i + 1; j < blocks.length; j++)
+      if (overlaps(blocks[i].mt, blocks[j].mt)) out.push({ kind: "meeting", a: blocks[i], b: blocks[j] });
+    for (const b of BLOCKED)
+      if (overlaps(blocks[i].mt, b)) out.push({ kind: "blocked", a: blocks[i], blocked: b });
+  }
+  return out;
+}
+
+function clashedMeetingKeys() {
+  const keys = new Set();
+  for (const cl of clashes()) {
+    keys.add(mkey(cl.a));
+    if (cl.b) keys.add(mkey(cl.b));
+  }
+  return keys;
+}
+const mkey = (b) => `${b.c.id}|${b.g.id}|${b.mt.day}|${b.mt.from}`;
+
+/* Would picking this Group clash with what is already picked? */
+function candidateClashes(c, g) {
+  const others = pickedGroups().filter((p) => !(p.course.id === c.id && p.group.type === g.type));
+  const hits = [];
+  for (const mt of g.meetings) {
+    for (const o of others)
+      for (const omt of o.group.meetings)
+        if (overlaps(mt, omt)) hits.push({ with: `${o.course.id} ${typeName(o.group.type)} ${o.group.id}` });
+    for (const b of BLOCKED) if (overlaps(mt, b)) hits.push({ with: b.label[state.lang] });
+  }
+  return hits;
+}
+
+function completeness(c) {
+  const need = lessonTypes(c), have = picksOf()[c.id] || {};
+  const missing = need.filter((t) => !have[t]);
+  return { need, missing, any: Object.keys(have).length > 0, done: missing.length === 0 && need.length > 0 };
+}
+
+function pickedCredits() {
+  return Object.keys(picksOf()).reduce((sum, cid) => sum + (course(cid)?.credits || 0), 0);
+}
+
+/* Exams of picked Courses, in date order, with the gap to the previous one. */
+function examRows() {
+  const rows = [];
+  for (const cid of Object.keys(picksOf())) {
+    const c = course(cid); if (!c) continue;
+    for (const e of c.exams) rows.push({ c, moed: e.moed, date: e.date });
+  }
+  rows.sort((x, y) => x.date.localeCompare(y.date));
+  const day = 864e5;
+  rows.forEach((r, i) => {
+    r.gap = i === 0 ? null : Math.round((new Date(r.date) - new Date(rows[i - 1].date)) / day);
+    r.sameDay = i > 0 && rows[i - 1].date === r.date;
+    r.tight = r.gap !== null && r.gap < 3;
+  });
+  return rows;
+}
+
+function planDiffs() {
+  const out = PLAN_ONLY.map((p) => ({
+    id: p.id, title: cnameOf(p),
+    text: p.issue === "spring" ? L().spring : L().missing,
+    acts: p.issue === "spring" ? [L().moveToSpring, L().keep] : [L().drop, L().keep],
+  }));
+  for (const t of TRAY) {
+    if (!t.inPlan && picksOf()[t.id]) {
+      const c = course(t.id);
+      out.push({ id: c.id, title: cname(c), text: L().notInPlan, acts: [L().addToPlan, L().keep] });
+    }
+  }
+  return out;
+}
+const cnameOf = (p) => (state.lang === "he" ? p.nameHe : p.nameEn);
+
+function togglePick(cid, gid) {
+  const c = course(cid), g = c.groups.find((x) => x.id === gid);
+  const byType = picksOf()[cid] || (picksOf()[cid] = {});
+  if (byType[g.type] === gid) {
+    delete byType[g.type];
+    if (!Object.keys(byType).length) delete picksOf()[cid];
+  } else byType[g.type] = gid;
+  render();
+}
+
+function fmtDate(iso) {
+  const d = new Date(iso);
+  return d.toLocaleDateString(state.lang === "he" ? "he-IL" : "en-GB", { day: "numeric", month: "short" });
+}
+
+/* ============================ shared week grid ============================ */
+
+function weekHTML({ compact = false, ghostFor = null, previewOnly = false, loud = false, hour = null } = {}) {
+  const hourPx = hour || (compact ? 26 : 54);
+  const pxPerMin = hourPx / 60;
+  const height = (GRID_END - GRID_START) * pxPerMin;
+  const days = DAYS;
+  const names = DAY_NAMES[state.lang];
+
+  let heads = `<div class="colhead"></div>`;
+  for (const d of days) heads += `<div class="colhead">${compact ? names[d].slice(0, state.lang === "he" ? 1 : 3) : names[d]}</div>`;
+
+  let hours = `<div class="hours" style="height:${height}px">`;
+  for (let t = GRID_START; t <= GRID_END; t += 60)
+    hours += `<div class="h" style="top:${(t - GRID_START) * pxPerMin}px">${compact ? t / 60 : m2t(t)}</div>`;
+  hours += `</div>`;
+
+  const picked = pickedGroups();
+  const clashKeys = clashedMeetingKeys();
+  const ghostCourse = ghostFor ? course(ghostFor) : null;
+  const prev = state.preview;
+
+  let cols = "";
+  for (const d of days) {
+    let inner = "";
+    for (const b of BLOCKED.filter((b) => b.day === d))
+      inner += box(b.from, b.to, `<span class="sub">${b.label[state.lang]}</span>`, "busy", pxPerMin);
+
+    for (const { course: c, group: g } of picked) {
+      for (const mt of g.meetings.filter((x) => x.day === d)) {
+        const bad = clashKeys.has(mkey({ c, g, mt }));
+        const tall = (mt.to - mt.from) * pxPerMin;
+        const label = compact
+          ? `<div class="num">${c.id}</div><div class="sub">${typeName(g.type)} ${g.id}</div>`
+          : `<div class="nm">${cname(c)}</div><div class="sub">${c.id} · ${typeName(g.type)} ${g.id}${tall >= 104 ? " · " + m2t(mt.from) + "–" + m2t(mt.to) : ""}</div>`;
+        inner += box(mt.from, mt.to, label,
+          `pick${bad ? " clash" : ""}${tall < 86 ? " oneline" : ""}`, pxPerMin, `data-type="${g.type}"`);
+      }
+    }
+
+    if (ghostCourse && !previewOnly) {
+      const have = picksOf()[ghostCourse.id] || {};
+      for (const g of ghostCourse.groups) {
+        if (have[g.type] === g.id) continue;
+        const hits = candidateClashes(ghostCourse, g);
+        for (const mt of g.meetings.filter((x) => x.day === d))
+          inner += box(mt.from, mt.to,
+            `<div class="num">${typeName(g.type)} ${g.id}<span class="pill">${L().pickLabel}</span></div><div class="sub">${g.who}</div>`,
+            `ghost${hits.length ? " blocked" : ""}`, pxPerMin,
+            `data-type="${g.type}" data-pick="${ghostCourse.id}:${g.id}" role="button" tabindex="0"`);
+      }
+    }
+
+    if (prev) {
+      const pc = course(prev.courseId), pg = pc.groups.find((g) => g.id === prev.groupId);
+      const bad = candidateClashes(pc, pg).length > 0;
+      for (const mt of pg.meetings.filter((x) => x.day === d))
+        inner += box(mt.from, mt.to,
+          compact ? `<div class="num">${pc.id}</div><div class="sub">${typeName(pg.type)} ${pg.id}</div>`
+                  : `<div class="nm">${cname(pc)}</div><div class="sub">${pc.id} · ${typeName(pg.type)} ${pg.id}</div>`,
+          `preview${bad ? " clash" : ""}`, pxPerMin, `data-type="${pg.type}"`);
+    }
+
+    cols += `<div class="day" style="height:${height}px">${inner}</div>`;
+  }
+
+  const untimedPicked = picked.filter((p) => p.group.meetings.length === 0);
+  const untimedGhost = ghostCourse && !previewOnly
+    ? ghostCourse.groups.filter((g) => !g.meetings.length && (picksOf()[ghostCourse.id] || {})[g.type] !== g.id)
+    : [];
+  let strip = "";
+  if (untimedPicked.length || untimedGhost.length) {
+    strip = `<div class="untimed"><span class="sub" style="color:var(--pencil);font-size:12px">${L().noFixedTime}</span>`;
+    for (const p of untimedPicked)
+      strip += `<div class="blk pick" data-type="${p.group.type}"><div class="nm">${cname(p.course)}</div><div class="sub">${p.course.id} · ${typeName(p.group.type)} ${p.group.id}</div></div>`;
+    for (const g of untimedGhost)
+      strip += `<button class="blk ghost" data-type="${g.type}" data-pick="${ghostCourse.id}:${g.id}"><div class="num">${ghostCourse.id} ${g.id}</div><div class="sub">${g.who}</div></button>`;
+    strip += `</div>`;
+  }
+
+  return `<div class="week${compact ? " compact" : ""}${loud ? " loud" : ""}" style="grid-template-columns:${compact ? 28 : 54}px repeat(${days.length},minmax(0,1fr));--hour:${hourPx}px;--half:${hourPx / 2}px">${heads}${hours}${cols}</div>${strip}`;
+}
+
+function box(from, to, html, cls, pxPerMin, attrs = "") {
+  const top = (from - GRID_START) * pxPerMin, h = (to - from) * pxPerMin;
+  const tag = attrs.includes("data-pick") ? "button" : "div";
+  return `<${tag} class="blk ${cls}" style="top:${top}px;height:${h - 2}px" ${attrs}>${html}</${tag}>`;
+}
+
+/* ============================ shared panel pieces ============================ */
+
+function clashesHTML() {
+  const cl = clashes();
+  if (!cl.length) return `<p class="empty">${L().noClashes}</p>`;
+  return cl.map((c) => {
+    const left = `${c.a.c.id} ${typeName(c.a.g.type)} ${c.a.g.id}`;
+    const right = c.kind === "blocked" ? c.blocked.label[state.lang] : `${c.b.c.id} ${typeName(c.b.g.type)} ${c.b.g.id}`;
+    return `<div class="line bad"><span class="t">${DAY_NAMES[state.lang][c.a.mt.day]} ${m2t(c.a.mt.from)}</span><b>${left}</b><span>×</span><b>${right}</b></div>`;
+  }).join("");
+}
+
+function examsHTML() {
+  const rows = examRows();
+  if (!rows.length) return `<p class="empty">${L().noExams}</p>`;
+  return rows.map((r) => `
+    <div class="line${r.tight ? " bad" : ""}">
+      <span class="t">${fmtDate(r.date)}</span>
+      <b>${r.c.id}</b><span>${L().moed} ${r.moed}</span>
+      ${r.gap === null ? "" : `<span style="margin-inline-start:auto;color:${r.tight ? "var(--pen)" : "var(--pencil)"}">${r.sameDay ? "·" : r.gap + " " + L().days}</span>`}
+    </div>`).join("");
+}
+
+function diffsHTML() {
+  const d = planDiffs();
+  if (!d.length) return `<p class="empty">—</p>`;
+  return d.map((x) => `
+    <div class="diff">
+      <p><b>${x.id}</b> ${x.title} — ${x.text}</p>
+      <div class="acts">${x.acts.map((a, i) => `<button class="${i ? "alt" : ""}" data-toast="${a}">${a}</button>`).join("")}</div>
+    </div>`).join("");
+}
+
+function trayItemHTML(entry) {
+  const c = course(entry.id);
+  const st = completeness(c);
+  const tags = [];
+  if (!entry.inPlan) tags.push(`<span class="tag warn">${L().notInPlan}</span>`);
+  if (c.yearLong) tags.push(`<span class="tag">${L().yearLong}</span>`);
+  if (st.done) tags.push(`<span class="tag done">${L().complete}</span>`);
+  else if (st.any) tags.push(`<span class="tag warn">${L().incomplete} ${st.missing.map(typeName).join(", ")}</span>`);
+  return `
+    <button class="trayitem" data-select="${c.id}" aria-selected="${state.selected === c.id}">
+      <div class="row"><span class="name">${cname(c)}</span></div>
+      <div class="row"><span class="meta">${c.id} · ${c.credits} ${L().credits}</span></div>
+      <div class="row" style="flex-wrap:wrap;gap:4px">${tags.join("")}</div>
+    </button>`;
+}
+
+function planOnlyTrayHTML() {
+  return PLAN_ONLY.map((p) => `
+    <div class="trayitem" style="opacity:.85">
+      <div class="row"><span class="name">${cnameOf(p)}</span></div>
+      <div class="row"><span class="meta">${p.id} · ${p.credits} ${L().credits}</span></div>
+      <div class="row"><span class="tag ${p.issue === "missing" ? "bad" : "warn"}">${p.issue === "missing" ? L().missing : L().spring}</span></div>
+    </div>`).join("");
+}
+
+function langButton() {
+  return `<button class="ghostbtn" data-lang="1">${L().lang}</button>`;
+}
+
+function ttTabs(kind) {
+  const items = [["main", L().variantMain], ["backup", L().variantBackup]];
+  if (kind === "seg")
+    return `<div class="seg">${items.map(([k, n]) => `<button data-tt="${k}" aria-pressed="${state.tt === k}">${n}</button>`).join("")}</div>`;
+  return items.map(([k, n]) => `<button data-tt="${k}" aria-pressed="${state.tt === k}">${n}</button>`).join("");
+}
+
+/* ============================ layout A — three panes ============================
+   Tray on one side, the week in the middle, checks on the other side.
+   The design doc's proposal, drawn so it can be argued with. */
+function VariantA() {
+  const c = state.selected ? course(state.selected) : null;
+  return `
+  <div class="app">
+    <header class="topbar">
+      <h1>${L().week}</h1>
+      <span class="crumb">${L().semester}</span>
+      <div class="spacer"></div>
+      <span class="crumb">${pickedCredits()} ${L().totalCredits}</span>
+      ${langButton()}
+      <button class="ghostbtn" data-toast="${L().registered}">${L().registered}</button>
+    </header>
+    <div class="A">
+      <aside class="tray">
+        <h3 style="margin-bottom:8px">${L().tray}</h3>
+        ${TRAY.map(trayItemHTML).join("")}
+        ${planOnlyTrayHTML()}
+      </aside>
+      <div class="center">
+        <div class="tabs">${ttTabs()}</div>
+        <div class="gridwrap">${weekHTML({ ghostFor: state.selected })}</div>
+      </div>
+      <aside class="checks">
+        <div class="panelsec">
+          <h3>${c ? cname(c) + " · " + c.id : L().checks}</h3>
+          <p class="empty">${c ? L().hoverHint : L().pickPrompt}</p>
+        </div>
+        <div class="panelsec"><h3>${L().clashes}</h3>${clashesHTML()}</div>
+        <div class="panelsec"><h3>${L().exams}</h3>${examsHTML()}</div>
+        <div class="panelsec"><h3>${L().diffs}</h3>${diffsHTML()}</div>
+      </aside>
+    </div>
+  </div>`;
+}
+
+/* ============================ layout B — course-led list ============================
+   No grid as the primary surface. Each Course opens into its Groups as rows you
+   compare (time, lecturer, whether it fits), with a small week kept beside them. */
+function VariantB() {
+  const rows = TRAY.map((entry) => {
+    const c = course(entry.id), st = completeness(c), open = state.selected === c.id;
+    const have = picksOf()[c.id] || {};
+    const summary = st.done
+      ? lessonTypes(c).map((t) => `${typeName(t)} ${have[t]}`).join(" · ")
+      : st.any ? `${L().incomplete} ${st.missing.map(typeName).join(", ")}` : "";
+    let opts = "";
+    if (open) {
+      opts = `<div class="opts">` + c.groups.map((g) => {
+        const hits = candidateClashes(c, g);
+        const on = have[g.type] === g.id;
+        const times = g.meetings.length
+          ? g.meetings.map((mt) => `${DAY_NAMES[state.lang][mt.day].slice(0, state.lang === "he" ? 2 : 3)} ${m2t(mt.from)}–${m2t(mt.to)}`).join(", ")
+          : L().noFixedTime;
+        return `<button class="opt" data-pick="${c.id}:${g.id}" data-hover="${c.id}:${g.id}" aria-pressed="${on}">
+            <span class="dot" data-type="${g.type}"></span>
+            <span class="g">${typeName(g.type)} ${g.id}</span>
+            <span class="tm">${times}</span>
+            <span class="who">${g.who}</span>
+            <span class="verdict ${hits.length ? "bad" : ""}">${hits.length ? L().clashesWith + " " + hits[0].with : L().fits}</span>
+          </button>`;
+      }).join("") + `</div>`;
+    }
+    return `<div class="course">
+      <button class="chead" data-select="${c.id}">
+        <span class="dot" data-type="${st.done ? "tirgul" : "lecture"}" style="${st.done ? "" : "background:var(--pencil)"}"></span>
+        <span class="nm"><b>${cname(c)}</b><div>${c.id} · ${c.credits} ${L().credits}${summary ? " · " + summary : ""}</div></span>
+        ${entry.inPlan ? "" : `<span class="tag warn">${L().notInPlan}</span>`}
+      </button>${opts}</div>`;
+  }).join("");
+
+  return `
+  <div class="app">
+    <header class="topbar">
+      <h1>${L().tray}</h1>
+      <span class="crumb">${L().semester}</span>
+      ${ttTabs("seg")}
+      <div class="spacer"></div>
+      <span class="crumb">${pickedCredits()} ${L().totalCredits}</span>
+      ${langButton()}
+    </header>
+    <div class="B">
+      <div class="list">
+        ${rows}
+        ${PLAN_ONLY.map((p) => `<div class="course" style="opacity:.9"><div class="chead">
+            <span class="dot" style="background:var(--pen)"></span>
+            <span class="nm"><b>${cnameOf(p)}</b><div>${p.id} · ${p.issue === "missing" ? L().missing : L().spring}</div></span>
+          </div></div>`).join("")}
+      </div>
+      <aside class="aside">
+        <div class="mini">${weekHTML({ compact: true, previewOnly: true })}</div>
+        <p class="hint">${L().hoverHint}</p>
+        <div class="panelsec"><h3>${L().clashes}</h3>${clashesHTML()}</div>
+        <div class="panelsec"><h3>${L().exams}</h3>${examsHTML()}</div>
+        <div class="panelsec"><h3>${L().diffs}</h3>${diffsHTML()}</div>
+      </aside>
+    </div>
+  </div>`;
+}
+
+
+/* ---- group options drawer and exam timeline: born in layout C, reused by D ---- */
+function groupDrawerHTML(c) {
+  if (!c) return `<div class="drawer"><p class="empty">${L().pickPrompt}</p></div>`;
+  const have = picksOf()[c.id] || {};
+  return `<div class="drawer">
+    <div class="head"><h2>${L().groupsFor} ${cname(c)}</h2>
+      <span class="crumb">${c.id} · ${c.credits} ${L().credits}</span>
+      <div class="spacer" style="flex:1"></div><span class="crumb">${L().hoverHint}</span></div>
+    <div class="optsrow">${c.groups.map((g) => {
+      const hits = candidateClashes(c, g);
+      const on = have[g.type] === g.id;
+      return `<button class="optcard${hits.length && !on ? " clashing" : ""}" data-type="${g.type}"
+          data-pick="${c.id}:${g.id}" data-hover="${c.id}:${g.id}" aria-pressed="${on}">
+        <span class="k">${typeName(g.type)} ${g.id}${on ? " ✓" : ""}</span>
+        <span class="v">${g.meetings.length ? g.meetings.map((mt) => `${DAY_NAMES[state.lang][mt.day].slice(0, state.lang === "he" ? 2 : 3)} ${m2t(mt.from)}–${m2t(mt.to)}`).join(", ") : L().noFixedTime}</span>
+        <span class="v">${g.who}</span>
+        ${hits.length ? `<span class="w">${L().clashesWith} ${hits[0].with}</span>` : ""}
+      </button>`;
+    }).join("")}</div></div>`;
+}
+
+function examTimelineHTML() {
+  const rows = examRows();
+  if (!rows.length) return `<p class="empty">${L().noExams}</p>`;
+  const first = new Date(rows[0].date), last = new Date(rows[rows.length - 1].date);
+  const span = Math.max(1, (last - first) / 864e5);
+  return `<div class="tl">` + rows.map((r) => {
+    const pos = ((new Date(r.date) - first) / 864e5 / span) * 96 + 2;
+    return `<div class="mark ${r.moed === "ב" ? "b" : ""} ${r.tight ? "tight" : ""}" style="inset-inline-start:${pos}%">
+      <i></i>${r.c.id}<br>${fmtDate(r.date)}${r.tight ? " · " + r.gap + "d" : ""}</div>`;
+  }).join("") + `</div>`;
+}
+
+/* ============================ layout C — full-bleed grid ============================
+   One surface: chips on top, the week filling the screen, a drawer of Group options
+   for the selected Course, and the exam period drawn as a timeline. */
+function VariantC() {
+  const c = state.selected ? course(state.selected) : null;
+  const chips = TRAY.map((entry) => {
+    const cc = course(entry.id), st = completeness(cc);
+    return `<button class="chip${st.done ? "" : " incomplete"}" data-select="${cc.id}" aria-pressed="${state.selected === cc.id}">
+      <span class="dot" data-type="${st.done ? "tirgul" : "lecture"}" style="${st.done ? "" : "background:var(--pencil)"}"></span>
+      <span class="n">${cc.id}</span><span>${cname(cc)}</span>
+      ${st.done ? "" : `<span class="tag warn">${st.any ? L().incomplete : "0/" + st.need.length}</span>`}
+    </button>`;
+  }).join("") + PLAN_ONLY.map((p) => `<button class="chip" data-toast="${p.issue === "missing" ? L().missing : L().spring}">
+      <span class="dot" style="background:var(--pen)"></span><span class="n">${p.id}</span>
+      <span class="tag bad">${p.issue === "missing" ? L().missing : L().spring}</span></button>`).join("");
+
+
+  return `
+  <div class="app">
+    <header class="topbar">
+      <h1>${L().semester}</h1>
+      ${ttTabs("seg")}
+      <div class="spacer"></div>
+      <span class="crumb">${pickedCredits()} ${L().totalCredits} · ${clashes().length} ${L().clashes.toLowerCase()}</span>
+      ${langButton()}
+      <button class="ghostbtn" data-toast="${L().registered}">${L().registered}</button>
+    </header>
+    <div class="C">
+      <div class="rail">${chips}</div>
+      <div class="gridwrap">${weekHTML({ ghostFor: state.selected })}</div>
+      ${groupDrawerHTML(c)}
+      <div class="timeline"><h3>${L().examTimeline}</h3>${examTimelineHTML()}</div>
+    </div>
+  </div>`;
+}
+
+
+
+/* ---- pieces shared by the refined layouts (D, E, F) ---- */
+function hintBarHTML(c) {
+  let hint = L().hintStart;
+  if (c) {
+    const st = completeness(c);
+    hint = st.missing.length
+      ? `<b>${cname(c)}</b> ${L().hintNeeds}: ${st.missing.map(typeName).join(", ")}`
+      : `<b>${cname(c)}</b> · ${lessonTypes(c).map((t) => typeName(t) + " " + (picksOf()[c.id] || {})[t]).join(" · ")}`;
+  } else if (TRAY.every((t) => completeness(course(t.id)).done)) hint = L().hintDone;
+  return `<div class="hintbar">
+    <span>${hint}</span>
+    <span class="legend">
+      <span><i class="swatch ink"></i>${L().legendInk}</span>
+      <span><i class="swatch pencil"></i>${L().legendPencil}</span>
+      <span><i class="swatch pen"></i>${L().legendPen}</span>
+    </span>
+  </div>`;
+}
+
+/* Clashes move out of the side panel and sit where the eye already is. */
+function clashStripHTML() {
+  const cl = clashes();
+  if (!cl.length) return "";
+  return `<div class="clashstrip"><b>${cl.length} ${L().clashes.toLowerCase()}</b>` + cl.map((c) => {
+    const right = c.kind === "blocked" ? c.blocked.label[state.lang] : `${c.b.c.id} ${typeName(c.b.g.type)} ${c.b.g.id}`;
+    return `<span>${DAY_NAMES[state.lang][c.a.mt.day]} ${m2t(c.a.mt.from)} · ${c.a.c.id} ${typeName(c.a.g.type)} ${c.a.g.id} × ${right}</span>`;
+  }).join("") + `<span class="note">${L().inRed}</span></div>`;
+}
+
+/* The Tray carries its own Plan Diffs, so the Plan stays on one side of the screen. */
+function trayWithDiffsHTML() {
+  const entries = TRAY.map((entry) => {
+    const cc = course(entry.id), st = completeness(cc), have = picksOf()[cc.id] || {};
+    const needs = st.need.map((t) => `<span class="need${have[t] ? " on" : ""}" data-type="${t}">${typeName(t)}${have[t] ? " " + have[t] : " —"}</span>`).join("");
+    const acts = !entry.inPlan && have && Object.keys(have).length
+      ? `<div class="trayacts"><button data-toast="${L().addToPlan}">${L().addToPlan}</button><button class="alt" data-toast="${L().keep}">${L().keep}</button></div>`
+      : "";
+    return `<div class="trayblock">
+      <button class="trayitem" data-select="${cc.id}" aria-selected="${state.selected === cc.id}">
+        <div class="row"><span class="name">${cname(cc)}</span></div>
+        <div class="row"><span class="meta">${cc.id} · ${cc.credits} ${L().credits}${cc.yearLong ? " · " + L().yearLong : ""}</span></div>
+        <div class="needs">${needs}</div>
+        ${entry.inPlan ? "" : `<div class="row"><span class="tag warn">${L().notInPlan}</span></div>`}
+      </button>${acts}</div>`;
+  }).join("");
+
+  const stuck = PLAN_ONLY.map((p) => `<div class="trayblock">
+      <div class="trayitem" style="opacity:.9">
+        <div class="row"><span class="name">${cnameOf(p)}</span></div>
+        <div class="row"><span class="meta">${p.id} · ${p.credits} ${L().credits}</span></div>
+        <div class="row"><span class="tag ${p.issue === "missing" ? "bad" : "warn"}">${p.issue === "missing" ? L().missing : L().spring}</span></div>
+      </div>
+      <div class="trayacts">
+        <button data-toast="${p.issue === "missing" ? L().drop : L().moveToSpring}">${p.issue === "missing" ? L().drop : L().moveToSpring}</button>
+        <button class="alt" data-toast="${L().keep}">${L().keep}</button>
+      </div></div>`).join("");
+
+  return `<h3>${L().tray}</h3>${entries}<h3 style="margin:14px 0 10px">${L().diffs}</h3>${stuck}`;
+}
+
+/* The same exam period, stood on its end: spacing between marks is the real gap. */
+function examRailHTML() {
+  const rows = examRows();
+  if (!rows.length) return `<p class="empty">${L().noExams}</p>`;
+  return `<div class="vtl">` + rows.map((r, i) => {
+    const mt = i === 0 ? 0 : Math.min(84, Math.max(18, (r.gap || 0) * 7));
+    const gap = r.gap === null ? "" : `<div class="gap">${r.sameDay ? L().sameDay : r.gap + " " + L().days}</div>`;
+    return `<div class="ex ${r.moed === "ב" ? "b" : ""} ${r.tight ? "tight" : ""}" style="margin-block-start:${mt}px">
+      <i></i>${gap}<div class="c">${r.c.id} · ${L().moed} ${r.moed}</div><div class="d">${fmtDate(r.date)}</div></div>`;
+  }).join("") + `</div>`;
+}
+
+function creditsLine() {
+  const ex = examRows(), tight = ex.filter((r) => r.tight).length;
+  return `${pickedCredits()} ${L().totalCredits} · ${ex.length} ${L().examsCount}${tight ? " · " + tight + " " + L().tightGaps : ""}`;
+}
+
+/* ============================ layout E — drawer on top, exam rail on the side ============================
+   Round-two notes applied: the Group drawer moves above the grid where it cannot be missed,
+   Plan Diffs move onto the Tray, and the side pane becomes the exam period turned vertical. */
+function VariantE() {
+  const c = state.selected ? course(state.selected) : null;
+  return `
+  <div class="app">
+    <header class="topbar">
+      <h1>${L().week}</h1><span class="crumb">${L().semester}</span>
+      <div class="spacer"></div><span class="crumb">${creditsLine()}</span>
+      ${langButton()}<button class="ghostbtn" data-toast="${L().registered}">${L().registered}</button>
+    </header>
+    <div class="E">
+      <aside class="tray">${trayWithDiffsHTML()}</aside>
+      <div class="center">
+        <div class="tabs">${ttTabs()}</div>
+        ${hintBarHTML(c)}
+        ${clashStripHTML()}
+        ${groupDrawerHTML(c)}
+        <div class="gridwrap">${weekHTML({ ghostFor: state.selected, loud: true, hour: 66 })}</div>
+      </div>
+      <aside class="examrail"><h3>${L().examRail}</h3>${examRailHTML()}</aside>
+    </div>
+  </div>`;
+}
+
+/* ============================ layout F — two panes ============================
+   The same as E with the side pane deleted: the week gets the width, and the exam period
+   returns to a horizontal strip under the grid. */
+function VariantF() {
+  const c = state.selected ? course(state.selected) : null;
+  const ex = examRows(), tight = ex.filter((r) => r.tight).length;
+  return `
+  <div class="app">
+    <header class="topbar">
+      <h1>${L().week}</h1><span class="crumb">${L().semester}</span>
+      <div class="spacer"></div><span class="crumb">${creditsLine()}</span>
+      ${langButton()}<button class="ghostbtn" data-toast="${L().registered}">${L().registered}</button>
+    </header>
+    <div class="F">
+      <aside class="tray">${trayWithDiffsHTML()}</aside>
+      <div class="center">
+        <div class="tabs">${ttTabs()}</div>
+        ${hintBarHTML(c)}
+        ${clashStripHTML()}
+        ${groupDrawerHTML(c)}
+        <div class="gridwrap">${weekHTML({ ghostFor: state.selected, loud: true, hour: 66 })}</div>
+        <div class="timeline">
+          <h3>${L().examTimeline} · ${ex.length} ${L().examsCount}${tight ? " · " + tight + " " + L().tightGaps : ""}</h3>
+          ${examTimelineHTML()}
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+/* ============================ layout D — A, refined ============================
+   The winner from round one (A), with the verdict folded in: more room, tiles whose
+   states are much further apart, a first-run hint with a legend, plus the Group drawer
+   and the exam timeline borrowed from C. Exams leave the side panel, so it holds only
+   Clashes and Plan Diffs. */
+function VariantD() {
+  const c = state.selected ? course(state.selected) : null;
+  const cl = clashes(), ex = examRows(), tight = ex.filter((r) => r.tight).length;
+
+  const tray = TRAY.map((entry) => {
+    const cc = course(entry.id), st = completeness(cc), have = picksOf()[cc.id] || {};
+    const needs = st.need.map((t) => `<span class="need${have[t] ? " on" : ""}" data-type="${t}">${typeName(t)}${have[t] ? " " + have[t] : " —"}</span>`).join("");
+    return `<button class="trayitem" data-select="${cc.id}" aria-selected="${state.selected === cc.id}">
+      <div class="row"><span class="name">${cname(cc)}</span></div>
+      <div class="row"><span class="meta">${cc.id} · ${cc.credits} ${L().credits}${cc.yearLong ? " · " + L().yearLong : ""}</span></div>
+      <div class="needs">${needs}</div>
+      ${entry.inPlan ? "" : `<div class="row"><span class="tag warn">${L().notInPlan}</span></div>`}
+    </button>`;
+  }).join("");
+
+  return `
+  <div class="app">
+    <header class="topbar">
+      <h1>${L().week}</h1>
+      <span class="crumb">${L().semester}</span>
+      <div class="spacer"></div>
+      <span class="crumb">${pickedCredits()} ${L().totalCredits} · ${ex.length} ${L().examsCount}${tight ? " · " + tight + " " + L().tightGaps : ""}</span>
+      ${langButton()}
+      <button class="ghostbtn" data-toast="${L().registered}">${L().registered}</button>
+    </header>
+    <div class="D">
+      <aside class="tray">
+        <h3>${L().tray}</h3>
+        ${tray}
+        ${planOnlyTrayHTML()}
+      </aside>
+      <div class="center">
+        <div class="tabs">${ttTabs()}</div>
+        ${hintBarHTML(c)}
+        <div class="gridwrap">${weekHTML({ ghostFor: state.selected, loud: true, hour: 66 })}</div>
+        ${groupDrawerHTML(c)}
+        <div class="timeline">
+          <h3>${L().examTimeline} · ${ex.length} ${L().examsCount}${tight ? " · " + tight + " " + L().tightGaps : ""}</h3>
+          ${examTimelineHTML()}
+        </div>
+      </div>
+      <aside class="checks">
+        <div class="panelsec"><h3>${L().clashes}${cl.length ? " · " + cl.length : ""}</h3>${clashesHTML()}</div>
+        <div class="panelsec"><h3>${L().diffs}</h3>${diffsHTML()}</div>
+      </aside>
+    </div>
+  </div>`;
+}
+
+/* ============================ switcher + wiring ============================ */
+
+const LAYOUTS = {
+  E: { name: { en: "Agreed layout", he: "הפריסה שנבחרה" }, render: VariantE },
+  F: { name: { en: "No side pane (not chosen)", he: "בלי חלק צדי (לא נבחר)" }, render: VariantF },
+  D: { name: { en: "Round 2 (superseded)", he: "סבב 2 (הוחלף)" }, render: VariantD },
+  A: { name: { en: "Round 1 (superseded)", he: "סבב 1 (הוחלף)" }, render: VariantA },
+  B: { name: { en: "Round 1, course list", he: "סבב 1, רשימת קורסים" }, render: VariantB },
+  C: { name: { en: "Round 1, full-bleed", he: "סבב 1, לוח מלא" }, render: VariantC },
+};
+const KEYS = Object.keys(LAYOUTS);
+
+function switcherHTML() {
+  const l = LAYOUTS[state.layout];
+  return `
+    <div class="switcher">
+      <button data-step="-1" aria-label="previous layout">←</button>
+      <span class="lbl">${state.layout} · ${l.name[state.lang]}</span>
+      <button data-step="1" aria-label="next layout">→</button>
+      <button data-themestep="1">${state.theme}</button>
+      <button data-statetoggle="1" aria-pressed="${state.showState}">state</button>
+    </div>
+    ${state.showState ? `<pre class="statepane">${stateDump()}</pre>` : ""}`;
+}
+
+function stateDump() {
+  const picks = Object.entries(picksOf()).map(([cid, b]) => `  ${cid}: ${Object.entries(b).map(([t, g]) => t + " " + g).join(", ")}`).join("\n");
+  const cl = clashes().map((c) => `  ${c.a.c.id}/${c.a.g.id} × ${c.kind === "blocked" ? c.blocked.label.en : c.b.c.id + "/" + c.b.g.id}`).join("\n");
+  const ex = examRows().map((r) => `  ${r.date} ${r.c.id} moed ${r.moed}${r.tight ? " (tight)" : ""}`).join("\n");
+  return `layout: ${state.layout}   lang: ${state.lang}   variant: ${state.tt}
+selected: ${state.selected || "—"}
+credits: ${pickedCredits()}
+picks:\n${picks || "  —"}
+clashes:\n${cl || "  —"}
+exams:\n${ex || "  —"}`;
+}
+
+function step(n) {
+  const i = (KEYS.indexOf(state.layout) + n + KEYS.length) % KEYS.length;
+  state.layout = KEYS[i];
+  const u = new URL(location.href);
+  u.searchParams.set("variant", state.layout);
+  history.replaceState(null, "", u);
+  render();
+}
+
+function toast(text) {
+  const el = document.createElement("div");
+  el.textContent = text + " — prototype, nothing saved";
+  el.style.cssText = "position:fixed;inset-block-end:60px;inset-inline-start:50%;transform:translateX(-50%);background:#101820;color:#fff;padding:8px 14px;border-radius:3px;z-index:60;font-size:13px";
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 1800);
+}
+
+const THEMES = ["system", "dark", "light"];
+
+function render() {
+  if (state.theme === "system") delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = state.theme;
+  document.documentElement.lang = state.lang;
+  document.documentElement.dir = state.lang === "he" ? "rtl" : "ltr";
+  document.getElementById("root").innerHTML = LAYOUTS[state.layout].render();
+  document.getElementById("switcher").innerHTML = switcherHTML();
+}
+
+document.addEventListener("click", (e) => {
+  const t = e.target.closest("[data-pick],[data-select],[data-tt],[data-lang],[data-step],[data-statetoggle],[data-themestep],[data-toast]");
+  if (!t) return;
+  if (t.dataset.pick) { const [cid, gid] = t.dataset.pick.split(":"); state.preview = null; togglePick(cid, gid); return; }
+  if (t.dataset.select) { state.selected = state.selected === t.dataset.select ? null : t.dataset.select; render(); return; }
+  if (t.dataset.tt) { state.tt = t.dataset.tt; render(); return; }
+  if (t.dataset.lang) { state.lang = state.lang === "en" ? "he" : "en"; render(); return; }
+  if (t.dataset.step) { step(Number(t.dataset.step)); return; }
+  if (t.dataset.themestep) { state.theme = THEMES[(THEMES.indexOf(state.theme) + 1) % THEMES.length]; render(); return; }
+  if (t.dataset.statetoggle) { state.showState = !state.showState; render(); return; }
+  if (t.dataset.toast) { toast(t.dataset.toast); }
+});
+
+document.addEventListener("mouseover", (e) => {
+  const t = e.target.closest("[data-hover]");
+  const next = t ? { courseId: t.dataset.hover.split(":")[0], groupId: t.dataset.hover.split(":")[1] } : null;
+  const same = (!next && !state.preview) ||
+    (next && state.preview && next.courseId === state.preview.courseId && next.groupId === state.preview.groupId);
+  if (same) return;
+  state.preview = next;
+  render();
+});
+
+document.addEventListener("keydown", (e) => {
+  if (/^(INPUT|TEXTAREA)$/.test(e.target.tagName) || e.target.isContentEditable) return;
+  if (e.key === "ArrowLeft") step(document.documentElement.dir === "rtl" ? 1 : -1);
+  if (e.key === "ArrowRight") step(document.documentElement.dir === "rtl" ? -1 : 1);
+});
+
+render();
+</script>
+</body>
+</html>

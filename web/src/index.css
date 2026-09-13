@@ -1,0 +1,28 @@
+@import "tailwindcss";
+
+/* Colors come from tokens that the dark scheme redefines; component styles hold no
+   raw color values. These are placeholders for the real palette. */
+@theme {
+  --color-surface: oklch(99% 0 0);
+  --color-on-surface: oklch(25% 0.01 260);
+  --color-accent: oklch(55% 0.16 260);
+}
+
+@layer base {
+  :root {
+    color-scheme: light dark;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    @theme {
+      --color-surface: oklch(21% 0.01 260);
+      --color-on-surface: oklch(95% 0.005 260);
+      --color-accent: oklch(72% 0.14 260);
+    }
+  }
+
+  body {
+    background-color: var(--color-surface);
+    color: var(--color-on-surface);
+  }
+}

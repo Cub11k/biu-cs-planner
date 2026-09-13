@@ -1,0 +1,13 @@
+# Project-local toolchain and caches (see CLAUDE.md, "Project-local everything")
+.tools/
+node_modules/
+dist/
+.cache/
+.npm/
+.playwright/
+
+# Claude Code session transcripts: contain personal data (email, home paths)
+.sessions/
+
+# Local scratch
+.scratch/
