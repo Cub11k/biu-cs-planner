@@ -16,7 +16,7 @@ function exceptProvenance(warnings: ReturnType<typeof importRawCrawl>["warnings"
 /** A timed lecture row of 89-110; each test overrides only the fields it is about. */
 function row(overrides: Partial<Parameters<typeof importRawCrawl>[0]["rows"] extends
   (infer R)[] | undefined ? R : never> = {}) {
-  return {
+  const merged = {
     code: "89110",
     name: "מבוא למדעי המחשב",
     group: "01",
@@ -25,9 +25,12 @@ function row(overrides: Partial<Parameters<typeof importRawCrawl>[0]["rows"] ext
     semester: "סמסטר א'",
     day: "ג'",
     hours: "15:00 - 18:00",
-    lid: "808655",
     ...overrides,
   };
+  // Shoham gives every row its own lid, and `code|group|kind|semester` is unique across all
+  // 510 rows of the crawl. A test that says nothing about lids still gets distinct ones, so
+  // that two ordinary rows never read as the crawl contradicting itself.
+  return { ...merged, lid: merged.lid ?? `${merged.code}-${merged.group}-${merged.semester}` };
 }
 
 it("imports a timed lecture row as one Offering with one Group and one Meeting", () => {
@@ -515,4 +518,206 @@ it("warns when a detail record does not say which Group it came from", () => {
     { kind: "detail-group-unknown", courseNumber: "89-110" },
   ]);
   expect(catalog.offerings[0]!.groups[0]!.weeklyHours).toBeUndefined();
+});
+
+// --- what the 2026-09-13 crawl added: per-Group records, English names, provenance ---
+
+it("takes a Group's weekly hours from the detail record keyed by its own lid", () => {
+  // 89-110 Fall as the crawl really sends it: the lecture reads 3.00 and the tirgul 2.00,
+  // and the department's yedion gives the Course lecture_h 3.0, exercise_h 2.0, total_h 5.0.
+  const { catalog, warnings } = importRawCrawl(
+    {
+      rows: [
+        row({ group: "01", kind: "הרצאה", lid: "808655" }),
+        row({ group: "03", kind: "תרגיל", hours: "18:00 - 20:00", lid: "822335" }),
+      ],
+      sections: {
+        "808655": { points: "3.00", code: "89110-01" },
+        "822335": { points: "2.00", code: "89110-03" },
+      },
+    },
+    { academicYear: YEAR_2027 },
+  );
+
+  const offering = catalog.offerings[0]!;
+  expect(exceptProvenance(warnings)).toEqual([]);
+  expect(offering.groups.map((g) => [g.number, g.weeklyHours])).toEqual([
+    ["01", 3],
+    ["03", 2],
+  ]);
+  expect(offering.credits).toEqual({ known: true, total: 5 });
+});
+
+it("lets a per-Group record's hours win over the figure a sampled record gave", () => {
+  // A course-wide record speaks for whichever Group Shoham happened to hand back; a
+  // per-Group record names its Group outright. Where they disagree, the one that knows wins.
+  const { catalog } = importRawCrawl(
+    {
+      rows: [row({ group: "01", lid: "808655" })],
+      details: { "89110|סמסטר א'": { points: "4.00", code: "89110-01", terms: [] } },
+      sections: { "808655": { points: "3.00", code: "89110-01" } },
+    },
+    { academicYear: YEAR_2027 },
+  );
+
+  expect(catalog.offerings[0]!.groups[0]!.weeklyHours).toBe(3);
+});
+
+it("warns about a detail record whose lid matches no Group, rather than dropping it", () => {
+  // A Group carries no lid of its own, so a part of records alone has nothing to match on.
+  // ADR-0010 allows such a part to arrive, and it must say it recorded nothing.
+  const first = importRawCrawl({ rows: [row({ lid: "808655" })] }, { academicYear: YEAR_2027 })
+    .catalog;
+
+  const { catalog, warnings } = importRawCrawl(
+    { sections: { "808655": { points: "3.00", code: "89110-01" } } },
+    { academicYear: YEAR_2027, into: first },
+  );
+
+  expect(exceptProvenance(warnings)).toEqual([{ kind: "detail-without-group", lid: "808655" }]);
+  expect(catalog.offerings[0]!.groups[0]!.weeklyHours).toBeUndefined();
+});
+
+it("takes an Offering's English name from its per-Group records, and leaves it out otherwise", () => {
+  // The results grid has no English column, so these records are the only source of one.
+  const { catalog } = importRawCrawl(
+    {
+      rows: [
+        row({ group: "01", kind: "הרצאה", lid: "808655" }),
+        row({ group: "03", kind: "תרגיל", lid: "822335" }),
+      ],
+      sections: {
+        "808655": { points: "3.00", code: "89110-01", name_en: "Intro to Computers" },
+        "822335": { points: "2.00", code: "89110-03", name_en: "Intro to Computers" },
+      },
+    },
+    { academicYear: YEAR_2027 },
+  );
+
+  const offering = catalog.offerings[0]!;
+  expect(offering.nameHebrew).toBe("מבוא למדעי המחשב");
+  expect(offering.nameEnglish).toBe("Intro to Computers");
+
+  // a crawl from before the field was captured leaves the Offering with its Hebrew name only
+  const older = importRawCrawl({ rows: [row()] }, { academicYear: YEAR_2027 }).catalog;
+  expect(older.offerings[0]!.nameEnglish).toBeUndefined();
+});
+
+it("treats a blank English name as absent rather than storing an empty one", () => {
+  const { catalog } = importRawCrawl(
+    {
+      rows: [row({ lid: "808655" })],
+      sections: { "808655": { points: "3.00", code: "89110-01", name_en: "  " } },
+    },
+    { academicYear: YEAR_2027 },
+  );
+
+  expect(catalog.offerings[0]!.nameEnglish).toBeUndefined();
+});
+
+/** The meta block of the 2026-09-13 crawl, with the counters that say nothing here left off. */
+const META = {
+  schema: 1,
+  script: "scripts/crawl/v1-crawl.js",
+  label: "2027-cs",
+  mode: "all",
+  scraped_at: "2026-09-13T13:53:03.017Z",
+  source: "https://courses.biu.ac.il/CoursesView.aspx",
+  complete: true,
+};
+
+it("reads a part's provenance from its meta block, and stops warning about it", () => {
+  const { catalog, warnings } = importRawCrawl(
+    { rows: [row()], meta: META },
+    { academicYear: YEAR_2027 },
+  );
+
+  expect(warnings).toEqual([]);
+  expect(catalog.sources).toEqual([
+    {
+      query: "2027-cs",
+      crawledAt: "2026-09-13T13:53:03.017Z",
+      crawlerVersion: "scripts/crawl/v1-crawl.js",
+      source: "https://courses.biu.ac.il/CoursesView.aspx",
+      complete: true,
+    },
+  ]);
+});
+
+it("records a crawl that stopped early as the partial part it is", () => {
+  const { catalog } = importRawCrawl(
+    { rows: [row()], meta: { ...META, complete: false } },
+    { academicYear: YEAR_2027 },
+  );
+
+  expect(catalog.sources[0]!.complete).toBe(false);
+});
+
+it("keeps whatever a thin meta block does say, without inventing the rest", () => {
+  const { catalog, warnings } = importRawCrawl(
+    { rows: [row()], meta: { scraped_at: "2026-09-13T13:53:03.017Z" } },
+    { academicYear: YEAR_2027 },
+  );
+
+  expect(warnings).toEqual([]);
+  expect(catalog.sources).toEqual([{ crawledAt: "2026-09-13T13:53:03.017Z" }]);
+});
+
+it("still warns when a meta block carries nothing worth recording", () => {
+  const { catalog, warnings } = importRawCrawl(
+    { rows: [row()], meta: { reported_total: 513 } },
+    { academicYear: YEAR_2027 },
+  );
+
+  expect(warnings).toEqual([{ kind: "provenance-missing" }]);
+  expect(catalog.sources).toEqual([]);
+});
+
+it("warns when two rows claim one lid, instead of letting one Group lose its record", () => {
+  // A row's identity is its lid. Two rows claiming one is the crawl contradicting itself,
+  // and the Group that loses the match would otherwise be left short of its hours silently.
+  const { catalog, warnings } = importRawCrawl(
+    {
+      rows: [
+        row({ group: "01", kind: "הרצאה", lid: "808655" }),
+        row({ group: "03", kind: "תרגיל", lid: "808655" }),
+      ],
+      sections: { "808655": { points: "2.00", code: "89110-03" } },
+    },
+    { academicYear: YEAR_2027 },
+  );
+
+  expect(exceptProvenance(warnings)).toEqual([{ kind: "lid-not-unique", lid: "808655" }]);
+  // the later row keeps the lid, so its Group is the one the record reaches
+  expect(catalog.offerings[0]!.groups.map((g) => [g.number, g.weeklyHours])).toEqual([
+    ["01", undefined],
+    ["03", 2],
+  ]);
+});
+
+it("settles credits at zero hours, rather than letting a later Group unsettle them", () => {
+  // 89-100 Fall as the crawl sends it: two הדרכה Groups, the first reading 0.00 and the
+  // second never read at all. Zero weekly hours is a real figure here, not a blank.
+  const { catalog } = importRawCrawl(
+    {
+      rows: [
+        row({ code: "89100", group: "03", kind: "הדרכה", day: "", hours: "", lid: "820000" }),
+        row({ code: "89100", group: "04", kind: "הדרכה", day: "", hours: "", lid: "820001" }),
+      ],
+      sections: { "820000": { points: "0.00", code: "89100-03" } },
+    },
+    { academicYear: YEAR_2027 },
+  );
+
+  expect(catalog.offerings[0]!.credits).toEqual({ known: true, total: 0 });
+});
+
+it("prefers the meta block over a provenance handed in already shaped", () => {
+  const { catalog } = importRawCrawl(
+    { rows: [row()], meta: META, provenance: { crawlerVersion: "2" } },
+    { academicYear: YEAR_2027 },
+  );
+
+  expect(catalog.sources).toHaveLength(1);
+  expect(catalog.sources[0]!.crawlerVersion).toBe("scripts/crawl/v1-crawl.js");
 });
