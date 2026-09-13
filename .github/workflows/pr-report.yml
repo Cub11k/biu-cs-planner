@@ -1,0 +1,64 @@
+# Builds the report a reviewer reads instead of the diff, and posts it on the PR.
+#
+# The report is derived: module graph and call graph from the source, coverage and
+# per-function hit counts from a real test run. Running it also runs the tests, so a
+# red job means the change does not pass, not that the report failed to build.
+name: PR report
+
+on:
+  pull_request:
+    paths:
+      - "**/*.ts"
+      - "**/*.tsx"
+      - "package.json"
+      - "vitest.config.ts"
+      - ".github/workflows/pr-report.yml"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: pr-report-${{ github.event.number }}
+  cancel-in-progress: true
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # Writes pr-report.md, and appends the same markdown to the job summary.
+      - name: Build the report
+        run: npm run report
+
+      - name: Post it on the pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.number }}
+        run: |
+          set -euo pipefail
+          marker='<!-- pr-report -->'
+          printf '%s\n\n' "$marker" > comment.md
+          cat pr-report.md >> comment.md
+
+          # One comment per PR, edited in place, so the thread is not buried in reruns.
+          id=$(gh api "repos/$REPO/issues/$NUMBER/comments" --paginate \
+                 --jq "map(select(.body | startswith(\"$marker\"))) | .[0].id // empty")
+
+          if [ -n "$id" ]; then
+            gh api --method PATCH "repos/$REPO/issues/comments/$id" -F body=@comment.md
+          else
+            gh api --method POST "repos/$REPO/issues/$NUMBER/comments" -F body=@comment.md
+          fi

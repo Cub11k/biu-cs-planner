@@ -41,10 +41,13 @@
     "test:watch": "vitest",
     "dev:server": "node --experimental-strip-types server/src/serve.ts",
     "dev:web": "npm run dev --workspace web",
-    "build": "npm run build --workspaces --if-present"
+    "build": "npm run build --workspaces --if-present",
+    "coverage": "vitest run --coverage",
+    "report": "npm run coverage --silent && node tools/pr-report/main.ts"
   },
   "devDependencies": {
     "@types/node": "^22",
+    "@vitest/coverage-v8": "^5.0.0",
     "typescript": "^5",
     "vitest": "^5.0.0"
   }
