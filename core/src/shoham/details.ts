@@ -1,4 +1,7 @@
-import { parseSemesters, type Semester } from "./dialect.ts";
+import { parseSemesters } from "./dialect.ts";
+import type { Exam, Semester } from "../catalog/schema.ts";
+
+export type { Exam };
 
 /**
  * The Course-wide facts: credits and Exams. They are keyed by course number and Semester,
@@ -11,8 +14,6 @@ export type RawDetail = {
   hours?: string;
   terms?: Array<{ type: string; date: string; hour: string }>;
 };
-
-export type Exam = { moed: string; date: string; time: string };
 
 export type DetailKey = { courseNumber: string; semesters: Semester[] };
 

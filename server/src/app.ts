@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { CURRENT_SCHEMA_VERSION } from "@biu-cs-planner/core";
+import { CURRENT_CATALOG_SCHEMA_VERSION } from "@biu-cs-planner/core";
 
 /**
  * The HTTP API exposes domain operations, never file paths.
@@ -9,7 +9,7 @@ import { CURRENT_SCHEMA_VERSION } from "@biu-cs-planner/core";
  * unauthenticated so a launcher can probe a running instance.
  */
 export const app = new Hono().get("/api/health", (c) =>
-  c.json({ ok: true, schemaVersion: CURRENT_SCHEMA_VERSION } as const),
+  c.json({ ok: true, catalogSchemaVersion: CURRENT_CATALOG_SCHEMA_VERSION } as const),
 );
 
 /** `web` imports this type only, never the runtime (docs/design.md, "Architecture"). */

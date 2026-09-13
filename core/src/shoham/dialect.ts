@@ -4,11 +4,9 @@
  * Public because two callers need it — a row's own Semester cell, and the Semester
  * buried inside a detail record's key. See docs/research/shoham-raw-shape.md.
  */
-export type Semester = "fall" | "spring" | "summer";
+import type { Day, Meeting, Semester } from "../catalog/schema.ts";
 
-export type Day = "sunday" | "monday" | "tuesday" | "wednesday" | "thursday" | "friday";
-
-export type Meeting = { semester: Semester; day: Day; start: string; end: string };
+export type { Day, Meeting, Semester };
 
 const SEMESTERS: ReadonlyArray<readonly [string, Semester]> = [
   ["סמסטר א'", "fall"],
@@ -25,39 +23,65 @@ const DAYS: Readonly<Record<string, Day>> = {
   "ו'": "friday",
 };
 
-/** A cell naming two Semesters is how Shoham shows a Year-long Course; there is no שנתי marker. */
+/**
+ * A cell naming two Semesters is how Shoham shows a Year-long Course; there is no שנתי marker.
+ *
+ * The labels are found wherever they sit rather than by splitting the cell, because the same
+ * Year-long cell reaches us both as two lines and as one run-together string, and both have to
+ * mean the same thing (ADR-0010). Order follows the cell, not the table above.
+ */
 export function parseSemesters(cell: string): Semester[] {
-  const found: Semester[] = [];
-  for (const line of cell.split("\n")) {
-    const match = SEMESTERS.find(([label]) => line.trim() === label);
-    if (match) found.push(match[1]);
+  const found: Array<{ at: number; semester: Semester }> = [];
+  for (const [label, semester] of SEMESTERS) {
+    for (let at = cell.indexOf(label); at !== -1; at = cell.indexOf(label, at + label.length)) {
+      found.push({ at, semester });
+    }
   }
-  return found;
+  return found.sort((a, b) => a.at - b.at).map((f) => f.semester);
 }
+
+/** Why a Group's schedule could not be read in full. Never blocks the import. */
+export type ScheduleWarning = "hours-do-not-divide" | "meeting-unreadable";
 
 export function parseGroupSchedule(row: {
   day: string;
   hours: string;
   semester: string;
-}): { semesters: Semester[]; meetings: Meeting[] } {
+}): { semesters: Semester[]; meetings: Meeting[]; warnings: ScheduleWarning[] } {
   const semesters = parseSemesters(row.semester);
-  if (!row.day.trim()) return { semesters, meetings: [] };
+  if (!row.day.trim()) return { semesters, meetings: [], warnings: [] };
 
   const days = row.day.split(",").map((d) => d.trim());
   const ranges = row.hours.split("\n").map((h) => h.trim()).filter(Boolean);
 
   // A Year-long Group repeats its weekly hours once per Semester, so the ranges arrive as
   // one block per Semester. Cut them back into blocks before pairing them with the days.
+  // The ranges should arrive as one block of `days.length` per Semester. Anything else is
+  // reported rather than guessed at; what can be read is still kept.
+  const divides = ranges.length === days.length * semesters.length;
+  const warnings: ScheduleWarning[] = divides ? [] : ["hours-do-not-divide"];
+
   const meetings: Meeting[] = [];
+  let unreadable = false;
   semesters.forEach((semester, blockIndex) => {
     const block = ranges.slice(blockIndex * days.length, (blockIndex + 1) * days.length);
     days.forEach((dayLabel, index) => {
       const day = DAYS[dayLabel];
       const range = block[index];
-      if (!day || !range) return;
+      if (!day || !range) {
+        unreadable = true;
+        return;
+      }
       const [start, end] = range.split("-").map((t) => t.trim());
-      if (start && end) meetings.push({ semester, day, start, end });
+      if (!start || !end) {
+        unreadable = true;
+        return;
+      }
+      meetings.push({ semester, day, start, end });
     });
   });
-  return { semesters, meetings };
+  // An uneven split already explains every Meeting missing from the short block, so it is
+  // not also reported one by one: a Warning nobody can act on is a Warning nobody reads.
+  if (unreadable && divides) warnings.push("meeting-unreadable");
+  return { semesters, meetings, warnings };
 }

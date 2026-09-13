@@ -1,5 +1,10 @@
-import { parseGroupSchedule, type Meeting, type Semester } from "./dialect.ts";
-import { parseCredits, parseDetailKey, parseExams, type Exam, type RawDetail } from "./details.ts";
+import { parseGroupSchedule, type Semester } from "./dialect.ts";
+import { parseCredits, parseDetailKey, parseExams, type RawDetail } from "./details.ts";
+import {
+  CURRENT_CATALOG_SCHEMA_VERSION,
+  type Catalog,
+  type Offering,
+} from "../catalog/schema.ts";
 
 export type RawCrawlRow = {
   code: string;
@@ -18,35 +23,19 @@ export type RawCrawl = {
   details?: Record<string, RawDetail>;
 };
 
-export type Group = {
-  number: string;
-  lessonType: string;
-  lecturers: string[];
-  meetings: Meeting[];
-};
-
-/**
- * Exams are `known: false` until a detail record read from the course's first lecture
- * Group says otherwise: an absent Exam list elsewhere means "not shown", not "none".
- */
-export type Exams = { known: boolean; sittings: Exam[] };
-
-export type Offering = {
-  courseNumber: string;
-  nameHebrew: string;
-  credits?: number;
-  semesters: Semester[];
-  groups: Group[];
-  exams: Exams;
-};
-
-export type Catalog = { academicYear: number; offerings: Offering[] };
-
-export type Warning = { message: string };
+export type Warning =
+  | { kind: "hours-do-not-divide" | "meeting-unreadable"; courseNumber: string; group: string }
+  | { kind: "unusual-course-number"; courseNumber: string };
 
 /** Shoham writes a course number without its hyphen: 89110 is 89-110, 891195 is 89-1195. */
 function courseNumberFrom(code: string): string {
   return `${code.slice(0, 2)}-${code.slice(2)}`;
+}
+
+/** Tails run to three or four digits. Anything else is reported and imported as it stands. */
+function hasUnusualTail(code: string): boolean {
+  const tail = code.slice(2);
+  return tail.length < 3 || tail.length > 4;
 }
 
 function lecturersFrom(teachers: string): string[] {
@@ -76,13 +65,23 @@ export function importRawCrawl(
     });
   }
 
+  const warnings: Warning[] = [];
+  const reportedNumbers = new Set<string>();
+
   for (const row of crawl.rows ?? []) {
-    const { semesters, meetings } = parseGroupSchedule(row);
+    const { semesters, meetings, warnings: scheduleWarnings } = parseGroupSchedule(row);
     const courseNumber = courseNumberFrom(row.code);
+    for (const kind of scheduleWarnings) {
+      warnings.push({ kind, courseNumber, group: row.group });
+    }
     const key = offeringKey(courseNumber, semesters);
 
     let offering = offerings.get(key);
     if (!offering) {
+      if (hasUnusualTail(row.code) && !reportedNumbers.has(courseNumber)) {
+        reportedNumbers.add(courseNumber);
+        warnings.push({ kind: "unusual-course-number", courseNumber });
+      }
       offering = {
         courseNumber,
         nameHebrew: row.name,
@@ -117,7 +116,11 @@ export function importRawCrawl(
   }
 
   return {
-    catalog: { academicYear: options.academicYear, offerings: [...offerings.values()] },
-    warnings: [],
+    catalog: {
+      schemaVersion: CURRENT_CATALOG_SCHEMA_VERSION,
+      academicYear: options.academicYear,
+      offerings: [...offerings.values()],
+    },
+    warnings,
   };
 }

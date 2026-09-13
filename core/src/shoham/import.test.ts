@@ -175,3 +175,98 @@ it("merges a details-only part into a Catalog already imported", () => {
   // the part that was imported first is left alone
   expect(first.offerings[0]!.exams).toEqual({ known: false, sittings: [] });
 });
+
+it("warns when a Year-long Group's hours do not divide evenly across its Semesters", () => {
+  // Two Semesters, three days, but only one block of ranges: the Spring half is missing.
+  const { catalog, warnings } = importRawCrawl(
+    {
+      rows: [
+        row({
+          code: "89099",
+          group: "01",
+          semester: "סמסטר א'\nסמסטר ב'",
+          day: "א',ה',ו'",
+          hours: "09:00 - 11:00\n09:00 - 11:00\n08:00 - 13:00",
+        }),
+      ],
+    },
+    { academicYear: YEAR_2027 },
+  );
+
+  expect(warnings).toEqual([
+    { kind: "hours-do-not-divide", courseNumber: "89-099", group: "01" },
+  ]);
+  // what could be read is kept; the edit is never blocked
+  expect(catalog.offerings[0]!.groups[0]!.meetings).toEqual([
+    { semester: "fall", day: "sunday", start: "09:00", end: "11:00" },
+    { semester: "fall", day: "thursday", start: "09:00", end: "11:00" },
+    { semester: "fall", day: "friday", start: "08:00", end: "13:00" },
+  ]);
+});
+
+it("warns on a Meeting it cannot read, and keeps the rest of the Group", () => {
+  const { catalog, warnings } = importRawCrawl(
+    { rows: [row({ day: "ג',ז'", hours: "15:00 - 18:00\n10:00 - 12:00" })] },
+    { academicYear: YEAR_2027 },
+  );
+
+  expect(warnings).toEqual([
+    { kind: "meeting-unreadable", courseNumber: "89-110", group: "01" },
+  ]);
+  expect(catalog.offerings[0]!.groups[0]!.meetings).toEqual([
+    { semester: "fall", day: "tuesday", start: "15:00", end: "18:00" },
+  ]);
+});
+
+it("imports an Untimed Group without complaint", () => {
+  const { catalog, warnings } = importRawCrawl(
+    { rows: [row({ group: "05", kind: "פרויקט", day: "", hours: "" })] },
+    { academicYear: YEAR_2027 },
+  );
+
+  expect(warnings).toEqual([]);
+  expect(catalog.offerings[0]!.groups[0]!.meetings).toEqual([]);
+});
+
+it("keeps Exams once known, even if a later part carries none", () => {
+  const withExams = importRawCrawl(
+    { rows: [row()], details: { "89110|סמסטר א'": DETAIL_89110_FALL } },
+    { academicYear: YEAR_2027 },
+  ).catalog;
+
+  const { catalog } = importRawCrawl(
+    { details: { "89110|סמסטר א'": { points: "4.00", code: "89110-07", terms: [] } } },
+    { academicYear: YEAR_2027, into: withExams },
+  );
+
+  expect(catalog.offerings[0]!.exams.sittings).toHaveLength(2);
+});
+
+it("matches a Year-long detail key written without a separator", () => {
+  const yearLong = importRawCrawl(
+    { rows: [row({ code: "89385", semester: "סמסטר א'\nסמסטר ב'", day: "", hours: "" })] },
+    { academicYear: YEAR_2027 },
+  ).catalog;
+  expect(yearLong.offerings[0]!.semesters).toEqual(["fall", "spring"]);
+
+  const { catalog } = importRawCrawl(
+    { details: { "89385|סמסטר א'סמסטר ב'": DETAIL_89110_FALL } },
+    { academicYear: YEAR_2027, into: yearLong },
+  );
+
+  expect(catalog.offerings[0]!.exams.known).toBe(true);
+});
+
+it("warns about a course number with an unusual tail, and imports it as its own Course", () => {
+  // 8912000 is מבני נתונים alongside the ordinary 891200. The Importer stays faithful; an
+  // Equivalence in a Requirements File is how the two are declared to be one Course.
+  const { catalog, warnings } = importRawCrawl(
+    { rows: [row({ code: "8912000" }), row({ code: "8912000", group: "02", kind: "תרגיל" })] },
+    { academicYear: YEAR_2027 },
+  );
+
+  expect(warnings).toEqual([
+    { kind: "unusual-course-number", courseNumber: "89-12000" },
+  ]);
+  expect(catalog.offerings[0]!.courseNumber).toBe("89-12000");
+});
