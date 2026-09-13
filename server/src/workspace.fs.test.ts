@@ -111,3 +111,43 @@ it("hands back what a corrupt file actually contains, rather than inventing a va
 
   expect(value).toBe("{ this is not json");
 });
+
+it("refuses to read a Catalog file symlinked out of the Workspace", async () => {
+  const outside = await mkdtemp(join(tmpdir(), "biu-outside-"));
+  try {
+    await writeFile(join(outside, "secret.json"), JSON.stringify({ secret: "leaked" }));
+    const workspace = fileSystemWorkspace(root);
+    await workspace.create();
+    // the folder is genuinely inside; the file within it points out
+    await symlink(join(outside, "secret.json"), join(root, "catalogs", "2027.json"));
+
+    await expect(
+      workspace.read({ kind: "catalog", academicYear: 2027 }),
+    ).rejects.toThrow(/outside the Workspace/i);
+  } finally {
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
+it("does not call a Workspace ready when its folders point outside", async () => {
+  const outside = await mkdtemp(join(tmpdir(), "biu-outside-"));
+  try {
+    await mkdir(join(root, "requirements"));
+    await mkdir(join(root, ".backups"));
+    await writeFile(join(outside, "2030.json"), JSON.stringify({ schemaVersion: 1 }));
+    await symlink(outside, join(root, "catalogs"), "dir");
+    const workspace = fileSystemWorkspace(root);
+
+    expect(await workspace.status()).toEqual({ ready: false, missing: ["catalogs"] });
+    expect(await workspace.list("catalog")).toEqual([]);
+  } finally {
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
+it("reads nothing, rather than throwing, before the layout exists", async () => {
+  const workspace = fileSystemWorkspace(root);
+
+  // the port promises absence is not an error, and a query must not become a 500
+  await expect(workspace.read({ kind: "catalog", academicYear: 2027 })).resolves.toBeUndefined();
+});

@@ -140,3 +140,16 @@ it("answers a health check without a Workspace, so a launcher can probe it", asy
   expect(response.status).toBe(200);
   await expect(response.json()).resolves.toEqual({ ok: true, catalogSchemaVersion: 1 });
 });
+
+it("says a folder with no Workspace has no Catalog, rather than failing", async () => {
+  const response = await api.request("/api/catalog/2027/offerings?semester=fall");
+
+  expect(response.status).toBe(404);
+  await expect(response.json()).resolves.toEqual({
+    warnings: [{ kind: "no-catalog-for-year", academicYear: 2027 }],
+  });
+});
+
+it("404s an unknown route", async () => {
+  expect((await api.request("/api/nope")).status).toBe(404);
+});
