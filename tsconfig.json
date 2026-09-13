@@ -1,7 +1,15 @@
 {
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "types": ["node"]
+    "types": [
+      "node"
+    ]
   },
-  "include": ["core/src", "app/src", "server/src", "vitest.config.ts"]
+  "include": [
+    "core/src",
+    "app/src",
+    "server/src",
+    "tools",
+    "vitest.config.ts"
+  ]
 }
