@@ -42,3 +42,10 @@ The five canonical triage roles, each label string equal to its name. See `docs/
 ### Domain docs
 
 Single-context: `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
+### Worktrees
+
+Any skill that implements something runs in a worktree made for it and removed when the work
+lands — never in the main checkout, which stays on `dev`. Check `git worktree list` and
+`git status` before starting: changes you did not make belong to another session. See
+`docs/agents/worktrees.md`.
