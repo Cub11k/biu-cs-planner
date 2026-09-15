@@ -20,6 +20,26 @@ Semesters, and build the weekly Timetable for an Academic Year.
 
 The vocabulary above is precise, and [`CONTEXT.md`](CONTEXT.md) defines every term in it.
 
+## Running it
+
+Once there is a release, one command starts it:
+
+```sh
+npx biu-cs-planner            # in the folder you keep your planning files in
+```
+
+It serves `http://localhost:8900`, prints that URL with your launch token in the fragment,
+and opens a browser.
+
+| Option | Does |
+| --- | --- |
+| `--workspace <path>` | the Workspace folder to use (default: the current directory) |
+| `--no-open` | print the URL but open no browser |
+| `--host <address>` | the address to bind; loopback only, because serving further out needs a password and there is none yet ([ADR-0004](docs/adr/0004-localhost-auth-bearer-token.md)) |
+| `--help` | the same list |
+
+If port 8900 is taken it uses the next free one and says so. Stop it with Ctrl-C.
+
 ## Development
 
 Node **22 or newer** (developed on Node 24; `@types/node` tracks the 22 floor on purpose).
@@ -44,6 +64,13 @@ Four npm workspaces, and the boundary between them is the point:
 
 `web` never imports `core` or `app`; it knows the API contract and nothing else. The API exposes
 domain operations, never file paths.
+
+`npm run build` bundles the server into `dist/cli.js` with esbuild, builds the UI with Vite
+and copies it next to the bundle as `dist/ui/`. Those two are the whole published package:
+it declares no runtime dependencies, so an install pulls one package and nothing else.
+
+A release is a tag on `master`, which is what triggers CI to test, build, check the packed
+tarball and publish it to npm with provenance. Nothing is published from a laptop.
 
 ## No course data here
 
