@@ -47,6 +47,10 @@ jobs:
       GITHUB_TOKEN: ${{ github.token }}
       PR_NUMBER: ${{ github.event.number }}
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      # The Standards pass reads the guardrails at the base commit, not out of the
+      # checkout: a change that relaxed a rule and then broke it would otherwise be
+      # judged against its own edited copy of that rule.
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
     steps:
       # Checkout and Node are what it takes to run a TypeScript file at all; neither
       # produces a review, so the banner below still lands before any review exists.
