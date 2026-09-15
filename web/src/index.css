@@ -1,28 +1,184 @@
 @import "tailwindcss";
 
-/* Colors come from tokens that the dark scheme redefines; component styles hold no
-   raw color values. These are placeholders for the real palette. */
+/**
+ * The palette lives here and nowhere else. Every colour is a token, the dark scheme
+ * redefines the tokens rather than filtering the page, and it follows the operating
+ * system (docs/design.md, "Light and dark"). No component holds a raw colour value.
+ *
+ * The hues are the ones the prototype settled on: a light desk with paper on it, and in
+ * the dark a dark desk with a raised surface, each Lesson Type lifted until it reads on
+ * it. Refining the dark Lesson Type hues, which read as too neon, is deferred by
+ * docs/design.md and is deliberately not attempted here.
+ */
+:root {
+  --desk: #eef1f4;
+  --paper: #ffffff;
+  --ink: #16324f;
+  --ink-soft: #3d5a7a;
+  --pencil: #8b97a6;
+  --rule: #cfd8e3;
+  --rule-soft: #e3e9f0;
+  --hint: #f6fafc;
+
+  --lesson-lecture: #16324f;
+  --lesson-tirgul: #0f6e63;
+  --lesson-lab: #8a5a00;
+  --lesson-other: #53478f;
+
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --desk: #0e141b;
+    --paper: #161e27;
+    --ink: #dbe6f2;
+    --ink-soft: #a3b4c7;
+    --pencil: #6e8093;
+    --rule: #2c3744;
+    --rule-soft: #212b36;
+    --hint: #141d26;
+
+    --lesson-lecture: #7fa8d8;
+    --lesson-tirgul: #46b3a2;
+    --lesson-lab: #d3a45c;
+    --lesson-other: #a093e0;
+  }
+}
+
+/* The Tailwind utilities point at the tokens above, so `bg-paper` follows the scheme. */
 @theme {
-  --color-surface: oklch(99% 0 0);
-  --color-on-surface: oklch(25% 0.01 260);
-  --color-accent: oklch(55% 0.16 260);
+  --color-desk: var(--desk);
+  --color-paper: var(--paper);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-pencil: var(--pencil);
+  --color-rule: var(--rule);
+  --color-rule-soft: var(--rule-soft);
+  --color-hint: var(--hint);
 }
 
 @layer base {
-  :root {
-    color-scheme: light dark;
-  }
-
-  @media (prefers-color-scheme: dark) {
-    @theme {
-      --color-surface: oklch(21% 0.01 260);
-      --color-on-surface: oklch(95% 0.005 260);
-      --color-accent: oklch(72% 0.14 260);
-    }
-  }
-
   body {
-    background-color: var(--color-surface);
-    color: var(--color-on-surface);
+    background-color: var(--desk);
+    color: var(--ink);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans Hebrew", sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--ink);
+    outline-offset: 2px;
+  }
+}
+
+/**
+ * The week grid. Written as component styles rather than utilities because hour lines are
+ * a gradient and a tile is positioned at its own minute — neither is a class you can
+ * spell. Everything here is direction-neutral: `inset-inline`, `border-inline-start` and
+ * `text-align: start`, so Hebrew flips the grid without a second stylesheet.
+ */
+@layer components {
+  .week {
+    display: grid;
+    background: var(--paper);
+    --half: calc(var(--hour) / 2);
+  }
+
+  .week-head {
+    padding: 0.5rem 0.625rem;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--ink);
+    text-align: start;
+    border-block-end: 1px solid var(--rule);
+    border-inline-start: 1px solid var(--rule-soft);
+    position: sticky;
+    inset-block-start: 0;
+    background: var(--paper);
+    z-index: 2;
+  }
+
+  .week-corner {
+    border-block-end: 1px solid var(--rule);
+    position: sticky;
+    inset-block-start: 0;
+    background: var(--paper);
+    z-index: 2;
+  }
+
+  .hour-gutter {
+    position: relative;
+  }
+
+  .hour-label {
+    position: absolute;
+    inset-inline: 0;
+    text-align: end;
+    padding-inline-end: 0.375rem;
+    font-size: 0.6875rem;
+    color: var(--pencil);
+    transform: translateY(-0.6em);
+  }
+
+  /* Hour lines, with fainter half-hour lines between them. */
+  .day-column {
+    position: relative;
+    border-inline-start: 1px solid var(--rule-soft);
+    background-image:
+      repeating-linear-gradient(to bottom, var(--rule) 0 1px, transparent 1px var(--hour)),
+      repeating-linear-gradient(to bottom, var(--rule-soft) 0 1px, transparent 1px var(--half));
+  }
+
+  /**
+   * Pencil, and only pencil: a dashed outline on the surface colour, an option nobody has
+   * taken. There is no Variant and no Pick yet, so there is no ink, no red pen and no
+   * hatching in this stylesheet at all (docs/design.md, "Visual language").
+   */
+  .tile {
+    position: absolute;
+    border: 2px dashed color-mix(in srgb, var(--lesson) 55%, var(--paper));
+    border-radius: 4px;
+    background: var(--paper);
+    color: var(--ink-soft);
+    padding: 0.25rem 0.4375rem;
+    font-size: 0.8125rem;
+    line-height: 1.25;
+    overflow: hidden;
+    text-align: start;
+    transition: border-color 0.12s ease;
+  }
+
+  .tile[data-lesson-slot="lecture"] { --lesson: var(--lesson-lecture); }
+  .tile[data-lesson-slot="tirgul"] { --lesson: var(--lesson-tirgul); }
+  .tile[data-lesson-slot="lab"] { --lesson: var(--lesson-lab); }
+  .tile[data-lesson-slot="other"] { --lesson: var(--lesson-other); }
+
+  /* Every Meeting of one Group lights up together, however many it has. */
+  .tile.is-highlighted {
+    border-color: var(--lesson);
+    color: var(--ink);
+  }
+
+  .tile-name {
+    font-weight: 620;
+    color: var(--ink);
+    line-height: 1.2;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: var(--name-lines);
+    line-clamp: var(--name-lines);
+  }
+
+  .tile-detail {
+    font-size: 0.6875rem;
+    color: var(--ink-soft);
+  }
+
+  /* An Untimed Group sits here and never on the grid. */
+  .untimed .tile {
+    position: static;
+    min-width: 11rem;
   }
 }
