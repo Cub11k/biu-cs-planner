@@ -11,7 +11,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it } from "vitest";
 import type { Group, Offering } from "./catalog.ts";
-import { TimetableScreen } from "./TimetableScreen.tsx";
+import { CatalogNotice, TimetableScreen } from "./TimetableScreen.tsx";
 import { WeekGrid } from "./WeekGrid.tsx";
 
 const group = (
@@ -124,4 +124,31 @@ it("names the Semester and the Academic Year it opened on", () => {
 
   expect(markup).toContain("Semester A");
   expect(markup).toContain("2026-27");
+});
+
+it("tells the student what is actually wrong when no Catalog is served", () => {
+  // a Catalog written by a newer version is there; "import a crawl" would not help
+  const markup = renderToStaticMarkup(
+    createElement(CatalogNotice, {
+      language: "en",
+      academicYear: 2027,
+      warnings: [{ kind: "schema-version-too-new", found: 2 }],
+    }),
+  );
+
+  expect(markup).toContain("could not be read");
+  expect(markup).toContain("newer version");
+  expect(markup).not.toContain("Import a crawl");
+});
+
+it("offers the import only when the year simply has no Catalog", () => {
+  const markup = renderToStaticMarkup(
+    createElement(CatalogNotice, {
+      language: "en",
+      academicYear: 2027,
+      warnings: [{ kind: "no-catalog-for-year", academicYear: 2027 }],
+    }),
+  );
+
+  expect(markup).toContain("Import a crawl");
 });

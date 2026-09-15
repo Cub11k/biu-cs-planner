@@ -5,7 +5,7 @@
  * It sits beside the components rather than inside one so that the request, and every
  * answer the API can give, can be tested against a fake fetch.
  */
-import type { InferRequestType } from "hono/client";
+import type { InferRequestType, InferResponseType } from "hono/client";
 import type { createApiClient } from "../api.ts";
 import type { Offering, Semester } from "./catalog.ts";
 
@@ -13,10 +13,24 @@ export type ApiClient = ReturnType<typeof createApiClient>;
 
 type OfferingsRoute = ApiClient["api"]["catalog"][":year"]["offerings"]["$get"];
 
+type Answer = InferResponseType<OfferingsRoute>;
+
+/** Why no Catalog was served. The API sends these with every answer that has none. */
+export type CatalogWarning = Extract<Answer, { warnings: unknown }>["warnings"][number];
+
+/** The guard answers before the route does, so its status is not one of the route's. */
+const UNAUTHORIZED = 401;
+
 export type OfferingsResult =
   | { kind: "served"; offerings: Offering[] }
-  /** No Catalog for this Academic Year yet, or the Workspace would not read the file. */
-  | { kind: "missing" }
+  /**
+   * The API would not serve a Catalog and said why: no Catalog for the year, a file it
+   * could not read, a schema version it does not speak, a Workspace that refused it.
+   * The Warnings travel with it, because a refusal nobody can act on is not a refusal.
+   */
+  | { kind: "refused"; warnings: CatalogWarning[] }
+  /** This page has no launch token, so the server will not talk to it (ADR-0004). */
+  | { kind: "unauthorized" }
   /** The request never arrived: the server is not running, or not running here. */
   | { kind: "unreachable" };
 
@@ -39,9 +53,15 @@ export async function fetchOfferings(
     return { kind: "unreachable" };
   }
 
-  // Every other answer carries Warnings and no Catalog, which this screen has nowhere to
-  // show yet; it says only that there is nothing to lay out.
-  if (!answer.ok) return { kind: "missing" };
+  if (!answer.ok) {
+    // `status` is widened deliberately: the launch token guard rejects the request before
+    // the route runs, so 401 is not among the answers the contract knows about.
+    const status: number = answer.status;
+    if (status === UNAUTHORIZED) return { kind: "unauthorized" };
+
+    const body = await answer.json();
+    return { kind: "refused", warnings: "warnings" in body ? body.warnings : [] };
+  }
 
   const body = await answer.json();
   return { kind: "served", offerings: body.offerings };
