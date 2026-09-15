@@ -61,7 +61,10 @@ it("calls a same-day pair a Clash and not also a spacing Warning", () => {
   expect(result.warnings.map((w) => w.kind)).toEqual(["exam-clash"]);
 });
 
-it("warns when two Exams are fewer than the default three days apart", () => {
+it("warns about each Exam fewer than the default three days from another", () => {
+  const first = { courseNumber: "89-110", moed: "מועד א", date: "2027-01-21", time: "09:00" };
+  const second = { courseNumber: "89-112", moed: "מועד א", date: "2027-01-23", time: "09:00" };
+
   const result = checkExams([
     offering("89-110", [{ moed: "מועד א", date: "2027-01-21" }]),
     offering("89-112", [{ moed: "מועד א", date: "2027-01-23" }]),
@@ -69,14 +72,8 @@ it("warns when two Exams are fewer than the default three days apart", () => {
 
   expect(DEFAULT_EXAM_SPACING_DAYS).toBe(3);
   expect(result.warnings).toEqual([
-    {
-      kind: "exam-spacing",
-      days: 2,
-      sittings: [
-        { courseNumber: "89-110", moed: "מועד א", date: "2027-01-21", time: "09:00" },
-        { courseNumber: "89-112", moed: "מועד א", date: "2027-01-23", time: "09:00" },
-      ],
-    },
+    { kind: "exam-spacing", sitting: first, nearbyCount: 1, nearby: [second] },
+    { kind: "exam-spacing", sitting: second, nearbyCount: 1, nearby: [first] },
   ]);
 });
 
@@ -97,18 +94,45 @@ it("takes the threshold as a parameter, so raising it warns about a wider gap", 
 
   expect(checkExams(offerings).warnings).toEqual([]);
   expect(checkExams(offerings, { spacingDays: 5 }).warnings).toMatchObject([
-    { kind: "exam-spacing", days: 4 },
+    { kind: "exam-spacing", sitting: { courseNumber: "89-110" }, nearbyCount: 1 },
+    { kind: "exam-spacing", sitting: { courseNumber: "89-112" }, nearbyCount: 1 },
   ]);
 });
 
-it("reports every tight pair, not only neighbouring ones", () => {
+it("tells an Exam how many others crowd it, not which pairs are tight", () => {
+  // Every one of the three is within three days of both the others, which as a list of
+  // pairs would be three Warnings saying the same thing about the same week.
   const result = checkExams([
     offering("89-110", [{ moed: "מועד א", date: "2027-01-21" }]),
     offering("89-112", [{ moed: "מועד א", date: "2027-01-22" }]),
     offering("89-114", [{ moed: "מועד א", date: "2027-01-23" }]),
   ]);
 
-  expect(result.warnings.map((w) => w.kind === "exam-spacing" && w.days)).toEqual([1, 2, 1]);
+  expect(result.warnings).toMatchObject([
+    { kind: "exam-spacing", sitting: { courseNumber: "89-110" }, nearbyCount: 2 },
+    { kind: "exam-spacing", sitting: { courseNumber: "89-112" }, nearbyCount: 2 },
+    { kind: "exam-spacing", sitting: { courseNumber: "89-114" }, nearbyCount: 2 },
+  ]);
+});
+
+it("names the Exams crowding one, in rail order, and counts only those in range", () => {
+  // The middle sitting has one on either side; the outer two are four days apart and so
+  // are near the middle one only. This is the case the per-Exam count exists for.
+  const result = checkExams([
+    offering("89-110", [{ moed: "מועד א", date: "2027-01-21" }]),
+    offering("89-112", [{ moed: "מועד א", date: "2027-01-23" }]),
+    offering("89-114", [{ moed: "מועד א", date: "2027-01-25" }]),
+  ]);
+
+  expect(result.warnings).toMatchObject([
+    { sitting: { courseNumber: "89-110" }, nearbyCount: 1, nearby: [{ courseNumber: "89-112" }] },
+    {
+      sitting: { courseNumber: "89-112" },
+      nearbyCount: 2,
+      nearby: [{ courseNumber: "89-110" }, { courseNumber: "89-114" }],
+    },
+    { sitting: { courseNumber: "89-114" }, nearbyCount: 1, nearby: [{ courseNumber: "89-112" }] },
+  ]);
 });
 
 it("returns the sittings in date order, each with the day gap to the previous one", () => {
@@ -179,7 +203,10 @@ it("counts the same gap from the far side of the date line", () => {
   ]);
 
   expect(result.sittings[1]?.daysSincePrevious).toBe(1);
-  expect(result.warnings).toMatchObject([{ kind: "exam-spacing", days: 1 }]);
+  expect(result.warnings).toMatchObject([
+    { kind: "exam-spacing", nearbyCount: 1 },
+    { kind: "exam-spacing", nearbyCount: 1 },
+  ]);
 });
 
 it("counts a Course whose Exams are unknown and takes no Warning from it", () => {
@@ -273,16 +300,19 @@ it("treats an unfamiliar Moed label exactly like a familiar one", () => {
   expect(result.warnings).toMatchObject([{ kind: "exam-clash", date: "2027-01-21" }]);
 });
 
-it("reports a Clash and a spacing Warning when a third Exam sits next to a pair", () => {
+it("puts the Clashes first, then the crowded Exams in rail order", () => {
   const result = checkExams([
     offering("89-110", [{ moed: "מועד א", date: "2027-01-21" }]),
     offering("89-112", [{ moed: "מועד ב", date: "2027-01-21" }]),
     offering("89-114", [{ moed: "מועד א", date: "2027-01-22" }]),
   ]);
 
-  expect(result.warnings.map((w) => w.kind)).toEqual([
-    "exam-clash",
-    "exam-spacing",
-    "exam-spacing",
+  // The same-day pair Clashes and does not count towards either one's crowding, so each of
+  // them is near the third Exam alone, while the third is near both of them.
+  expect(result.warnings).toMatchObject([
+    { kind: "exam-clash", date: "2027-01-21" },
+    { kind: "exam-spacing", sitting: { courseNumber: "89-110" }, nearbyCount: 1 },
+    { kind: "exam-spacing", sitting: { courseNumber: "89-112" }, nearbyCount: 1 },
+    { kind: "exam-spacing", sitting: { courseNumber: "89-114" }, nearbyCount: 2 },
   ]);
 });

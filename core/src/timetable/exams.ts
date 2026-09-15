@@ -37,7 +37,12 @@ export interface RailSitting extends ExamSitting {
 
 export type ExamWarning =
   | { kind: "exam-clash"; date: string; sittings: [ExamSitting, ExamSitting] }
-  | { kind: "exam-spacing"; days: number; sittings: [ExamSitting, ExamSitting] };
+  /**
+   * One sitting with too little room around it. A Warning per sitting rather than per pair:
+   * three Exams on three consecutive days is one crowded stretch, and what the student can
+   * act on is "this one has two others close to it", which is also what the rail draws.
+   */
+  | { kind: "exam-spacing"; sitting: ExamSitting; nearbyCount: number; nearby: ExamSitting[] };
 
 export interface ExamCheck {
   /** Every sitting in date order, so the rail can space its marks without re-deriving them. */
@@ -132,12 +137,17 @@ function countCoursesWithUnknownExams(offerings: readonly ExamSource[]): number 
  * rail alongside them.
  *
  * A Clash is any two Exams on the same calendar day, whichever Moed each belongs to: the
- * student decides which sitting they intend to attend, and the app does not guess. A pair
- * fewer than `spacingDays` days apart is a spacing Warning instead — one problem, one
- * Warning, so a same-day pair is never both. Every pair is judged, not only neighbours,
- * because three Exams on three consecutive days is three tight pairs.
+ * student decides which sitting they intend to attend, and the app does not guess. Clashes
+ * come one per pair, because a pair is what the student has to choose between.
  *
- * Both are Warnings in the glossary's sense: this reports, and rejects nothing.
+ * Spacing is counted the other way round: one Warning per sitting, naming how many other
+ * sittings fall within `spacingDays` of it and which they are. A pair list grows as the
+ * square of a crowded stretch and says the same thing three times over; a count per Exam says
+ * the thing the student can act on. Same-day sittings are Clashes and are left out of the
+ * count, so one problem still raises one Warning.
+ *
+ * The Clashes come first, then the spacing Warnings in rail order. Both are Warnings in the
+ * glossary's sense: this reports, and rejects nothing.
  */
 export function checkExams(
   offerings: readonly ExamSource[],
@@ -147,18 +157,29 @@ export function checkExams(
   const sittings = distinctSittings(offerings);
   const days = sittings.map((sitting) => utcDayNumber(sitting.date));
 
-  const warnings: ExamWarning[] = [];
+  const clashes: ExamWarning[] = [];
+  /** Per sitting, the other sittings crowding it, filled in rail order. */
+  const nearby: ExamSitting[][] = sittings.map(() => []);
+
   for (let first = 0; first < sittings.length; first++) {
     for (let second = first + 1; second < sittings.length; second++) {
       const a = sittings[first]!;
       const b = sittings[second]!;
       const gap = days[second]! - days[first]!;
       if (gap === 0) {
-        warnings.push({ kind: "exam-clash", date: a.date, sittings: [a, b] });
+        clashes.push({ kind: "exam-clash", date: a.date, sittings: [a, b] });
       } else if (gap < spacingDays) {
-        warnings.push({ kind: "exam-spacing", days: gap, sittings: [a, b] });
+        nearby[first]!.push(b);
+        nearby[second]!.push(a);
       }
     }
+  }
+
+  const spacing: ExamWarning[] = [];
+  for (const [index, sitting] of sittings.entries()) {
+    const near = nearby[index]!;
+    if (near.length === 0) continue;
+    spacing.push({ kind: "exam-spacing", sitting, nearbyCount: near.length, nearby: near });
   }
 
   return {
@@ -166,7 +187,7 @@ export function checkExams(
       ...sitting,
       daysSincePrevious: index === 0 ? undefined : days[index]! - days[index - 1]!,
     })),
-    warnings,
+    warnings: [...clashes, ...spacing],
     coursesWithUnknownExams: countCoursesWithUnknownExams(offerings),
   };
 }
