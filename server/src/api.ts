@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
+import { onlyTheLauncher } from "./guard.ts";
 import {
   createWorkspace,
   getOffering,
@@ -21,11 +22,22 @@ import { z } from "zod";
  * and never a file path: where a Catalog lives is the Workspace adapter's business, and
  * nothing in a request or a response names it (ADR-0002, docs/design.md).
  *
- * Not here yet, and deliberately: the bearer token, the Host and Origin checks, and the
- * JSON-only rule for writes. They are ADR-0004's, and issue #3 builds them. Until then
- * these routes are reachable by anything that can reach the port.
+ * Every route sits behind `onlyTheLauncher`, so a route added here is protected by being
+ * added here — the launch token, the Host and Origin checks and the JSON-only rule for
+ * writes are not something each new endpoint has to remember (ADR-0004).
  */
-export type ApiDependencies = { workspace: Workspace };
+export type ApiDependencies = {
+  workspace: Workspace;
+  /** The launch token this server was started with; see ./token.ts. */
+  token: string;
+};
+
+/**
+ * The one route that answers without a token: a launcher needs to tell a server that is
+ * already running from a port that something else holds, before it has a token to offer.
+ * It says only that the app is here and which schema version it speaks.
+ */
+const HEALTH_PATH = "/api/health";
 
 /** A crawl of a whole department is large; a request far past that is not one. */
 const MAX_BODY_BYTES = 16 * 1024 * 1024;
@@ -61,9 +73,12 @@ function hasDangerousKey(value: unknown, depth = 0): boolean {
   return false;
 }
 
-export function createApi({ workspace }: ApiDependencies) {
-  const api = new Hono()
-    .get("/api/health", (c) =>
+export function createApi({ workspace, token }: ApiDependencies) {
+  const guarded = new Hono();
+  guarded.use("/api/*", onlyTheLauncher({ token, openPaths: [HEALTH_PATH] }));
+
+  const api = guarded
+    .get(HEALTH_PATH, (c) =>
       c.json({ ok: true, catalogSchemaVersion: CURRENT_CATALOG_SCHEMA_VERSION } as const),
     )
 
