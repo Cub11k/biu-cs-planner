@@ -3,10 +3,11 @@ import {
   attemptSchema,
   blockedTimeSchema,
   CURRENT_STATE_SCHEMA_VERSION,
-  pickSchema,
+  groupPickSchema,
   stateSchema,
   statusSchema,
   type BlockedTime,
+  type GroupPick,
 } from "./schema.ts";
 
 it("accepts several Attempts for the same Course in different Semesters", () => {
@@ -61,7 +62,7 @@ it("refuses a grade that is neither kind", () => {
  * was picked, and a Catalog that grows a field must not be able to stop it loading.
  */
 it("keeps a Pick's snapshot of the Group's Meetings", () => {
-  const pick = pickSchema.parse({
+  const pick = groupPickSchema.parse({
     courseNumber: "89-110",
     lessonType: "הרצאה",
     groupNumber: "01",
@@ -74,7 +75,7 @@ it("keeps a Pick's snapshot of the Group's Meetings", () => {
 });
 
 it("refuses a Pick whose snapshot is missing, so it can never be dropped as an optimisation", () => {
-  const pick = pickSchema.safeParse({
+  const pick = groupPickSchema.safeParse({
     courseNumber: "89-110",
     lessonType: "הרצאה",
     groupNumber: "01",
@@ -162,4 +163,18 @@ it("types a Blocked Time as the glossary describes it", () => {
   };
 
   expect(blocked.label).toBe("work");
+});
+
+/**
+ * The whole reason the code symbol is `GroupPick` while the domain term stays Pick: a type
+ * named `Pick` shadows TypeScript's built-in, so a module importing one could not use the
+ * other without aliasing. This file does both at once, which is the guarantee.
+ */
+it("leaves TypeScript's own Pick usable by anything that imports a Pick", () => {
+  const named: Pick<GroupPick, "courseNumber" | "lessonType"> = {
+    courseNumber: "89-110",
+    lessonType: "הרצאה",
+  };
+
+  expect(named).toEqual({ courseNumber: "89-110", lessonType: "הרצאה" });
 });

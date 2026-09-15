@@ -5,14 +5,14 @@ import {
   attemptSchema,
   blockedTimeSchema,
   CURRENT_STATE_SCHEMA_VERSION,
-  pickSchema,
+  groupPickSchema,
   pinSchema,
   settingsSchema,
   stateSchema,
   timetableHeadSchema,
   variantHeadSchema,
   type BlockedTime,
-  type Pick,
+  type GroupPick,
   type Settings,
   type State,
   type Timetable,
@@ -131,7 +131,7 @@ function readEach<T>(
  * grid would ink both Groups while the Tray chip can hold only one Group number. The Picks
  * are kept — a Warning never costs a student what they chose — and the pair is named.
  */
-function checkPicksUnique(picks: Pick[], at: string, warnings: StateFileWarning[]): void {
+function checkPicksUnique(picks: GroupPick[], at: string, warnings: StateFileWarning[]): void {
   const seen = new Set<string>();
   for (const pick of picks) {
     const slot = `${pick.courseNumber}\u0000${pick.lessonType}`;
@@ -160,7 +160,7 @@ function readVariant(
   }
   // The head parse just proved `raw` is an object; the cast only tells the compiler so.
   const source = raw as Record<string, unknown>;
-  const picks = readEach(pickSchema, source.picks, `${at}.picks`, warnings);
+  const picks = readEach(groupPickSchema, source.picks, `${at}.picks`, warnings);
   checkPicksUnique(picks, at, warnings);
   return { ...head.data, picks };
 }

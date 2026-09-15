@@ -38,7 +38,7 @@ export type {
   Attempt,
   BlockedTime,
   Grade,
-  Pick,
+  GroupPick,
   Pin,
   Settings,
   State,
