@@ -40,25 +40,25 @@ The server runs in the foreground on port ${DEFAULT_PORT}; if that port is taken
 the next free one and says so. Stop it with Ctrl-C.`;
 
 /**
- * The addresses that are this machine and nothing else. `--host` may name one of these
- * and no other, because binding anywhere reachable needs a password and password login
- * is not built yet (docs/design.md, "Authentication"; ADR-0004).
+ * The addresses `--host` may name, each written the way Node will be asked to listen on
+ * it — `[::1]` is accepted as a spelling and handed back as `::1`, which is what Node
+ * can actually resolve.
  *
- * This is not `guard.ts`'s loopback set: that one reads the `Host` header of a request
- * that has already arrived, while this one decides which interface to listen on. The
- * two overlap without being the same question, so neither is written in terms of the
- * other.
+ * This is exactly the set `guard.ts` accepts in a `Host` header, and deliberately no
+ * wider. The rest of 127.0.0.0/8 is loopback too, but a server bound to 127.0.0.2 would
+ * print a `localhost` URL that reaches nothing, and every request that did arrive would
+ * be refused by the guard as a name that is not loopback. An address the student can
+ * bind and then cannot use is worse than one they cannot bind.
+ *
+ * Anything further out needs a password, and password login is not built yet
+ * (docs/design.md, "Authentication"; ADR-0004).
  */
-function isLoopbackAddress(host: string): boolean {
-  const bare = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
-  if (bare.toLowerCase() === "localhost") return true;
-  if (bare === "::1" || bare === "::ffff:127.0.0.1") return true;
-  // the whole 127.0.0.0/8 block is loopback, so 127.0.0.2 is as local as 127.0.0.1
-  return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(bare) && octetsFit(bare);
-}
+const LOOPBACK_ADDRESSES = new Set(["localhost", "127.0.0.1", "::1"]);
 
-function octetsFit(address: string): boolean {
-  return address.split(".").every((octet) => Number(octet) <= 255);
+function loopbackAddress(host: string): string | undefined {
+  const bare = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
+  const canonical = bare.toLowerCase();
+  return LOOPBACK_ADDRESSES.has(canonical) ? canonical : undefined;
 }
 
 /**
@@ -72,9 +72,9 @@ function refuseNonLoopback(host: string): Refusal {
     kind: "refusal",
     message:
       `biu-cs-planner: refusing to bind ${host}.\n` +
-      "Serving anything but loopback needs a password, and password login is not built " +
-      'yet (docs/design.md, "Authentication").\n' +
-      "Leave --host off to serve 127.0.0.1 only.",
+      "Serving anywhere but this machine needs a password, and password login is not " +
+      'built yet (docs/design.md, "Authentication").\n' +
+      `--host takes ${[...LOOPBACK_ADDRESSES].join(", ")}; leave it off for 127.0.0.1.`,
   };
 }
 
@@ -113,8 +113,9 @@ export function parseArguments(
       case "--host": {
         const value = argv[++index];
         if (value === undefined || value.startsWith("-")) return missingValue("--host", "<address>");
-        if (!isLoopbackAddress(value)) return refuseNonLoopback(value);
-        host = value;
+        const loopback = loopbackAddress(value);
+        if (loopback === undefined) return refuseNonLoopback(value);
+        host = loopback;
         break;
       }
 
