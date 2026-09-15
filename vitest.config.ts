@@ -7,7 +7,7 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     environment: "node",
-    include: ["{core,app,server,web}/src/**/*.test.ts"],
+    include: ["{core,app,server,web}/src/**/*.test.ts", "tools/**/*.test.ts"],
     coverage: {
       provider: "v8",
       // json-summary feeds the PR report; text is for a human running it locally.
