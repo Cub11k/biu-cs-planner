@@ -253,6 +253,38 @@ it("warns when a Blocked Time sits in a different Semester from its Timetable", 
   ]);
 });
 
+/**
+ * Comparing zero-padded "HH:MM" as strings is what every consumer of this shape will do, and
+ * `23:00`–`01:00` is empty under that comparison rather than wrapping into the next Day. The
+ * file keeps the entry; the Warning is what stops it from quietly keeping no time free.
+ */
+it("warns about a Blocked Time that ends at or before it starts, and keeps it", () => {
+  const nightShift = fullFile();
+  nightShift.timetables[0]!.blockedTimes = [
+    { semester: "fall", day: "sunday", start: "23:00", end: "01:00", label: "night shift" },
+    { semester: "fall", day: "monday", start: "10:00", end: "10:00", label: "nothing at all" },
+    { semester: "fall", day: "tuesday", start: "08:00", end: "10:00", label: "commute" },
+  ];
+
+  const result = parseStateFile(onDisk(nightShift));
+
+  expect(result.state?.timetables[0]?.blockedTimes).toHaveLength(3);
+  expect(result.warnings).toEqual([
+    {
+      kind: "blocked-time-does-not-advance",
+      at: "timetables[0].blockedTimes[0]",
+      start: "23:00",
+      end: "01:00",
+    },
+    {
+      kind: "blocked-time-does-not-advance",
+      at: "timetables[0].blockedTimes[1]",
+      start: "10:00",
+      end: "10:00",
+    },
+  ]);
+});
+
 it("strips a key it does not know rather than carrying it", () => {
   const result = parseStateFile({
     schemaVersion: CURRENT_STATE_SCHEMA_VERSION,

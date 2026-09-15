@@ -32,7 +32,8 @@ export type StateFileWarning =
   | { kind: "list-unreadable"; at: string }
   | { kind: "settings-unreadable"; field: string }
   | { kind: "primary-variant-not-unique"; at: string; primaries: number }
-  | { kind: "blocked-time-semester-mismatch"; at: string; semester: Semester };
+  | { kind: "blocked-time-semester-mismatch"; at: string; semester: Semester }
+  | { kind: "blocked-time-does-not-advance"; at: string; start: string; end: string };
 
 /**
  * Migrations that bring an older State File up to the current version, keyed by the version
@@ -151,6 +152,34 @@ function checkBlockedSemesters(
   });
 }
 
+/**
+ * A Blocked Time runs from `start` to `end` within one Day, the way a Meeting does. One that
+ * ends at or before it starts — `23:00`–`01:00` for a night shift, or `10:00`–`10:00` — keeps
+ * no time free at all, and would otherwise sit in the file looking like it did: whatever
+ * compares it against the week finds an empty range and reports nothing. The entry is kept
+ * rather than dropped, because a Warning never costs a student what they typed, but it is
+ * named so the silence is broken.
+ *
+ * A period crossing midnight is therefore two Blocked Times, one either side of it. Whether
+ * the product would rather have one row that wraps is a question this only defers: nothing
+ * here forecloses it, since a wrapping reading would simply stop warning.
+ */
+function checkBlockedRanges(
+  blockedTimes: BlockedTime[],
+  at: string,
+  warnings: StateFileWarning[],
+): void {
+  blockedTimes.forEach((blocked, index) => {
+    if (blocked.end > blocked.start) return;
+    warnings.push({
+      kind: "blocked-time-does-not-advance",
+      at: `${at}[${index}]`,
+      start: blocked.start,
+      end: blocked.end,
+    });
+  });
+}
+
 function readTimetable(
   raw: unknown,
   at: string,
@@ -174,6 +203,7 @@ function readTimetable(
 
   checkPrimary(variants, at, warnings);
   checkBlockedSemesters(blockedTimes, head.data.semester, `${at}.blockedTimes`, warnings);
+  checkBlockedRanges(blockedTimes, `${at}.blockedTimes`, warnings);
 
   return { ...head.data, variants, blockedTimes };
 }

@@ -95,16 +95,26 @@ it("gives a Blocked Time the shape a Clashes module can read without importing t
   expect(period).toMatchObject({ semester: "fall", day: "sunday", start: "08:00", end: "10:00" });
 });
 
-it("refuses a Blocked Time with a clock time it cannot read", () => {
-  const blocked: unknown = {
+/**
+ * A Blocked Time is typed by a student, unlike a Meeting which arrives from a Catalog, so
+ * the hour it carries is the one likely to be written informally. An unpadded "9:00" sorts
+ * after "10:00" as a string, which is how a Clash quietly fails to be one — so it is refused
+ * here, where the file is read, rather than going unnoticed by whatever compares it later.
+ */
+it("refuses a clock time it cannot read, an unpadded hour included", () => {
+  const written = (start: string) => ({
     semester: "fall",
     day: "sunday",
-    start: "8am",
-    end: "10:00",
-    label: "commute",
-  };
+    start,
+    end: "17:00",
+    label: "work",
+  });
 
-  expect(blockedTimeSchema.safeParse(blocked).success).toBe(false);
+  expect(blockedTimeSchema.safeParse(written("9:00")).success).toBe(false);
+  expect(blockedTimeSchema.safeParse(written("8am")).success).toBe(false);
+  expect(blockedTimeSchema.safeParse(written("24:00")).success).toBe(false);
+  expect(blockedTimeSchema.safeParse(written("09:60")).success).toBe(false);
+  expect(blockedTimeSchema.safeParse(written("09:00")).success).toBe(true);
 });
 
 it("fills an all-but-empty file in, so a new State File is a version and nothing else", () => {
