@@ -184,16 +184,18 @@ export type TileBox = {
 /** A hairline between stacked blocks, so two back-to-back Meetings read as two. */
 const BLOCK_GAP_PX = 2;
 
+/** Two decimals: enough to keep a Meeting on its own minute, short enough to read. */
+const round = (value: number): number => Math.round(value * 100) / 100;
+
 export function tileBox(tile: Tile, range: HourRange, hourPx: number): TileBox {
-  const pxPerMinute = hourPx / 60;
   const fromTop = tile.startMinutes - range.startHour * 60;
-  const height = (tile.endMinutes - tile.startMinutes) * pxPerMinute;
+  const height = ((tile.endMinutes - tile.startMinutes) * hourPx) / 60;
 
   return {
-    topPx: fromTop * pxPerMinute,
-    heightPx: Math.max(height - BLOCK_GAP_PX, 1),
-    startPercent: (tile.lane / tile.lanes) * 100,
-    widthPercent: 100 / tile.lanes,
+    topPx: round((fromTop * hourPx) / 60),
+    heightPx: round(Math.max(height - BLOCK_GAP_PX, 1)),
+    startPercent: round((tile.lane / tile.lanes) * 100),
+    widthPercent: round(100 / tile.lanes),
   };
 }
 
