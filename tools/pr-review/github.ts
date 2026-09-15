@@ -99,6 +99,53 @@ export async function fetchDiff(
   return await response.text();
 }
 
+/**
+ * One file as it stands at a given commit.
+ *
+ * The Standards pass reads its rules at the *base* commit, not out of the checkout: on a
+ * `pull_request` event the checkout is the merge commit, so a change that deleted a
+ * guardrail and then broke it would be judged against its own edited copy of the rules
+ * and come back clean.
+ */
+async function fetchFile(
+  repo: string,
+  path: string,
+  ref: string,
+  token: string,
+): Promise<string> {
+  const response = await ok(
+    await fetch(`${API}/repos/${repo}/contents/${path}?ref=${ref}`, {
+      headers: headers(token, "application/vnd.github.raw"),
+    }),
+    `reading ${path}`,
+  );
+  return await response.text();
+}
+
+type Entry = { name: string; type: string };
+
+/** CLAUDE.md, the glossary and every ADR, as they stood before this change. */
+export async function fetchStandardsDocs(
+  repo: string,
+  ref: string,
+  token: string,
+): Promise<string> {
+  const listing = await ok(
+    await fetch(`${API}/repos/${repo}/contents/docs/adr?ref=${ref}`, {
+      headers: headers(token, "application/vnd.github+json"),
+    }),
+    "listing docs/adr",
+  );
+  const adrs = ((await listing.json()) as Entry[])
+    .filter((e) => e.type === "file" && e.name.endsWith(".md"))
+    .map((e) => `docs/adr/${e.name}`)
+    .sort();
+
+  const paths = ["CLAUDE.md", "CONTEXT.md", ...adrs];
+  const texts = await Promise.all(paths.map((p) => fetchFile(repo, p, ref, token)));
+  return paths.map((path, i) => `## ${path}\n\n${texts[i]}`).join("\n\n---\n\n");
+}
+
 type Comment = { id: number; body: string };
 
 /** The review's own comment, found by its marker so `pr-report.yml`'s is left alone. */

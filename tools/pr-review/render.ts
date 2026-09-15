@@ -106,9 +106,9 @@ function graphs({ moduleCycles, callCycles }: Graphs, out: string[]): void {
   } else {
     out.push(
       `**Module graph: ${moduleCycles.length} cycle${moduleCycles.length === 1 ? "" : "s"}.** ` +
-        "A cycle here is a finding every time — it is how the layering fails in practice, " +
-        "`core → app → server` with `web` reaching only the API, so a back edge is a broken " +
-        "guardrail rather than a style preference.",
+        "A cycle here is a finding every time: the layering runs `core → app → server` with " +
+        "`web` reaching only the API, so a back edge is a broken guardrail rather than a style " +
+        "preference.",
     );
     out.push("");
     for (const cycle of moduleCycles) out.push(`- \`${cycle.join(" → ")}\``);
@@ -131,8 +131,10 @@ function graphs({ moduleCycles, callCycles }: Graphs, out: string[]): void {
   }
   out.push("");
   out.push(
-    "> The call graph records only calls that leave the module they are written in, so " +
-      "recursion that stays inside one file never shows up above.",
+    "> Two things this check does not do. It records only calls that leave the module they " +
+      "are written in, so recursion that stays inside one file never shows up. And acyclic is " +
+      "not the same as correctly layered: a one-way `web → core` import breaks a guardrail " +
+      "without closing a loop, so it passes here and belongs to the Standards pass below.",
   );
   out.push("");
 }

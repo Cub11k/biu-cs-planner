@@ -55,7 +55,8 @@ const CONCRETE = `Rules for what you report, and they are strict:
 - A candidate you cannot write that scenario for is speculation. Leave it out. An empty review is a good review; an invented finding costs the author more than it saves.
 - Rank by severity: something that produces a wrong result outranks something that might one day.
 - Do not describe what the change does, do not praise it, and do not suggest refactors nobody asked for.
-- Judge the change, not the code it did not touch, unless the change was supposed to touch it.`;
+- Judge the change, not the code it did not touch, unless the change was supposed to touch it.
+- Report at most ten findings. If there are more, report the ten most severe.`;
 
 const STANDARDS_SYSTEM = `You review one pull request against one axis: does this change hold the standards this project has written down?
 
@@ -97,7 +98,7 @@ async function run<T>(
 ): Promise<T> {
   const response = await client.messages.parse({
     model: MODEL,
-    max_tokens: 16000,
+    max_tokens: 24000,
     output_config: { effort: "high", format: zodOutputFormat(schema) },
     system,
     messages: [{ role: "user", content: user }],
@@ -105,6 +106,12 @@ async function run<T>(
 
   if (response.stop_reason === "refusal") {
     throw new Error(`the model declined to review: ${response.stop_details?.explanation ?? ""}`);
+  }
+  // Checked before the parse, because a run that hit the ceiling leaves the JSON cut off
+  // mid-array. Calling that a schema mismatch would point the author at a bug that is not
+  // there; it is a length problem, and only saying so makes it fixable.
+  if (response.stop_reason === "max_tokens") {
+    throw new Error("the review ran past its token ceiling and was cut off");
   }
   if (response.parsed_output === null) {
     throw new Error("the model's answer did not match the review schema");
