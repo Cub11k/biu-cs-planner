@@ -84,4 +84,14 @@ function listen(
   });
 }
 
-await main(process.argv.slice(2));
+/**
+ * Anything that got past the refusals above — a port range entirely in use, a permission
+ * the operating system will not give — is still the student's problem to read, not a
+ * stack trace. The contract is the same one `main` keeps: a line on stderr, exit 1.
+ */
+try {
+  await main(process.argv.slice(2));
+} catch (error) {
+  console.error(error instanceof Error ? error.message : `biu-cs-planner: ${String(error)}`);
+  process.exitCode = 1;
+}

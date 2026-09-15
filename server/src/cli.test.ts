@@ -29,23 +29,34 @@ it("prints the URL without opening a browser under --no-open", () => {
   expect(parseArguments(["--no-open"], cwd)).toMatchObject({ kind: "launch", open: false });
 });
 
-it.each(["127.0.0.1", "127.0.0.2", "localhost", "::1", "[::1]"])(
-  "binds %s, which is this machine and nobody else",
-  (host) => {
-    expect(parseArguments(["--host", host], cwd)).toMatchObject({ kind: "launch", host });
-  },
-);
+it.each([
+  ["127.0.0.1", "127.0.0.1"],
+  ["localhost", "localhost"],
+  ["::1", "::1"],
+  // a spelling of the same address, handed back as the one Node can resolve
+  ["[::1]", "::1"],
+  ["LOCALHOST", "localhost"],
+])("binds %s, which is this machine and nobody else", (given, bound) => {
+  expect(parseArguments(["--host", given], cwd)).toMatchObject({ kind: "launch", host: bound });
+});
 
-it.each(["0.0.0.0", "::", "192.168.1.20", "example.com", "127.0.0.1.evil.example"])(
-  "refuses --host %s, because reaching past loopback needs a password",
-  (host) => {
-    const invocation = parseArguments(["--host", host], cwd);
+it.each([
+  "0.0.0.0",
+  "::",
+  "192.168.1.20",
+  "example.com",
+  "127.0.0.1.evil.example",
+  // loopback, but the guard refuses this name in a Host header and the printed URL
+  // says localhost, so the student would get a server they cannot talk to
+  "127.0.0.2",
+  "::ffff:127.0.0.1",
+])("refuses --host %s rather than serving a page that cannot reach the API", (host) => {
+  const invocation = parseArguments(["--host", host], cwd);
 
-    expect(invocation.kind).toBe("refusal");
-    // the student is told what would make it work, not just that it did not
-    expect(invocation).toMatchObject({ message: expect.stringContaining("password") });
-  },
-);
+  expect(invocation.kind).toBe("refusal");
+  // the student is told what would make it work, not just that it did not
+  expect(invocation).toMatchObject({ message: expect.stringContaining("password") });
+});
 
 it("refuses a flag it does not know rather than planning in the wrong folder", () => {
   const invocation = parseArguments(["--workspce", "/srv/plans"], cwd);
