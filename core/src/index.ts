@@ -20,3 +20,18 @@ export type {
   Offering,
   Semester,
 } from "./catalog/schema.ts";
+export { parseStateFile, stateJsonSchema } from "./state/file.ts";
+export type { StateFileWarning } from "./state/file.ts";
+export { CURRENT_STATE_SCHEMA_VERSION, stateSchema } from "./state/schema.ts";
+export type {
+  Attempt,
+  BlockedTime,
+  Grade,
+  Pick,
+  Pin,
+  Settings,
+  State,
+  Status,
+  Timetable,
+  Variant,
+} from "./state/schema.ts";
