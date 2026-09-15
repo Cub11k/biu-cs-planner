@@ -1,0 +1,242 @@
+import { z } from "zod";
+import type { Semester } from "../catalog/schema.ts";
+import { migrateForward, type Migrations } from "./migrate.ts";
+import {
+  attemptSchema,
+  blockedTimeSchema,
+  CURRENT_STATE_SCHEMA_VERSION,
+  pickSchema,
+  pinSchema,
+  settingsSchema,
+  stateSchema,
+  timetableHeadSchema,
+  variantHeadSchema,
+  type BlockedTime,
+  type Settings,
+  type State,
+  type Timetable,
+  type Variant,
+} from "./schema.ts";
+import { findUnsafeKey } from "./unsafe-keys.ts";
+
+export type StateFileWarning =
+  /** Not a State File at all: no object, or no `schemaVersion` to go on. */
+  | { kind: "file-unreadable" }
+  | { kind: "schema-version-too-new"; found: number }
+  | { kind: "schema-version-unsupported"; found: number }
+  | { kind: "migration-failed"; found: number; version: number }
+  | { kind: "unsafe-key"; key: string; at: string }
+  /** One entry of a list could not be read and was left out; `field` names what was wrong. */
+  | { kind: "entry-dropped"; at: string; field: string }
+  /** Something that should have been a list was not, so it was read as an empty one. */
+  | { kind: "list-unreadable"; at: string }
+  | { kind: "settings-unreadable"; field: string }
+  | { kind: "primary-variant-not-unique"; at: string; primaries: number }
+  | { kind: "blocked-time-semester-mismatch"; at: string; semester: Semester };
+
+/**
+ * Migrations that bring an older State File up to the current version, keyed by the version
+ * they read. There are none yet because there has only ever been one version; each new
+ * version adds the migration that reads the version before it.
+ */
+const STATE_MIGRATIONS: Migrations = {};
+
+const versionProbe = z.object({ schemaVersion: z.number() });
+
+/**
+ * JSON Schema for a State File, so a hand-edited file gets autocomplete and inline errors in
+ * an editor. Generated from the Zod schema, never maintained by hand. It describes the file
+ * as written rather than as read (`io: "input"`), so the fields a new State File leaves out
+ * — everything but the version — are not flagged as missing.
+ */
+export function stateJsonSchema(): Record<string, unknown> {
+  return z.toJSONSchema(stateSchema, { io: "input" }) as Record<string, unknown>;
+}
+
+/** The path of the first thing Zod objected to, relative to the value it was given. */
+function fieldOf(error: z.ZodError): string {
+  const path = error.issues[0]?.path ?? [];
+  return path.map(String).join(".");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Reads a list entry by entry, keeping what it can. A list that is missing is an empty one; a
+ * list that is not a list is reported and read as empty; an entry `read` cannot make sense of
+ * is left out. Nothing here throws, and nothing here loses more of the file than it has to.
+ */
+function readList<T>(
+  raw: unknown,
+  at: string,
+  warnings: StateFileWarning[],
+  read: (entry: unknown, entryAt: string) => T | undefined,
+): T[] {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) {
+    warnings.push({ kind: "list-unreadable", at });
+    return [];
+  }
+  const kept: T[] = [];
+  raw.forEach((entry, index) => {
+    const value = read(entry, `${at}[${index}]`);
+    if (value !== undefined) kept.push(value);
+  });
+  return kept;
+}
+
+/** `readList` for a list whose entries are wholly described by one schema. */
+function readEach<T>(
+  schema: z.ZodType<T>,
+  raw: unknown,
+  at: string,
+  warnings: StateFileWarning[],
+): T[] {
+  return readList(raw, at, warnings, (entry, entryAt) => {
+    const parsed = schema.safeParse(entry);
+    if (parsed.success) return parsed.data;
+    warnings.push({ kind: "entry-dropped", at: entryAt, field: fieldOf(parsed.error) });
+    return undefined;
+  });
+}
+
+function readVariant(
+  raw: unknown,
+  at: string,
+  warnings: StateFileWarning[],
+): Variant | undefined {
+  const head = variantHeadSchema.safeParse(raw);
+  if (!head.success) {
+    warnings.push({ kind: "entry-dropped", at, field: fieldOf(head.error) });
+    return undefined;
+  }
+  // The head parse just proved `raw` is an object; the cast only tells the compiler so.
+  const source = raw as Record<string, unknown>;
+  return { ...head.data, picks: readEach(pickSchema, source.picks, `${at}.picks`, warnings) };
+}
+
+/**
+ * Exactly one Variant of a Timetable is primary. A file that breaks it opens anyway — a
+ * Warning never blocks an edit — but a Timetable with no Variants yet is not a breach.
+ */
+function checkPrimary(variants: Variant[], at: string, warnings: StateFileWarning[]): void {
+  if (variants.length === 0) return;
+  const primaries = variants.filter((variant) => variant.primary).length;
+  if (primaries !== 1) {
+    warnings.push({ kind: "primary-variant-not-unique", at, primaries });
+  }
+}
+
+/**
+ * A Blocked Time carries its own Semester, because the Clashes module reads it on its own
+ * and needs one. That makes it possible for it to disagree with the Timetable holding it,
+ * which usually means a Blocked Time was copied to another Semester without being retimed.
+ */
+function checkBlockedSemesters(
+  blockedTimes: BlockedTime[],
+  semester: Semester,
+  at: string,
+  warnings: StateFileWarning[],
+): void {
+  blockedTimes.forEach((blocked, index) => {
+    if (blocked.semester !== semester) {
+      warnings.push({
+        kind: "blocked-time-semester-mismatch",
+        at: `${at}[${index}]`,
+        semester: blocked.semester,
+      });
+    }
+  });
+}
+
+function readTimetable(
+  raw: unknown,
+  at: string,
+  warnings: StateFileWarning[],
+): Timetable | undefined {
+  const head = timetableHeadSchema.safeParse(raw);
+  if (!head.success) {
+    warnings.push({ kind: "entry-dropped", at, field: fieldOf(head.error) });
+    return undefined;
+  }
+  const source = raw as Record<string, unknown>;
+  const variants = readList(source.variants, `${at}.variants`, warnings, (entry, entryAt) =>
+    readVariant(entry, entryAt, warnings),
+  );
+  const blockedTimes = readEach(
+    blockedTimeSchema,
+    source.blockedTimes,
+    `${at}.blockedTimes`,
+    warnings,
+  );
+
+  checkPrimary(variants, at, warnings);
+  checkBlockedSemesters(blockedTimes, head.data.semester, `${at}.blockedTimes`, warnings);
+
+  return { ...head.data, variants, blockedTimes };
+}
+
+/** Settings are never worth losing a file over: unreadable ones fall back to the defaults. */
+function readSettings(raw: unknown, warnings: StateFileWarning[]): Settings {
+  const parsed = settingsSchema.safeParse(raw ?? {});
+  if (parsed.success) return parsed.data;
+  warnings.push({ kind: "settings-unreadable", field: fieldOf(parsed.error) });
+  return settingsSchema.parse({});
+}
+
+function readState(raw: Record<string, unknown>, warnings: StateFileWarning[]): State {
+  return {
+    schemaVersion: CURRENT_STATE_SCHEMA_VERSION,
+    attempts: readEach(attemptSchema, raw.attempts, "attempts", warnings),
+    timetables: readList(raw.timetables, "timetables", warnings, (entry, at) =>
+      readTimetable(entry, at, warnings),
+    ),
+    pins: readEach(pinSchema, raw.pins, "pins", warnings),
+    settings: readSettings(raw.settings, warnings),
+  };
+}
+
+export type StateFileRead = { state?: State; warnings: StateFileWarning[] };
+
+/**
+ * The reading itself, with the migration table as a parameter. `parseStateFile` is the one
+ * callers want; this exists so the version walk and the Warnings it produces are covered
+ * before there is a real migration to walk, which is the whole reason the runner ships now.
+ */
+export function readStateFile(input: unknown, migrations: Migrations): StateFileRead {
+  const unsafe = findUnsafeKey(input);
+  if (unsafe) return { warnings: [{ kind: "unsafe-key", ...unsafe }] };
+
+  const probe = versionProbe.safeParse(input);
+  if (!probe.success) return { warnings: [{ kind: "file-unreadable" }] };
+
+  const found = probe.data.schemaVersion;
+  if (found > CURRENT_STATE_SCHEMA_VERSION) {
+    return { warnings: [{ kind: "schema-version-too-new", found }] };
+  }
+
+  // How far back a file can be read is the chain of migrations itself: a version nothing
+  // reads stops the walk, and that is what "unsupported" means. No second constant to keep
+  // in step with the table, and so no way for the two to disagree.
+  const migrated = migrateForward(input, found, CURRENT_STATE_SCHEMA_VERSION, migrations);
+  if (!migrated.ok) {
+    return migrated.reason === "no-migration"
+      ? { warnings: [{ kind: "schema-version-unsupported", found }] }
+      : { warnings: [{ kind: "migration-failed", found, version: migrated.version }] };
+  }
+  if (!isRecord(migrated.file)) return { warnings: [{ kind: "file-unreadable" }] };
+
+  const warnings: StateFileWarning[] = [];
+  return { state: readState(migrated.file, warnings), warnings };
+}
+
+/**
+ * Reads a State File. Untrusted input: it never throws. A file this build cannot open at all
+ * comes back as Warnings and nothing else; anything else comes back as a State plus Warnings
+ * naming what was dropped on the way, because a student's own data is worth salvaging.
+ */
+export function parseStateFile(input: unknown): StateFileRead {
+  return readStateFile(input, STATE_MIGRATIONS);
+}
