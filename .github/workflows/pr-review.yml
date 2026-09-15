@@ -1,14 +1,18 @@
-# Posts a judgement about the change, next to the PR report's account of what it is.
+# Checks the dependency graphs on every code pull request, and posts a two-axis review
+# when a maintainer asks for one.
 #
-# Two axes, kept apart: Standards (the guardrails in CLAUDE.md and the reasons in
-# docs/adr/) and Spec (whether the change does what its ticket asked for). Plus one
-# mechanical check that is nobody's judgement: the module and call graphs `tools/pr-report`
-# derives must be acyclic.
+# The split is deliberate. The graph check is mechanical, needs no API key and costs
+# nothing, so it runs on every code pull request — losing automatic cycle detection to
+# solve a spending question would be a bad trade. The two judgement passes — Standards
+# against the guardrails in CLAUDE.md and docs/adr/, Spec against the acceptance criteria
+# of the issue the pull request closes — cost money per run, so they are asked for by
+# hand. Locally, `/code-review` is the primary path; this is for when you want the same
+# thing recorded on the pull request.
 #
 # It advises. It is never a required check and no finding here blocks a merge.
 #
-# Before this can run, a maintainer has to add an ANTHROPIC_API_KEY repository secret.
-# Without it the job still runs and still posts, saying the two passes were skipped and why.
+# The two passes need an ANTHROPIC_API_KEY repository secret. Without it they do not run,
+# the graph comment says so plainly, and the job still succeeds.
 name: PR review
 
 # `pull_request`, deliberately. It withholds secrets from fork pull requests, and the job
@@ -16,6 +20,10 @@ name: PR review
 # in scope against a base-repo checkout, and any step that then built or executed the pull
 # request's code would hand an attacker that key. Fork coverage, if it is ever wanted,
 # needs its own design rather than a trigger swap.
+#
+# `workflow_dispatch` is the manual half: Actions → PR review → Run workflow, with the
+# pull request's number. It is offered on the default branch only, which is how GitHub
+# lists manually triggered workflows.
 on:
   pull_request:
     paths:
@@ -24,37 +32,44 @@ on:
       - "package.json"
       - "vitest.config.ts"
       - ".github/workflows/pr-review.yml"
+  workflow_dispatch:
+    inputs:
+      pull_request:
+        description: "The number of the pull request to review"
+        required: true
+        type: string
 
-# Read the tree, write one comment. Reading the issues a pull request closes is what the
+# Read the tree, write the comments. Reading the issues a pull request closes is what the
 # Spec pass is for, and it needs nothing else.
 permissions:
   contents: read
   issues: read
   pull-requests: write
 
-# A burst of pushes should leave the newest review standing, not a race between two.
+# One pull request at a time, whichever trigger started it. A burst of pushes should leave
+# the newest result standing, and a push during a review should cancel that review rather
+# than post a judgement of code that has already moved.
 concurrency:
-  group: pr-review-${{ github.event.number }}
+  group: pr-review-${{ github.event.number || inputs.pull_request }}
   cancel-in-progress: true
 
 jobs:
   review:
     # A fork's pull request gets no secrets from `pull_request` anyway; this makes the
-    # refusal explicit rather than leaving it to a failed API call.
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    # refusal explicit. The manual trigger takes a number typed by hand, so the same
+    # refusal is repeated in the script, where the number is resolved.
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     env:
       GITHUB_TOKEN: ${{ github.token }}
-      PR_NUMBER: ${{ github.event.number }}
-      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-      # The Standards pass reads the guardrails at the base commit, not out of the
-      # checkout: a change that relaxed a rule and then broke it would otherwise be
-      # judged against its own edited copy of that rule.
-      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      PR_NUMBER: ${{ github.event.number || inputs.pull_request }}
+      REVIEW_MODE: ${{ github.event_name == 'workflow_dispatch' && 'full' || 'graphs' }}
     steps:
-      # Checkout and Node are what it takes to run a TypeScript file at all; neither
-      # produces a review, so the banner below still lands before any review exists.
+      # The merge commit of the pull request under review, which for a `pull_request`
+      # event is what `github.ref` already points at.
       - uses: actions/checkout@v4
+        with:
+          ref: refs/pull/${{ github.event.number || inputs.pull_request }}/merge
 
       - uses: actions/setup-node@v4
         with:
@@ -62,13 +77,18 @@ jobs:
           cache: npm
 
       # First, so the window in which a stale review looks current is closed rather than
-      # narrowed. Needs no dependencies: it edits a comment and nothing else.
+      # narrowed. It needs no dependencies: it edits a comment and nothing else. It runs
+      # on the automatic pushes too — with the review asked for by hand, nothing else
+      # will ever replace one, so this is what keeps a review from three pushes ago from
+      # sitting there looking current.
       - name: Mark the review already there as outdated
         run: node tools/pr-review/outdate.ts
 
       - run: npm ci
 
-      - name: Review the change and post it
+      - name: Check the graphs, and judge the change when asked to
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Only reaches the environment on a manual run. An automatic push never has the
+          # key in scope at all, which is a stronger gate than checking it in the script.
+          ANTHROPIC_API_KEY: ${{ github.event_name == 'workflow_dispatch' && secrets.ANTHROPIC_API_KEY || '' }}
         run: npm run review

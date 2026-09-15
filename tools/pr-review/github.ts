@@ -14,6 +14,12 @@ export type PullRequest = {
   number: number;
   title: string;
   body: string;
+  /** The commit under review. */
+  headSha: string;
+  /** The base branch tip — where the standards are read from, not the merge commit. */
+  baseSha: string;
+  /** True when the change comes from a fork, which never gets near the key. */
+  isFork: boolean;
   /** The issues this pull request closes, whose acceptance criteria the Spec pass reads. */
   closes: LinkedIssue[];
 };
@@ -39,6 +45,9 @@ query($owner: String!, $name: String!, $number: Int!) {
       number
       title
       body
+      headRefOid
+      baseRefOid
+      isCrossRepository
       closingIssuesReferences(first: 5) {
         nodes { number title body }
       }
@@ -76,6 +85,9 @@ export async function fetchPullRequest(
     number,
     title: String(pr["title"] ?? ""),
     body: String(pr["body"] ?? ""),
+    headSha: String(pr["headRefOid"] ?? ""),
+    baseSha: String(pr["baseRefOid"] ?? ""),
+    isFork: pr["isCrossRepository"] === true,
     closes: (closing?.nodes ?? []).map((issue) => ({
       number: issue.number,
       title: issue.title ?? "",
