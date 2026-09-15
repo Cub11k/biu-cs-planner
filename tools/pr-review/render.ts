@@ -10,7 +10,12 @@ import type { Finding, PassOutcome } from "./review.ts";
 /** Enough to act on. Past this a large diff produces a wall instead of a review. */
 export const CAP = 8;
 
-export type Graphs = { moduleCycles: Cycle[]; callCycles: CallCycle[] };
+export type Graphs = {
+  moduleCycles: Cycle[];
+  callCycles: CallCycle[];
+  /** The directories the graphs were derived from, so "acyclic" says what it covered. */
+  scope: readonly string[];
+};
 
 export type ReviewComment = {
   headSha: string;
@@ -91,13 +96,14 @@ function pass(name: string, subtitle: string, outcome: PassOutcome, out: string[
   }
 }
 
-function graphs({ moduleCycles, callCycles }: Graphs, out: string[]): void {
+function graphs({ moduleCycles, callCycles, scope }: Graphs, out: string[]): void {
   out.push("### The dependency graphs");
   out.push("");
   out.push(
     "Mechanical, not a judgement: the module and call graphs `tools/pr-report` derives " +
       "from the source, checked for cycles. Nothing here is re-parsed, so this and the " +
-      "PR report describe the same graphs.",
+      `PR report describe the same graphs. Derived from ${scope.map((d) => `\`${d}\``).join(", ")} ` +
+      "and nowhere else — a cycle outside those is not covered by either graph below.",
   );
   out.push("");
 

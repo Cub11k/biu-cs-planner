@@ -12,7 +12,8 @@ import { readTestFile } from "./tests.ts";
  * graphs: the report renders them, and the PR review (`tools/pr-review`) checks them for
  * cycles. Deriving them twice would let the two disagree.
  */
-const SOURCE_DIRS = ["core/src", "app/src", "server/src", "web/src"];
+/** The four workspaces. Exported because the review states what it walked. */
+export const SOURCE_DIRS = ["core/src", "app/src", "server/src", "web/src"];
 const SKIP = new Set(["node_modules", "dist", "__fixtures__", "coverage"]);
 
 function walk(dir: string): string[] {

@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { collect } from "../pr-report/collect.ts";
+import { SOURCE_DIRS, collect } from "../pr-report/collect.ts";
 import { callCycles, moduleCycles } from "./cycles.ts";
 import { fetchDiff, fetchPullRequest, fetchStandardsDocs, upsertComment } from "./github.ts";
 import { MARKER } from "./outdated.ts";
@@ -40,6 +40,7 @@ const derived = collect(ROOT);
 const graphs = {
   moduleCycles: moduleCycles(derived.modules),
   callCycles: callCycles(derived.edges),
+  scope: SOURCE_DIRS,
 };
 
 let standards: PassOutcome;
@@ -78,22 +79,33 @@ if (!apiKey) {
       reviewSpec(client, input),
     ]);
   } catch (error) {
-    // Whatever went wrong, the comment still gets posted and still says so. The step
-    // before this one already folded the previous review away, and a banner with no
-    // explanation under it is worse than the stale review it replaced.
+    // Both passes fail together here, which the check below turns into "leave the
+    // previous review folded where it is" rather than a comment that reviewed nothing.
     const reason = `the review could not read what it needed: ${message(error)}`;
     standards = { status: "failed", reason };
     spec = { status: "failed", reason };
   }
 }
 
-const body = renderReview({
-  headSha,
-  graphs,
-  standards,
-  spec,
-  ...(truncated ? { diffTruncatedAt: DIFF_LIMIT } : {}),
-});
+// If neither pass got anywhere, the comment is left exactly as the outdate step left it:
+// the previous review, folded, under a banner saying which commit it described and which
+// one is now under review. Overwriting that with "Did not finish" would delete a real
+// review and replace it with nothing, which is the outcome the banner exists to prevent.
+// A missing API key is not this case — that is a steady state, not a failure, and saying
+// so on every pull request is how the maintainer finds out.
+if (standards.status === "failed" && spec.status === "failed") {
+  console.error(`neither pass reviewed ${headSha}: ${standards.reason}`);
+  console.error("leaving the outdated banner standing rather than overwriting it");
+  process.exitCode = 1;
+} else {
+  const body = renderReview({
+    headSha,
+    graphs,
+    standards,
+    spec,
+    ...(truncated ? { diffTruncatedAt: DIFF_LIMIT } : {}),
+  });
 
-await upsertComment(repo, number, token, MARKER, body);
-console.log(`reviewed ${headSha} on ${repo}#${number}`);
+  await upsertComment(repo, number, token, MARKER, body);
+  console.log(`reviewed ${headSha} on ${repo}#${number}`);
+}

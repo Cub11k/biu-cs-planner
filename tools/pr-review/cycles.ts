@@ -108,14 +108,14 @@ export function callCycles(edges: readonly CallEdge[]): CallCycle[] {
   }
 
   return findCycles(graph).map((path) => {
+    // Each module named once, in the order the cycle first reaches it. A loop that
+    // leaves a module and comes back — `import → details → import → details → import`
+    // — spans two modules, and listing four would have the reader counting wrong.
     const modules: string[] = [];
     for (const ref of path) {
       const mod = moduleOf(ref);
-      if (modules[modules.length - 1] !== mod) modules.push(mod);
+      if (!modules.includes(mod)) modules.push(mod);
     }
-    // The path is closed, so the first module is repeated at the end once the loop
-    // returns to it; the caller wants the set it spans, not the repetition.
-    if (modules.length > 1 && modules[0] === modules[modules.length - 1]) modules.pop();
     return { path, modules };
   });
 }
