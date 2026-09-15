@@ -29,5 +29,5 @@ export type {
   ExamWarning,
   RailSitting,
 } from "./timetable/exams.ts";
-export { findClashes } from "./timetable/clashes.ts";
-export type { Clash, GroupRef, PickedGroup, WeeklySpan } from "./timetable/clashes.ts";
+export { findMeetingClashes } from "./timetable/clashes.ts";
+export type { GroupRef, MeetingClash, PickedGroup, WeeklySpan } from "./timetable/clashes.ts";
