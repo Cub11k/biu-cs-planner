@@ -38,7 +38,7 @@ A Course whose Offering spans Fall and Spring as one unit (שנתי).
 _Avoid_: annual course
 
 **Group**:
-One two-digit-numbered section of an Offering, with a single Lesson Type, zero or more lecturers and zero or more Meetings.
+One two-digit-numbered division of an Offering, with a single Lesson Type, zero or more lecturers and zero or more Meetings. Its number and its Lesson Type together identify it within an Offering — each Lesson Type is numbered from 01, so a lecture's 01 and a tirgul's 01 are two Groups — and so a re-imported part updates the Group that pair names rather than adding a second.
 _Avoid_: section, class
 
 **Lesson Type**:

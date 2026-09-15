@@ -176,6 +176,124 @@ it("merges a details-only part into a Catalog already imported", () => {
   expect(first.offerings[0]!.exams).toEqual({ known: false, sittings: [] });
 });
 
+// --- a part imported twice: a Group is its number and its Lesson Type (issue #9) ---
+
+it("updates the Group a repeated row names rather than holding it twice", () => {
+  // Re-crawling before a registration window and importing the result over last month's
+  // Catalog is the routine path, not an edge case: every row of it has been seen before.
+  const first = importRawCrawl(
+    {
+      rows: [
+        row({ group: "01", kind: "הרצאה" }),
+        row({ group: "03", kind: "תרגיל", hours: "11:00 - 13:00" }),
+      ],
+    },
+    { academicYear: YEAR_2027 },
+  ).catalog;
+
+  const { catalog } = importRawCrawl(
+    {
+      rows: [
+        row({ group: "01", kind: "הרצאה" }),
+        row({ group: "03", kind: "תרגיל", hours: "11:00 - 13:00" }),
+      ],
+    },
+    { academicYear: YEAR_2027, into: first },
+  );
+
+  expect(catalog.offerings).toHaveLength(1);
+  expect(catalog.offerings[0]!.groups.map((g) => [g.number, g.lessonType])).toEqual([
+    ["01", "הרצאה"],
+    ["03", "תרגיל"],
+  ]);
+});
+
+it("holds one Group per number and Lesson Type, so one number in two types stays two", () => {
+  // The pair is the identity, not the number alone: Shoham numbers a Course's lecture and
+  // its tirgul independently, and 01 of each is two Groups a student picks separately.
+  const { catalog } = importRawCrawl(
+    {
+      rows: [
+        row({ group: "01", kind: "הרצאה" }),
+        row({ group: "01", kind: "תרגיל", hours: "11:00 - 13:00" }),
+      ],
+    },
+    { academicYear: YEAR_2027 },
+  );
+
+  expect(catalog.offerings[0]!.groups.map((g) => [g.number, g.lessonType])).toEqual([
+    ["01", "הרצאה"],
+    ["01", "תרגיל"],
+  ]);
+});
+
+it("moves a Group whose repeated row moved it, and re-staffs one that changed lecturers", () => {
+  const first = importRawCrawl(
+    { rows: [row({ day: "ג'", hours: "15:00 - 18:00", teachers: "פרופ' נועה אגמון" })] },
+    { academicYear: YEAR_2027 },
+  ).catalog;
+
+  const { catalog } = importRawCrawl(
+    { rows: [row({ day: "ד'", hours: "10:00 - 13:00", teachers: "ד\"ר יהודית גל-עזר" })] },
+    { academicYear: YEAR_2027, into: first },
+  );
+
+  const group = catalog.offerings[0]!.groups[0]!;
+  expect(group.meetings).toEqual([
+    { semester: "fall", day: "wednesday", start: "10:00", end: "13:00" },
+  ]);
+  expect(group.lecturers).toEqual(['ד"ר יהודית גל-עזר']);
+  // the Catalog merged into is left untouched, as every other merge leaves it (ADR-0010)
+  expect(first.offerings[0]!.groups[0]!.meetings).toEqual([
+    { semester: "fall", day: "tuesday", start: "15:00", end: "18:00" },
+  ]);
+});
+
+it("keeps weekly hours already known when a repeated row carries none", () => {
+  // A row never carries hours -- only a detail record does -- so a part of rows alone must
+  // not undo what an earlier part settled, or credits would come and go with each import.
+  const first = importRawCrawl(
+    {
+      rows: [row({ group: "01", kind: "הרצאה", lid: "808655" })],
+      sections: { "808655": { points: "3.00", code: "89110-01" } },
+    },
+    { academicYear: YEAR_2027 },
+  ).catalog;
+  expect(first.offerings[0]!.credits).toEqual({ known: true, total: 3 });
+
+  const { catalog } = importRawCrawl(
+    { rows: [row({ group: "01", kind: "הרצאה", lid: "808655" })] },
+    { academicYear: YEAR_2027, into: first },
+  );
+
+  expect(catalog.offerings[0]!.groups).toHaveLength(1);
+  expect(catalog.offerings[0]!.groups[0]!.weeklyHours).toBe(3);
+  expect(catalog.offerings[0]!.credits).toEqual({ known: true, total: 3 });
+});
+
+it("adds a Group a later part brings that the Catalog did not hold", () => {
+  const first = importRawCrawl(
+    { rows: [row({ group: "01", kind: "הרצאה" })] },
+    { academicYear: YEAR_2027 },
+  ).catalog;
+
+  const { catalog } = importRawCrawl(
+    {
+      rows: [
+        row({ group: "01", kind: "הרצאה" }),
+        row({ group: "05", kind: "תרגיל", hours: "11:00 - 13:00" }),
+      ],
+    },
+    { academicYear: YEAR_2027, into: first },
+  );
+
+  expect(catalog.offerings[0]!.groups.map((g) => [g.number, g.lessonType])).toEqual([
+    ["01", "הרצאה"],
+    ["05", "תרגיל"],
+  ]);
+  expect(first.offerings[0]!.groups).toHaveLength(1);
+});
+
 it("warns when a Year-long Group's hours do not divide evenly across its Semesters", () => {
   // Three days and four ranges divides no way at all: neither one block per Semester nor
   // one block shared by both. Three ranges would have been the legitimate shared form.
