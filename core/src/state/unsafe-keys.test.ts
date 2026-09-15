@@ -35,3 +35,22 @@ it("names a prototype key", () => {
 it("does not mistake a string value for a key", () => {
   expect(findUnsafeKey(parse('{"attempts":[{"courseNumber":"__proto__"}]}'))).toBeUndefined();
 });
+
+/**
+ * A State File is untrusted input, and the one shape a guard must survive is the shape it
+ * exists to refuse. A recursive walk would exhaust the call stack here and throw out of a
+ * function whose whole contract is that it does not.
+ */
+it("walks a file nested far deeper than a call stack would reach", () => {
+  const deep = (depth: number, leaf: string) => {
+    let json = leaf;
+    for (let level = 0; level < depth; level++) json = `{"variants":${json}}`;
+    return parse(json);
+  };
+
+  expect(findUnsafeKey(deep(50_000, '{"name":"ok"}'))).toBeUndefined();
+  expect(findUnsafeKey(deep(50_000, '{"__proto__":{}}'))).toEqual({
+    key: "__proto__",
+    at: new Array(50_000).fill("variants").join("."),
+  });
+});

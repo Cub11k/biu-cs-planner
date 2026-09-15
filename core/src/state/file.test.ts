@@ -477,3 +477,21 @@ it("refuses a migration that hands back something that is not a file", () => {
   expect(result.state).toBeUndefined();
   expect(result.warnings).toEqual([{ kind: "file-unreadable" }]);
 });
+
+/**
+ * Untrusted input: whatever arrives, a Warning comes back rather than an exception. Deep
+ * nesting is the shape that breaks a reader written the obvious way, and the reader is the
+ * last thing that may break — losing a student's file to a stack overflow is not an option.
+ */
+it("refuses a file nested far deeper than a call stack, without throwing", () => {
+  let json = '{"name":"deep"}';
+  for (let level = 0; level < 50_000; level++) json = `{"variants":[${json}]}`;
+  const deep = JSON.parse(`{"schemaVersion":1,"timetables":[${json}]}`) as unknown;
+
+  const result = parseStateFile(deep);
+
+  expect(result.warnings).toEqual([
+    { kind: "entry-dropped", at: "timetables[0]", field: "academicYear" },
+  ]);
+  expect(result.state?.timetables).toEqual([]);
+});
