@@ -3,9 +3,21 @@ import { MARKER, commitMarker } from "./outdated.ts";
 import type { Finding, PassOutcome } from "./review.ts";
 
 /**
- * The comment itself. One per pull request, stamped with the commit it reviewed, so
- * "is this current?" is answered by looking rather than by guessing.
+ * Two comments, because they have two different lifecycles.
+ *
+ * The graph check is mechanical, costs nothing and reruns on every push, so it is always
+ * current and never needs a banner. The two-axis review costs money, is asked for by
+ * hand, and goes stale the moment anyone pushes — so it lives in its own comment that the
+ * next push folds away under a banner. Keeping them apart means the automatic run can
+ * never overwrite a review somebody paid for, and a reader can never mistake a graph pass
+ * for a judgement.
  */
+
+/** The review's own comment. Unchanged from when this was one comment. */
+export { MARKER as REVIEW_MARKER };
+
+/** The graph check's comment. Distinct enough that neither marker matches the other. */
+export const GRAPHS_MARKER = "<!-- pr-review-graphs -->";
 
 /** Enough to act on. Past this a large diff produces a wall instead of a review. */
 export const CAP = 8;
@@ -17,9 +29,16 @@ export type Graphs = {
   scope: readonly string[];
 };
 
+/** What, if anything, has judged the commit the graph comment describes. */
+export type Judgement =
+  | { kind: "not-requested" }
+  | { kind: "unavailable"; reason: string }
+  | { kind: "reviewed" };
+
+export type GraphsComment = { headSha: string; graphs: Graphs; judgement: Judgement };
+
 export type ReviewComment = {
   headSha: string;
-  graphs: Graphs;
   standards: PassOutcome;
   spec: PassOutcome;
   /** Set when the diff was too large to send whole, so the comment can admit it. */
@@ -96,9 +115,35 @@ function pass(name: string, subtitle: string, outcome: PassOutcome, out: string[
   }
 }
 
-function graphs({ moduleCycles, callCycles, scope }: Graphs, out: string[]): void {
-  out.push("### The dependency graphs");
+/**
+ * The automatic comment: the mechanical check, plus a plain statement of what has and has
+ * not judged this commit. A reader must never take "no cycles" for "reviewed and clean".
+ */
+export function renderGraphs({ headSha, graphs, judgement }: GraphsComment): string {
+  const { moduleCycles, callCycles, scope } = graphs;
+  const out: string[] = [GRAPHS_MARKER, ""];
+
+  out.push(`## Graph check of \`${short(headSha)}\``);
   out.push("");
+
+  if (judgement.kind === "not-requested") {
+    out.push(
+      "**Nothing has judged this change.** This is the mechanical check only, so no " +
+        "findings below is not the same as reviewed and clean. A maintainer can ask for the " +
+        "two-axis review from the Actions tab — *PR review* → *Run workflow* — with this " +
+        `pull request's number.`,
+    );
+  } else if (judgement.kind === "unavailable") {
+    out.push(
+      `**Nothing has judged this change.** The two-axis review was asked for but did not run: ${judgement.reason} ` +
+        "Until then this is the mechanical check only, and no findings below is not the same " +
+        "as reviewed and clean.",
+    );
+  } else {
+    out.push("The two-axis review of this commit is in its own comment on this pull request.");
+  }
+  out.push("");
+
   out.push(
     "Mechanical, not a judgement: the module and call graphs `tools/pr-report` derives " +
       "from the source, checked for cycles. Nothing here is re-parsed, so this and the " +
@@ -140,31 +185,34 @@ function graphs({ moduleCycles, callCycles, scope }: Graphs, out: string[]): voi
     "> Two things this check does not do. It records only calls that leave the module they " +
       "are written in, so recursion that stays inside one file never shows up. And acyclic is " +
       "not the same as correctly layered: a one-way `web → core` import breaks a guardrail " +
-      "without closing a loop, so it passes here and belongs to the Standards pass below.",
+      "without closing a loop, so it passes here and belongs to the Standards pass.",
   );
-  out.push("");
+
+  return out.join("\n").trimEnd();
 }
 
+/** The asked-for comment: the two judgement passes, and nothing mechanical. */
 export function renderReview(input: ReviewComment): string {
   const out: string[] = [MARKER, commitMarker(input.headSha), ""];
 
   out.push(`## Two-axis review of \`${short(input.headSha)}\``);
   out.push("");
   out.push(
-    "Advice, not a gate. This is never a required check and nothing below blocks a merge — " +
-      "if it is wrong, say so and merge.",
+    "Asked for by hand, and true only of the commit named above — the next push folds this " +
+      "away under an outdated banner rather than letting it look current. Advice, not a gate: " +
+      "this is never a required check and nothing below blocks a merge, so if it is wrong, say " +
+      "so and merge. The mechanical graph check is in its own comment and reruns on every push.",
   );
   out.push("");
 
-  graphs(input.graphs, out);
   pass("Standards", "the guardrails in `CLAUDE.md` and `docs/adr/`", input.standards, out);
   pass("Spec", "what the ticket asked for", input.spec, out);
 
   if (input.diffTruncatedAt !== undefined) {
     out.push(
       `> The diff was longer than ${input.diffTruncatedAt.toLocaleString("en-US")} characters ` +
-        "and both passes read only the first that much of it. The graph checks above still cover " +
-        "the whole tree.",
+        "and both passes read only the first that much of it. The graph check in the other " +
+        "comment still covers the whole tree.",
     );
     out.push("");
   }

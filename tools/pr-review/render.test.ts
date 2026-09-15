@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { MARKER, markOutdated, reviewedCommit } from "./outdated.ts";
-import { CAP, bySeverity, renderReview, safe, type ReviewComment } from "./render.ts";
+import {
+  CAP,
+  GRAPHS_MARKER,
+  bySeverity,
+  renderGraphs,
+  renderReview,
+  safe,
+  type GraphsComment,
+  type ReviewComment,
+} from "./render.ts";
 import type { Finding, PassOutcome } from "./review.ts";
 
 const finding = (over: Partial<Finding> = {}): Finding => ({
@@ -19,9 +28,15 @@ const clean: PassOutcome = {
   findings: [],
 };
 
-const comment = (over: Partial<ReviewComment> = {}): ReviewComment => ({
+const graphsComment = (over: Partial<GraphsComment> = {}): GraphsComment => ({
   headSha: "abcdef1234567890",
   graphs: { moduleCycles: [], callCycles: [], scope: ["core/src", "app/src"] },
+  judgement: { kind: "not-requested" },
+  ...over,
+});
+
+const comment = (over: Partial<ReviewComment> = {}): ReviewComment => ({
+  headSha: "abcdef1234567890",
   standards: clean,
   spec: clean,
   ...over,
@@ -56,32 +71,54 @@ describe("bySeverity", () => {
   });
 });
 
-describe("renderReview", () => {
-  it("carries the marker and the head commit it reviewed", () => {
-    const body = renderReview(comment());
-    expect(body.startsWith(MARKER)).toBe(true);
-    expect(reviewedCommit(body)).toBe("abcdef1234567890");
-    expect(body).toContain("`abcdef1`");
+describe("the two comments are told apart by their markers", () => {
+  it("does not let the graph comment answer to the review's marker", () => {
+    expect(renderGraphs(graphsComment()).startsWith(MARKER)).toBe(false);
+    expect(renderGraphs(graphsComment()).startsWith(GRAPHS_MARKER)).toBe(true);
   });
 
-  it("names what it walked, so 'acyclic' does not overstate its reach", () => {
-    expect(renderReview(comment())).toContain("Derived from `core/src`, `app/src`");
+  it("does not let the review answer to the graph comment's marker", () => {
+    expect(renderReview(comment()).startsWith(GRAPHS_MARKER)).toBe(false);
+    expect(renderReview(comment()).startsWith(MARKER)).toBe(true);
+  });
+});
+
+describe("renderGraphs", () => {
+  it("says plainly that nothing judged the change when no review was asked for", () => {
+    const body = renderGraphs(graphsComment());
+    expect(body).toContain("**Nothing has judged this change.**");
+    expect(body).toContain("not the same as reviewed and clean");
+    expect(body).toContain("Run workflow");
   });
 
-  it("says it advises rather than gates", () => {
-    expect(renderReview(comment())).toContain("nothing below blocks a merge");
+  it("says why when a review was asked for and could not run", () => {
+    const body = renderGraphs(
+      graphsComment({
+        judgement: {
+          kind: "unavailable",
+          reason: "the `ANTHROPIC_API_KEY` repository secret is not set.",
+        },
+      }),
+    );
+    expect(body).toContain("**Nothing has judged this change.**");
+    expect(body).toContain("`ANTHROPIC_API_KEY` repository secret is not set");
   });
 
-  it("says a clean review is clean instead of padding it", () => {
-    const body = renderReview(comment());
-    expect(body).toContain("**Module graph:** acyclic.");
-    expect(body).toContain("Nothing to report.");
-    expect(body).not.toContain("Goes wrong when");
+  it("points at the other comment once a review exists", () => {
+    const body = renderGraphs(graphsComment({ judgement: { kind: "reviewed" } }));
+    expect(body).toContain("in its own comment");
+    expect(body).not.toContain("Nothing has judged this change");
+  });
+
+  it("names the commit it checked and what it walked", () => {
+    const body = renderGraphs(graphsComment());
+    expect(body).toContain("## Graph check of `abcdef1`");
+    expect(body).toContain("Derived from `core/src`, `app/src`");
   });
 
   it("reports a module cycle as a path through it", () => {
-    const body = renderReview(
-      comment({
+    const body = renderGraphs(
+      graphsComment({
         graphs: {
           moduleCycles: [["core/src/a.ts", "app/src/b.ts", "core/src/a.ts"]],
           callCycles: [],
@@ -94,8 +131,8 @@ describe("renderReview", () => {
   });
 
   it("keeps call-graph cycles in their own paragraph and names the modules they span", () => {
-    const body = renderReview(
-      comment({
+    const body = renderGraphs(
+      graphsComment({
         graphs: {
           moduleCycles: [],
           callCycles: [
@@ -104,13 +141,43 @@ describe("renderReview", () => {
               modules: ["core/src/a.ts", "core/src/b.ts"],
             },
           ],
-          scope: ["core/src", "app/src"],
+          scope: ["core/src"],
         },
       }),
     );
     expect(body).toContain("**Call graph: 1 cycle.**");
     expect(body).toContain("across `core/src/a.ts`, `core/src/b.ts`");
     expect(body).toContain("recursion is legitimate");
+  });
+
+  it("says a clean graph is clean instead of padding it", () => {
+    const body = renderGraphs(graphsComment());
+    expect(body).toContain("**Module graph:** acyclic.");
+    expect(body).toContain("**Call graph:** no cycles between functions.");
+  });
+});
+
+describe("renderReview", () => {
+  it("carries the marker and the head commit it reviewed", () => {
+    const body = renderReview(comment());
+    expect(reviewedCommit(body)).toBe("abcdef1234567890");
+    expect(body).toContain("## Two-axis review of `abcdef1`");
+  });
+
+  it("says it advises rather than gates, and that it will not stay current", () => {
+    const body = renderReview(comment());
+    expect(body).toContain("nothing below blocks a merge");
+    expect(body).toContain("the next push folds this away");
+  });
+
+  it("holds no graph section, which lives in the comment that reruns on every push", () => {
+    expect(renderReview(comment())).not.toContain("Module graph");
+  });
+
+  it("says a clean review is clean instead of padding it", () => {
+    const body = renderReview(comment());
+    expect(body).toContain("Nothing to report.");
+    expect(body).not.toContain("Goes wrong when");
   });
 
   it("keeps Standards and Spec as separate sections", () => {
@@ -170,9 +237,7 @@ describe("renderReview", () => {
   });
 
   it("survives being folded away on the next push", () => {
-    const body = renderReview(
-      comment({ standards: { ...clean, findings: [finding()] } }),
-    );
+    const body = renderReview(comment({ standards: { ...clean, findings: [finding()] } }));
     const folded = markOutdated(body, "fedcba9876543210");
 
     expect(folded).toContain("<code>abcdef1</code>");
