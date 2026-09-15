@@ -1,0 +1,151 @@
+# The signal that says whether the code works. pr-report.yml builds the report a reviewer
+# reads; this is the pass/fail check beside it, on every pull request and every push to dev.
+#
+# Two claims get exercised. The matrix runs the tests on the supported floor (Node 22) as
+# well as the runtime development uses (Node 24), so an API that exists only in 24 fails
+# here rather than on a student's machine. The smoke jobs start the real server under Bun
+# and under Deno, because "the server avoids native modules and Node-only APIs where
+# possible, so `bunx` and `deno run npm:` work too" (docs/design.md, "CLI and
+# distribution") is a property nothing else touches.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - dev
+
+permissions:
+  contents: read
+
+# github.ref is the PR's merge ref on a pull request and the branch on a push, so a
+# rerun cancels its own predecessor and nothing else.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    strategy:
+      # Both legs always report: "fails on 22, passes on 24" is the answer this job exists
+      # to give, and stopping the matrix at the first failure would hide half of it.
+      fail-fast: false
+      matrix:
+        node:
+          - 22 # the floor in `engines`, which @types/node tracks
+          - 24 # what development runs on
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      # The committed lockfile, installed exactly, with no package's install script run:
+      # "no install scripts" is a supply-chain rule, and this is where it is enforced
+      # rather than assumed.
+      - run: npm ci --ignore-scripts
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+  smoke:
+    name: ${{ matrix.name }} start-up
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runtime: bun
+            name: Bun
+            start: bun server/src/serve.ts
+          - runtime: deno
+            name: Deno
+            # The permissions the server actually asks of the OS: a port, the Workspace
+            # and the token file, the environment and platform behind the config
+            # directory. Widening this list is a fine thing to do when the server grows a
+            # need — it is spelled out so that growing one is a visible edit.
+            start: >-
+              deno run --allow-net --allow-read --allow-write --allow-env --allow-sys
+              server/src/serve.ts
+    steps:
+      - uses: actions/checkout@v4
+
+      # Bun and Deno run the server, but the dependencies still come from the committed
+      # lockfile, so that what starts here is what a student's `npm i -g` installs.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci --ignore-scripts
+
+      - if: matrix.runtime == 'bun'
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - if: matrix.runtime == 'deno'
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      # Not a second test suite: the server comes up, answers once, and goes away again.
+      # The health route is the one route that needs no launch token (ADR-0004), which is
+      # exactly what a probe from outside the app can ask for.
+      - name: Start the server, ask it one question, stop it
+        run: |
+          set -euo pipefail
+
+          # The port server/src/config.ts binds; the dev entry point takes no --port.
+          port=8900
+
+          ${{ matrix.start }} &
+          server=$!
+
+          # Up to thirty seconds, but a process that has already died is not worth
+          # waiting for: that is the failure this job is looking for, so it is reported
+          # as itself rather than as a timeout.
+          answered=""
+          for _ in $(seq 1 30); do
+            if ! kill -0 "$server" 2>/dev/null; then
+              echo "::error::${{ matrix.name }} could not start the server: the process exited before answering."
+              wait "$server" || true
+              exit 1
+            fi
+            if curl -fs --max-time 2 "http://127.0.0.1:$port/api/health" -o health.json; then
+              answered=yes
+              break
+            fi
+            sleep 1
+          done
+
+          if [ -z "$answered" ]; then
+            echo "::error::${{ matrix.name }} started the server but it never answered on port $port."
+            kill "$server" 2>/dev/null || true
+            exit 1
+          fi
+
+          # the body goes in the log: it is what "one successful response" looked like
+          cat health.json
+          echo
+          grep -q '"ok":true' health.json
+
+          # Exiting cleanly is part of the claim: a runtime that comes up and then has to
+          # be killed is not one a student can Ctrl+C.
+          kill "$server"
+          for _ in $(seq 1 10); do
+            kill -0 "$server" 2>/dev/null || break
+            sleep 1
+          done
+          if kill -0 "$server" 2>/dev/null; then
+            kill -9 "$server" || true
+            echo "::error::${{ matrix.name }} did not stop the server on SIGTERM."
+            exit 1
+          fi
