@@ -27,6 +27,7 @@ export type Warning =
   | { kind: "detail-without-offering"; courseNumber: string; semesters: Semester[] }
   | { kind: "weekly-hours-unreadable"; courseNumber: string }
   | { kind: "detail-group-unknown"; courseNumber: string }
+  | { kind: "detail-group-ambiguous"; courseNumber: string; group: string }
   | { kind: "detail-without-group"; lid: string }
   | { kind: "lid-not-unique"; lid: string }
   | { kind: "exam-unreadable"; courseNumber: string }
@@ -156,7 +157,7 @@ export function importRawCrawl(
   // Built on first use, which covers an Offering seeded from the Catalog and one this part
   // created alike.
   const indexes = new Map<Offering, Map<string, Group>>();
-  function groupsOf(offering: Offering): Map<string, Group> {
+  function groupIndexOf(offering: Offering): Map<string, Group> {
     let index = indexes.get(offering);
     if (!index) {
       index = new Map(offering.groups.map((g) => [groupKey(g.number, g.lessonType), g]));
@@ -225,7 +226,7 @@ export function importRawCrawl(
     // part have been seen before. Such a row updates the Group it names rather than adding
     // a second: what the row carries -- Meetings and lecturers -- replaces what is held, so
     // a Group that moved moves, and the weekly hours no row ever carries are left alone.
-    const index = groupsOf(offering);
+    const index = groupIndexOf(offering);
     const identity = groupKey(row.group, row.kind);
     let group = index.get(identity);
     if (!group) {
@@ -236,8 +237,9 @@ export function importRawCrawl(
     group.lecturers = lecturersFrom(row.teachers);
     group.meetings = meetings;
     // A row's identity is its lid, so two rows claiming one is the crawl contradicting
-    // itself. The later row keeps the lid, and the earlier Group is left without the hours
-    // its record would have carried -- which is worth saying rather than losing quietly.
+    // itself. The later row keeps the lid; where the two rows are different Groups, the
+    // earlier is left without the hours its record would have carried, and where they are
+    // the same Group nothing is lost. Either way it is worth saying rather than passing.
     if (row.lid) {
       if (groupsByLid.has(row.lid)) warnings.push({ kind: "lid-not-unique", lid: row.lid });
       groupsByLid.set(row.lid, { offering, group });
@@ -264,10 +266,21 @@ export function importRawCrawl(
 
     const hours = readWeeklyHours(detail.points, parsed.courseNumber, warnings);
     if (hours !== undefined) {
+      // A course-wide record names the Group it was sampled from by number alone, and a
+      // number alone is not a Group: the same 01 can be a lecture and a tirgul. Where it
+      // names one Group the figure lands on it; where it names two there is nothing in the
+      // record to choose between them, so the hours are refused rather than guessed onto
+      // the wrong Lesson Type, which would put a wrong total in the Offering's credits.
       const sampled = parseSampledGroup(detail.code);
-      const group = sampled && offering.groups.find((g) => g.number === sampled);
-      if (group) group.weeklyHours = hours;
-      else warnings.push({ kind: "detail-group-unknown", courseNumber: parsed.courseNumber });
+      const named = sampled ? offering.groups.filter((g) => g.number === sampled) : [];
+      if (named.length === 1) named[0]!.weeklyHours = hours;
+      else if (named.length > 1) {
+        warnings.push({
+          kind: "detail-group-ambiguous",
+          courseNumber: parsed.courseNumber,
+          group: sampled!,
+        });
+      } else warnings.push({ kind: "detail-group-unknown", courseNumber: parsed.courseNumber });
     }
 
     // An absent Exam list means "not published for the Group this was read from", never

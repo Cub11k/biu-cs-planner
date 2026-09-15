@@ -30,7 +30,10 @@ function row(overrides: Partial<Parameters<typeof importRawCrawl>[0]["rows"] ext
   // Shoham gives every row its own lid, and `code|group|kind|semester` is unique across all
   // 510 rows of the crawl. A test that says nothing about lids still gets distinct ones, so
   // that two ordinary rows never read as the crawl contradicting itself.
-  return { ...merged, lid: merged.lid ?? `${merged.code}-${merged.group}-${merged.semester}` };
+  return {
+    ...merged,
+    lid: merged.lid ?? `${merged.code}-${merged.group}-${merged.kind}-${merged.semester}`,
+  };
 }
 
 it("imports a timed lecture row as one Offering with one Group and one Meeting", () => {
@@ -211,6 +214,8 @@ it("updates the Group a repeated row names rather than holding it twice", () => 
 it("holds one Group per number and Lesson Type, so one number in two types stays two", () => {
   // The pair is the identity, not the number alone: Shoham numbers a Course's lecture and
   // its tirgul independently, and 01 of each is two Groups a student picks separately.
+  // This one guards the shape of the identity rather than the duplication bug -- a key of
+  // the number alone would collapse these two into one, and no re-import is needed to see it.
   const { catalog } = importRawCrawl(
     {
       rows: [
@@ -624,6 +629,45 @@ it("settles credits once every Lesson Type has hours, summing one per type", () 
   );
 
   expect(catalog.offerings[0]!.credits).toEqual({ known: true, total: 6 });
+});
+
+it("refuses a sampled record's hours when its number names two Groups, and says so", () => {
+  // A course-wide record names its Group by number alone, which the lecture and the tirgul
+  // can share. Guessing would put the lecture's 4.00 on whichever came first and hand the
+  // Offering a wrong credit total; a Group whose hours nobody published stays unsettled.
+  const { catalog, warnings } = importRawCrawl(
+    {
+      rows: [
+        row({ code: "89132", group: "01", kind: "הרצאה" }),
+        row({ code: "89132", group: "01", kind: "תרגיל", hours: "11:00 - 13:00" }),
+      ],
+      details: { "89132|סמסטר א'": { points: "4.00", code: "89132-01", terms: [] } },
+    },
+    { academicYear: YEAR_2027 },
+  );
+
+  expect(exceptProvenance(warnings)).toEqual([
+    { kind: "detail-group-ambiguous", courseNumber: "89-132", group: "01" },
+  ]);
+  const offering = catalog.offerings[0]!;
+  expect(offering.groups.map((g) => g.weeklyHours)).toEqual([undefined, undefined]);
+  expect(offering.credits).toEqual({ known: false });
+});
+
+it("still lands a sampled record's hours when its number names exactly one Group", () => {
+  const { catalog, warnings } = importRawCrawl(
+    {
+      rows: [
+        row({ code: "89132", group: "01", kind: "הרצאה" }),
+        row({ code: "89132", group: "03", kind: "תרגיל", hours: "11:00 - 13:00" }),
+      ],
+      details: { "89132|סמסטר א'": { points: "4.00", code: "89132-01", terms: [] } },
+    },
+    { academicYear: YEAR_2027 },
+  );
+
+  expect(exceptProvenance(warnings)).toEqual([]);
+  expect(catalog.offerings[0]!.groups.map((g) => g.weeklyHours)).toEqual([4, undefined]);
 });
 
 it("warns when a detail record does not say which Group it came from", () => {
