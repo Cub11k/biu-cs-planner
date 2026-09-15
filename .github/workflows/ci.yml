@@ -118,9 +118,9 @@ jobs:
           ${{ matrix.start }} &
           server=$!
 
-          # Up to thirty seconds, but a process that has already died is not worth
-          # waiting for: that is the failure this job is looking for, so it is reported
-          # as itself rather than as a timeout.
+          # Thirty tries -- a minute and a half at worst -- but a process that has
+          # already died is not worth waiting for: that is the failure this job is looking
+          # for, so it is reported as itself rather than as a timeout.
           answered=""
           for _ in $(seq 1 30); do
             if ! kill -0 "$server" 2>/dev/null; then
@@ -147,21 +147,39 @@ jobs:
           answer_ok=""
           if grep -q '"ok":true' health.json; then answer_ok=yes; fi
 
-          # Exiting cleanly is part of the claim: a runtime that comes up and then has to
-          # be killed is not one a student can Ctrl+C. The server is stopped before the
-          # body is judged, so that a disappointing answer still leaves nothing running --
-          # an orphan here holds the step's output open and the job hangs rather than fails.
-          if ! kill "$server" 2>/dev/null; then
-            echo "::error::${{ matrix.name }} answered once and then exited on its own, before it could be stopped."
-            exit 1
-          fi
+          # Exiting cleanly is the rest of the claim. SIGINT, because Ctrl+C in a terminal
+          # is how a student stops this and SIGINT is what Ctrl+C sends. The server is
+          # stopped before the answer is judged, so a disappointing answer still leaves
+          # nothing running -- an orphan holds the step's output open, and the runner waits
+          # on that, so the job would hang for its whole timeout instead of failing.
+          kill -INT "$server" 2>/dev/null || true
+
+          refused=""
           for _ in $(seq 1 10); do
             kill -0 "$server" 2>/dev/null || break
             sleep 1
           done
           if kill -0 "$server" 2>/dev/null; then
             kill -9 "$server" || true
-            echo "::error::${{ matrix.name }} did not stop the server on SIGTERM."
+            refused=yes
+          fi
+
+          # The status it went out with, not merely that it is gone. A server that answers
+          # and then crashes a moment later is also gone by the time we look, and "gone"
+          # on its own would call that a clean shutdown.
+          status=0
+          wait "$server" || status=$?
+
+          if [ -n "$refused" ]; then
+            echo "::error::${{ matrix.name }} did not stop the server on SIGINT: a student's Ctrl+C would not end it either."
+            exit 1
+          fi
+
+          # 130 is ending on SIGINT, which is what both runtimes do with no handler
+          # installed; 0 is a handler that chose to stop. Any other status is the server
+          # going down for reasons of its own, which is not stopping when it was asked.
+          if [ "$status" -ne 130 ] && [ "$status" -ne 0 ]; then
+            echo "::error::${{ matrix.name }} did not shut the server down cleanly: it exited with status $status."
             exit 1
           fi
 
