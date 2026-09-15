@@ -61,7 +61,9 @@ export function WeekGrid({ language, semester, offering }: WeekGridProps): React
           {hourLines(range).map((hour) => (
             <span
               key={hour}
-              className="hour-label"
+              // the first label would be translated up into the sticky corner cell, which
+              // paints over it; it sits under its line instead of astride it
+              className={hour === range.startHour ? "hour-label hour-label-first" : "hour-label"}
               style={{ top: (hour - range.startHour) * HOUR_PX }}
             >
               {formatClock(hour * 60)}
@@ -161,7 +163,17 @@ function PencilTile({
       onBlur={() => onHighlight(undefined)}
     >
       <div className="tile-name">{text.name}</div>
-      <div className="tile-detail">{text.detail}</div>
+      <div className="tile-detail">
+        {text.detail}
+        {text.times === undefined ? null : (
+          <>
+            {" · "}
+            {/* isolated and left-to-right: the dash between two clock times is bidi-neutral,
+                so in Hebrew "15:00–18:00" would otherwise be reordered into "18:00–15:00" */}
+            <bdi dir="ltr">{text.times}</bdi>
+          </>
+        )}
+      </div>
     </div>
   );
 }

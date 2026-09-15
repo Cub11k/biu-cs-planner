@@ -70,14 +70,16 @@ export function TimetableScreen({
 
   const offerings = catalog.kind === "served" ? catalog.offerings : [];
   const chosen = offerings.find((offering) => offering.courseNumber === selected);
-  const span = academicYearSpan(academicYear);
+  // one spelling of the year on the whole screen: the header and the sidebar disagreeing
+  // about 2026-27 and 2027 reads as if a different year were the one missing
+  const yearLabel = t(language, "academicYear", academicYearSpan(academicYear));
 
   return (
     <div dir={DIRECTION[language]} className="flex min-h-dvh flex-col">
       <header className="flex items-center gap-4 border-b border-rule bg-paper px-4 py-2">
         <h1 className="text-lg font-semibold">{t(language, "timetable")}</h1>
         <span className="text-sm text-pencil">
-          {t(language, SEMESTER_STRING[semester])} · {t(language, "academicYear", span)}
+          {t(language, SEMESTER_STRING[semester])} · {yearLabel}
         </span>
         <button
           type="button"
@@ -99,7 +101,7 @@ export function TimetableScreen({
           ) : catalog.kind === "refused" ? (
             <CatalogNotice
               language={language}
-              academicYear={academicYear}
+              academicYear={yearLabel}
               warnings={catalog.warnings}
             />
           ) : (
@@ -151,7 +153,8 @@ export function CatalogNotice({
   warnings,
 }: {
   language: Language;
-  academicYear: number;
+  /** Spelled as the header spells it, so the screen names one year once. */
+  academicYear: string;
   warnings: readonly CatalogWarning[];
 }): React.JSX.Element {
   return (

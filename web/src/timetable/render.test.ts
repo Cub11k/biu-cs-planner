@@ -11,6 +11,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it } from "vitest";
 import type { Group, Offering } from "./catalog.ts";
+import { CoursePicker } from "./CoursePicker.tsx";
 import { CatalogNotice, TimetableScreen } from "./TimetableScreen.tsx";
 import { WeekGrid } from "./WeekGrid.tsx";
 
@@ -57,7 +58,10 @@ it("puts a Meeting at its own minutes, and says what it is", () => {
   expect(markup).toContain("top:0");
   expect(markup).toContain("height:196px");
   expect(markup).toContain("Introduction to Computer Science");
-  expect(markup).toContain("89-110 · Lecture · 01 · 15:00–18:00");
+  expect(markup).toContain("89-110 · Lecture · 01");
+  // the time range carries its own direction: an en dash between two clock times is
+  // bidi-neutral, so in Hebrew it would otherwise render as 18:00–15:00
+  expect(markup).toContain('<bdi dir="ltr">15:00–18:00</bdi>');
 });
 
 it("draws every block in pencil, with no ink, red pen or hatching anywhere", () => {
@@ -131,11 +135,12 @@ it("tells the student what is actually wrong when no Catalog is served", () => {
   const markup = renderToStaticMarkup(
     createElement(CatalogNotice, {
       language: "en",
-      academicYear: 2027,
+      academicYear: "2026-27",
       warnings: [{ kind: "schema-version-too-new", found: 2 }],
     }),
   );
 
+  expect(markup).toContain("2026-27");
   expect(markup).toContain("could not be read");
   expect(markup).toContain("newer version");
   expect(markup).not.toContain("Import a crawl");
@@ -145,10 +150,26 @@ it("offers the import only when the year simply has no Catalog", () => {
   const markup = renderToStaticMarkup(
     createElement(CatalogNotice, {
       language: "en",
-      academicYear: 2027,
+      academicYear: "2026-27",
       warnings: [{ kind: "no-catalog-for-year", academicYear: 2027 }],
     }),
   );
 
   expect(markup).toContain("Import a crawl");
+});
+
+it("counts one Group as one, in both languages", () => {
+  const one = offering([group("01", "סמינריון", [["sunday", "10:00", "12:00"]])]);
+  const picker = (language: "en" | "he"): string =>
+    renderToStaticMarkup(
+      createElement(CoursePicker, {
+        language,
+        offerings: [one],
+        selected: undefined,
+        onSelect: () => {},
+      }),
+    );
+
+  expect(picker("en")).toContain("1 group<");
+  expect(picker("he")).toContain("קבוצה אחת");
 });

@@ -61,8 +61,7 @@ export function CoursePicker({
               >
                 <span className="block font-medium">{courseName(offering, language)}</span>
                 <span className="block text-xs text-pencil">
-                  {offering.courseNumber} ·{" "}
-                  {t(language, "groupsCount", { count: offering.groups.length })}
+                  {offering.courseNumber} · {groupCount(language, offering.groups.length)}
                 </span>
               </button>
             </li>
@@ -71,6 +70,13 @@ export function CoursePicker({
       )}
     </div>
   );
+}
+
+/** One Group is not "1 groups", and Hebrew's singular is a different word again. */
+function groupCount(language: Language, count: number): string {
+  return count === 1
+    ? t(language, "groupsCountOne")
+    : t(language, "groupsCount", { count });
 }
 
 /** Course number or either name; the student types whichever they remember. */
