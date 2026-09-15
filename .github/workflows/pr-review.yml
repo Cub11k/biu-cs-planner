@@ -1,0 +1,70 @@
+# Posts a judgement about the change, next to the PR report's account of what it is.
+#
+# Two axes, kept apart: Standards (the guardrails in CLAUDE.md and the reasons in
+# docs/adr/) and Spec (whether the change does what its ticket asked for). Plus one
+# mechanical check that is nobody's judgement: the module and call graphs `tools/pr-report`
+# derives must be acyclic.
+#
+# It advises. It is never a required check and no finding here blocks a merge.
+#
+# Before this can run, a maintainer has to add an ANTHROPIC_API_KEY repository secret.
+# Without it the job still runs and still posts, saying the two passes were skipped and why.
+name: PR review
+
+# `pull_request`, deliberately. It withholds secrets from fork pull requests, and the job
+# below additionally refuses to run for one. `pull_request_target` would run with the key
+# in scope against a base-repo checkout, and any step that then built or executed the pull
+# request's code would hand an attacker that key. Fork coverage, if it is ever wanted,
+# needs its own design rather than a trigger swap.
+on:
+  pull_request:
+    paths:
+      - "**/*.ts"
+      - "**/*.tsx"
+      - "package.json"
+      - "vitest.config.ts"
+      - ".github/workflows/pr-review.yml"
+
+# Read the tree, write one comment. Reading the issues a pull request closes is what the
+# Spec pass is for, and it needs nothing else.
+permissions:
+  contents: read
+  issues: read
+  pull-requests: write
+
+# A burst of pushes should leave the newest review standing, not a race between two.
+concurrency:
+  group: pr-review-${{ github.event.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    # A fork's pull request gets no secrets from `pull_request` anyway; this makes the
+    # refusal explicit rather than leaving it to a failed API call.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+      PR_NUMBER: ${{ github.event.number }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      # Checkout and Node are what it takes to run a TypeScript file at all; neither
+      # produces a review, so the banner below still lands before any review exists.
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      # First, so the window in which a stale review looks current is closed rather than
+      # narrowed. Needs no dependencies: it edits a comment and nothing else.
+      - name: Mark the review already there as outdated
+        run: node tools/pr-review/outdate.ts
+
+      - run: npm ci
+
+      - name: Review the change and post it
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: npm run review
