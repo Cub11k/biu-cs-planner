@@ -1,9 +1,9 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { Hono } from "hono";
 import { afterEach, beforeEach, expect, it } from "vitest";
-import { serveBuiltUi } from "./ui.ts";
+import { builtUiRoot, serveBuiltUi } from "./ui.ts";
 
 let root: string;
 
@@ -101,4 +101,11 @@ it("answers 404 when the UI was never built, instead of failing to start", async
   } finally {
     await rm(empty, { recursive: true, force: true });
   }
+});
+
+it("looks for the built UI beside the bundle, not beside the Workspace", () => {
+  // `dist/cli.js` and `dist/ui/` are siblings, and the student's current directory —
+  // which is the Workspace — must never be what decides which files are served
+  expect(builtUiRoot().endsWith(`${sep}ui`)).toBe(true);
+  expect(builtUiRoot()).not.toBe(join(process.cwd(), "ui"));
 });
