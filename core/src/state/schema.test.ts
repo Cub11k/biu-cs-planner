@@ -56,6 +56,10 @@ it("refuses a grade that is neither kind", () => {
   expect(attempt.success).toBe(false);
 });
 
+/**
+ * The snapshot is a Meeting in shape but not in ownership: it is the student's record of what
+ * was picked, and a Catalog that grows a field must not be able to stop it loading.
+ */
 it("keeps a Pick's snapshot of the Group's Meetings", () => {
   const pick = pickSchema.parse({
     courseNumber: "89-110",
@@ -90,8 +94,15 @@ it("gives a Blocked Time the shape a Clashes module can read without importing t
 
   // The structural contract with #14, written out rather than imported: a Blocked Time is
   // assignable to a weekly period, so Clashes can take one without either module depending
-  // on the other.
-  const period: { semester: string; day: string; start: string; end: string } = blocked;
+  // on the other. The Semester and Day are spelled out as their values rather than as
+  // `string`, because widening either of them here would break Clashes while a `string`
+  // target went on compiling — which is the breakage this test is named for.
+  const period: {
+    semester: "fall" | "spring" | "summer";
+    day: "sunday" | "monday" | "tuesday" | "wednesday" | "thursday" | "friday";
+    start: string;
+    end: string;
+  } = blocked;
   expect(period).toMatchObject({ semester: "fall", day: "sunday", start: "08:00", end: "10:00" });
 });
 

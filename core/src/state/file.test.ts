@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import { parseStateFile, readStateFile, stateJsonSchema } from "./file.ts";
 import type { Migrations } from "./migrate.ts";
-import { CURRENT_STATE_SCHEMA_VERSION, stateSchema } from "./schema.ts";
+import { CURRENT_STATE_SCHEMA_VERSION, stateSchema, statusSchema } from "./schema.ts";
 
 /** What actually reaches disk: JSON, so every type has survived a round trip. */
 function onDisk(state: unknown): unknown {
@@ -34,6 +34,14 @@ function fullFile() {
         grade: { kind: "pass-fail", passed: true },
       },
       { courseNumber: "89-230", academicYear: 2027, semester: "spring", status: "planned" },
+      { courseNumber: "89-214", academicYear: 2027, semester: "summer", status: "registered" },
+      {
+        courseNumber: "89-550",
+        academicYear: 2025,
+        semester: "spring",
+        status: "credited",
+        grade: { kind: "pass-fail", passed: false },
+      },
     ],
     timetables: [
       {
@@ -64,11 +72,19 @@ function fullFile() {
   };
 }
 
-it("reads back a State File whole", () => {
+/**
+ * The round trip that matters is through JSON, because that is what reaches disk. Every
+ * status and both kinds of grade are in here for that reason rather than in a loop over the
+ * schema, which would never touch a file.
+ */
+it("reads back a State File whole, every status and both grades among it", () => {
   const result = parseStateFile(onDisk(fullFile()));
 
   expect(result.warnings).toEqual([]);
   expect(result.state).toEqual(fullFile());
+  expect(new Set(result.state?.attempts.map((attempt) => attempt.status))).toEqual(
+    new Set(statusSchema.options),
+  );
 });
 
 it("returns a State that its own schema accepts, so the reader cannot drift from the schema", () => {
@@ -589,4 +605,29 @@ it("refuses a file nested far deeper than a call stack, without throwing", () =>
     { kind: "entry-dropped", at: "timetables[0]", field: "academicYear" },
   ]);
   expect(result.state?.timetables).toEqual([]);
+});
+
+/**
+ * A Timetable is the weekly schedule work for one Semester of one Academic Year. A second one
+ * for the same pair splits a student's Variants across two places nothing distinguishes.
+ */
+it("warns about a second Timetable for the same Semester, and keeps both", () => {
+  const result = parseStateFile({
+    schemaVersion: CURRENT_STATE_SCHEMA_VERSION,
+    timetables: [
+      { academicYear: 2027, semester: "fall" },
+      { academicYear: 2027, semester: "spring" },
+      { academicYear: 2027, semester: "fall" },
+    ],
+  });
+
+  expect(result.state?.timetables).toHaveLength(3);
+  expect(result.warnings).toEqual([
+    {
+      kind: "timetable-not-unique",
+      at: "timetables[2]",
+      academicYear: 2027,
+      semester: "fall",
+    },
+  ]);
 });

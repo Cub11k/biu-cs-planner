@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { daySchema, meetingSchema, semesterSchema } from "../catalog/schema.ts";
+import { daySchema, semesterSchema } from "../catalog/schema.ts";
 
 /**
  * A State File is one student's or one scenario's own data: Attempts, Timetables, Pins and
@@ -9,9 +9,10 @@ import { daySchema, meetingSchema, semesterSchema } from "../catalog/schema.ts";
  *
  * **Courses are referenced by course number, never by Catalog entry.** Nothing here holds a
  * pointer into a Catalog, so importing a new year's Catalog cannot invalidate a State File.
- * `semesterSchema`, `daySchema` and `meetingSchema` are shared vocabulary, not entries: a
- * Pick's snapshot is compared against the new Catalog's Meetings on re-import, which only
- * works if both say `fall` and `tuesday` and `15:00` the same way.
+ * `semesterSchema` and `daySchema` are shared vocabulary rather than entries — closed sets of
+ * values, which a Catalog can only ever widen, and which both sides must agree on for a
+ * snapshot to be comparable at all. Every record shape is declared here, for the reason under
+ * `pickedMeetingSchema`.
  */
 export const CURRENT_STATE_SCHEMA_VERSION = 1;
 
@@ -56,11 +57,31 @@ export const attemptSchema = z.object({
  * re-import compares it against the new Catalog to show "changed since picked", so it is not
  * redundant with the Catalog and must not be dropped as an optimisation.
  */
+/**
+ * A Meeting as it stood when it was picked. Deliberately declared here rather than borrowed
+ * from the Catalog, even though the two are the same shape today and the snapshot exists to
+ * be compared against a Catalog's Meetings.
+ *
+ * A snapshot is a student's data, versioned by `CURRENT_STATE_SCHEMA_VERSION`; a Catalog's
+ * Meeting is versioned by the Catalog's own counter, and the two move independently. Borrow
+ * it and the day the crawler learns to read rooms — a required `room` on a Catalog Meeting —
+ * every State File on every disk fails to load its Picks, with no migration possible, because
+ * the version that would have triggered one never changed. A Catalog change must never be
+ * able to invalidate a State File; that is the rule this whole file is written around, and a
+ * shared record shape is the one way through it.
+ */
+export const pickedMeetingSchema = z.object({
+  semester: semesterSchema,
+  day: daySchema,
+  start: z.string().regex(CLOCK_TIME),
+  end: z.string().regex(CLOCK_TIME),
+});
+
 export const pickSchema = z.object({
   courseNumber: z.string(),
   lessonType: z.string(),
   groupNumber: z.string(),
-  meetings: z.array(meetingSchema),
+  meetings: z.array(pickedMeetingSchema),
 });
 
 /**
@@ -134,6 +155,7 @@ export const stateSchema = z.object({
 export type Status = z.infer<typeof statusSchema>;
 export type Grade = z.infer<typeof gradeSchema>;
 export type Attempt = z.infer<typeof attemptSchema>;
+export type PickedMeeting = z.infer<typeof pickedMeetingSchema>;
 export type Pick = z.infer<typeof pickSchema>;
 export type Variant = z.infer<typeof variantSchema>;
 export type BlockedTime = z.infer<typeof blockedTimeSchema>;
