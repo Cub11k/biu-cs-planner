@@ -40,7 +40,8 @@ export type StateFileWarning =
   | { kind: "primary-variant-not-unique"; at: string; primaries: number }
   | { kind: "blocked-time-semester-mismatch"; at: string; semester: Semester }
   | { kind: "blocked-time-does-not-advance"; at: string; start: string; end: string }
-  | { kind: "pick-not-unique"; at: string; courseNumber: string; lessonType: string };
+  | { kind: "pick-not-unique"; at: string; courseNumber: string; lessonType: string }
+  | { kind: "timetable-not-unique"; at: string; academicYear: number; semester: Semester };
 
 /**
  * Migrations that bring an older State File up to the current version, keyed by the version
@@ -277,13 +278,42 @@ function readSettings(raw: unknown, warnings: StateFileWarning[]): Settings {
   return settings;
 }
 
+/**
+ * A Timetable is the weekly schedule work for one Semester of one Academic Year, so a second
+ * one for the same pair splits a student's Variants across two places that nothing
+ * distinguishes: whatever asks for "the Timetable for 2027 Fall" gets one of them, and the
+ * Variants in the other are invisible. Both are kept and the pair is named.
+ */
+function checkTimetablesUnique(
+  timetables: Timetable[],
+  warnings: StateFileWarning[],
+): void {
+  const seen = new Set<string>();
+  timetables.forEach((timetable, index) => {
+    const slot = `${timetable.academicYear}\u0000${timetable.semester}`;
+    if (seen.has(slot)) {
+      warnings.push({
+        kind: "timetable-not-unique",
+        at: `timetables[${index}]`,
+        academicYear: timetable.academicYear,
+        semester: timetable.semester,
+      });
+      return;
+    }
+    seen.add(slot);
+  });
+}
+
 function readState(raw: Record<string, unknown>, warnings: StateFileWarning[]): State {
+  const timetables = readList(raw.timetables, "timetables", warnings, (entry, at) =>
+    readTimetable(entry, at, warnings),
+  );
+  checkTimetablesUnique(timetables, warnings);
+
   return {
     schemaVersion: CURRENT_STATE_SCHEMA_VERSION,
     attempts: readEach(attemptSchema, raw.attempts, "attempts", warnings),
-    timetables: readList(raw.timetables, "timetables", warnings, (entry, at) =>
-      readTimetable(entry, at, warnings),
-    ),
+    timetables,
     pins: readEach(pinSchema, raw.pins, "pins", warnings),
     settings: readSettings(raw.settings, warnings),
   };
