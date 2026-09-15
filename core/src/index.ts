@@ -20,3 +20,5 @@ export type {
   Offering,
   Semester,
 } from "./catalog/schema.ts";
+export { findClashes } from "./timetable/clashes.ts";
+export type { Clash, GroupRef, PickedGroup, WeeklySpan } from "./timetable/clashes.ts";
