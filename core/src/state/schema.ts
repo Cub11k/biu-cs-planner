@@ -52,12 +52,6 @@ export const attemptSchema = z.object({
 });
 
 /**
- * One Group chosen for one Lesson Type of an Offering, carrying a snapshot of that Group's
- * Meetings as they stood when it was picked. The snapshot is the point and is required:
- * re-import compares it against the new Catalog to show "changed since picked", so it is not
- * redundant with the Catalog and must not be dropped as an optimisation.
- */
-/**
  * A Meeting as it stood when it was picked. Deliberately declared here rather than borrowed
  * from the Catalog, even though the two are the same shape today and the snapshot exists to
  * be compared against a Catalog's Meetings.
@@ -77,7 +71,17 @@ export const pickedMeetingSchema = z.object({
   end: z.string().regex(CLOCK_TIME),
 });
 
-export const pickSchema = z.object({
+/**
+ * A Pick: one Group chosen for one Lesson Type of an Offering, carrying a snapshot of that
+ * Group's Meetings as they stood when it was picked. The snapshot is the point and is
+ * required — re-import compares it against the new Catalog to show "changed since picked", so
+ * it is not redundant with the Catalog and must not be dropped as an optimisation.
+ *
+ * The domain term is **Pick** and prose should say so; the code symbol is `GroupPick` only
+ * because a type called `Pick` shadows TypeScript's built-in `Pick<T, K>`, which every
+ * importer would otherwise have to alias around. Recorded in `CONTEXT.md` under Pick.
+ */
+export const groupPickSchema = z.object({
   courseNumber: z.string(),
   lessonType: z.string(),
   groupNumber: z.string(),
@@ -100,7 +104,7 @@ export const variantHeadSchema = z.object({
 
 /** A named alternative set of Picks for a Semester. */
 export const variantSchema = variantHeadSchema.extend({
-  picks: z.array(pickSchema).default([]),
+  picks: z.array(groupPickSchema).default([]),
 });
 
 /**
@@ -156,7 +160,7 @@ export type Status = z.infer<typeof statusSchema>;
 export type Grade = z.infer<typeof gradeSchema>;
 export type Attempt = z.infer<typeof attemptSchema>;
 export type PickedMeeting = z.infer<typeof pickedMeetingSchema>;
-export type Pick = z.infer<typeof pickSchema>;
+export type GroupPick = z.infer<typeof groupPickSchema>;
 export type Variant = z.infer<typeof variantSchema>;
 export type BlockedTime = z.infer<typeof blockedTimeSchema>;
 export type Timetable = z.infer<typeof timetableSchema>;

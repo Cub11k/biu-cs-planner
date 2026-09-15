@@ -148,6 +148,7 @@ _Avoid_: option, draft, scenario
 **Pick**:
 The choice of one Group for one Lesson Type of an Offering within a Variant, with a snapshot of the Group's Meetings at the time of picking.
 _Avoid_: selection, registration
+_In code_: the type and schema are `GroupPick` and `groupPickSchema`, because a type named `Pick` shadows TypeScript's built-in `Pick<T, K>` for everything that imports it. The term is still Pick everywhere else, this file and `docs/` included.
 
 **Tray**:
 The Courses waiting to be scheduled in a Variant: that Semester's planned Attempts plus Courses added directly.
