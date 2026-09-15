@@ -21,7 +21,7 @@ const clean: PassOutcome = {
 
 const comment = (over: Partial<ReviewComment> = {}): ReviewComment => ({
   headSha: "abcdef1234567890",
-  graphs: { moduleCycles: [], callCycles: [] },
+  graphs: { moduleCycles: [], callCycles: [], scope: ["core/src", "app/src"] },
   standards: clean,
   spec: clean,
   ...over,
@@ -64,6 +64,10 @@ describe("renderReview", () => {
     expect(body).toContain("`abcdef1`");
   });
 
+  it("names what it walked, so 'acyclic' does not overstate its reach", () => {
+    expect(renderReview(comment())).toContain("Derived from `core/src`, `app/src`");
+  });
+
   it("says it advises rather than gates", () => {
     expect(renderReview(comment())).toContain("nothing below blocks a merge");
   });
@@ -81,6 +85,7 @@ describe("renderReview", () => {
         graphs: {
           moduleCycles: [["core/src/a.ts", "app/src/b.ts", "core/src/a.ts"]],
           callCycles: [],
+          scope: ["core/src", "app/src"],
         },
       }),
     );
@@ -99,6 +104,7 @@ describe("renderReview", () => {
               modules: ["core/src/a.ts", "core/src/b.ts"],
             },
           ],
+          scope: ["core/src", "app/src"],
         },
       }),
     );

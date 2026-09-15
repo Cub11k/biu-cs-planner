@@ -102,6 +102,17 @@ describe("callCycles", () => {
     ]);
   });
 
+  it("names a module once even when the loop leaves it and comes back", () => {
+    const cycle = callCycles([
+      edge("import.ts#importRawCrawl", "details.ts#parseExams"),
+      edge("details.ts#parseExams", "import.ts#readWeeklyHours"),
+      edge("import.ts#readWeeklyHours", "details.ts#parseWeeklyHours"),
+      edge("details.ts#parseWeeklyHours", "import.ts#importRawCrawl"),
+    ]);
+    // Two modules, not the four visits the loop makes through them.
+    expect(cycle[0]?.modules).toEqual(["details.ts", "import.ts"]);
+  });
+
   it("names each module once when a loop passes through three of them", () => {
     const cycle = callCycles([
       edge("a.ts#f", "b.ts#g"),
