@@ -25,9 +25,13 @@ function offeringWithoutKnownExams(courseNumber: string): Offering {
   return { ...offering(courseNumber, []), exams: { known: false, sittings: [] } };
 }
 
+// Two tests move the machine's timezone to prove the day gaps do not follow it. Putting it
+// back means deleting the variable when there was none: assigning `undefined` would leave
+// the literal string "undefined" behind for every test after them.
 const originalTimezone = process.env.TZ;
 afterEach(() => {
-  process.env.TZ = originalTimezone;
+  if (originalTimezone === undefined) delete process.env.TZ;
+  else process.env.TZ = originalTimezone;
 });
 
 it("calls two Exams on the same day a Clash, whichever Moed each belongs to", () => {
