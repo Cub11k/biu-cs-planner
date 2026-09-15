@@ -1,11 +1,13 @@
 import { defineConfig } from "vitest/config";
 
-// `core`, `app` and `server` run in Node. `web` gets its own jsdom project once
-// there are components worth testing; see docs/design.md, "Development".
+// `core`, `app` and `server` run in Node, and so do the `web` modules that keep the
+// browser at arm's length — they take what they need of it as an argument, so a fake
+// stands in. Components get their own jsdom project once there are some worth testing;
+// see docs/design.md, "Development".
 export default defineConfig({
   test: {
     environment: "node",
-    include: ["{core,app,server}/src/**/*.test.ts"],
+    include: ["{core,app,server,web}/src/**/*.test.ts"],
     coverage: {
       provider: "v8",
       // json-summary feeds the PR report; text is for a human running it locally.
@@ -13,7 +15,8 @@ export default defineConfig({
       // the functions the tests never executed.
       reporter: ["text-summary", "json-summary", "json"],
       reportsDirectory: "coverage",
-      include: ["{core,app,server}/src/**/*.ts"],
+      // `.tsx` is left out: a component is not measured until it can be rendered.
+      include: ["{core,app,server,web}/src/**/*.ts"],
       exclude: ["**/*.test.ts", "**/__fixtures__/**"],
     },
   },

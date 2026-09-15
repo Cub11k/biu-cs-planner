@@ -117,6 +117,10 @@ _Avoid_: lock
 The folder holding a student's Catalogs, Requirements Files, State Files and backups.
 _Avoid_: project, profile
 
+**Launch Token**:
+The secret the server is started with and every request must carry, delivered to the page in the fragment of the URL the launcher prints. It is kept in the user config directory, never in the Workspace.
+_Avoid_: api key, secret, session
+
 **State File**:
 One student's or one scenario's personal data: Attempts, Timetables, Pins and settings.
 _Avoid_: save, profile
