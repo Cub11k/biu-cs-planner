@@ -43,12 +43,15 @@
     "dev:web": "npm run dev --workspace web",
     "build": "npm run build --workspaces --if-present",
     "coverage": "vitest run --coverage",
-    "report": "npm run coverage --silent && node tools/pr-report/main.ts"
+    "report": "npm run coverage --silent && node tools/pr-report/main.ts",
+    "review": "node tools/pr-review/main.ts"
   },
   "devDependencies": {
+    "@anthropic-ai/sdk": "^0.126.0",
     "@types/node": "^22",
     "@vitest/coverage-v8": "^5.0.0",
     "typescript": "^5",
-    "vitest": "^5.0.0"
+    "vitest": "^5.0.0",
+    "zod": "^4.6.5"
   }
 }
