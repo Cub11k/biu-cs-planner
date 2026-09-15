@@ -72,6 +72,8 @@ Requirements form a tree of these building blocks:
 
 Anything the vocabulary cannot express becomes a Manual Requirement with its text. New building blocks are added only when real data forces them.
 
+**Every Requirement carries a stable id.** A Pin in the State File references a Requirement by that id and by nothing else, so an id has to survive a Requirements File being re-edited or reissued for a new Cohort — otherwise every Pin a student has made silently stops resolving. Ids are assigned by the maintainer writing the file, not derived from a Requirement's position in the tree or from its text, both of which move.
+
 ### Assignment
 
 - A solver finds the Assignment that satisfies the most Requirements. The student can Pin a Course to a Requirement.
