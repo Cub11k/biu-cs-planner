@@ -1,18 +1,8 @@
 import type { Provenance } from "../catalog/schema.ts";
+import type { RawCrawlMeta } from "./raw-crawl.ts";
 
-/**
- * The block the crawler writes at the head of a Raw Crawl, saying when it ran, what it asked
- * for and against what. Older crawls have none; the fields are read as they are found rather
- * than required, because the block also carries counters the Catalog has no use for.
- */
-export type RawCrawlMeta = {
-  label?: unknown;
-  scraped_at?: unknown;
-  script?: unknown;
-  source?: unknown;
-  complete?: unknown;
-  [other: string]: unknown;
-};
+export type { RawCrawlMeta };
+
 
 function stringOr(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
