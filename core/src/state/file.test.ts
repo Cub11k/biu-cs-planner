@@ -144,6 +144,76 @@ it("drops the Attempts it cannot read and keeps the rest, naming each", () => {
   ]);
 });
 
+/**
+ * The JSON Schema export exists so a State File can be hand-edited, and a list of bare
+ * strings where objects belong is what hand-editing gets wrong. No one field is to blame
+ * then, so the Warning carries none rather than carrying an empty one for a UI to render as
+ * a cause that reads blank.
+ */
+it("names the entry, and no field, when an entry is the wrong shape entirely", () => {
+  const result = parseStateFile({
+    schemaVersion: CURRENT_STATE_SCHEMA_VERSION,
+    pins: ["general-english"],
+    attempts: [5],
+  });
+
+  expect(result.warnings).toEqual([
+    { kind: "entry-dropped", at: "attempts[0]" },
+    { kind: "entry-dropped", at: "pins[0]" },
+  ]);
+});
+
+/**
+ * `null` is not "no Attempts" — it is something a hand edit or another tool wrote. Read as
+ * an empty list it would open as an empty Plan, and autosave would write `[]` back over the
+ * file a few seconds later. The one shape that could lose everything, and quietly.
+ */
+it("refuses to read a list written as null as an empty one", () => {
+  const result = parseStateFile({ schemaVersion: CURRENT_STATE_SCHEMA_VERSION, attempts: null });
+
+  expect(result.state?.attempts).toEqual([]);
+  expect(result.warnings).toEqual([{ kind: "list-unreadable", at: "attempts" }]);
+});
+
+/**
+ * A Pick is one Group for one Lesson Type of an Offering within a Variant. Two of them for
+ * the same pair describe a week that cannot be drawn: the grid inks both Groups while the
+ * Tray chip holds one Group number.
+ */
+it("warns about two Picks for the same Lesson Type of a Course, and keeps both", () => {
+  const meetings = [{ semester: "fall", day: "monday", start: "10:00", end: "12:00" }];
+  const result = parseStateFile({
+    schemaVersion: CURRENT_STATE_SCHEMA_VERSION,
+    timetables: [
+      {
+        academicYear: 2027,
+        semester: "fall",
+        variants: [
+          {
+            name: "no Fridays",
+            primary: true,
+            picks: [
+              { courseNumber: "89-110", lessonType: "הרצאה", groupNumber: "01", meetings },
+              { courseNumber: "89-110", lessonType: "תרגיל", groupNumber: "01", meetings },
+              { courseNumber: "89-110", lessonType: "הרצאה", groupNumber: "02", meetings },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+
+  expect(result.state?.timetables[0]?.variants[0]?.picks).toHaveLength(3);
+  expect(result.warnings).toEqual([
+    {
+      kind: "pick-not-unique",
+      at: "timetables[0].variants[0]",
+      courseNumber: "89-110",
+      lessonType: "הרצאה",
+    },
+  ]);
+});
+
 it("drops one bad Pick without losing the Variant around it", () => {
   const file = {
     schemaVersion: CURRENT_STATE_SCHEMA_VERSION,
@@ -195,14 +265,39 @@ it("keeps a Timetable whose Variants are not a list at all", () => {
   ]);
 });
 
-it("falls back to default settings it cannot read, rather than losing the file", () => {
+/**
+ * Settings are read one at a time, so a student reading Hebrew whose Exam spacing got
+ * corrupted does not also find their language reset to English — which autosave would then
+ * write back to the file as though they had chosen it.
+ */
+it("keeps the settings it can read and defaults only the one it cannot", () => {
   const result = parseStateFile({
     schemaVersion: CURRENT_STATE_SCHEMA_VERSION,
-    settings: { language: "klingon", examSpacingDays: 5 },
+    settings: { language: "he", examSpacingDays: "five" },
+  });
+
+  expect(result.state?.settings).toEqual({ language: "he", examSpacingDays: 3 });
+  expect(result.warnings).toEqual([{ kind: "settings-unreadable", field: "examSpacingDays" }]);
+});
+
+it("falls back to every default when settings are not settings at all", () => {
+  const result = parseStateFile({
+    schemaVersion: CURRENT_STATE_SCHEMA_VERSION,
+    settings: "hebrew, three days",
   });
 
   expect(result.state?.settings).toEqual({ language: "en", examSpacingDays: 3 });
-  expect(result.warnings).toEqual([{ kind: "settings-unreadable", field: "language" }]);
+  expect(result.warnings).toEqual([{ kind: "settings-unreadable" }]);
+});
+
+it("strips a setting it does not know", () => {
+  const result = parseStateFile({
+    schemaVersion: CURRENT_STATE_SCHEMA_VERSION,
+    settings: { language: "he", theme: "dark" },
+  });
+
+  expect(result.state?.settings).toEqual({ language: "he", examSpacingDays: 3 });
+  expect(result.warnings).toEqual([]);
 });
 
 it("warns when a Timetable has no one primary Variant, and opens it anyway", () => {

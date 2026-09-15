@@ -12,6 +12,7 @@ import {
   timetableHeadSchema,
   variantHeadSchema,
   type BlockedTime,
+  type Pick,
   type Settings,
   type State,
   type Timetable,
@@ -26,14 +27,20 @@ export type StateFileWarning =
   | { kind: "schema-version-unsupported"; found: number }
   | { kind: "migration-failed"; found: number; version: number }
   | { kind: "unsafe-key"; key: string; at: string }
-  /** One entry of a list could not be read and was left out; `field` names what was wrong. */
-  | { kind: "entry-dropped"; at: string; field: string }
+  /**
+   * One entry of a list could not be read and was left out. `field` names the part that was
+   * wrong; it is absent when the entry was not the right shape at all — a Pin written as a
+   * bare string rather than an object, say — because then no one field is to blame.
+   */
+  | { kind: "entry-dropped"; at: string; field?: string }
   /** Something that should have been a list was not, so it was read as an empty one. */
   | { kind: "list-unreadable"; at: string }
-  | { kind: "settings-unreadable"; field: string }
+  /** One setting could not be read and kept its default; absent `field` means all of them. */
+  | { kind: "settings-unreadable"; field?: string }
   | { kind: "primary-variant-not-unique"; at: string; primaries: number }
   | { kind: "blocked-time-semester-mismatch"; at: string; semester: Semester }
-  | { kind: "blocked-time-does-not-advance"; at: string; start: string; end: string };
+  | { kind: "blocked-time-does-not-advance"; at: string; start: string; end: string }
+  | { kind: "pick-not-unique"; at: string; courseNumber: string; lessonType: string };
 
 /**
  * Migrations that bring an older State File up to the current version, keyed by the version
@@ -54,10 +61,21 @@ export function stateJsonSchema(): Record<string, unknown> {
   return z.toJSONSchema(stateSchema, { io: "input" }) as Record<string, unknown>;
 }
 
-/** The path of the first thing Zod objected to, relative to the value it was given. */
-function fieldOf(error: z.ZodError): string {
-  const path = error.issues[0]?.path ?? [];
-  return path.map(String).join(".");
+/**
+ * The path of the first thing Zod objected to, relative to the value it was given, or nothing
+ * when it objected to the value itself rather than to a part of it.
+ */
+function fieldOf(error: z.ZodError): string | undefined {
+  const path = error.issues[0]?.path;
+  return path && path.length > 0 ? path.map(String).join(".") : undefined;
+}
+
+/** An `entry-dropped` Warning carrying a field only when one field is to blame. */
+function dropped(at: string, error: z.ZodError): StateFileWarning {
+  const field = fieldOf(error);
+  return field === undefined
+    ? { kind: "entry-dropped", at }
+    : { kind: "entry-dropped", at, field };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -75,7 +93,10 @@ function readList<T>(
   warnings: StateFileWarning[],
   read: (entry: unknown, entryAt: string) => T | undefined,
 ): T[] {
-  if (raw === undefined || raw === null) return [];
+  // Only a missing list is an empty one. `null` is something a hand edit or another tool
+  // wrote, and reading it as "no Attempts" would let autosave overwrite a whole Plan with
+  // `[]` and never say so — the one shape that could lose everything quietly.
+  if (raw === undefined) return [];
   if (!Array.isArray(raw)) {
     warnings.push({ kind: "list-unreadable", at });
     return [];
@@ -98,9 +119,32 @@ function readEach<T>(
   return readList(raw, at, warnings, (entry, entryAt) => {
     const parsed = schema.safeParse(entry);
     if (parsed.success) return parsed.data;
-    warnings.push({ kind: "entry-dropped", at: entryAt, field: fieldOf(parsed.error) });
+    warnings.push(dropped(entryAt, parsed.error));
     return undefined;
   });
+}
+
+/**
+ * A Pick is the choice of one Group for one Lesson Type of an Offering within a Variant, so
+ * two Picks naming the same Course and Lesson Type describe a week that cannot be drawn: the
+ * grid would ink both Groups while the Tray chip can hold only one Group number. The Picks
+ * are kept — a Warning never costs a student what they chose — and the pair is named.
+ */
+function checkPicksUnique(picks: Pick[], at: string, warnings: StateFileWarning[]): void {
+  const seen = new Set<string>();
+  for (const pick of picks) {
+    const slot = `${pick.courseNumber}\u0000${pick.lessonType}`;
+    if (seen.has(slot)) {
+      warnings.push({
+        kind: "pick-not-unique",
+        at,
+        courseNumber: pick.courseNumber,
+        lessonType: pick.lessonType,
+      });
+      continue;
+    }
+    seen.add(slot);
+  }
 }
 
 function readVariant(
@@ -110,12 +154,14 @@ function readVariant(
 ): Variant | undefined {
   const head = variantHeadSchema.safeParse(raw);
   if (!head.success) {
-    warnings.push({ kind: "entry-dropped", at, field: fieldOf(head.error) });
+    warnings.push(dropped(at, head.error));
     return undefined;
   }
   // The head parse just proved `raw` is an object; the cast only tells the compiler so.
   const source = raw as Record<string, unknown>;
-  return { ...head.data, picks: readEach(pickSchema, source.picks, `${at}.picks`, warnings) };
+  const picks = readEach(pickSchema, source.picks, `${at}.picks`, warnings);
+  checkPicksUnique(picks, at, warnings);
+  return { ...head.data, picks };
 }
 
 /**
@@ -187,7 +233,7 @@ function readTimetable(
 ): Timetable | undefined {
   const head = timetableHeadSchema.safeParse(raw);
   if (!head.success) {
-    warnings.push({ kind: "entry-dropped", at, field: fieldOf(head.error) });
+    warnings.push(dropped(at, head.error));
     return undefined;
   }
   const source = raw as Record<string, unknown>;
@@ -208,12 +254,27 @@ function readTimetable(
   return { ...head.data, variants, blockedTimes };
 }
 
-/** Settings are never worth losing a file over: unreadable ones fall back to the defaults. */
+/**
+ * Settings are never worth losing a file over, and they are read one at a time for the same
+ * reason a list is: a student reading Hebrew whose Exam spacing got corrupted should not also
+ * find their language reset to English, which autosave would then write back as the truth.
+ */
 function readSettings(raw: unknown, warnings: StateFileWarning[]): Settings {
-  const parsed = settingsSchema.safeParse(raw ?? {});
-  if (parsed.success) return parsed.data;
-  warnings.push({ kind: "settings-unreadable", field: fieldOf(parsed.error) });
-  return settingsSchema.parse({});
+  const settings: Settings = settingsSchema.parse({});
+  if (raw === undefined) return settings;
+  if (!isRecord(raw)) {
+    warnings.push({ kind: "settings-unreadable" });
+    return settings;
+  }
+
+  const written = settings as Record<string, unknown>;
+  for (const [field, fieldSchema] of Object.entries(settingsSchema.shape)) {
+    if (raw[field] === undefined) continue;
+    const parsed = fieldSchema.safeParse(raw[field]);
+    if (parsed.success) written[field] = parsed.data;
+    else warnings.push({ kind: "settings-unreadable", field });
+  }
+  return settings;
 }
 
 function readState(raw: Record<string, unknown>, warnings: StateFileWarning[]): State {
