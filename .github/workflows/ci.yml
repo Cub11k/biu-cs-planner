@@ -18,16 +18,21 @@ on:
 permissions:
   contents: read
 
-# github.ref is the PR's merge ref on a pull request and the branch on a push, so a
-# rerun cancels its own predecessor and nothing else.
+# A pull request cancels its own earlier run: pushing a fix makes the previous commit's
+# verdict irrelevant. A push to dev does not, because there the group is the branch and
+# the predecessor is a different commit -- cancelling it would leave a commit that landed
+# on dev with no verdict at all, and nobody would know it was never tested.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
     name: Node ${{ matrix.node }}
     runs-on: ubuntu-latest
+    # A check that hangs is worse than one that fails: the default is six hours, which is
+    # six hours of nobody being told anything.
+    timeout-minutes: 15
     strategy:
       # Both legs always report: "fails on 22, passes on 24" is the answer this job exists
       # to give, and stopping the matrix at the first failure would hide half of it.
@@ -45,8 +50,8 @@ jobs:
           cache: npm
 
       # The committed lockfile, installed exactly, with no package's install script run:
-      # "no install scripts" is a supply-chain rule, and this is where it is enforced
-      # rather than assumed.
+      # "no install scripts" is a supply-chain rule (docs/design.md), and an install here
+      # keeps it rather than trusting that no dependency has one.
       - run: npm ci --ignore-scripts
 
       - name: Typecheck
@@ -58,6 +63,7 @@ jobs:
   smoke:
     name: ${{ matrix.name }} start-up
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -103,7 +109,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          # The port server/src/config.ts binds; the dev entry point takes no --port.
+          # The port server/src/config.ts binds; the dev entry point takes no --port. When
+          # the CLI ticket lands the "next free port" fallback the design promises, this
+          # has to come out of the URL the launcher prints instead, or the probe will ask
+          # the wrong port and blame the runtime for the silence.
           port=8900
 
           ${{ matrix.start }} &
@@ -135,11 +144,17 @@ jobs:
           # the body goes in the log: it is what "one successful response" looked like
           cat health.json
           echo
-          grep -q '"ok":true' health.json
+          answer_ok=""
+          if grep -q '"ok":true' health.json; then answer_ok=yes; fi
 
           # Exiting cleanly is part of the claim: a runtime that comes up and then has to
-          # be killed is not one a student can Ctrl+C.
-          kill "$server"
+          # be killed is not one a student can Ctrl+C. The server is stopped before the
+          # body is judged, so that a disappointing answer still leaves nothing running --
+          # an orphan here holds the step's output open and the job hangs rather than fails.
+          if ! kill "$server" 2>/dev/null; then
+            echo "::error::${{ matrix.name }} answered once and then exited on its own, before it could be stopped."
+            exit 1
+          fi
           for _ in $(seq 1 10); do
             kill -0 "$server" 2>/dev/null || break
             sleep 1
@@ -147,5 +162,10 @@ jobs:
           if kill -0 "$server" 2>/dev/null; then
             kill -9 "$server" || true
             echo "::error::${{ matrix.name }} did not stop the server on SIGTERM."
+            exit 1
+          fi
+
+          if [ -z "$answer_ok" ]; then
+            echo "::error::${{ matrix.name }} started the server, but /api/health did not answer with ok: true."
             exit 1
           fi
