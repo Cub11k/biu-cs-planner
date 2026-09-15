@@ -113,7 +113,15 @@ export function TimetableScreen({
           </p>
 
           <div className="min-h-0 flex-1 overflow-auto">
-            <WeekGrid language={language} semester={semester} offering={chosen} />
+            {/* keyed by the Course: choosing another one starts the week fresh, so a
+                Group highlighted under the pointer cannot carry over to a Group of the
+                same number and Lesson Type in the Course that replaced it */}
+            <WeekGrid
+              key={chosen?.courseNumber ?? "none"}
+              language={language}
+              semester={semester}
+              offering={chosen}
+            />
           </div>
         </section>
       </div>
