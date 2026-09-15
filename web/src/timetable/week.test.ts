@@ -103,6 +103,14 @@ describe("placing a Semester's Meetings", () => {
     expect(tilesFor([unreadable], FALL)).toEqual([]);
   });
 
+  it("runs a Meeting written as ending at 00:00 to the bottom of its day", () => {
+    const lateClass = group("01", "הרצאה", [["tuesday", "22:00", "00:00"]]);
+
+    const [tile] = tilesFor([lateClass], FALL);
+
+    expect(tile).toMatchObject({ startMinutes: 22 * 60, endMinutes: 24 * 60 });
+  });
+
   it("gives Meetings that overlap a lane each, so none hides another", () => {
     const tiles = tilesFor(
       [
@@ -234,12 +242,15 @@ describe("what a tile says", () => {
 
     expect(text.name).toBe("Introduction to Computer Science");
     expect(text.detail).toBe("89-110 · Lecture · 01");
+    expect(text.times).toBeUndefined();
   });
 
   it("adds the times once the block is tall enough to hold them", () => {
-    expect(tileText({ ...base, heightPx: 180 }).detail).toBe(
-      "89-110 · Lecture · 01 · 15:00–18:00",
-    );
+    const text = tileText({ ...base, heightPx: 180 });
+
+    expect(text.detail).toBe("89-110 · Lecture · 01");
+    // kept out of the detail line so the component can isolate their direction
+    expect(text.times).toBe("15:00–18:00");
   });
 
   it("wraps the name to two lines, or one in a short block", () => {

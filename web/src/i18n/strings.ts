@@ -47,6 +47,7 @@ const english = {
 
   noFixedTime: "No fixed time",
   groupsCount: "{count} groups",
+  groupsCountOne: "1 group",
 
   sunday: "Sunday",
   monday: "Monday",
@@ -107,6 +108,7 @@ const hebrew: Record<StringKey, string> = {
 
   noFixedTime: "ללא שעה קבועה",
   groupsCount: "{count} קבוצות",
+  groupsCountOne: "קבוצה אחת",
 
   sunday: "ראשון",
   monday: "שני",

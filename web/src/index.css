@@ -121,6 +121,10 @@
     transform: translateY(-0.6em);
   }
 
+  .hour-label-first {
+    transform: none;
+  }
+
   /* Hour lines, with fainter half-hour lines between them. */
   .day-column {
     position: relative;

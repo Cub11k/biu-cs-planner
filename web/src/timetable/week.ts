@@ -60,6 +60,9 @@ export function groupKey(group: Group): string {
   return `${group.lessonType}|${group.number}`;
 }
 
+/** A Meeting written as ending at 00:00 ends at the bottom of the day, not before it began. */
+const END_OF_DAY = 24 * 60;
+
 /**
  * The Meetings of these Groups in this Semester, placed. A Meeting whose times cannot be
  * read, or that ends before it starts, is left off the grid rather than drawn somewhere
@@ -71,8 +74,12 @@ export function tilesFor(groups: readonly Group[], semester: Semester): Tile[] {
   groups.forEach((group, groupIndex) => {
     meetingsInSemester(group, semester).forEach((meeting, meetingIndex) => {
       const startMinutes = parseClock(meeting.start);
-      const endMinutes = parseClock(meeting.end);
-      if (startMinutes === undefined || endMinutes === undefined) return;
+      const read = parseClock(meeting.end);
+      if (startMinutes === undefined || read === undefined) return;
+
+      // "22:00 - 00:00" is a class that runs to midnight, not one that ends before it
+      // starts: Shoham writes the end of the day as 00:00 and the schema accepts it.
+      const endMinutes = read === 0 && startMinutes > 0 ? END_OF_DAY : read;
       if (endMinutes <= startMinutes) return;
 
       placed.push({
@@ -208,8 +215,15 @@ export const ONE_LINE_BELOW_PX = 86;
 export type TileText = {
   /** The Course name, first, because that is what a student scans for. */
   name: string;
-  /** course number · Lesson Type · Group, with the times when the block is tall enough. */
+  /** course number · Lesson Type · Group. */
   detail: string;
+  /**
+   * The times, once the block is tall enough to hold them. Separate from `detail` because
+   * they have to be rendered inside their own direction isolate: the dash between two
+   * clock times is bidi-neutral, so in a Hebrew paragraph "15:00–18:00" would otherwise
+   * be reordered into "18:00–15:00".
+   */
+  times: string | undefined;
   nameLines: 1 | 2;
 };
 
@@ -222,14 +236,14 @@ export function tileText(input: {
   endMinutes: number;
   heightPx: number;
 }): TileText {
-  const parts = [input.courseNumber, input.lessonTypeName, input.groupNumber];
-  if (input.heightPx >= TIMES_FIT_ABOVE_PX) {
-    parts.push(`${formatClock(input.startMinutes)}–${formatClock(input.endMinutes)}`);
-  }
+  const fits = input.heightPx >= TIMES_FIT_ABOVE_PX;
 
   return {
     name: input.name,
-    detail: parts.join(" · "),
+    detail: [input.courseNumber, input.lessonTypeName, input.groupNumber].join(" · "),
+    times: fits
+      ? `${formatClock(input.startMinutes)}–${formatClock(input.endMinutes)}`
+      : undefined,
     nameLines: input.heightPx < ONE_LINE_BELOW_PX ? 1 : 2,
   };
 }
