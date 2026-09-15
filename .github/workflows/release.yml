@@ -1,0 +1,203 @@
+# What a release is: a tag on `master` that CI tests, builds, checks and publishes to
+# npm. Nothing is published from a laptop.
+#
+# The job that matters here is `verify`. It builds the package, packs it, and then
+# installs the tarball into an empty directory and runs it — because a package can pass
+# every test in the repo and still ship a `files` list that leaves out the thing that
+# runs, and that failure is silent until after a publish.
+#
+# It also runs on pull requests that touch packaging, so the tarball is proved long
+# before anyone reaches for a tag.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  pull_request:
+    paths:
+      - "package.json"
+      - "package-lock.json"
+      - "server/**"
+      - "web/**"
+      - "tools/package/**"
+      - ".github/workflows/release.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Pack it, install it, run it
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      # "no install scripts" is a supply-chain rule in the design, so CI installs as if
+      # it were already true. esbuild and Vite both work without their postinstall.
+      - run: npm ci --ignore-scripts
+
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+      - name: Pack
+        run: |
+          set -euo pipefail
+          npm pack --ignore-scripts --pack-destination . >/dev/null
+          echo "TARBALL=$PWD/$(ls -1 *.tgz)" >> "$GITHUB_ENV"
+
+      # The tarball must hold what runs and nothing else. An allowlist rather than a
+      # list of things to exclude: a new folder of fixtures should have to be let in on
+      # purpose, not remembered about.
+      - name: The tarball holds no source, tests or fixtures
+        run: |
+          set -euo pipefail
+          npm pack --dry-run --ignore-scripts --json > pack.json
+          jq -r '.[0].files[].path' pack.json | sort > shipped.txt
+          echo "Shipped:"; sed 's/^/  /' shipped.txt
+
+          stowaways=$(grep -Ev '^(dist/|README\.md$|LICENSE$|package\.json$)' shipped.txt || true)
+          if [ -n "$stowaways" ]; then
+            echo "::error::these do not belong in the package:"; echo "$stowaways"; exit 1
+          fi
+          # dist/ itself could still carry a stray .ts or a test
+          if grep -Eq '\.tsx?$|\.test\.|__fixtures__' shipped.txt; then
+            echo "::error::source, tests or fixtures reached dist/"; exit 1
+          fi
+
+      - name: The published package declares no dependencies and no install scripts
+        run: |
+          set -euo pipefail
+          tar -xzOf "$TARBALL" package/package.json > packed.json
+          node -e '
+            const pkg = JSON.parse(require("node:fs").readFileSync("packed.json", "utf8"));
+            const fail = (why) => { console.error(`::error::${why}`); process.exitCode = 1; };
+
+            const runtime = Object.keys(pkg.dependencies ?? {});
+            if (runtime.length > 0) fail(`runtime dependencies: ${runtime.join(", ")}`);
+
+            const installTime = ["preinstall", "install", "postinstall", "prepare"]
+              .filter((name) => (pkg.scripts ?? {})[name] !== undefined);
+            if (installTime.length > 0) fail(`install scripts: ${installTime.join(", ")}`);
+
+            if (pkg.bin?.["biu-cs-planner"] === undefined) fail("no bin entry");
+          '
+
+      # The whole point of the ticket: an install that pulls one package and a binary
+      # that answers on a port.
+      - name: Install the tarball into an empty directory and run it
+        run: |
+          set -euo pipefail
+          work=$(mktemp -d)
+          cd "$work"
+          mkdir workspace
+          printf '{"name":"tarball-smoke","private":true}' > package.json
+          npm install --ignore-scripts --no-audit --no-fund "$TARBALL"
+
+          installed=$(ls node_modules | grep -v '^\.' | tr '\n' ' ')
+          echo "node_modules holds: $installed"
+          if [ "$installed" != "biu-cs-planner " ]; then
+            echo "::error::the install pulled more than the package itself"; exit 1
+          fi
+
+          ./node_modules/.bin/biu-cs-planner --no-open --workspace ./workspace > run.log 2>&1 &
+          server=$!
+          trap 'kill $server 2>/dev/null || true' EXIT
+
+          for _ in $(seq 1 60); do
+            grep -q '^biu-cs-planner: http' run.log && break
+            sleep 0.5
+          done
+          cat run.log
+
+          url=$(sed -n 's/^biu-cs-planner: //p' run.log)
+          if [ -z "$url" ]; then echo "::error::it printed no URL"; exit 1; fi
+          port=${url#*localhost:}; port=${port%%/*}
+          token=${url##*#t=}
+
+          # the built UI shipped, and it is what a browser gets
+          curl -fsS "http://localhost:$port/" | grep -q 'id="root"'
+          # the API is there, and the launch token it printed is the one it accepts
+          curl -fsS "http://localhost:$port/api/health" | grep -q '"ok":true'
+          curl -fsS -H "Authorization: Bearer $token" "http://localhost:$port/api/workspace" \
+            | grep -q '"ready"'
+          # and without it, nothing
+          test "$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:$port/api/workspace")" = 401
+
+      # ADR-0004: binding past loopback needs a password, and there is none yet.
+      - name: It still refuses to bind past loopback
+        run: |
+          set -euo pipefail
+          work=$(mktemp -d)
+          cd "$work"
+          printf '{"name":"tarball-smoke","private":true}' > package.json
+          npm install --ignore-scripts --no-audit --no-fund "$TARBALL"
+
+          if ./node_modules/.bin/biu-cs-planner --host 0.0.0.0 --no-open > refusal.log 2>&1; then
+            echo "::error::it bound 0.0.0.0 without a password"; exit 1
+          fi
+          cat refusal.log
+          grep -q password refusal.log
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-tarball
+          path: "*.tgz"
+          if-no-files-found: error
+
+  publish:
+    name: Publish to npm
+    needs: verify
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # npm trusted publishing: the job proves who it is with a short-lived OIDC token,
+      # so there is no npm token in a secret to leak. The maintainer configures the
+      # trusted publisher on npmjs.com; the workflow cannot grant itself that.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # `master` holds releases (CLAUDE.md, "Project conventions"). A tag pushed on a
+      # feature branch by accident should not become a version on npm that can never be
+      # taken back.
+      - name: The tag names a commit on master, and matches the version
+        run: |
+          set -euo pipefail
+          if ! git branch -r --contains HEAD | grep -qE '^\s*origin/master$'; then
+            echo "::error::$GITHUB_REF_NAME is not on master"; exit 1
+          fi
+          version=$(node -p "require('./package.json').version")
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match version $version"; exit 1
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      # Trusted publishing needs npm 11.5.1 or newer.
+      - run: npm install -g npm@latest
+
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+
+      # No NODE_AUTH_TOKEN: the OIDC token above is the whole credential, and
+      # --provenance is what ties the published tarball to this workflow run.
+      - run: npm publish --provenance --access public

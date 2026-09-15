@@ -25,7 +25,11 @@
   "engines": {
     "node": ">=22"
   },
+  "bin": {
+    "biu-cs-planner": "dist/cli.js"
+  },
   "files": [
+    "dist",
     "README.md",
     "LICENSE"
   ],
@@ -41,7 +45,8 @@
     "test:watch": "vitest",
     "dev:server": "node --experimental-strip-types server/src/serve.ts",
     "dev:web": "npm run dev --workspace web",
-    "build": "npm run build --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present && npm run build:package",
+    "build:package": "node tools/package/main.ts",
     "coverage": "vitest run --coverage",
     "report": "npm run coverage --silent && node tools/pr-report/main.ts"
   },
