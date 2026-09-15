@@ -32,7 +32,7 @@ export type {
 export { findMeetingClashes } from "./timetable/clashes.ts";
 export type { GroupRef, MeetingClash, PickedGroup, WeeklySpan } from "./timetable/clashes.ts";
 export { parseStateFile, stateJsonSchema } from "./state/file.ts";
-export type { StateFileWarning } from "./state/file.ts";
+export type { StateFileRead, StateFileWarning } from "./state/file.ts";
 export { CURRENT_STATE_SCHEMA_VERSION, stateSchema } from "./state/schema.ts";
 export type {
   Attempt,
