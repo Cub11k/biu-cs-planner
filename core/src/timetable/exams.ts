@@ -44,10 +44,12 @@ export interface ExamCheck {
   sittings: RailSitting[];
   warnings: ExamWarning[];
   /**
-   * How many Offerings had no published Exams. The screen needs it to admit the picture is
-   * partial rather than implying an empty exam period.
+   * How many Courses had no published Exams, so the screen can admit the picture is partial
+   * rather than implying an empty exam period. Courses and not Offerings, because an
+   * `ExamSource` names no Semester: within the one Semester a rail draws, a Course is an
+   * Offering, and counting entries instead would count a Course once per picked Lesson Type.
    */
-  offeringsWithUnknownExams: number;
+  coursesWithUnknownExams: number;
 }
 
 export interface ExamCheckOptions {
@@ -116,8 +118,8 @@ function distinctSittings(offerings: readonly ExamSource[]): ExamSitting[] {
   return [...seen.values()].sort(byWhenThenWhose);
 }
 
-/** Offerings nobody has published Exams for, counted once per Course. */
-function coursesWithUnknownExams(offerings: readonly ExamSource[]): number {
+/** Courses nobody has published Exams for, counted once however often one is handed in. */
+function countCoursesWithUnknownExams(offerings: readonly ExamSource[]): number {
   const courses = new Set<string>();
   for (const offering of offerings) {
     if (!offering.exams.known) courses.add(offering.courseNumber);
@@ -165,6 +167,6 @@ export function checkExams(
       daysSincePrevious: index === 0 ? undefined : days[index]! - days[index - 1]!,
     })),
     warnings,
-    offeringsWithUnknownExams: coursesWithUnknownExams(offerings),
+    coursesWithUnknownExams: countCoursesWithUnknownExams(offerings),
   };
 }

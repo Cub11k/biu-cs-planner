@@ -182,14 +182,14 @@ it("counts the same gap from the far side of the date line", () => {
   expect(result.warnings).toMatchObject([{ kind: "exam-spacing", days: 1 }]);
 });
 
-it("counts an Offering whose Exams are unknown and takes no Warning from it", () => {
+it("counts a Course whose Exams are unknown and takes no Warning from it", () => {
   const result = checkExams([
     offering("89-110", [{ moed: "מועד א", date: "2027-01-21" }]),
     offeringWithoutKnownExams("89-112"),
     offeringWithoutKnownExams("89-114"),
   ]);
 
-  expect(result.offeringsWithUnknownExams).toBe(2);
+  expect(result.coursesWithUnknownExams).toBe(2);
   expect(result.warnings).toEqual([]);
   expect(result.sittings).toHaveLength(1);
 });
@@ -210,7 +210,7 @@ it("ignores sittings listed under an Offering that says its Exams are unknown", 
 
   expect(result.sittings).toHaveLength(1);
   expect(result.warnings).toEqual([]);
-  expect(result.offeringsWithUnknownExams).toBe(1);
+  expect(result.coursesWithUnknownExams).toBe(1);
 });
 
 it("takes one Offering's sittings once however many Groups it has", () => {
@@ -230,6 +230,14 @@ it("takes one Offering's sittings once however many Groups it has", () => {
 
   expect(result.sittings).toHaveLength(2);
   expect(result.warnings).toEqual([]);
+});
+
+it("counts a Course whose Exams are unknown once, however often it is handed in", () => {
+  const unknown = offeringWithoutKnownExams("89-112");
+
+  const result = checkExams([unknown, unknown, offeringWithoutKnownExams("89-114")]);
+
+  expect(result.coursesWithUnknownExams).toBe(2);
 });
 
 it("treats the same Offering handed in twice as the one set of Exams it is", () => {
@@ -253,7 +261,7 @@ it("keeps both Offerings of one Course when their Exams differ", () => {
 it("finds nothing in an empty Timetable", () => {
   const result = checkExams([]);
 
-  expect(result).toEqual({ sittings: [], warnings: [], offeringsWithUnknownExams: 0 });
+  expect(result).toEqual({ sittings: [], warnings: [], coursesWithUnknownExams: 0 });
 });
 
 it("treats an unfamiliar Moed label exactly like a familiar one", () => {
