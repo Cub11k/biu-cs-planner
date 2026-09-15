@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { api } from "../api.ts";
 import { DIRECTION, t, type Language, type StringKey } from "../i18n/strings.ts";
 import { academicYearOf, academicYearSpan, semesterOf } from "./calendar.ts";
-import { courseName, type Offering, type Semester } from "./catalog.ts";
-import { fetchOfferings } from "./offerings.ts";
+import { courseName, type Semester } from "./catalog.ts";
+import { fetchOfferings, type CatalogWarning, type OfferingsResult } from "./offerings.ts";
 import { CoursePicker } from "./CoursePicker.tsx";
 import { WeekGrid } from "./WeekGrid.tsx";
 
@@ -13,12 +13,22 @@ const SEMESTER_STRING = {
   summer: "semesterSummer",
 } as const satisfies Record<Semester, StringKey>;
 
-type CatalogState =
-  | { kind: "loading" }
-  | { kind: "ready"; offerings: Offering[] }
-  /** The Workspace has no Catalog for this Academic Year, or would not read it. */
-  | { kind: "missing" }
-  | { kind: "unreachable" };
+type CatalogState = { kind: "loading" } | OfferingsResult;
+
+/**
+ * Why the API served no Catalog, said in words the student can act on. A Warning nobody
+ * can read is not a Warning, and the four reasons ask for four different things.
+ */
+const WARNING_STRING = new Map<CatalogWarning["kind"], StringKey>([
+  ["file-unreadable", "warningFileUnreadable"],
+  ["schema-version-too-new", "warningSchemaTooNew"],
+  ["schema-version-unsupported", "warningSchemaUnsupported"],
+  ["workspace-refused", "warningWorkspaceRefused"],
+]);
+
+/** Absence is not a fault: the year simply has no Catalog yet, and one can be imported. */
+const isAbsence = (warnings: readonly CatalogWarning[]): boolean =>
+  warnings.length === 0 || warnings.every((warning) => warning.kind === "no-catalog-for-year");
 
 export type TimetableScreenProps = {
   language: Language;
@@ -50,10 +60,7 @@ export function TimetableScreen({
     setCatalog({ kind: "loading" });
 
     fetchOfferings(api, { academicYear, semester }).then((result) => {
-      if (!current) return;
-      setCatalog(
-        result.kind === "served" ? { kind: "ready", offerings: result.offerings } : result,
-      );
+      if (current) setCatalog(result);
     });
 
     return () => {
@@ -61,7 +68,7 @@ export function TimetableScreen({
     };
   }, [academicYear, semester]);
 
-  const offerings = catalog.kind === "ready" ? catalog.offerings : [];
+  const offerings = catalog.kind === "served" ? catalog.offerings : [];
   const chosen = offerings.find((offering) => offering.courseNumber === selected);
   const span = academicYearSpan(academicYear);
 
@@ -85,12 +92,16 @@ export function TimetableScreen({
         <aside className="overflow-auto border-e border-rule bg-desk p-4">
           {catalog.kind === "loading" ? (
             <p className="text-sm text-pencil">{t(language, "catalogLoading")}</p>
-          ) : catalog.kind === "missing" ? (
-            <p className="text-sm text-pencil">
-              {t(language, "catalogMissing", { year: academicYear })}
-            </p>
           ) : catalog.kind === "unreachable" ? (
             <p className="text-sm text-pencil">{t(language, "apiUnreachable")}</p>
+          ) : catalog.kind === "unauthorized" ? (
+            <p className="text-sm text-pencil">{t(language, "catalogUnauthorized")}</p>
+          ) : catalog.kind === "refused" ? (
+            <CatalogNotice
+              language={language}
+              academicYear={academicYear}
+              warnings={catalog.warnings}
+            />
           ) : (
             <CoursePicker
               language={language}
@@ -125,6 +136,37 @@ export function TimetableScreen({
           </div>
         </section>
       </div>
+    </div>
+  );
+}
+
+/**
+ * What the screen says when the API served no Catalog. Absence asks the student to import
+ * a crawl; a file that is there but unreadable asks for something else entirely, so the
+ * Warnings the API sent decide which it is and are shown rather than swallowed.
+ */
+export function CatalogNotice({
+  language,
+  academicYear,
+  warnings,
+}: {
+  language: Language;
+  academicYear: number;
+  warnings: readonly CatalogWarning[];
+}): React.JSX.Element {
+  return (
+    <div className="text-sm text-pencil">
+      <p>
+        {isAbsence(warnings)
+          ? t(language, "catalogMissing", { year: academicYear })
+          : t(language, "catalogUnreadable", { year: academicYear })}
+      </p>
+      <ul className="mt-2 list-disc space-y-1 ps-5">
+        {warnings.map((warning) => {
+          const key = WARNING_STRING.get(warning.kind);
+          return key === undefined ? null : <li key={warning.kind}>{t(language, key)}</li>;
+        })}
+      </ul>
     </div>
   );
 }

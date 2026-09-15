@@ -32,6 +32,14 @@ const english = {
   catalogLoading: "Loading the catalog…",
   catalogEmpty: "No course matches",
   catalogMissing: "No catalog for {year} yet. Import a crawl of Shoham to fill it.",
+  catalogUnreadable: "The catalog for {year} is there, but could not be read:",
+  catalogUnauthorized:
+    "This page has no launch token. Start the app from a terminal and open the address it prints.",
+
+  warningFileUnreadable: "The catalog file is not a catalog this app can read.",
+  warningSchemaTooNew: "The catalog was written by a newer version of the app.",
+  warningSchemaUnsupported: "The catalog's schema version is not one this app reads.",
+  warningWorkspaceRefused: "The workspace would not read the catalog file.",
 
   hintChoose: "Choose a course to see when its groups meet.",
   hintShowing: "Every group of {course} is on the week. Nothing is picked yet.",
@@ -84,6 +92,14 @@ const hebrew: Record<StringKey, string> = {
   catalogLoading: "טוען את הקטלוג…",
   catalogEmpty: "אין קורס מתאים",
   catalogMissing: "אין עדיין קטלוג לשנת {year}. ייבאו זחילה משוהם כדי למלא אותו.",
+  catalogUnreadable: "הקטלוג לשנת {year} קיים, אך לא ניתן לקרוא אותו:",
+  catalogUnauthorized:
+    "לדף הזה אין אסימון הפעלה. הפעילו את היישום מהמסוף ופתחו את הכתובת שהוא מדפיס.",
+
+  warningFileUnreadable: "הקובץ אינו קטלוג שהיישום יודע לקרוא.",
+  warningSchemaTooNew: "הקטלוג נכתב בגרסה חדשה יותר של היישום.",
+  warningSchemaUnsupported: "גרסת הסכימה של הקטלוג אינה נתמכת ביישום הזה.",
+  warningWorkspaceRefused: "סביבת העבודה סירבה לקרוא את קובץ הקטלוג.",
 
   hintChoose: "בחרו קורס כדי לראות מתי הקבוצות שלו נפגשות.",
   hintShowing: "כל הקבוצות של {course} מוצגות בשבוע. עדיין לא נבחרה אף אחת.",

@@ -44,14 +44,40 @@ it("hands back the Offerings it was served", async () => {
   expect(result).toEqual({ kind: "served", offerings: [OFFERING] });
 });
 
-it("says there is nothing to lay out when the year has no Catalog", async () => {
-  const { api } = client(() =>
-    Response.json({ warnings: [{ kind: "no-catalog-for-year", academicYear: 2027 }] }, { status: 404 }),
-  );
+it("says the year has no Catalog, and carries the Warning that says so", async () => {
+  const warnings = [{ kind: "no-catalog-for-year", academicYear: 2027 }];
+  const { api } = client(() => Response.json({ warnings }, { status: 404 }));
 
   const result = await fetchOfferings(api, { academicYear: 2027, semester: "fall" });
 
-  expect(result).toEqual({ kind: "missing" });
+  expect(result).toEqual({ kind: "refused", warnings });
+});
+
+it("keeps a Catalog that could not be read apart from one that is not there", async () => {
+  const warnings = [{ kind: "schema-version-too-new", found: 2 }];
+  const { api } = client(() => Response.json({ warnings }, { status: 404 }));
+
+  const result = await fetchOfferings(api, { academicYear: 2027, semester: "fall" });
+
+  // the file is there; telling the student to import a crawl would not help them
+  expect(result).toEqual({ kind: "refused", warnings });
+});
+
+it("keeps a Workspace refusal apart from absence", async () => {
+  const warnings = [{ kind: "workspace-refused", reason: "not a catalog" }];
+  const { api } = client(() => Response.json({ warnings }, { status: 409 }));
+
+  const result = await fetchOfferings(api, { academicYear: 2027, semester: "fall" });
+
+  expect(result).toEqual({ kind: "refused", warnings });
+});
+
+it("says so when the page has no launch token, rather than blaming the Catalog", async () => {
+  const { api } = client(() => Response.json({ error: "unauthorized" }, { status: 401 }));
+
+  const result = await fetchOfferings(api, { academicYear: 2027, semester: "fall" });
+
+  expect(result).toEqual({ kind: "unauthorized" });
 });
 
 it("says the API is unreachable rather than throwing at the screen", async () => {
