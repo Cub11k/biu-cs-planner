@@ -53,10 +53,10 @@ export function CoursePicker({
                 type="button"
                 aria-pressed={offering.courseNumber === selected}
                 onClick={() => onSelect(offering.courseNumber)}
+                // `border-s-3` and not a box shadow: the marked edge has to be the start
+                // edge, which is the right one in Hebrew.
                 className={`w-full rounded-sm border bg-paper px-2.5 py-2 text-start text-sm ${
-                  offering.courseNumber === selected
-                    ? "border-ink shadow-[inset_2px_0_0_var(--ink)]"
-                    : "border-rule"
+                  offering.courseNumber === selected ? "border-s-3 border-ink" : "border-rule"
                 }`}
               >
                 <span className="block font-medium">{courseName(offering, language)}</span>
