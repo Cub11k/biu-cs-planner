@@ -33,7 +33,9 @@ Development happens on temporary machines. The project lives on GitHub at `Cub11
 
 ### Issue tracker
 
-GitHub Issues on `Cub11k/biu-cs-planner`, driven through the `gh` CLI. See `docs/agents/issue-tracker.md`.
+GitHub Issues on `Cub11k/biu-cs-planner`, driven through the `gh` CLI. **A ticket's body is
+frozen once written** — amendments go in the comment thread, as the exact edit they would be, so
+the ticket stays the independent record of what was asked for. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
