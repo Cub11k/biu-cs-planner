@@ -262,7 +262,9 @@ The rejected options (cookies, TLS, sockets) are in [ADR 0004](adr/0004-localhos
   - The Workspace adapter gets integration tests against a temporary folder.
   - The Timetable's layout is asserted in a real Chromium (Vitest browser mode, Playwright provider): that the week reads right to left in Hebrew, that a time range survives a Hebrew line, that tiles stay in their columns, that the dark tokens resolve, and that the runner can draw Hebrew at all. Geometry, not appearance — screenshot baselines wait for the Timetable design to stabilize.
   - UI end-to-end tests (Playwright driving a running server) wait until the Timetable screen design stabilizes.
-- CI runs on Node 22 and 24, plus a start-up smoke test on Bun and Deno.
+- CI runs the node tests on Node 22 and 24 and the browser tests in Chromium, plus a start-up smoke test on Bun
+  and Deno. The browser leg installs a Hebrew font deliberately: a runner that draws tofu boxes still passes every
+  layout assertion, so a suite that is green on one is worse than no suite.
 
 ## Build order
 
