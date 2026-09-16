@@ -183,11 +183,73 @@ it("reads a Blocked Time the student wrote without a leading zero", () => {
   expect(clashes[0]?.overlap).toEqual(span("sunday", "10:00", "12:00"));
 });
 
+it("reads 24:00 as the end of the Day, so a Blocked Time can cover its last hour", () => {
+  const blockedTime = span("sunday", "22:00", "24:00");
+
+  const clashes = findMeetingClashes([group("99-101", [span("sunday", "23:00", "23:30")])], [
+    blockedTime,
+  ]);
+
+  expect(clashes).toEqual([
+    {
+      kind: "meeting-blocked-time",
+      overlap: span("sunday", "23:00", "23:30"),
+      group: { courseNumber: "99-101", lessonType: "lecture", number: "01" },
+      meeting: span("sunday", "23:00", "23:30"),
+      blockedTime,
+    },
+  ]);
+});
+
+it("carries 24:00 through as the end of an overlap, rather than the minute before it", () => {
+  const clashes = findMeetingClashes(
+    [group("99-101", [span("sunday", "23:00", "24:00")])],
+    [span("sunday", "22:00", "24:00")],
+  );
+
+  expect(clashes).toHaveLength(1);
+  expect(clashes[0]?.overlap).toEqual(span("sunday", "23:00", "24:00"));
+});
+
+/**
+ * `24:00` is the end of the Day and nothing in the Day comes after it, so a span that starts
+ * there is empty by the rule already here rather than by one written for it. The half-open
+ * reading `[start, end)` is what says so, and it is left alone.
+ */
+it("leaves a span starting at 24:00 occupying no time", () => {
+  const allDay = [group("99-101", [span("sunday", "00:00", "24:00")])];
+
+  expect(findMeetingClashes(allDay, [span("sunday", "24:00", "24:00")])).toEqual([]);
+  expect(findMeetingClashes([...allDay, group("99-202", [span("sunday", "24:00", "24:00")])])).toEqual(
+    [],
+  );
+});
+
+/**
+ * The two halves of a night shift are two Blocked Times on consecutive Days, as `CONTEXT.md`
+ * and #39 have it. The first half ending at `24:00` must not reach into the second half's Day.
+ */
+it("keeps the two halves of a night shift on their own Days", () => {
+  const blockedTimes = [span("sunday", "23:00", "24:00"), span("monday", "00:00", "01:00")];
+
+  const clashes = findMeetingClashes(
+    [group("99-101", [span("monday", "00:30", "02:00")])],
+    blockedTimes,
+  );
+
+  expect(clashes).toHaveLength(1);
+  expect(clashes[0]).toMatchObject({ blockedTime: span("monday", "00:00", "01:00") });
+});
+
 it("ignores a time it cannot read at all, rather than guessing where it falls", () => {
   const meetings = [group("99-101", [span("sunday", "10:00", "12:00")])];
 
   expect(findMeetingClashes(meetings, [span("sunday", "morning", "17:00")])).toEqual([]);
   expect(findMeetingClashes(meetings, [span("sunday", "25:00", "26:00")])).toEqual([]);
+  // `24:00` is the end of the Day and the last time there is; a minute past it is not a time.
+  expect(findMeetingClashes(meetings, [span("sunday", "09:00", "24:01")])).toEqual([]);
+  expect(findMeetingClashes(meetings, [span("sunday", "09:00", "24:15")])).toEqual([]);
+  expect(findMeetingClashes(meetings, [span("sunday", "09:00", "25:00")])).toEqual([]);
   expect(findMeetingClashes(meetings, [span("sunday", "0900", "1700")])).toEqual([]);
   expect(findMeetingClashes(meetings, [span("sunday", "09:00", "late")])).toEqual([]);
   // and the same on the Meeting's side of the comparison, not only the Blocked Time's

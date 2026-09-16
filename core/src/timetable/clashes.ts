@@ -6,10 +6,12 @@ import type { Day, Semester } from "../catalog/schema.ts";
  * a Pick's snapshot of one, and the State File's Blocked Time all satisfy it, so finding
  * Clashes needs no import from the State File and the State File needs none from here.
  *
- * `start` and `end` are times of day on a 24-hour clock. The range is half-open,
- * `[start, end)`: a range ending at `"10:00"` and one starting at `"10:00"` do not meet. It
- * lies within the one Day it names, so a range that would run past midnight — `"23:00"` to
- * `"01:00"` — describes no time at all rather than wrapping into the next Day.
+ * `start` and `end` are times of day on a 24-hour clock, plus `"24:00"` for the end of the Day
+ * — the one spelling that lets a span cover the Day's last minute. The range is half-open,
+ * `[start, end)`: a range ending at `"10:00"` and one starting at `"10:00"` do not meet, and
+ * so a range ending at `"24:00"` does not meet the next Day's `"00:00"`. It lies within the one
+ * Day it names, so a range that would run past midnight — `"23:00"` to `"01:00"` — describes no
+ * time at all rather than wrapping into the next Day.
  */
 export interface WeeklySpan {
   semester: Semester;
@@ -66,15 +68,22 @@ const CLOCK_TIME = /^(\d{1,2}):([0-5]\d)$/;
  * strings directly would be correct only while every one of them is zero-padded, and a Blocked
  * Time is student-entered: `"9:00"` sorts after `"10:00"`, which would quietly hide the Clash
  * rather than report it. Reading the number costs one literal pattern and removes the trap.
+ *
+ * `"24:00"` is the end of the Day, 1440 minutes in, so a Blocked Time can cover the Day's last
+ * minute — `"22:00"`–`"24:00"` rather than `"22:00"`–`"23:59"`. It is read the same on either
+ * end of a span and needs no special case for `start`: nothing in the Day comes after it, so a
+ * span beginning there is empty under the half-open reading already used here. `"24:01"` and
+ * anything above it name no time at all, the way `"25:00"` always has.
  */
 function minutesIntoDay(time: string): number | undefined {
   const read = CLOCK_TIME.exec(time);
   if (!read) return undefined;
 
   const hour = Number(read[1]);
-  if (hour > 23) return undefined;
+  const minute = Number(read[2]);
+  if (hour > 24 || (hour === 24 && minute > 0)) return undefined;
 
-  return hour * 60 + Number(read[2]);
+  return hour * 60 + minute;
 }
 
 function groupRef(group: PickedGroup): GroupRef {
