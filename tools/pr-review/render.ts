@@ -1,4 +1,5 @@
 import type { CallCycle, Cycle } from "./cycles.ts";
+import { explain, summarise, type ForbiddenEdge } from "./layering.ts";
 import { MARKER, commitMarker } from "./outdated.ts";
 import type { Finding, PassOutcome } from "./review.ts";
 
@@ -25,6 +26,8 @@ export const CAP = 8;
 export type Graphs = {
   moduleCycles: Cycle[];
   callCycles: CallCycle[];
+  /** Imports pointing the way the layering rule does not allow. */
+  forbidden: ForbiddenEdge[];
   /** The directories the graphs were derived from, so "acyclic" says what it covered. */
   scope: readonly string[];
 };
@@ -120,7 +123,7 @@ function pass(name: string, subtitle: string, outcome: PassOutcome, out: string[
  * not judged this commit. A reader must never take "no cycles" for "reviewed and clean".
  */
 export function renderGraphs({ headSha, graphs, judgement }: GraphsComment): string {
-  const { moduleCycles, callCycles, scope } = graphs;
+  const { moduleCycles, callCycles, forbidden, scope } = graphs;
   const out: string[] = [GRAPHS_MARKER, ""];
 
   out.push(`## Graph check of \`${short(headSha)}\``);
@@ -146,10 +149,29 @@ export function renderGraphs({ headSha, graphs, judgement }: GraphsComment): str
 
   out.push(
     "Mechanical, not a judgement: the module and call graphs `tools/pr-report` derives " +
-      "from the source, checked for cycles. Nothing here is re-parsed, so this and the " +
-      `PR report describe the same graphs. Derived from ${scope.map((d) => `\`${d}\``).join(", ")} ` +
-      "and nowhere else — a cycle outside those is not covered by either graph below.",
+      "from the source, checked for cycles and for which way their edges point. Nothing " +
+      "here is re-parsed, so this and the PR report describe the same graphs. Derived from " +
+      `${scope.map((d) => `\`${d}\``).join(", ")} and nowhere else — an edge outside those is ` +
+      "not covered by anything below.",
   );
+  out.push("");
+
+  if (!forbidden.length) {
+    // The rule is spelled out from the table, not beside it: a sentence written by hand
+    // here would go on reassuring readers after someone edited the table.
+    out.push(
+      `**Layering:** every import points the way the rule says it should — ${summarise()}.`,
+    );
+  } else {
+    out.push(
+      `**Layering: ${forbidden.length} import${forbidden.length === 1 ? "" : "s"} ` +
+        `point${forbidden.length === 1 ? "s" : ""} the wrong way.** The allowed edges are ` +
+        "declared in `tools/pr-review/layering.ts`; anything else is a broken guardrail " +
+        "rather than a style preference, and this job is red because of it.",
+    );
+    out.push("");
+    for (const edge of forbidden) out.push(`- ${explain(edge)}`);
+  }
   out.push("");
 
   if (!moduleCycles.length) {
@@ -182,10 +204,13 @@ export function renderGraphs({ headSha, graphs, judgement }: GraphsComment): str
   }
   out.push("");
   out.push(
-    "> Two things this check does not do. It records only calls that leave the module they " +
-      "are written in, so recursion that stays inside one file never shows up. And acyclic is " +
-      "not the same as correctly layered: a one-way `web → core` import breaks a guardrail " +
-      "without closing a loop, so it passes here and belongs to the Standards pass.",
+    "> Three things this check does not do. It records only calls that leave the module they " +
+      "are written in, so recursion that stays inside one file never shows up. It reads only " +
+      "the static `import` and `export … from` at the top of a file, so a dynamic " +
+      "`await import(…)` is in neither graph. And the layering check judges the direction " +
+      "between workspaces only: an import that leaves them, a layer broken inside one " +
+      "workspace, and the package names a *test* file imports — the graphs keep only a " +
+      "test's relative imports — are nobody's finding here and belong to the Standards pass.",
   );
 
   return out.join("\n").trimEnd();

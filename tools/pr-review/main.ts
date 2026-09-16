@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import { SOURCE_DIRS, collect } from "../pr-report/collect.ts";
 import { callCycles, moduleCycles } from "./cycles.ts";
+import { explain, forbiddenEdges } from "./layering.ts";
 import { fetchDiff, fetchPullRequest, fetchStandardsDocs, upsertComment } from "./github.ts";
 import {
   GRAPHS_MARKER,
@@ -48,12 +49,14 @@ if (pr.isFork) {
   process.exit(1);
 }
 
-// The graphs are derived from the checkout: no key, no network, no cost. A cycle in them
-// is a finding whether or not anybody ever asks for a judgement.
+// The graphs are derived from the checkout: no key, no network, no cost. A cycle in them,
+// or an import pointing the wrong way through the layers, is a finding whether or not
+// anybody ever asks for a judgement.
 const derived = collect(ROOT);
 const graphs = {
   moduleCycles: moduleCycles(derived.modules),
   callCycles: callCycles(derived.edges),
+  forbidden: forbiddenEdges(derived.modules, derived.tests),
   scope: SOURCE_DIRS,
 };
 
@@ -115,6 +118,14 @@ await upsertComment(
   GRAPHS_MARKER,
   renderGraphs({ headSha: pr.headSha, graphs, judgement }),
 );
+
+// The one thing in this workflow that is not advice. A forbidden edge is the layering rule
+// broken, so the job goes red — after the comment is posted, because a red job with no
+// explanation on the pull request is worse than no check at all.
+if (graphs.forbidden.length) {
+  for (const edge of graphs.forbidden) console.error(explain(edge));
+  process.exitCode = 1;
+}
 
 if (judgement.kind === "reviewed" && standards && spec) {
   await upsertComment(
