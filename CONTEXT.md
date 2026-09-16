@@ -46,7 +46,7 @@ The label on a Group (lecture, tirgul, lab, seminar…); every Lesson Type sched
 _Avoid_: component
 
 **Meeting**:
-A weekly recurring day and time range of a Group.
+A weekly recurring day and time range of a Group. A time is written `hh:mm`, `00:00` through `23:59`, and where `00:00` appears is what says which end of the Day is meant: as an `end` it is the end of the Day, as a `start` the beginning of it. So `22:00`–`00:00` is the evening, `00:00`–`08:00` is the night, and `00:00`–`00:00` is the whole Day. `24:00` is written nowhere — a Day's last minute is 1440 minutes in for whatever is counting, and `00:00` for whatever is reading or showing. The ruling is on issue #48.
 _Avoid_: session, slot, lesson
 
 **Untimed Group**:
@@ -155,7 +155,7 @@ The Courses waiting to be scheduled in a Variant: that Semester's planned Attemp
 _Avoid_: basket, cart
 
 **Blocked Time**:
-A student-defined weekly period in a Semester to keep free, such as work or commute. It lies within the one Day it names and never wraps past midnight, so a night shift is two Blocked Times rather than one: `23:00`–`24:00` on one Day and `00:00`–`01:00` on the next. A screen that takes a wrapping range from a student is what splits it into those two rows — one range typed, two stored — because a span that wraps would otherwise have to be split again by every reader of it, and a reader that forgot would silently stop blocking. The ruling and what it rejected are on issue #39.
+A student-defined weekly period in a Semester to keep free, such as work or commute. Its `start` and `end` are written the way a Meeting's are, the end of the Day included. It lies within the one Day it names and never wraps past midnight, so a night shift is two Blocked Times rather than one: `23:00`–`00:00` on one Day and `00:00`–`01:00` on the next. A screen that takes a wrapping range from a student is what splits it into those two rows — one range typed, two stored — because a span that wraps would otherwise have to be split again by every reader of it, and a reader that forgot would silently stop blocking. The ruling and what it rejected are on issue #39.
 _Avoid_: busy time, constraint
 
 **Plan Diff**:

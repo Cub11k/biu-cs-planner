@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { Semester } from "../catalog/schema.ts";
+import { clockAsEnd, clockAsStart } from "../clock.ts";
 import { migrateForward, type Migrations } from "./migrate.ts";
 import {
   attemptSchema,
@@ -207,9 +208,19 @@ function checkBlockedSemesters(
  * rather than dropped, because a Warning never costs a student what they typed, but it is
  * named so the silence is broken.
  *
- * A period crossing midnight is therefore two Blocked Times, one either side of it. Whether
- * the product would rather have one row that wraps is a question this only defers: nothing
- * here forecloses it, since a wrapping reading would simply stop warning.
+ * The two ends are read as minutes, in their own positions, rather than compared as strings:
+ * as an `end`, `00:00` is the end of the Day, so `22:00`–`00:00` keeps the evening free and
+ * `00:00`–`00:00` keeps the whole Day (issue #48). String comparison called both of those
+ * empty and warned about the one spelling that says what the student meant. The reading is
+ * `core/src/clock.ts`, the same one the Clashes module uses — neither module imports the
+ * other, and this is why they still agree.
+ *
+ * A period crossing midnight is therefore still two Blocked Times, one either side of it, as
+ * `CONTEXT.md` has it: `23:00`–`00:00` on one Day and `00:00`–`01:00` on the next.
+ *
+ * A time neither reading can place cannot reach here — `blockedTimeSchema` has already
+ * refused the entry — and if one ever did, a range nothing can place keeps no time free and
+ * gets the Warning that says so.
  */
 function checkBlockedRanges(
   blockedTimes: BlockedTime[],
@@ -217,7 +228,10 @@ function checkBlockedRanges(
   warnings: StateFileWarning[],
 ): void {
   blockedTimes.forEach((blocked, index) => {
-    if (blocked.end > blocked.start) return;
+    const start = clockAsStart(blocked.start);
+    const end = clockAsEnd(blocked.end);
+    if (start !== undefined && end !== undefined && end > start) return;
+
     warnings.push({
       kind: "blocked-time-does-not-advance",
       at: `${at}[${index}]`,

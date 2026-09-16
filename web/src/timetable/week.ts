@@ -24,15 +24,48 @@ const ALL_DAYS: readonly Day[] = [...WEEK_DAYS, FRIDAY];
 /** A literal pattern, never one built from data (ADR-0007). Mirrors the Catalog schema. */
 const CLOCK_TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
 
-/** Minutes since midnight, or undefined for a time the grid cannot place. */
+/**
+ * The end of the day in minutes. A number the grid computes with and never a string: `24:00`
+ * is spelled nowhere, and `formatClock` writes this back as `00:00`.
+ */
+const END_OF_DAY = 24 * 60;
+
+/**
+ * Minutes since midnight, or undefined for a time the grid cannot place. This is the reading
+ * of a `start`: `00:00` is the beginning of the day, 0 minutes in, so a Meeting written
+ * `00:00`-`08:00` is the night and not the whole day. An `end` is read by `parseClockAsEnd`.
+ */
 export function parseClock(clock: string): number | undefined {
   if (!CLOCK_TIME.test(clock)) return undefined;
   const [hours, minutes] = clock.split(":");
   return Number(hours) * 60 + Number(minutes);
 }
 
+/**
+ * A clock string read as the `end` of a range: `00:00` is the end of the day, 1440 minutes
+ * in, so a Meeting written `22:00`-`00:00` runs to the bottom of its day rather than ending
+ * before it began. One spelling of midnight, and the position is what says which end of the
+ * day is meant; `core` reads the same clock the same way and `fixtures/clock-ranges.json` is
+ * the table both are tested against (issue #48).
+ *
+ * A second function rather than a flag on `parseClock`: the position is the caller's and is
+ * fixed at the call site, and a flag invites `asEnd: someCondition` — which is the conditional
+ * reading this ticket came from.
+ */
+export function parseClockAsEnd(clock: string): number | undefined {
+  const read = parseClock(clock);
+  if (read === undefined) return undefined;
+
+  return read === 0 ? END_OF_DAY : read;
+}
+
+/**
+ * Minutes back as a clock string. The end of the day comes back as `00:00`, the spelling it
+ * went in as: a tile for `22:00`-`00:00` reads `22:00-00:00`, and the hour gutter's last line
+ * over a day that runs to the bottom reads `00:00` rather than a `24:00` no clock has.
+ */
 export function formatClock(minutes: number): string {
-  const hours = Math.floor(minutes / 60);
+  const hours = Math.floor(minutes / 60) % 24;
   return `${String(hours).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
 }
 
@@ -60,9 +93,6 @@ export function groupKey(group: Group): string {
   return `${group.lessonType}|${group.number}`;
 }
 
-/** A Meeting written as ending at 00:00 ends at the bottom of the day, not before it began. */
-const END_OF_DAY = 24 * 60;
-
 /**
  * The Meetings of these Groups in this Semester, placed. A Meeting whose times cannot be
  * read, or that ends before it starts, is left off the grid rather than drawn somewhere
@@ -73,13 +103,19 @@ export function tilesFor(groups: readonly Group[], semester: Semester): Tile[] {
 
   groups.forEach((group, groupIndex) => {
     meetingsInSemester(group, semester).forEach((meeting, meetingIndex) => {
+      // Each end read in its own position, unconditionally, so that `core` and this agree on
+      // every range: "22:00 - 00:00" is a Meeting that runs to midnight, "00:00 - 08:00" one
+      // that runs from it, and "00:00 - 00:00" the whole day (issue #48).
+      //
+      // No Offering in the 2027 Catalog needs any of that. The sweep recorded on #48 found 15
+      // distinct clock strings across all four 2027 workbooks, none of them 00:00 or 24:00,
+      // and the latest any Meeting ends is 21:00 — so this rule is here because a Blocked Time
+      // is student-entered and a Day has to end somewhere, not because Shoham was observed
+      // writing it. The crawl lives outside this repo (ADR-0005), so nothing here re-checks
+      // that count; it is what the data said when the rule was decided.
       const startMinutes = parseClock(meeting.start);
-      const read = parseClock(meeting.end);
-      if (startMinutes === undefined || read === undefined) return;
-
-      // "22:00 - 00:00" is a class that runs to midnight, not one that ends before it
-      // starts: Shoham writes the end of the day as 00:00 and the schema accepts it.
-      const endMinutes = read === 0 && startMinutes > 0 ? END_OF_DAY : read;
+      const endMinutes = parseClockAsEnd(meeting.end);
+      if (startMinutes === undefined || endMinutes === undefined) return;
       if (endMinutes <= startMinutes) return;
 
       placed.push({
