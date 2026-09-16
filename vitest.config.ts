@@ -1,6 +1,6 @@
 import tailwindcss from "@tailwindcss/vite";
 import { playwright } from "@vitest/browser-playwright";
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 
 /**
  * Two projects, because two different questions are being asked.
@@ -14,10 +14,12 @@ import { defineConfig } from "vitest/config";
  * resolve, whether Chromium can draw Hebrew at all. `renderToStaticMarkup` returns a
  * string and jsdom has no layout engine, so neither can be asked there (issue #45).
  *
- * The browser project needs a Chromium on the machine, which `npm install` does not put
- * there: every install in this repository runs with `--ignore-scripts`, and Playwright's
- * browser download is a postinstall. `npm run install:browsers` is that download, made
- * explicit. Without one, `npm run test:node` runs the whole node project and passes.
+ * The browser project needs a Chromium on the machine, and `npm install` does not put one
+ * there: `playwright@1.63` ships no install script at all, so nothing downloads a browser
+ * unless something asks. `npm run install:browsers` asks. (Were a future version to bring
+ * the postinstall back, `--ignore-scripts` would stop it, so this stays the way it is
+ * rather than becoming implicit again.) Without a browser, `npm run test:node` runs the
+ * whole node project and passes.
  */
 export default defineConfig({
   test: {
@@ -37,7 +39,11 @@ export default defineConfig({
         test: {
           name: "node",
           environment: "node",
-          include: ["{core,app,server,web}/src/**/*.test.ts", "tools/**/*.test.ts"],
+          // `.tsx` as well as `.ts`: the PR report lists the titles in every `*.test.ts?(x)`
+          // it finds, so a `web/src/**/*.test.tsx` that no project ran would be reported as
+          // a claim the suite proves. The browser project's files are the exception.
+          include: ["{core,app,server,web}/src/**/*.test.ts?(x)", "tools/**/*.test.ts"],
+          exclude: [...configDefaults.exclude, "**/*.browser.test.tsx"],
         },
       },
       {
@@ -59,8 +65,10 @@ export default defineConfig({
             provider: playwright(),
             // A desk, not a phone: the default 414px viewport leaves a five-column week
             // about a hundred pixels to live in, and every geometry assertion would then
-            // be measuring a collapsed grid rather than the one a student sees.
-            viewport: { width: 1600, height: 900 },
+            // be measuring a collapsed grid rather than the one a student sees. Wide
+            // enough, too, that a tile's detail line does not wrap between its two clock
+            // times, which is what the times assertion needs in order to mean anything.
+            viewport: { width: 1920, height: 900 },
             instances: [{ browser: "chromium" }],
           },
         },

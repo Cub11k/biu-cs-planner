@@ -218,8 +218,16 @@ describe.each(LANGUAGES)("the week in %s", (language) => {
     const end = runRect(text, TIME_RANGE.start.length + 1, text.length);
 
     // A range broken across two lines would put one end under the other and "which is
-    // further left" would stop meaning anything, so that is ruled out before it is asked.
-    expect(Math.abs(start.top - end.top)).toBeLessThan(HAIR);
+    // further left" would stop meaning anything, so that is ruled out before it is asked --
+    // and says so, because this one depends on the metrics of whatever font `system-ui`
+    // resolves to and a bare "expected 13.75 to be less than 0.5" in English would read as
+    // a bidi regression.
+    expect(
+      Math.abs(start.top - end.top),
+      "the tile's detail line wrapped between the two clock times, so their order says " +
+        "nothing about direction. Widen the browser project's viewport rather than " +
+        "reading this as a bidi failure.",
+    ).toBeLessThan(HAIR);
 
     // The en dash between two clock times is bidi-neutral and sits between two numbers,
     // so an unisolated range in a Hebrew line renders as 18:00\u201315:00 — the bug #4 shipped.
@@ -286,10 +294,16 @@ describe.each(LANGUAGES)("the week in %s", (language) => {
     expect(first.height).toBeGreaterThan(0);
   });
 
-  it("shows a visible outline on whatever the keyboard lands on", async () => {
+  it("draws the page's own focus ring on whatever the keyboard lands on", async () => {
     const screen = await openWeek(language);
+
+    // The ring is `2px solid var(--ink)`, and Chromium draws a ring of its own on anything
+    // focusable whether the page asks for one or not -- so "an outline exists" is a claim
+    // about the browser, not about this page. The ink is read off the page rather than
+    // named here, so refining the palette moves both sides of this at once.
+    const ink = getComputedStyle(one(screen, ".tile-name")).color;
     const reached: string[] = [];
-    const bare: string[] = [];
+    const wrong: string[] = [];
 
     // walking with the keyboard rather than calling focus(): :focus-visible is about how
     // the element was reached, and a mouse must not draw the same ring
@@ -298,21 +312,23 @@ describe.each(LANGUAGES)("the week in %s", (language) => {
       const focused = document.activeElement;
       if (!(focused instanceof HTMLElement) || !screen.contains(focused)) continue;
 
+      const ring = getComputedStyle(focused);
       const what = `${focused.tagName.toLowerCase()}.${focused.className}`;
       reached.push(what);
-      if (Number.parseFloat(getComputedStyle(focused).outlineWidth) <= 0) bare.push(what);
+      if (Number.parseFloat(ring.outlineWidth) <= 0 || ring.outlineColor !== ink) {
+        wrong.push(`${what}: ${ring.outlineWidth} ${ring.outlineColor}, wanted ${ink}`);
+      }
     }
 
-    expect(bare).toEqual([]);
+    expect(wrong).toEqual([]);
     expect(reached.length).toBeGreaterThan(2);
     expect(reached.some((what) => what.includes("tile"))).toBe(true);
   });
-});
 
-describe("the colour scheme", () => {
-  it("follows the system rather than a stamp on the page", async () => {
+
+  it("follows the system colour scheme rather than a stamp on the page", async () => {
     await colorScheme("light");
-    const light = await openWeek("en");
+    const light = await openWeek(language);
     const lightPaper = luminance(getComputedStyle(one(light, ".week")).backgroundColor);
     const lightInk = luminance(getComputedStyle(one(light, ".tile-name")).color);
 
@@ -322,7 +338,7 @@ describe("the colour scheme", () => {
     root?.unmount();
     host?.remove();
     await colorScheme("dark");
-    const dark = await openWeek("en");
+    const dark = await openWeek(language);
     const darkPaper = luminance(getComputedStyle(one(dark, ".week")).backgroundColor);
     const darkInk = luminance(getComputedStyle(one(dark, ".tile-name")).color);
 
@@ -331,5 +347,12 @@ describe("the colour scheme", () => {
     // asserted -- docs/design.md still defers refining them.
     expect(darkPaper).toBeLessThan(darkInk);
     expect(darkPaper).toBeLessThan(lightPaper);
+
+    // and the week is still a week in the dark: the gutter has not moved to the other side
+    const gutter = one(dark, ".hour-gutter").getBoundingClientRect();
+    const sunday = all(dark, ".day-column")[0]?.getBoundingClientRect();
+    if (sunday === undefined) throw new Error("the week has no days");
+    if (rightToLeft) expect(gutter.left).toBeGreaterThanOrEqual(sunday.right - HAIR);
+    else expect(gutter.right).toBeLessThanOrEqual(sunday.left + HAIR);
   });
 });
