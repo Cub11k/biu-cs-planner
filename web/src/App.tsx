@@ -1,39 +1,20 @@
 import { useEffect, useState } from "react";
-import { api } from "./api.ts";
-import { DIRECTION, t, type Language } from "./i18n/strings.ts";
+import { DIRECTION, type Language } from "./i18n/strings.ts";
+import { TimetableScreen } from "./timetable/TimetableScreen.tsx";
 
-type Health = "checking" | "reachable" | "unreachable";
-
-const HEALTH_STRING = {
-  checking: "apiChecking",
-  reachable: "apiReachable",
-  unreachable: "apiUnreachable",
-} as const;
-
-export function App({ language = "en" as Language }): React.JSX.Element {
-  const [health, setHealth] = useState<Health>("checking");
+/**
+ * Opening the app lands on the Timetable (docs/design.md, "Screens").
+ *
+ * The language lives here because `dir` and `lang` belong on the root element: switching
+ * to Hebrew has to flip the whole document, not one pane of it.
+ */
+export function App({ language: initial = "en" as Language }): React.JSX.Element {
+  const [language, setLanguage] = useState<Language>(initial);
 
   useEffect(() => {
-    let current = true;
+    document.documentElement.lang = language;
+    document.documentElement.dir = DIRECTION[language];
+  }, [language]);
 
-    api.api.health
-      .$get()
-      .then((response) => {
-        if (current) setHealth(response.ok ? "reachable" : "unreachable");
-      })
-      .catch(() => {
-        if (current) setHealth("unreachable");
-      });
-
-    return () => {
-      current = false;
-    };
-  }, []);
-
-  return (
-    <main dir={DIRECTION[language]} className="min-h-dvh p-8">
-      <h1 className="text-2xl font-semibold">{t(language, "appName")}</h1>
-      <p className="mt-2 text-accent">{t(language, HEALTH_STRING[health])}</p>
-    </main>
-  );
+  return <TimetableScreen language={language} onLanguage={setLanguage} />;
 }
