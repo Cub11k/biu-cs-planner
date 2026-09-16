@@ -62,9 +62,6 @@ export function mergeImports(refs: readonly ImportRef[]): ImportRef[] {
   return [...merged].map(([specifier, typeOnly]) => ({ specifier, typeOnly }));
 }
 
-/** The specifiers alone, for the readers that care only about direction. */
-export const specifiers = (refs: readonly ImportRef[]): string[] =>
-  refs.map((ref) => ref.specifier);
 
 const text = (node: ts.Node | undefined, source: ts.SourceFile): string =>
   node ? node.getText(source).replace(/\s+/g, " ").trim() : "";

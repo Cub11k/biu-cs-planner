@@ -390,6 +390,25 @@ describe("real source text", () => {
     expect(forbiddenEdges([inline], [])).toEqual([]);
   });
 
+  it("cannot see a dynamic import, because no graph records one", () => {
+    // A known hole, pinned here rather than left to be discovered. `readModule` reads the
+    // static `import` and `export … from` at the top of a file and nothing else, so this
+    // is invisible to the report, to the cycle check and to this alike — which is exactly
+    // the outcome the type-only rule is otherwise guarding against. Closing it means
+    // teaching `tools/pr-report` to walk call expressions; the module doc says so too.
+    const dynamic = moduleFromSource(
+      "web/src/api.ts",
+      [
+        "export const start = async () => {",
+        '  const { serve } = await import("@biu-cs-planner/server");',
+        "  return serve();",
+        "};",
+      ].join("\n"),
+    );
+    expect(dynamic.packages).toEqual([]);
+    expect(forbiddenEdges([dynamic], [])).toEqual([]);
+  });
+
   it("stays quiet for the contract arriving in web, which is how web is meant to work", () => {
     const client = moduleFromSource(
       "web/src/api.ts",
