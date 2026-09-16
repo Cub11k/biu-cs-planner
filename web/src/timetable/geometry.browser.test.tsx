@@ -15,7 +15,6 @@
  * Fixture data is invented: 89-110 is a real BIU course number, the name and the times
  * are not, and no crawled data is committed to this repo.
  */
-import type { JSX } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cdp, userEvent } from "vitest/browser";
@@ -109,9 +108,7 @@ async function openWeek(language: Language): Promise<HTMLElement> {
   host = mounted;
   document.body.append(mounted);
   root = createRoot(mounted);
-  root.render(
-    <TimetableScreen language={language} onLanguage={() => {}} today={TODAY} /> as JSX.Element,
-  );
+  root.render(<TimetableScreen language={language} onLanguage={() => {}} today={TODAY} />);
 
   // The screen asks the API as it mounts and draws the week when the answer arrives, so
   // waiting for the Course to appear is waiting for the render that has the Catalog in it.
