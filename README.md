@@ -46,7 +46,9 @@ Node **22 or newer** (developed on Node 24; `@types/node` tracks the 22 floor on
 
 ```sh
 npm install
-npm test          # Vitest, core + app + server
+npm run install:browsers  # Chromium for the browser tests; every install here passes --ignore-scripts, so it is not automatic
+npm test            # Vitest: core + app + server + web, and the Timetable's layout in Chromium
+npm run test:node   # the same without the browser project, if you skipped the line above
 npm run typecheck
 npm run dev:server  # API on http://127.0.0.1:8900
 npm run dev:web     # Vite dev server, proxying /api to the above
