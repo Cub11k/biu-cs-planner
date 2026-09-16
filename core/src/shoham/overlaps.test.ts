@@ -51,6 +51,10 @@ it("does not report the same Day and hours in different Semesters, as a Year-lon
 });
 
 it("compares times as minutes, so one written without its leading zero still overlaps", () => {
+  // The rule is #14's, and #14 reads minutes rather than comparing the strings because a
+  // Blocked Time is student-entered: "9:00" sorts after "10:00". Today's Shoham dialect only
+  // ever emits a padded time, so this is the rule holding rather than a case the Importer
+  // meets -- which is the point of testing it here, where the rule is, and not there.
   const morning = meeting({ start: "9:00", end: "11:00" });
   const late = meeting({ start: "10:00", end: "12:00" });
 
@@ -77,6 +81,9 @@ it("reports a Meeting duplicated exactly, which claims the same hour twice", () 
 });
 
 it("ignores a Meeting whose range occupies no time, which collides with nothing", () => {
+  // Inherited from #14, where a span that does not advance occupies no time and so Clashes
+  // with nothing. Whether such a Meeting deserves a Warning of its own is a separate
+  // question from overlap, and not one this ticket asked.
   expect(
     overlappingMeetings([
       meeting({ start: "15:00", end: "18:00" }),

@@ -897,6 +897,7 @@ it("warns when a Group's own Meetings overlap, naming the Course, the Group and 
     {
       kind: "group-meetings-overlap",
       courseNumber: "89-110",
+      semesters: ["fall"],
       group: "01",
       lessonType: "הרצאה",
       first: { semester: "fall", day: "tuesday", start: "15:00", end: "18:00" },
@@ -905,6 +906,28 @@ it("warns when a Group's own Meetings overlap, naming the Course, the Group and 
   ]);
   // the Warning never blocks: both Meetings are imported exactly as they were read
   expect(catalog.offerings[0]!.groups[0]!.meetings).toHaveLength(2);
+});
+
+it("names the Semesters too, since one Course can hold two Offerings numbered from 01", () => {
+  // 89-110 given Year-long and again in Fall only is two Offerings, each with its own 01
+  // lecture. Without the Semesters the two Warnings would read identically and a maintainer
+  // could not tell which Shoham page to open.
+  const { warnings } = importRawCrawl(
+    {
+      rows: [
+        row({ semester: "סמסטר א'סמסטר ב'", day: "ג', ג'", hours: "15:00 - 18:00\n16:00 - 17:00" }),
+        row({ day: "ג', ג'", hours: "15:00 - 18:00\n16:00 - 17:00" }),
+      ],
+    },
+    { academicYear: YEAR_2027 },
+  );
+
+  const overlaps = exceptProvenance(warnings).filter((w) => w.kind === "group-meetings-overlap");
+  expect(overlaps.map((w) => (w as { semesters: string[] }).semesters)).toEqual([
+    ["fall", "spring"],
+    ["fall", "spring"],
+    ["fall"],
+  ]);
 });
 
 it("does not warn about a Group whose Meetings merely abut", () => {
@@ -926,11 +949,10 @@ it("does not warn about a Year-long Group for meeting at one hour in both Semest
   expect(exceptProvenance(warnings)).toEqual([]);
 });
 
-it("compares Meeting times as minutes, so one without its leading zero still overlaps", () => {
-  // Every Group the resulting Catalog holds is checked, not only the ones this part's rows
-  // carried: the Warning describes the Catalog the import produces. A Group merged in can
-  // carry "9:00", where comparing the strings would sort it after "10:00" and quietly hide
-  // the overlap -- which is why the comparison is on minutes.
+it("says nothing about a Group this part never carried, however the Catalog holds it", () => {
+  // Every Warning this Importer produces speaks about the part being imported. The
+  // overlapping Group below came from an earlier part, which is where it was reported;
+  // re-reading it out of the Catalog would repeat that Warning on every later merge.
   const { warnings } = importRawCrawl(
     { rows: [row({ code: "89132", group: "02" })] },
     {
@@ -952,8 +974,8 @@ it("compares Meeting times as minutes, so one without its leading zero still ove
                 lessonType: "תרגיל",
                 lecturers: [],
                 meetings: [
-                  { semester: "fall", day: "monday", start: "9:00", end: "11:00" },
                   { semester: "fall", day: "monday", start: "10:00", end: "12:00" },
+                  { semester: "fall", day: "monday", start: "11:00", end: "13:00" },
                 ],
               },
             ],
@@ -963,14 +985,5 @@ it("compares Meeting times as minutes, so one without its leading zero still ove
     },
   );
 
-  expect(exceptProvenance(warnings)).toEqual([
-    {
-      kind: "group-meetings-overlap",
-      courseNumber: "89-210",
-      group: "04",
-      lessonType: "תרגיל",
-      first: { semester: "fall", day: "monday", start: "9:00", end: "11:00" },
-      second: { semester: "fall", day: "monday", start: "10:00", end: "12:00" },
-    },
-  ]);
+  expect(exceptProvenance(warnings)).toEqual([]);
 });
