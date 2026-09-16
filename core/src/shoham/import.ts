@@ -5,11 +5,19 @@ import {
   parseSampledGroup,
   parseWeeklyHours,
 } from "./details.ts";
+import {
+  canonicalSemesters,
+  groupKey,
+  offeringChanges,
+  offeringKey,
+  type ImportChanges,
+} from "./changes.ts";
 import { provenanceFromMeta } from "./meta.ts";
 import { overlappingMeetings } from "./overlaps.ts";
 import type { RawCrawl, RawCrawlRow } from "./raw-crawl.ts";
 
 export type { RawCrawl, RawCrawlRow };
+export type { GroupChange, GroupMove, ImportChanges, OfferingChange } from "./changes.ts";
 import {
   CURRENT_CATALOG_SCHEMA_VERSION,
   type Catalog,
@@ -33,6 +41,14 @@ export type Warning =
       lessonType: string;
       first: Meeting;
       second: Meeting;
+    }
+  | {
+      kind: "group-superseded";
+      courseNumber: string;
+      /** Which of a Course's Offerings lost the Group, since each numbers its Groups from 01. */
+      semesters: Semester[];
+      group: string;
+      lessonType: string;
     }
   | { kind: "unusual-course-number"; courseNumber: string }
   | { kind: "course-number-unreadable"; code: string }
@@ -71,32 +87,6 @@ function readWeeklyHours(
     warnings.push({ kind: "weekly-hours-unreadable", courseNumber });
   }
   return hours;
-}
-
-/**
- * Semesters in a fixed order. A cell can name them either way round, and the merge key must
- * not depend on which: otherwise one Year-long Course becomes two Offerings.
- */
-const SEMESTER_ORDER: Semester[] = ["fall", "spring", "summer"];
-
-function canonical(semesters: Semester[]): Semester[] {
-  return [...semesters].sort((a, b) => SEMESTER_ORDER.indexOf(a) - SEMESTER_ORDER.indexOf(b));
-}
-
-/** The key an Offering is merged on: a Course plus the Semesters it spans. */
-function offeringKey(courseNumber: string, semesters: Semester[]): string {
-  return `${courseNumber}|${canonical(semesters).join("+")}`;
-}
-
-/**
- * What identifies a Group inside one Offering: its number together with its Lesson Type.
- * Shoham numbers each Lesson Type's Groups from 01, so 01 of the lecture and 01 of the
- * tirgul are two Groups a student picks separately -- the number alone is not an identity.
- * `code|group|kind|semester` is unique across the whole crawl, which is that pair being
- * unique within an Offering (docs/research/shoham-raw-shape.md). CONTEXT.md says so too.
- */
-function groupKey(number: string, lessonType: string): string {
-  return `${number}|${lessonType}`;
 }
 
 /**
@@ -146,7 +136,7 @@ function summarise(catalog: Catalog): ImportSummary {
 export function importRawCrawl(
   crawl: RawCrawl,
   options: { academicYear: number; into?: Catalog },
-): { catalog: Catalog; warnings: Warning[]; summary: ImportSummary } {
+): { catalog: Catalog; warnings: Warning[]; summary: ImportSummary; changes: ImportChanges } {
   // One Offering per Course and Semester set. A Year-long row names two Semesters and so
   // forms its own Offering, separate from the same Course given only in Fall.
   // A part is merged into what is already there rather than replacing it, and the Catalog
@@ -183,6 +173,12 @@ export function importRawCrawl(
   // name is held once, so what is checked is the Meetings it ends up with.
   const carried = new Map<Group, Offering>();
 
+  // What this part speaks for (ADR-0011): the Offerings it carried a row for, and -- so that
+  // a Course moving from Fall-only to Year-long does not leave the Fall Groups behind -- the
+  // Semesters its rows named for each Course, which reach that Course's other Offerings.
+  const spokenFor = new Set<Offering>();
+  const spokenSemesters = new Map<string, Set<Semester>>();
+
   const warnings: Warning[] = [];
   const reportedNumbers = new Set<string>();
 
@@ -195,6 +191,7 @@ export function importRawCrawl(
         { kind: "academic-year-mismatch", catalog: options.into.academicYear, part: options.academicYear },
       ],
       summary: summarise(options.into),
+      changes: [],
     };
   }
 
@@ -231,7 +228,7 @@ export function importRawCrawl(
       offering = {
         courseNumber,
         nameHebrew: row.name,
-        semesters: canonical(semesters),
+        semesters: canonicalSemesters(semesters),
         groups: [],
         credits: { known: false },
         exams: { known: false, sittings: [] },
@@ -254,6 +251,10 @@ export function importRawCrawl(
     group.lecturers = lecturersFrom(row.teachers);
     group.meetings = meetings;
     carried.set(group, offering);
+    spokenFor.add(offering);
+    let namedSemesters = spokenSemesters.get(courseNumber);
+    if (!namedSemesters) spokenSemesters.set(courseNumber, (namedSemesters = new Set()));
+    for (const semester of semesters) namedSemesters.add(semester);
     // A row's identity is its lid, so two rows claiming one is the crawl contradicting
     // itself. The later row keeps the lid; where the two rows are different Groups, the
     // earlier is left without the hours its record would have carried, and where they are
@@ -285,6 +286,40 @@ export function importRawCrawl(
     }
   }
 
+  // A part speaks for the Offerings it carries rows for, and for the same Course's other
+  // Offerings whose Semesters its rows overlap; it says nothing about anything else
+  // (ADR-0011). Within an Offering it speaks for, the Groups it carried are the whole of it:
+  // a Group BIU cancelled between crawls is superseded here rather than left in the Catalog
+  // for a student to Pick. Before the detail records are read, so that a Group on its way out
+  // cannot take hours meant for the Group that replaced it, nor make a sampled record
+  // ambiguous by still being there.
+  for (const [key, offering] of offerings) {
+    const named = spokenSemesters.get(offering.courseNumber);
+    const overlaps = named !== undefined && offering.semesters.some((s) => named.has(s));
+    if (!spokenFor.has(offering) && !overlaps) continue;
+
+    const kept = offering.groups.filter((group) => carried.has(group));
+    if (kept.length === offering.groups.length) continue;
+
+    for (const group of offering.groups) {
+      if (carried.has(group)) continue;
+      warnings.push({
+        kind: "group-superseded",
+        courseNumber: offering.courseNumber,
+        semesters: [...offering.semesters],
+        group: group.number,
+        lessonType: group.lessonType,
+      });
+    }
+    offering.groups = kept;
+    indexes.delete(offering);
+    // An Offering whose last Group has just been superseded is the Course moving Semester:
+    // its Groups are now on the Offering the part named, and what is left here is a dead
+    // second copy of the Course. An Offering that was already empty had nothing taken from
+    // it and so is not reached at all.
+    if (!kept.length) offerings.delete(key);
+  }
+
   for (const [key, detail] of Object.entries(crawl.details ?? {})) {
     const parsed = parseDetailKey(key);
     if (!parsed) {
@@ -298,7 +333,7 @@ export function importRawCrawl(
       warnings.push({
         kind: "detail-without-offering",
         courseNumber: parsed.courseNumber,
-        semesters: canonical(parsed.semesters),
+        semesters: canonicalSemesters(parsed.semesters),
       });
       continue;
     }
@@ -357,5 +392,10 @@ export function importRawCrawl(
     offerings: [...offerings.values()],
   };
 
-  return { catalog, warnings, summary: summarise(catalog) };
+  return {
+    catalog,
+    warnings,
+    summary: summarise(catalog),
+    changes: offeringChanges(options.into?.offerings ?? [], catalog.offerings),
+  };
 }

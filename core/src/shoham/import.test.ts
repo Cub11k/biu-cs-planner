@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import { importRawCrawl } from "./import.ts";
+import type { Catalog, Offering } from "../catalog/schema.ts";
 
 // The Academic Year is not in a Raw Crawl: Shoham's search form takes it, but no
 // crawl on hand records it. The caller supplies it.
@@ -451,9 +452,13 @@ it("keeps the provenance of every part it merges", () => {
 it("merges a second rows part, adding a Group here and an Offering there", () => {
   const first = importRawCrawl({ rows: [row()] }, { academicYear: YEAR_2027 }).catalog;
 
+  // The second part re-carries 89-110's lecture beside the tirgul it brings. A part speaks
+  // for the Offerings it carries rows for (ADR-0011), so a part naming the tirgul alone
+  // would be saying the lecture is gone rather than adding to it.
   const { catalog, summary } = importRawCrawl(
     {
       rows: [
+        row(),
         row({ group: "03", kind: "תרגיל", hours: "18:00 - 20:00" }),
         // another department entirely: this is how a double major is covered
         row({ code: "10123", name: "יסודות", group: "01", teachers: "" }),
@@ -521,10 +526,16 @@ it("merges a Year-long Offering however its Semester labels are ordered", () => 
   ).catalog;
 
   const { catalog } = importRawCrawl(
-    { rows: [row({ group: "02", semester: "סמסטר ב'סמסטר א'", day: "", hours: "" })] },
+    {
+      rows: [
+        row({ group: "01", semester: "סמסטר ב'סמסטר א'", day: "", hours: "" }),
+        row({ group: "02", semester: "סמסטר ב'סמסטר א'", day: "", hours: "" }),
+      ],
+    },
     { academicYear: YEAR_2027, into: first },
   );
 
+  // one Offering, not two: the key must not depend on which way round the cell names them
   expect(catalog.offerings).toHaveLength(1);
   expect(catalog.offerings[0]!.semesters).toEqual(["fall", "spring"]);
   expect(catalog.offerings[0]!.groups.map((g) => g.number)).toEqual(["01", "02"]);
@@ -986,4 +997,328 @@ it("says nothing about a Group this part never carried, however the Catalog hold
   );
 
   expect(exceptProvenance(warnings)).toEqual([]);
+});
+
+// --- what a part supersedes, and what it reports changing (issue #22) ---------
+//
+// #9 settled a repeated row updating the Group it names. The other half of a re-crawl is a
+// Group the new crawl no longer carries, and the rule this section holds to is the one
+// ADR-0011 records: a part speaks for the Offerings it carries rows for, and for the same
+// Course's other Offerings whose Semesters its rows overlap. It speaks for nothing else.
+
+/** A Catalog holding exactly the Offerings given, as an earlier import would have left it. */
+function catalogOf(...offerings: Offering[]): Catalog {
+  return { schemaVersion: 1, academicYear: YEAR_2027, sources: [], offerings };
+}
+
+it("removes a Group from an Offering the part carries rows for and does not name", () => {
+  const first = importRawCrawl(
+    {
+      rows: [
+        row({ group: "01", kind: "הרצאה" }),
+        row({ group: "03", kind: "תרגיל", hours: "11:00 - 13:00" }),
+      ],
+    },
+    { academicYear: YEAR_2027 },
+  ).catalog;
+
+  // January's crawl: BIU cancelled the tirgul, so no row carries it any more.
+  const { catalog, warnings } = importRawCrawl(
+    { rows: [row({ group: "01", kind: "הרצאה" })] },
+    { academicYear: YEAR_2027, into: first },
+  );
+
+  expect(catalog.offerings[0]!.groups.map((g) => [g.number, g.lessonType])).toEqual([
+    ["01", "הרצאה"],
+  ]);
+  expect(exceptProvenance(warnings)).toEqual([
+    {
+      kind: "group-superseded",
+      courseNumber: "89-110",
+      semesters: ["fall"],
+      group: "03",
+      lessonType: "תרגיל",
+    },
+  ]);
+  // the Catalog merged into is left as it was, as every other merge leaves it (ADR-0010)
+  expect(first.offerings[0]!.groups).toHaveLength(2);
+});
+
+it("leaves an Offering's Groups alone when the part carries no row for it", () => {
+  // A part crawled for another department carries no CS row at all, and must not empty the
+  // Catalog on the first double-major import.
+  const first = importRawCrawl({ rows: [row()] }, { academicYear: YEAR_2027 }).catalog;
+
+  const { catalog, warnings, changes } = importRawCrawl(
+    { rows: [row({ code: "10123", name: "יסודות", group: "01", teachers: "" })] },
+    { academicYear: YEAR_2027, into: first },
+  );
+
+  expect(catalog.offerings.map((o) => [o.courseNumber, o.groups.length])).toEqual([
+    ["89-110", 1],
+    ["10-123", 1],
+  ]);
+  expect(exceptProvenance(warnings)).toEqual([]);
+  expect(changes.map((c) => c.courseNumber)).toEqual(["10-123"]);
+});
+
+it("removes nothing at all when the part carries no rows", () => {
+  // A details-only part is how an Academic Year already imported gains its Exams (ADR-0010).
+  // It speaks for no Offering, so it supersedes nothing.
+  const first = importRawCrawl(
+    { rows: [row({ group: "01" }), row({ group: "03", kind: "תרגיל", hours: "11:00 - 13:00" })] },
+    { academicYear: YEAR_2027 },
+  ).catalog;
+
+  const { catalog, warnings, changes } = importRawCrawl(
+    { details: { "89110|סמסטר א'": DETAIL_89110_FALL } },
+    { academicYear: YEAR_2027, into: first },
+  );
+
+  expect(catalog.offerings[0]!.groups).toHaveLength(2);
+  expect(exceptProvenance(warnings).filter((w) => w.kind === "group-superseded")).toEqual([]);
+  expect(changes).toEqual([]);
+});
+
+it("supersedes a Fall Offering when the same Course comes back Year-long", () => {
+  // 89-385 is the kind of Course this happens to. Keyed on Course plus Semesters, the
+  // Year-long rows form a second Offering; without this the Catalog would hold the Course
+  // twice with nothing to say which of the two is dead.
+  const first = importRawCrawl(
+    { rows: [row({ code: "89385", name: "מעבדת פרויקט", group: "01", semester: "סמסטר א'" })] },
+    { academicYear: YEAR_2027 },
+  ).catalog;
+
+  const { catalog, warnings, changes } = importRawCrawl(
+    {
+      rows: [
+        row({ code: "89385", name: "מעבדת פרויקט", group: "01", semester: "סמסטר א'\nסמסטר ב'" }),
+      ],
+    },
+    { academicYear: YEAR_2027, into: first },
+  );
+
+  expect(catalog.offerings.map((o) => [o.courseNumber, o.semesters])).toEqual([
+    ["89-385", ["fall", "spring"]],
+  ]);
+  expect(exceptProvenance(warnings)).toEqual([
+    {
+      kind: "group-superseded",
+      courseNumber: "89-385",
+      semesters: ["fall"],
+      group: "01",
+      lessonType: "הרצאה",
+    },
+  ]);
+  expect(changes.find((c) => c.offeringRemoved)).toMatchObject({
+    courseNumber: "89-385",
+    semesters: ["fall"],
+  });
+});
+
+it("leaves a Course's Spring Offering alone when the part carries only its Fall rows", () => {
+  // The other direction of the same rule: Semesters that do not overlap are not spoken for,
+  // so a part of one Semester never empties another's.
+  const first = importRawCrawl(
+    {
+      rows: [
+        row({ group: "01", semester: "סמסטר א'" }),
+        row({ group: "02", semester: "סמסטר ב'" }),
+      ],
+    },
+    { academicYear: YEAR_2027 },
+  ).catalog;
+
+  const { catalog, warnings } = importRawCrawl(
+    { rows: [row({ group: "01", semester: "סמסטר א'" })] },
+    { academicYear: YEAR_2027, into: first },
+  );
+
+  expect(catalog.offerings.map((o) => [o.semesters, o.groups.map((g) => g.number)])).toEqual([
+    [["fall"], ["01"]],
+    [["spring"], ["02"]],
+  ]);
+  expect(exceptProvenance(warnings)).toEqual([]);
+});
+
+it("keeps a Course held in four Semester spellings at once, since every one carries rows", () => {
+  // 89-100 is really crawled this way: Fall, Spring, Summer and Year-long in the one part.
+  // Each Offering is spoken for by its own rows, so none of the four supersedes another.
+  const spellings = ["סמסטר א'", "סמסטר ב'", "סמסטר ק'", "סמסטר א'\nסמסטר ב'"];
+  const rows = spellings.map((semester, i) =>
+    row({ code: "89100", name: "פרויקט חונכות", group: `0${i + 1}`, semester, day: "", hours: "" })
+  );
+
+  const { catalog, warnings } = importRawCrawl({ rows }, { academicYear: YEAR_2027 });
+  const { catalog: again, warnings: againWarnings, changes } = importRawCrawl(
+    { rows },
+    { academicYear: YEAR_2027, into: catalog },
+  );
+
+  expect(again.offerings.map((o) => o.semesters)).toEqual([
+    ["fall"],
+    ["spring"],
+    ["summer"],
+    ["fall", "spring"],
+  ]);
+  expect(exceptProvenance(warnings)).toEqual([]);
+  expect(exceptProvenance(againWarnings)).toEqual([]);
+  expect(changes).toEqual([]);
+});
+
+it("reports the Groups a part adds, removes and moves, per Offering", () => {
+  const first = importRawCrawl(
+    {
+      rows: [
+        row({ group: "01", kind: "הרצאה", day: "ג'", hours: "15:00 - 18:00" }),
+        row({ group: "03", kind: "תרגיל", hours: "11:00 - 13:00" }),
+      ],
+    },
+    { academicYear: YEAR_2027 },
+  ).catalog;
+
+  const { changes } = importRawCrawl(
+    {
+      rows: [
+        row({ group: "01", kind: "הרצאה", day: "ד'", hours: "10:00 - 13:00" }),
+        row({ group: "05", kind: "תרגיל", hours: "11:00 - 13:00" }),
+      ],
+    },
+    { academicYear: YEAR_2027, into: first },
+  );
+
+  expect(changes).toEqual([
+    {
+      courseNumber: "89-110",
+      semesters: ["fall"],
+      added: [
+        {
+          number: "05",
+          lessonType: "תרגיל",
+          meetings: [{ semester: "fall", day: "tuesday", start: "11:00", end: "13:00" }],
+        },
+      ],
+      removed: [
+        {
+          number: "03",
+          lessonType: "תרגיל",
+          meetings: [{ semester: "fall", day: "tuesday", start: "11:00", end: "13:00" }],
+        },
+      ],
+      moved: [
+        {
+          number: "01",
+          lessonType: "הרצאה",
+          before: [{ semester: "fall", day: "tuesday", start: "15:00", end: "18:00" }],
+          after: [{ semester: "fall", day: "wednesday", start: "10:00", end: "13:00" }],
+        },
+      ],
+      offeringRemoved: false,
+    },
+  ]);
+});
+
+it("reports every Offering a first import brings as added", () => {
+  const { changes } = importRawCrawl({ rows: [row()] }, { academicYear: YEAR_2027 });
+
+  expect(changes).toEqual([
+    {
+      courseNumber: "89-110",
+      semesters: ["fall"],
+      added: [
+        {
+          number: "01",
+          lessonType: "הרצאה",
+          meetings: [{ semester: "fall", day: "tuesday", start: "15:00", end: "18:00" }],
+        },
+      ],
+      removed: [],
+      moved: [],
+      offeringRemoved: false,
+    },
+  ]);
+});
+
+it("reports no change when a part is imported over the Catalog it built", () => {
+  const rows = [
+    row({ group: "01", kind: "הרצאה" }),
+    row({ group: "03", kind: "תרגיל", hours: "11:00 - 13:00" }),
+    row({ code: "89385", name: "מעבדת פרויקט", group: "01", semester: "סמסטר א'\nסמסטר ב'" }),
+  ];
+  const first = importRawCrawl({ rows }, { academicYear: YEAR_2027 }).catalog;
+
+  const { changes, warnings } = importRawCrawl({ rows }, { academicYear: YEAR_2027, into: first });
+
+  expect(changes).toEqual([]);
+  expect(exceptProvenance(warnings)).toEqual([]);
+});
+
+it("reports no change when a part carries no rows at all and nothing was there", () => {
+  const { changes } = importRawCrawl({}, { academicYear: YEAR_2027 });
+
+  expect(changes).toEqual([]);
+});
+
+it("refuses a part of another Academic Year without reporting a change", () => {
+  const first = importRawCrawl({ rows: [row()] }, { academicYear: YEAR_2027 }).catalog;
+
+  const { changes } = importRawCrawl(
+    { rows: [row({ group: "03" })] },
+    { academicYear: 2030, into: first },
+  );
+
+  expect(changes).toEqual([]);
+});
+
+it("does not let a superseded Group take a detail record's hours with it", () => {
+  // The Groups are settled before the details are read, so a stale Group cannot make a
+  // sampled record ambiguous, nor take hours that belong to the Group that replaced it.
+  const first = importRawCrawl(
+    {
+      rows: [
+        row({ group: "01", kind: "הרצאה" }),
+        row({ group: "01", kind: "תרגיל", hours: "11:00 - 13:00" }),
+      ],
+    },
+    { academicYear: YEAR_2027 },
+  ).catalog;
+
+  const { catalog, warnings } = importRawCrawl(
+    {
+      rows: [row({ group: "01", kind: "הרצאה" })],
+      details: { "89110|סמסטר א'": { points: "3.00", code: "89110-01" } },
+    },
+    { academicYear: YEAR_2027, into: first },
+  );
+
+  expect(catalog.offerings[0]!.groups.map((g) => [g.lessonType, g.weeklyHours])).toEqual([
+    ["הרצאה", 3],
+  ]);
+  expect(exceptProvenance(warnings).filter((w) => w.kind === "detail-group-ambiguous")).toEqual([]);
+});
+
+it("leaves an Offering the Catalog holds without Groups where it is", () => {
+  // Only supersession removes an Offering, and only by taking its last Group off it. An
+  // Offering that already held none -- a hand-written Catalog naming Exams and nothing else
+  // -- has nothing taken from it, so it stays, Exams and all.
+  const { catalog, changes } = importRawCrawl(
+    { rows: [row({ code: "89110", semester: "סמסטר א'\nסמסטר ב'" })] },
+    {
+      academicYear: YEAR_2027,
+      into: catalogOf({
+        courseNumber: "89-110",
+        nameHebrew: "מבוא למדעי המחשב",
+        semesters: ["fall"],
+        credits: { known: false },
+        exams: { known: true, sittings: [{ moed: "מועד א'", date: "2027-01-21", time: "16:00" }] },
+        groups: [],
+      }),
+    },
+  );
+
+  expect(catalog.offerings.map((o) => [o.semesters, o.groups.length])).toEqual([
+    [["fall"], 0],
+    [["fall", "spring"], 1],
+  ]);
+  expect(changes.map((c) => c.semesters)).toEqual([["fall", "spring"]]);
 });

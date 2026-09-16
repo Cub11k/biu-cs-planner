@@ -49,8 +49,14 @@ it("merges into the Catalog already stored for that year", async () => {
   const workspace = memoryWorkspace({ created: true });
   await importCrawl(workspace, CRAWL, { academicYear: 2027 });
 
+  // The part re-carries the lecture beside the tirgul it brings. A part speaks for the
+  // Offerings it carries rows for (ADR-0011), so one naming the tirgul alone would be saying
+  // the lecture is gone rather than adding to it.
   const tirgul = {
-    rows: [{ ...CRAWL.rows[0]!, group: "03", kind: "תרגיל", hours: "18:00 - 20:00" }],
+    rows: [
+      CRAWL.rows[0]!,
+      { ...CRAWL.rows[0]!, group: "03", kind: "תרגיל", hours: "18:00 - 20:00", lid: "822335" },
+    ],
   };
   const result = await importCrawl(workspace, tirgul, { academicYear: 2027 });
 
