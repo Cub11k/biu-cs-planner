@@ -6,6 +6,9 @@
   "exports": {
     ".": "./src/index.ts"
   },
+  "scripts": {
+    "build": "esbuild src/bin.ts --bundle --platform=node --format=esm --target=node22 --outfile=../dist/cli.js --banner:js='#!/usr/bin/env node' --legal-comments=eof --log-level=warning"
+  },
   "dependencies": {
     "@biu-cs-planner/app": "*",
     "@biu-cs-planner/core": "*",
