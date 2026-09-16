@@ -136,6 +136,9 @@ export function offeringChanges(before: Offering[], after: Offering[]): ImportCh
 
   for (const was of before) {
     const key = offeringKey(was.courseNumber, was.semesters);
+    // A Catalog holding one key twice is the merge's own last-one-wins, and reporting the
+    // same Offering twice would only make that harder to see.
+    if (seen.has(key)) continue;
     compare(key, was, afterByKey.get(key));
   }
   for (const is of after) {
