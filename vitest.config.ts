@@ -45,6 +45,11 @@ export default defineConfig({
         // corner and the dark tokens are all CSS — so the utilities are generated here
         // the way `web` generates them rather than left unresolved.
         plugins: [tailwindcss()],
+        // Named up front rather than discovered mid-run: Vite reloads the page when it
+        // optimizes a dependency it did not expect, and Vitest warns that a reload in the
+        // middle of a test run is how flakes and duplicate runs happen. On a cold
+        // node_modules/.vite -- which is every CI run -- that is exactly when it happens.
+        optimizeDeps: { include: ["react", "react/jsx-dev-runtime", "react-dom/client"] },
         test: {
           name: "browser",
           include: ["web/src/**/*.browser.test.tsx"],
