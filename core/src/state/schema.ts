@@ -28,7 +28,11 @@ const CLOCK_TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
  * no time free — `file.ts` warns `blocked-time-does-not-advance` about it — and `22:00`-`23:59`
  * gives the Day's last minute away. A `start` still tops out at `23:59`, because a Day has
  * nothing after the end of it to start at, and a Pick's snapshot of a Meeting keeps the narrow
- * clock because Shoham publishes no such time for a Catalog to be compared against.
+ * clock: Shoham publishes no `24:00`, so a snapshot carrying one could never match the Catalog
+ * Meeting it is compared against. Shoham does write an end of the Day — as `00:00`, which
+ * `web/src/timetable/week.ts` reads and `overlapOf` in the Clashes module does not. That
+ * disagreement is older than this and is not resolved here; #42 widened one `end` and left
+ * every other reading of the clock as it found it.
  */
 const CLOCK_TIME_OR_END_OF_DAY = /^(([01]\d|2[0-3]):[0-5]\d|24:00)$/;
 

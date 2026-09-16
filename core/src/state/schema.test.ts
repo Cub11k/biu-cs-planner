@@ -182,8 +182,9 @@ it("refuses a time past the end of the Day wherever it accepts 24:00", () => {
 
 /**
  * The end of the Day belongs to the Blocked Time and nowhere else. A Pick's snapshot is a
- * Catalog Meeting as it stood, and Shoham publishes no such time, so widening this one too
- * would put a value in a student's file that no Catalog could ever be compared against.
+ * Catalog Meeting as it stood, and Shoham publishes no `24:00`, so widening this one too would
+ * put a value in a student's file that no Catalog Meeting could ever equal — which is the whole
+ * point of the snapshot.
  */
 it("keeps the end of the Day out of the Catalog, on a Meeting and on an Exam", () => {
   const meeting = (end: string) => ({ semester: "fall", day: "sunday", start: "22:00", end });
