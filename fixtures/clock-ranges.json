@@ -1,0 +1,80 @@
+{
+  "rule": "A clock string is hh:mm, 00:00 through 23:59, and where 00:00 appears decides what it means: as an end it is the end of the Day, 1440 minutes in; as a start it is the beginning of the Day, 0 minutes in. A range is half-open, [start, end), so it occupies time only when endMinutes is greater than startMinutes. 24:00 is never a clock string; 1440 is only ever a number.",
+  "readBy": [
+    "core/src/timetable/clashes.test.ts, against core/src/clock.ts",
+    "web/src/timetable/week.test.ts, against web/src/timetable/week.ts"
+  ],
+  "why": "core and web each read this clock, and web never imports core, so the rule is necessarily written twice. This table is the one place it is written down, so that a change to either reading fails a test instead of drifting quietly (issue #48).",
+  "cases": [
+    {
+      "start": "08:00",
+      "end": "10:00",
+      "startMinutes": 480,
+      "endMinutes": 600,
+      "why": "an ordinary morning, and the shape every other case is judged against"
+    },
+    {
+      "start": "22:00",
+      "end": "00:00",
+      "startMinutes": 1320,
+      "endMinutes": 1440,
+      "why": "the evening, run to the end of the Day: an end of 00:00 is 1440, not 0"
+    },
+    {
+      "start": "00:00",
+      "end": "08:00",
+      "startMinutes": 0,
+      "endMinutes": 480,
+      "why": "the night, and only the night: a start of 00:00 is 0, not 1440"
+    },
+    {
+      "start": "00:00",
+      "end": "00:00",
+      "startMinutes": 0,
+      "endMinutes": 1440,
+      "why": "the whole Day, read positionally from both ends of the same spelling"
+    },
+    {
+      "start": "23:00",
+      "end": "00:00",
+      "startMinutes": 1380,
+      "endMinutes": 1440,
+      "why": "the Day's last hour, the half a night shift that is not the next Day's"
+    },
+    {
+      "start": "23:59",
+      "end": "00:00",
+      "startMinutes": 1439,
+      "endMinutes": 1440,
+      "why": "the Day's last minute, which is a minute and not nothing"
+    },
+    {
+      "start": "00:00",
+      "end": "01:00",
+      "startMinutes": 0,
+      "endMinutes": 60,
+      "why": "the other half of that night shift, on its own Day"
+    },
+    {
+      "start": "10:00",
+      "end": "10:00",
+      "startMinutes": 600,
+      "endMinutes": 600,
+      "why": "occupies no time: an end that does not advance past its start, and neither is 00:00"
+    },
+    {
+      "start": "23:00",
+      "end": "01:00",
+      "startMinutes": 1380,
+      "endMinutes": 60,
+      "why": "occupies no time: a range lies within the one Day it names and never wraps past midnight"
+    },
+    {
+      "start": "12:00",
+      "end": "08:00",
+      "startMinutes": 720,
+      "endMinutes": 480,
+      "why": "occupies no time: plainly backwards, and read as written rather than repaired"
+    }
+  ]
+}

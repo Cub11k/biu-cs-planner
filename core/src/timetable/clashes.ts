@@ -1,4 +1,5 @@
 import type { Day, Semester } from "../catalog/schema.ts";
+import { clockAsEnd, clockAsStart } from "../clock.ts";
 
 /**
  * A weekly day and time range within one Semester — the shape a Meeting and a Blocked Time
@@ -6,10 +7,13 @@ import type { Day, Semester } from "../catalog/schema.ts";
  * a Pick's snapshot of one, and the State File's Blocked Time all satisfy it, so finding
  * Clashes needs no import from the State File and the State File needs none from here.
  *
- * `start` and `end` are times of day on a 24-hour clock. The range is half-open,
- * `[start, end)`: a range ending at `"10:00"` and one starting at `"10:00"` do not meet. It
- * lies within the one Day it names, so a range that would run past midnight — `"23:00"` to
- * `"01:00"` — describes no time at all rather than wrapping into the next Day.
+ * `start` and `end` are times of day on a 24-hour clock, `"00:00"` to `"23:59"`, and where
+ * `"00:00"` sits decides what it means: as an `end` it is the end of the Day, as a `start` the
+ * beginning of it (issue #48). So `22:00`–`00:00` is the evening and `00:00`–`08:00` the night.
+ * The range is half-open, `[start, end)`: a range ending at `"10:00"` and one starting at
+ * `"10:00"` do not meet, and one Day's `"00:00"` end does not meet the next Day's `"00:00"`
+ * start. It lies within the one Day it names, so a range that would run past midnight —
+ * `"23:00"` to `"01:00"` — describes no time at all rather than wrapping into the next Day.
  */
 export interface WeeklySpan {
   semester: Semester;
@@ -58,25 +62,6 @@ export type MeetingClash =
       blockedTime: WeeklySpan;
     };
 
-/** A literal pattern, never built from data (ADR-0007). */
-const CLOCK_TIME = /^(\d{1,2}):([0-5]\d)$/;
-
-/**
- * Minutes since midnight, or `undefined` for a time this module cannot read. Comparing the
- * strings directly would be correct only while every one of them is zero-padded, and a Blocked
- * Time is student-entered: `"9:00"` sorts after `"10:00"`, which would quietly hide the Clash
- * rather than report it. Reading the number costs one literal pattern and removes the trap.
- */
-function minutesIntoDay(time: string): number | undefined {
-  const read = CLOCK_TIME.exec(time);
-  if (!read) return undefined;
-
-  const hour = Number(read[1]);
-  if (hour > 23) return undefined;
-
-  return hour * 60 + Number(read[2]);
-}
-
 function groupRef(group: PickedGroup): GroupRef {
   return {
     courseNumber: group.courseNumber,
@@ -92,18 +77,22 @@ function isSameGroup(a: GroupRef, b: GroupRef): boolean {
 }
 
 /**
- * The part of the week two spans share, or `undefined` if they share none. A span whose end
- * does not come after its start — a malformed range, or one written as if it wrapped past
- * midnight — occupies no time, which keeps it out of every Clash rather than letting it collide
- * with whatever encloses it. So does a span whose times cannot be read at all.
+ * The part of the week two spans share, or `undefined` if they share none. Each end of a span
+ * is read in its own position, so an `end` of `"00:00"` closes the Day rather than opening it.
+ * A span whose end still does not come after its start — a malformed range, or one written as
+ * if it wrapped past midnight — occupies no time, which keeps it out of every Clash rather than
+ * letting it collide with whatever encloses it. So does a span whose times cannot be read.
+ *
+ * The overlap is reported in the spellings it was given, so one that runs to the end of the Day
+ * ends at `"00:00"` too: 1440 is a number this computes with and never one it hands back.
  */
 function overlapOf(a: WeeklySpan, b: WeeklySpan): WeeklySpan | undefined {
   if (a.semester !== b.semester || a.day !== b.day) return undefined;
 
-  const aStart = minutesIntoDay(a.start);
-  const aEnd = minutesIntoDay(a.end);
-  const bStart = minutesIntoDay(b.start);
-  const bEnd = minutesIntoDay(b.end);
+  const aStart = clockAsStart(a.start);
+  const aEnd = clockAsEnd(a.end);
+  const bStart = clockAsStart(b.start);
+  const bEnd = clockAsEnd(b.end);
   if (aStart === undefined || aEnd === undefined) return undefined;
   if (bStart === undefined || bEnd === undefined) return undefined;
   if (aEnd <= aStart || bEnd <= bStart) return undefined;

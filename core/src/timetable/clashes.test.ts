@@ -1,5 +1,8 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { expect, it } from "vitest";
 import type { Day, Group, Semester } from "../catalog/schema.ts";
+import { clockAsEnd, clockAsStart } from "../clock.ts";
 import { findMeetingClashes, type PickedGroup, type WeeklySpan } from "./clashes.ts";
 
 /**
@@ -188,6 +191,10 @@ it("ignores a time it cannot read at all, rather than guessing where it falls", 
 
   expect(findMeetingClashes(meetings, [span("sunday", "morning", "17:00")])).toEqual([]);
   expect(findMeetingClashes(meetings, [span("sunday", "25:00", "26:00")])).toEqual([]);
+  // The end of the Day is spelled `00:00`; `24:00` is a number this module computes and never
+  // a time it reads, so a span written with one is as unreadable as any other non-time.
+  expect(findMeetingClashes(meetings, [span("sunday", "09:00", "24:00")])).toEqual([]);
+  expect(findMeetingClashes(meetings, [span("sunday", "24:00", "24:00")])).toEqual([]);
   expect(findMeetingClashes(meetings, [span("sunday", "0900", "1700")])).toEqual([]);
   expect(findMeetingClashes(meetings, [span("sunday", "09:00", "late")])).toEqual([]);
   // and the same on the Meeting's side of the comparison, not only the Blocked Time's
@@ -239,4 +246,125 @@ it("accepts a Catalog Group without either side importing the other", () => {
   const picked: PickedGroup = { courseNumber: "99-101", ...fromCatalog };
 
   expect(findMeetingClashes([picked], [span("sunday", "11:00", "13:00")])).toHaveLength(1);
+});
+
+/**
+ * The ruling on #48: `00:00` is the only spelling of midnight, and where it sits decides what
+ * it means. As an `end` it is the end of the Day, so a Meeting of `22:00`–`00:00` occupies the
+ * evening and Clashes with whatever else is there — which is what the week grid has always
+ * drawn and what this module used to call an empty range.
+ */
+it("reads an end of 00:00 as the end of the Day, so an evening Meeting Clashes", () => {
+  const blockedTime = span("sunday", "22:00", "00:00");
+
+  const clashes = findMeetingClashes(
+    [group("99-101", [span("sunday", "23:00", "23:30")])],
+    [blockedTime],
+  );
+
+  expect(clashes).toEqual([
+    {
+      kind: "meeting-blocked-time",
+      overlap: span("sunday", "23:00", "23:30"),
+      group: { courseNumber: "99-101", lessonType: "lecture", number: "01" },
+      meeting: span("sunday", "23:00", "23:30"),
+      blockedTime,
+    },
+  ]);
+});
+
+/**
+ * The overlap is reported in the spelling it came in, so an overlap that runs to the end of
+ * the Day ends at `00:00`. `"24:00"` is a number this module computes with and never a string
+ * it hands back.
+ */
+it("carries an end of 00:00 through to the overlap rather than the minute before it", () => {
+  const clashes = findMeetingClashes(
+    [group("99-101", [span("sunday", "23:00", "00:00")])],
+    [span("sunday", "22:00", "00:00")],
+  );
+
+  expect(clashes).toHaveLength(1);
+  expect(clashes[0]?.overlap).toEqual(span("sunday", "23:00", "00:00"));
+});
+
+/** A start of `00:00` is the beginning of the Day, so the night is the night and not the Day. */
+it("reads a start of 00:00 as the beginning of the Day, so the night stays the night", () => {
+  const night = [group("99-101", [span("sunday", "00:00", "08:00")])];
+
+  expect(findMeetingClashes(night, [span("sunday", "22:00", "00:00")])).toEqual([]);
+  expect(findMeetingClashes(night, [span("sunday", "07:00", "09:00")])).toHaveLength(1);
+});
+
+/** Read from both ends of the same spelling, `00:00`–`00:00` is 0 to 1440: the whole Day. */
+it("reads 00:00 to 00:00 as the whole Day", () => {
+  const clashes = findMeetingClashes(
+    [group("99-101", [span("sunday", "09:00", "10:00")])],
+    [span("sunday", "00:00", "00:00")],
+  );
+
+  expect(clashes).toHaveLength(1);
+  expect(clashes[0]?.overlap).toEqual(span("sunday", "09:00", "10:00"));
+});
+
+/**
+ * A Blocked Time never wraps past midnight, so a night shift is two of them (CONTEXT.md,
+ * "Blocked Time"). The first half ending at `00:00` is the end of its own Day and must not
+ * reach into the next one.
+ */
+it("keeps the two halves of a night shift on their own Days", () => {
+  const blockedTimes = [span("sunday", "23:00", "00:00"), span("monday", "00:00", "01:00")];
+
+  const clashes = findMeetingClashes(
+    [group("99-101", [span("monday", "00:30", "02:00")])],
+    blockedTimes,
+  );
+
+  expect(clashes).toHaveLength(1);
+  expect(clashes[0]).toMatchObject({ blockedTime: span("monday", "00:00", "01:00") });
+});
+
+/**
+ * `web` reads this same clock and never imports `core`, so the rule is written twice and the
+ * table is the one place it is written down: `web/src/timetable/week.test.ts` asserts the same
+ * file against its own reading. A range whose readings drift apart fails here, there, or both
+ * — which is the whole of issue #48.
+ *
+ * Both the readings and the behaviour they drive are checked: a whole-Day Blocked Time Clashes
+ * with exactly those ranges the table says occupy time, over exactly the range they name.
+ */
+const clockRanges: {
+  cases: { start: string; end: string; startMinutes: number; endMinutes: number; why: string }[];
+} = JSON.parse(
+  readFileSync(join(import.meta.dirname, "../../../fixtures/clock-ranges.json"), "utf8"),
+);
+
+it("reads every range in the shared table the way the table says", () => {
+  expect(clockRanges.cases.length).toBeGreaterThan(0);
+
+  for (const range of clockRanges.cases) {
+    const read = `${range.start}-${range.end}: ${range.why}`;
+
+    expect([read, clockAsStart(range.start)]).toEqual([read, range.startMinutes]);
+    expect([read, clockAsEnd(range.end)]).toEqual([read, range.endMinutes]);
+  }
+});
+
+it("Clashes over exactly those ranges in the shared table that occupy time", () => {
+  const wholeDay = span("sunday", "00:00", "00:00");
+
+  for (const range of clockRanges.cases) {
+    const read = `${range.start}-${range.end}: ${range.why}`;
+    const occupiesTime = range.endMinutes > range.startMinutes;
+
+    const clashes = findMeetingClashes(
+      [group("99-101", [span("sunday", range.start, range.end)])],
+      [wholeDay],
+    );
+
+    expect([read, clashes.map((clash) => clash.overlap)]).toEqual([
+      read,
+      occupiesTime ? [span("sunday", range.start, range.end)] : [],
+    ]);
+  }
 });
