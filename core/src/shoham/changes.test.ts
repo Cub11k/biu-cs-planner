@@ -149,21 +149,13 @@ it("reads one number in two Lesson Types as two Groups, not one that changed", (
   expect(change!.moved).toEqual([]);
 });
 
-it("reports an Offering a Catalog holds twice once, since the merge holds it once", () => {
-  // A hand-edited Catalog can name one Course and Semester twice; the merge keys Offerings,
-  // so the second overwrites the first. A report naming it twice would hide that.
-  const twice = [offering({ groups: [] }), offering()];
+it("reads a Catalog holding one Offering twice the way the merge reads it", () => {
+  // A hand-edited Catalog can name one Course and Semester set twice. The merge seeds by
+  // key, so the later entry is the one that survives; a report reading the earlier one would
+  // tell a student the part removed Groups the merge never saw.
+  const twice = [offering({ groups: [group({ number: "07" })] }), offering()];
 
-  expect(offeringChanges(twice, [offering()])).toEqual([
-    {
-      courseNumber: "89-110",
-      semesters: ["fall"],
-      added: [{ number: "01", lessonType: "הרצאה", meetings: [TUESDAY] }],
-      removed: [],
-      moved: [],
-      offeringRemoved: false,
-    },
-  ]);
+  expect(offeringChanges(twice, [offering()])).toEqual([]);
 });
 
 it("hands back Meetings of its own rather than the Catalog's arrays", () => {

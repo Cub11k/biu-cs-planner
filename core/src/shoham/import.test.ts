@@ -1002,9 +1002,10 @@ it("says nothing about a Group this part never carried, however the Catalog hold
 // --- what a part supersedes, and what it reports changing (issue #22) ---------
 //
 // #9 settled a repeated row updating the Group it names. The other half of a re-crawl is a
-// Group the new crawl no longer carries, and the rule this section holds to is the one
-// ADR-0011 records: a part speaks for the Offerings it carries rows for, and for the same
-// Course's other Offerings whose Semesters its rows overlap. It speaks for nothing else.
+// Group the new crawl no longer carries, and the rule these tests hold to is the one
+// ADR-0011 records: a part speaks for a Course it carries rows for, and within it for the
+// Offerings whose Semesters the part covered, read off the spellings its own rows use. It
+// speaks for nothing else.
 
 /** A Catalog holding exactly the Offerings given, as an earlier import would have left it. */
 function catalogOf(...offerings: Offering[]): Catalog {
@@ -1078,42 +1079,6 @@ it("removes nothing at all when the part carries no rows", () => {
   expect(catalog.offerings[0]!.groups).toHaveLength(2);
   expect(exceptProvenance(warnings).filter((w) => w.kind === "group-superseded")).toEqual([]);
   expect(changes).toEqual([]);
-});
-
-it("supersedes a Fall Offering when the same Course comes back Year-long", () => {
-  // 89-385 is the kind of Course this happens to. Keyed on Course plus Semesters, the
-  // Year-long rows form a second Offering; without this the Catalog would hold the Course
-  // twice with nothing to say which of the two is dead.
-  const first = importRawCrawl(
-    { rows: [row({ code: "89385", name: "מעבדת פרויקט", group: "01", semester: "סמסטר א'" })] },
-    { academicYear: YEAR_2027 },
-  ).catalog;
-
-  const { catalog, warnings, changes } = importRawCrawl(
-    {
-      rows: [
-        row({ code: "89385", name: "מעבדת פרויקט", group: "01", semester: "סמסטר א'\nסמסטר ב'" }),
-      ],
-    },
-    { academicYear: YEAR_2027, into: first },
-  );
-
-  expect(catalog.offerings.map((o) => [o.courseNumber, o.semesters])).toEqual([
-    ["89-385", ["fall", "spring"]],
-  ]);
-  expect(exceptProvenance(warnings)).toEqual([
-    {
-      kind: "group-superseded",
-      courseNumber: "89-385",
-      semesters: ["fall"],
-      group: "01",
-      lessonType: "הרצאה",
-    },
-  ]);
-  expect(changes.find((c) => c.offeringRemoved)).toMatchObject({
-    courseNumber: "89-385",
-    semesters: ["fall"],
-  });
 });
 
 it("leaves a Course's Spring Offering alone when the part carries only its Fall rows", () => {
@@ -1321,4 +1286,125 @@ it("leaves an Offering the Catalog holds without Groups where it is", () => {
     [["fall", "spring"], 1],
   ]);
   expect(changes.map((c) => c.semesters)).toEqual([["fall", "spring"]]);
+});
+
+// --- what a part covered, read off its own rows (the self-review of #22) -------
+
+/** 89-100 as it is really crawled: Fall, Spring, Summer and Year-long at once. */
+const SPELLINGS_89100 = ["סמסטר א'", "סמסטר ב'", "סמסטר ק'", "סמסטר א'\nסמסטר ב'"];
+const rows89100 = () =>
+  SPELLINGS_89100.map((semester, i) =>
+    row({ code: "89100", name: "פרויקט חונכות", group: `0${i + 1}`, semester, day: "", hours: "" })
+  );
+
+it("leaves a Course's Year-long Offering alone when the part covered only Fall", () => {
+  // The Fall rows of a Course also given Year-long say nothing about the Year-long Offering:
+  // the two are given side by side, and a part that never carried a Year-long row anywhere
+  // was not asked about them.
+  const first = importRawCrawl({ rows: rows89100() }, { academicYear: YEAR_2027 }).catalog;
+
+  const { catalog, warnings } = importRawCrawl(
+    { rows: [rows89100()[0]!] },
+    { academicYear: YEAR_2027, into: first },
+  );
+
+  expect(catalog.offerings.map((o) => [o.semesters, o.groups.map((g) => g.number)])).toEqual([
+    [["fall"], ["01"]],
+    [["spring"], ["02"]],
+    [["summer"], ["03"]],
+    [["fall", "spring"], ["04"]],
+  ]);
+  expect(exceptProvenance(warnings)).toEqual([]);
+});
+
+it("leaves a Course's single-Semester Offerings alone when the part covered only Year-long", () => {
+  const first = importRawCrawl({ rows: rows89100() }, { academicYear: YEAR_2027 }).catalog;
+
+  const { catalog, warnings } = importRawCrawl(
+    { rows: [rows89100()[3]!] },
+    { academicYear: YEAR_2027, into: first },
+  );
+
+  expect(catalog.offerings.map((o) => o.semesters)).toEqual([
+    ["fall"],
+    ["spring"],
+    ["summer"],
+    ["fall", "spring"],
+  ]);
+  expect(exceptProvenance(warnings)).toEqual([]);
+});
+
+it("supersedes the Fall Offering of a Course that moved, since the part covered Fall", () => {
+  // The difference from the two above is what the part carried for *other* Courses: this one
+  // carries Fall rows, so a Course of its own it names only Year-long has no Fall left.
+  const first = importRawCrawl(
+    {
+      rows: [
+        row({ group: "01", semester: "סמסטר א'" }),
+        row({ code: "89385", name: "מעבדת פרויקט", group: "01", semester: "סמסטר א'" }),
+      ],
+    },
+    { academicYear: YEAR_2027 },
+  ).catalog;
+
+  const { catalog, warnings, changes } = importRawCrawl(
+    {
+      rows: [
+        row({ group: "01", semester: "סמסטר א'" }),
+        row({ code: "89385", name: "מעבדת פרויקט", group: "01", semester: "סמסטר א'\nסמסטר ב'" }),
+      ],
+    },
+    { academicYear: YEAR_2027, into: first },
+  );
+
+  expect(catalog.offerings.map((o) => [o.courseNumber, o.semesters])).toEqual([
+    ["89-110", ["fall"]],
+    ["89-385", ["fall", "spring"]],
+  ]);
+  expect(exceptProvenance(warnings)).toEqual([
+    {
+      kind: "group-superseded",
+      courseNumber: "89-385",
+      semesters: ["fall"],
+      group: "01",
+      lessonType: "הרצאה",
+    },
+  ]);
+  // the dead second copy of the Course is reported gone, not merely emptied
+  expect(changes.find((c) => c.offeringRemoved)).toMatchObject({
+    courseNumber: "89-385",
+    semesters: ["fall"],
+  });
+});
+
+it("supersedes nothing of a Course whose Semester cell it could not read", () => {
+  // The run-together corruption docs/research/shoham-raw-shape.md describes reaches Semester
+  // cells. A part that could not read where one of a Course's Groups meets is in no position
+  // to say which of that Course's Groups are gone.
+  const first = importRawCrawl(
+    {
+      rows: [
+        row({ group: "01", kind: "הרצאה" }),
+        row({ group: "03", kind: "תרגיל", hours: "11:00 - 13:00" }),
+      ],
+    },
+    { academicYear: YEAR_2027 },
+  ).catalog;
+
+  const { catalog, warnings } = importRawCrawl(
+    {
+      rows: [
+        row({ group: "01", kind: "הרצאה", semester: "לא ידוע" }),
+        row({ group: "03", kind: "תרגיל", hours: "11:00 - 13:00" }),
+      ],
+    },
+    { academicYear: YEAR_2027, into: first },
+  );
+
+  const fall = catalog.offerings.find((o) => o.semesters.length === 1)!;
+  expect(fall.groups.map((g) => [g.number, g.lessonType])).toEqual([
+    ["01", "הרצאה"],
+    ["03", "תרגיל"],
+  ]);
+  expect(exceptProvenance(warnings).filter((w) => w.kind === "group-superseded")).toEqual([]);
 });

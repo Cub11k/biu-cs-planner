@@ -10,6 +10,7 @@ import {
   groupKey,
   offeringChanges,
   offeringKey,
+  semesterSpelling,
   type ImportChanges,
 } from "./changes.ts";
 import { provenanceFromMeta } from "./meta.ts";
@@ -173,11 +174,19 @@ export function importRawCrawl(
   // name is held once, so what is checked is the Meetings it ends up with.
   const carried = new Map<Group, Offering>();
 
-  // What this part speaks for (ADR-0011): the Offerings it carried a row for, and -- so that
-  // a Course moving from Fall-only to Year-long does not leave the Fall Groups behind -- the
-  // Semesters its rows named for each Course, which reach that Course's other Offerings.
-  const spokenFor = new Set<Offering>();
-  const spokenSemesters = new Map<string, Set<Semester>>();
+  // What this part covered, read off its own rows (ADR-0011): the Courses it carried a row
+  // for, and the Semester spellings those rows used. A part that returned a Fall row was
+  // asked about Fall; one that never returned a Year-long row was not asked about Year-long.
+  // Both are needed, because 89-100 really is given Fall, Spring, Summer and Year-long at
+  // once: its Fall rows say nothing about its Year-long Offering, while a part that covered
+  // Fall and names 89-385 only Year-long is saying 89-385 has no Fall Offering left.
+  const coursesCarried = new Set<string>();
+  const spellingsCovered = new Set<string>();
+
+  // A Course one of whose rows would not say which Semester it is in. A part that could not
+  // read where one of a Course's Groups meets is in no position to say which of that
+  // Course's Groups are gone, so it supersedes none of them.
+  const semesterUnreadable = new Set<string>();
 
   const warnings: Warning[] = [];
   const reportedNumbers = new Set<string>();
@@ -211,6 +220,10 @@ export function importRawCrawl(
     }
     if (!semesters.length) {
       warnings.push({ kind: "semester-unreadable", courseNumber, group: row.group });
+      semesterUnreadable.add(courseNumber);
+    } else {
+      coursesCarried.add(courseNumber);
+      spellingsCovered.add(semesterSpelling(semesters));
     }
     if (row.code.length < 3 && !reportedNumbers.has(courseNumber)) {
       reportedNumbers.add(courseNumber);
@@ -251,10 +264,6 @@ export function importRawCrawl(
     group.lecturers = lecturersFrom(row.teachers);
     group.meetings = meetings;
     carried.set(group, offering);
-    spokenFor.add(offering);
-    let namedSemesters = spokenSemesters.get(courseNumber);
-    if (!namedSemesters) spokenSemesters.set(courseNumber, (namedSemesters = new Set()));
-    for (const semester of semesters) namedSemesters.add(semester);
     // A row's identity is its lid, so two rows claiming one is the crawl contradicting
     // itself. The later row keeps the lid; where the two rows are different Groups, the
     // earlier is left without the hours its record would have carried, and where they are
@@ -286,18 +295,17 @@ export function importRawCrawl(
     }
   }
 
-  // A part speaks for the Offerings it carries rows for, and for the same Course's other
-  // Offerings whose Semesters its rows overlap; it says nothing about anything else
-  // (ADR-0011). Within an Offering it speaks for, the Groups it carried are the whole of it:
+  // A part speaks for a Course it carries rows for, and within it for the Offerings whose
+  // Semesters the part covered; it says nothing about anything else (ADR-0011). Within an
+  // Offering it speaks for, the Groups it carried are the whole of it:
   // a Group BIU cancelled between crawls is superseded here rather than left in the Catalog
   // for a student to Pick. Before the detail records are read, so that a Group on its way out
   // cannot take hours meant for the Group that replaced it, nor make a sampled record
   // ambiguous by still being there.
   for (const [key, offering] of offerings) {
-    const namedSemesters = spokenSemesters.get(offering.courseNumber);
-    const overlaps =
-      namedSemesters !== undefined && offering.semesters.some((s) => namedSemesters.has(s));
-    if (!spokenFor.has(offering) && !overlaps) continue;
+    if (semesterUnreadable.has(offering.courseNumber)) continue;
+    if (!coursesCarried.has(offering.courseNumber)) continue;
+    if (!spellingsCovered.has(semesterSpelling(offering.semesters))) continue;
 
     const kept = offering.groups.filter((group) => carried.has(group));
     if (kept.length === offering.groups.length) continue;

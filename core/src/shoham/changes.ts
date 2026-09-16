@@ -19,9 +19,17 @@ export function canonicalSemesters(semesters: Semester[]): Semester[] {
   return [...semesters].sort((a, b) => SEMESTER_ORDER.indexOf(a) - SEMESTER_ORDER.indexOf(b));
 }
 
+/**
+ * How a set of Semesters is written when it is being matched rather than shown: one string,
+ * in a fixed order, so `fall+spring` is one spelling however a cell named the two.
+ */
+export function semesterSpelling(semesters: Semester[]): string {
+  return canonicalSemesters(semesters).join("+");
+}
+
 /** The key an Offering is merged and compared on: a Course plus the Semesters it spans. */
 export function offeringKey(courseNumber: string, semesters: Semester[]): string {
-  return `${courseNumber}|${canonicalSemesters(semesters).join("+")}`;
+  return `${courseNumber}|${semesterSpelling(semesters)}`;
 }
 
 /**
@@ -135,13 +143,13 @@ export function offeringChanges(before: Offering[], after: Offering[]): ImportCh
     });
   };
 
-  for (const was of before) {
-    const key = offeringKey(was.courseNumber, was.semesters);
-    // A Catalog holding one key twice is the merge's own last-one-wins, and reporting the
-    // same Offering twice would only make that harder to see.
-    if (seen.has(key)) continue;
-    compare(key, was, afterByKey.get(key));
-  }
+  // A Catalog naming one Course and Semester set twice is the merge's own last-one-wins --
+  // it seeds by key, so the later entry is the one that survives. The report reads it the
+  // same way, or it would tell a student the part removed Groups the merge never saw.
+  const beforeByKey = new Map(
+    before.map((o) => [offeringKey(o.courseNumber, o.semesters), o] as const),
+  );
+  for (const [key, was] of beforeByKey) compare(key, was, afterByKey.get(key));
   for (const is of after) {
     const key = offeringKey(is.courseNumber, is.semesters);
     if (!seen.has(key)) compare(key, undefined, is);
