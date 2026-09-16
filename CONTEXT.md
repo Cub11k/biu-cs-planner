@@ -155,7 +155,7 @@ The Courses waiting to be scheduled in a Variant: that Semester's planned Attemp
 _Avoid_: basket, cart
 
 **Blocked Time**:
-A student-defined weekly period in a Semester to keep free, such as work or commute.
+A student-defined weekly period in a Semester to keep free, such as work or commute. It lies within the one Day it names and never wraps past midnight, so a night shift is two Blocked Times rather than one: `23:00`–`24:00` on one Day and `00:00`–`01:00` on the next. A screen that takes a wrapping range from a student is what splits it into those two rows — one range typed, two stored — because a span that wraps would otherwise have to be split again by every reader of it, and a reader that forgot would silently stop blocking. The ruling and what it rejected are on issue #39.
 _Avoid_: busy time, constraint
 
 **Plan Diff**:
