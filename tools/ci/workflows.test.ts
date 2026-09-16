@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   declaresPermissions,
-  grantsEverything,
+  grantsWriteAll,
+  writeScopes,
   installCommands,
 } from "./workflows.ts";
 
@@ -45,9 +46,28 @@ describe("the workflows in this repository", () => {
   });
 
   it("hands no job a write-all token", () => {
-    const wide = workflowFiles().filter((name) => grantsEverything(read(name)));
+    const wide = workflowFiles().filter((name) => grantsWriteAll(read(name)));
 
     expect(wide).toEqual([]);
+  });
+
+  // Not "no broader than what it does" -- no test can read a workflow's mind. This is
+  // the mechanical half: the write scopes this repository has a reason for are listed
+  // here, so a workflow reaching for a new one has to come through this line and say
+  // why. Every other scope any workflow holds is read.
+  it("grants write only where this repository has a reason for it", () => {
+    // pull-requests: pr-report.yml and pr-review.yml each edit one sticky comment.
+    // id-token: release.yml's publish job proves who it is to npm, which is what
+    // replaces an npm token sitting in a secret.
+    const allowed = ["pull-requests", "id-token"];
+
+    const unexpected = workflowFiles().flatMap((name) =>
+      writeScopes(read(name))
+        .filter((scope) => !allowed.includes(scope))
+        .map((scope) => `${name}: ${scope}`),
+    );
+
+    expect(unexpected).toEqual([]);
   });
 });
 
@@ -112,6 +132,54 @@ describe("installCommands", () => {
     ]);
   });
 
+  it("judges each command in a chain on its own", () => {
+    const found = installCommands(
+      "w.yml",
+      "      - run: npm ci --ignore-scripts && npm install some-package",
+    );
+
+    expect(found).toHaveLength(2);
+    expect(found.map((command) => command.ignoresScripts)).toEqual([true, false]);
+  });
+
+  it("splits on the other separators a shell line can hold", () => {
+    for (const separator of [";", "&&", "||", "|", "&"]) {
+      const found = installCommands("w.yml", `npm ci --ignore-scripts ${separator} npm i evil`);
+
+      expect(found.map((command) => command.ignoresScripts)).toEqual([true, false]);
+    }
+  });
+
+  it("sees the subcommand past npm's own options", () => {
+    for (const command of [
+      "npm --prefix web install evil",
+      "npm --silent ci",
+      "npm -w core install evil",
+    ]) {
+      expect(installCommands("w.yml", command)).toHaveLength(1);
+    }
+  });
+
+  it("does not call npm run an install, however it is spelled", () => {
+    for (const command of [
+      "npm run install-fixtures",
+      "npm --silent run report",
+      "npm exec -- install",
+    ]) {
+      expect(installCommands("w.yml", command)).toEqual([]);
+    }
+  });
+
+  it("does not let a trailing comment lend a command the flag", () => {
+    const [found] = installCommands("w.yml", "      - run: npm ci  # --ignore-scripts goes here");
+
+    expect(found?.ignoresScripts).toBe(false);
+  });
+
+  it("does not read an install out of a trailing comment either", () => {
+    expect(installCommands("w.yml", "      - run: echo hi  # npm ci")).toEqual([]);
+  });
+
   it("does not mistake a shell '#' for the start of a comment", () => {
     const found = installCommands("w.yml", '          token=${url##*#t=}; npm i "$TARBALL"');
 
@@ -128,7 +196,21 @@ describe("the permissions helpers", () => {
   });
 
   it("spots write-all, and ignores a comment warning against it", () => {
-    expect(grantsEverything("permissions: write-all\n")).toBe(true);
-    expect(grantsEverything("# never write-all\n")).toBe(false);
+    expect(grantsWriteAll("permissions: write-all\n")).toBe(true);
+    expect(grantsWriteAll("# never write-all\n")).toBe(false);
+  });
+
+  it("names the scopes granted at write, and no others", () => {
+    const yaml = [
+      "permissions:",
+      "  contents: read",
+      "  pull-requests: write",
+      "jobs:",
+      "  publish:",
+      "    permissions:",
+      "      id-token: write",
+    ].join("\n");
+
+    expect(writeScopes(yaml)).toEqual(["pull-requests", "id-token"]);
   });
 });

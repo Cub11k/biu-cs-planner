@@ -36,8 +36,8 @@ jobs:
           cache: npm
 
       # No install script runs on this runner, and this is the runner it matters most
-      # on: the job below holds `pull-requests: write`, so code executed here could
-      # write to this repository. See CLAUDE.md, "Code guardrails".
+      # on: this job holds `pull-requests: write`, so code executed here could write to
+      # this repository. See CLAUDE.md, "Code guardrails".
       - run: npm ci --ignore-scripts
 
       - name: Typecheck

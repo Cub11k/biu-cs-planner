@@ -25,28 +25,49 @@ trap 'rm -rf "$work"' EXIT
 tarball="$work/$(cd "$work" && npm pack --ignore-scripts --silent "$probe")"
 test -f "$tarball"
 
-# Installs the probe into an empty project and says whether its postinstall ran, by
-# whether the file that postinstall writes is there afterwards.
-marker_after_installing() {
+# Installs the probe into an empty project. A failed install is fatal and says so: the
+# whole check turns on whether one file exists afterwards, and an install that never
+# happened leaves no file either -- which would read as a pass. Nothing calls this from
+# inside an `if` condition, because that suspends `set -e` for everything it touches and
+# would bring that failure mode straight back.
+install_probe() {
   local where="$work/$1"
   shift
   mkdir -p "$where"
   printf '{"name":"probe-host","version":"0.0.0","private":true}' > "$where/package.json"
-  (
+
+  if ! (
     cd "$where"
-    PROBE_MARKER="$where/marker.txt" npm install --no-audit --no-fund "$@" "$tarball" >/dev/null
-  )
-  test -f "$where/marker.txt"
+    PROBE_MARKER="$where/marker.txt" npm install --no-audit --no-fund "$@" "$tarball"
+  ) > "$where/npm.log" 2>&1; then
+    echo "::error::the probe install failed, so this check proves nothing either way. npm said:"
+    cat "$where/npm.log"
+    exit 1
+  fi
+
+  # The package is there whether or not its script ran. Without this, an install that
+  # silently pulled nothing would look exactly like a suppressed postinstall.
+  if [ ! -d "$where/node_modules/install-script-probe" ]; then
+    echo "::error::the probe install reported success but installed no probe. npm said:"
+    cat "$where/npm.log"
+    exit 1
+  fi
 }
 
-if ! marker_after_installing control; then
+postinstall_ran() {
+  test -f "$work/$1/marker.txt"
+}
+
+install_probe control
+if ! postinstall_ran control; then
   echo "::error::the probe never ran its own postinstall, so this check cannot tell you anything."
   echo "::error::Either the probe is broken, or this npm no longer runs install scripts without being asked -- which would be good news, and still needs this control rewritten to say so."
   exit 1
 fi
 echo "Control: installed without the flag, and the postinstall ran."
 
-if marker_after_installing guarded --ignore-scripts; then
+install_probe guarded --ignore-scripts
+if postinstall_ran guarded; then
   echo "::error::npm install --ignore-scripts ran the package's postinstall anyway. Every workflow in this repository assumes it does not."
   exit 1
 fi

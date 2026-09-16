@@ -28,7 +28,7 @@ Development happens on temporary machines. The project lives on GitHub at `Cub11
 - Every domain check produces a Warning; edits always go through.
 - UI strings go through translation files, and styling uses direction-neutral classes only (`ms-`/`me-`/`start-`/`end-`), so Hebrew right-to-left layout works from day one.
 - Colors come from tokens that a dark scheme redefines; component styles hold no raw color values.
-- **Every install in `.github/workflows/` passes `--ignore-scripts`**, and every workflow declares a `permissions:` block no wider than what it does. A dependency's install script is arbitrary code on a runner, and a runner can hold a token that writes to this repository. `tools/ci/workflows.test.ts` fails the build when a new workflow forgets; `tools/ci/no-install-scripts.sh`, run by CI, shows the flag still works.
+- **Every install in `.github/workflows/` passes `--ignore-scripts`**, and every workflow declares its own `permissions:` block, no wider than what it does. A dependency's install script is arbitrary code on a runner, and a runner can hold a token that writes to this repository. `tools/ci/workflows.test.ts` fails the build on an install without the flag, on a workflow that declares no `permissions:`, and on a write scope outside the short list it keeps — whether a token is *no wider than needed* stays a judgement made in review. `tools/ci/no-install-scripts.sh`, which CI runs, shows the flag still works.
 
 ## Agent skills
 
