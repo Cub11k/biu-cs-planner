@@ -164,6 +164,7 @@ describe("renderGraphs", () => {
               fromWorkspace: "web",
               imported: "core/src/catalog/schema.ts",
               toWorkspace: "core",
+              kind: "direction",
               rule: "`web` knows only the HTTP API contract",
             },
           ],
@@ -187,7 +188,7 @@ describe("renderGraphs", () => {
     expect(body).toContain(
       "**Layering:** every import points the way the rule says it should — `core` imports " +
         "none of the others, `app` imports `core`, `server` imports `core` and `app`, " +
-        "`web` imports `server`.",
+        "`web` imports `server` for types only.",
     );
   });
 });

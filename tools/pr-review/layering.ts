@@ -1,4 +1,4 @@
-import type { Module } from "../pr-report/surface.ts";
+import type { ImportRef, Module } from "../pr-report/surface.ts";
 import type { TestFile } from "../pr-report/tests.ts";
 
 /**
@@ -24,13 +24,31 @@ export const WORKSPACES = ["core", "app", "server", "web"] as const;
 export type WorkspaceName = (typeof WORKSPACES)[number];
 
 /**
+ * One edge the rule allows, and on what terms.
+ *
+ * A bare workspace name allows any import of it. The object form narrows the edge to
+ * imports that carry nothing but types, so `import type { ApiType }` satisfies it and
+ * `import { serve }` does not — the terse form is the common case and stays terse, and
+ * the narrowing is visible wherever it is used.
+ */
+export type AllowedImport =
+  | WorkspaceName
+  | { readonly workspace: WorkspaceName; readonly typeOnly: true };
+
+/** An allowed edge in one shape, whichever way the table wrote it. */
+const terms = (
+  allowed: AllowedImport,
+): { workspace: WorkspaceName; typeOnly: boolean } =>
+  typeof allowed === "string" ? { workspace: allowed, typeOnly: false } : allowed;
+
+/**
  * One workspace's half of the rule: who it may import, and the sentence a reader gets
  * when something imports what it may not.
  */
 export type Layer = {
   workspace: WorkspaceName;
   /** The workspaces this one may import. Every other workspace edge is forbidden. */
-  mayImport: readonly WorkspaceName[];
+  mayImport: readonly AllowedImport[];
   /** The rule in one sentence, quoted back beside any edge that breaks it. */
   rule: string;
 };
@@ -64,11 +82,16 @@ export const LAYERS: readonly Layer[] = [
       "from `web`",
   },
   {
+    // Type-only, and the narrowest entry in the table. `web/src/api.ts` writes
+    // `import type { ApiType } from "@biu-cs-planner/server"` and nothing else of
+    // `server` is meant to reach the browser — a value import would pull `node:fs` and
+    // the rest of the Node runtime into the bundle. See #51.
     workspace: "web",
-    mayImport: ["server"],
+    mayImport: [{ workspace: "server", typeOnly: true }],
     rule:
       "`web` knows only the HTTP API contract, which it learns from `server`'s exported " +
-      "`ApiType`, so it may never import `core` or `app`",
+      "`ApiType`, so it may import types from `server` and nothing else — never a value " +
+      "from `server`, and never `core` or `app` at all",
   },
 ];
 
@@ -79,11 +102,14 @@ export const LAYERS: readonly Layer[] = [
  * after someone edited `LAYERS` to say otherwise.
  */
 export const summarise = (): string =>
-  LAYERS.map((layer) =>
-    layer.mayImport.length === 0
-      ? `\`${layer.workspace}\` imports none of the others`
-      : `\`${layer.workspace}\` imports ${layer.mayImport.map((w) => `\`${w}\``).join(" and ")}`,
-  ).join(", ");
+  LAYERS.map((layer) => {
+    if (layer.mayImport.length === 0) return `\`${layer.workspace}\` imports none of the others`;
+    const allowed = layer.mayImport
+      .map(terms)
+      .map((t) => `\`${t.workspace}\`${t.typeOnly ? " for types only" : ""}`)
+      .join(" and ");
+    return `\`${layer.workspace}\` imports ${allowed}`;
+  }).join(", ");
 
 /**
  * Keyed by plain string rather than by `WorkspaceName`, so a path segment or a package
@@ -111,6 +137,13 @@ export type ForbiddenEdge = {
   imported: string;
   /** The workspace the import lands in. */
   toWorkspace: WorkspaceName;
+  /**
+   * Which half of the rule the edge breaks.
+   *
+   * - `"direction"` — the rule allows no edge from this workspace to that one at all.
+   * - `"value"` — the rule allows this edge for types only, and this import carries code.
+   */
+  kind: "direction" | "value";
   /** The rule this edge breaks, as one sentence. */
   rule: string;
 };
@@ -137,21 +170,22 @@ function workspaceOfPackage(specifier: string): WorkspaceName | undefined {
  * out of `modules` — a `web` test reaching into `core` is the same broken guardrail as a
  * `web` module doing it, and it would otherwise pass unseen.
  *
- * **Type-only imports count exactly as much as value ones.** The rule is about what a
- * workspace is allowed to *know*, not about what survives into a bundle: a `web` module
- * holding `import type { Plan } from "@biu-cs-planner/core"` is coupled to `core`'s
- * shapes and will break when they change, however little of it reaches the browser. That
- * is also why `web → server` is in the allowed set above — `import type { ApiType }` in
- * `web/src/api.ts` is the contract arriving, and it is deliberate, reviewed and named in
- * `docs/design.md`. Treating every import alike means that import keeps passing and a
- * type-only `web → core` still fails, which is the pair of answers the rule wants.
+ * **A type-only import is still an import, unless an entry says otherwise.** The rule is
+ * about what a workspace is allowed to *know*: a `web` module holding `import type { Plan }
+ * from "@biu-cs-planner/core"` is coupled to `core`'s shapes and will break when they
+ * change, however little of it reaches the browser. So a forbidden edge is forbidden in
+ * either form, and only an entry that asks for `typeOnly` treats the two apart.
  *
- * The cost is that `web → server` is open in *both* directions of that trade: nothing here
- * stops `web` importing a runtime function out of `server` and pulling `node:fs` into the
- * browser bundle. Narrowing the edge to type-only imports would need `surface.ts` to record
- * which imports are type-only, which is a change to `tools/pr-report` and a ticket of its
- * own. Until then the narrower guard is `web/package.json`, where `@biu-cs-planner/server`
- * is a *devDependency* — nothing of it is meant to ship.
+ * One entry does. `web → server` exists for exactly one line — `import type { ApiType }` in
+ * `web/src/api.ts`, the contract arriving, deliberate and named in `docs/design.md` — and
+ * saying so in the table is what keeps the edge as narrow as the reason for it. A value
+ * import from `web` to `server` would pull `node:fs` and the rest of the Node runtime into
+ * the browser bundle, and it is now a finding rather than a broken build (#51).
+ *
+ * Type-only-ness is read from the syntax by `tools/pr-report/surface.ts`, not from a type
+ * checker, so an import that *could* have been written `import type` but was not is a
+ * value import here. That is the safe direction to err in: the fix is to write what was
+ * meant.
  *
  * Edges that leave the four workspaces altogether — an import of `tools/`, of `zod`, of
  * `node:fs` — are not judged here. This check is about the direction between workspaces
@@ -177,35 +211,37 @@ export function forbiddenEdges(
   const judge = (
     from: string,
     workspace: string,
-    imported: string,
+    imported: ImportRef,
     to: WorkspaceName | undefined,
   ): void => {
     // Anything outside the four — `tools/`, say — is not governed by this rule at all.
     const layer = BY_NAME.get(workspace);
     if (!layer || to === undefined || to === layer.workspace) return;
-    if (layer.mayImport.includes(to)) return;
+    const allowed = layer.mayImport.map(terms).find((t) => t.workspace === to);
+    if (allowed && (!allowed.typeOnly || imported.typeOnly)) return;
     found.push({
       from,
       fromWorkspace: layer.workspace,
-      imported,
+      imported: imported.specifier,
       toWorkspace: to,
+      kind: allowed ? "value" : "direction",
       rule: layer.rule,
     });
   };
 
   for (const module of modules) {
     for (const imported of module.imports) {
-      judge(module.path, module.workspace, imported, workspaceOfPath(imported));
+      judge(module.path, module.workspace, imported, workspaceOfPath(imported.specifier));
     }
     for (const imported of module.packages) {
-      judge(module.path, module.workspace, imported, workspaceOfPackage(imported));
+      judge(module.path, module.workspace, imported, workspaceOfPackage(imported.specifier));
     }
   }
 
   for (const test of tests) {
     const workspace = test.path.split("/")[0] ?? "";
     for (const imported of test.targets) {
-      judge(test.path, workspace, imported, workspaceOfPath(imported));
+      judge(test.path, workspace, imported, workspaceOfPath(imported.specifier));
     }
   }
 
@@ -216,8 +252,12 @@ export function forbiddenEdges(
 
 /**
  * One forbidden edge as a sentence: who imports what, and which rule that breaks. A
- * reader should never have to work out why an edge nobody listed is wrong.
+ * reader should never have to work out why an edge nobody listed is wrong — nor, when the
+ * edge itself is allowed, why writing `import type` would have been enough.
  */
 export const explain = (edge: ForbiddenEdge): string =>
-  `\`${edge.from}\` imports \`${edge.imported}\`; \`${edge.fromWorkspace}\` may not import ` +
-  `\`${edge.toWorkspace}\` — ${edge.rule}.`;
+  edge.kind === "value"
+    ? `\`${edge.from}\` imports a value from \`${edge.imported}\`; \`${edge.fromWorkspace}\` may ` +
+      `import only types from \`${edge.toWorkspace}\` — ${edge.rule}.`
+    : `\`${edge.from}\` imports \`${edge.imported}\`; \`${edge.fromWorkspace}\` may not import ` +
+      `\`${edge.toWorkspace}\` — ${edge.rule}.`;
