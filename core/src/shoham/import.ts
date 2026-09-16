@@ -294,8 +294,9 @@ export function importRawCrawl(
   // cannot take hours meant for the Group that replaced it, nor make a sampled record
   // ambiguous by still being there.
   for (const [key, offering] of offerings) {
-    const named = spokenSemesters.get(offering.courseNumber);
-    const overlaps = named !== undefined && offering.semesters.some((s) => named.has(s));
+    const namedSemesters = spokenSemesters.get(offering.courseNumber);
+    const overlaps =
+      namedSemesters !== undefined && offering.semesters.some((s) => namedSemesters.has(s));
     if (!spokenFor.has(offering) && !overlaps) continue;
 
     const kept = offering.groups.filter((group) => carried.has(group));
