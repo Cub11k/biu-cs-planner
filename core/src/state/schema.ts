@@ -19,6 +19,19 @@ export const CURRENT_STATE_SCHEMA_VERSION = 1;
 /** Literal pattern, never built from data (ADR-0007). */
 const CLOCK_TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
 
+/**
+ * The same clock plus `"24:00"`, the end of the Day. A Blocked Time's `end` is the only field
+ * that takes it, and the extra literal rather than a widened `CLOCK_TIME` is what keeps it
+ * that way: a field declared later inherits the narrow clock unless it asks for this one.
+ *
+ * It buys the one spelling of "work until midnight" that occupies time. `22:00`-`00:00` keeps
+ * no time free — `file.ts` warns `blocked-time-does-not-advance` about it — and `22:00`-`23:59`
+ * gives the Day's last minute away. A `start` still tops out at `23:59`, because a Day has
+ * nothing after the end of it to start at, and a Pick's snapshot of a Meeting keeps the narrow
+ * clock because Shoham publishes no such time for a Catalog to be compared against.
+ */
+const CLOCK_TIME_OR_END_OF_DAY = /^(([01]\d|2[0-3]):[0-5]\d|24:00)$/;
+
 export const statusSchema = z.enum([
   "planned",
   "registered",
@@ -112,12 +125,16 @@ export const variantSchema = variantHeadSchema.extend({
  * a structural contract with the Clashes module: it consumes `{ semester, day, start, end }`
  * without either module importing the other, so they are spelled out here rather than
  * borrowed from a Meeting — a Blocked Time is not a Meeting and must not drift with one.
+ *
+ * `end` is the one field on either side of that contract that reads `"24:00"`, so that a
+ * Blocked Time can cover the Day's last minute; see `CLOCK_TIME_OR_END_OF_DAY`. It is a
+ * widening, so every State File that was valid before this is still valid.
  */
 export const blockedTimeSchema = z.object({
   semester: semesterSchema,
   day: daySchema,
   start: z.string().regex(CLOCK_TIME),
-  end: z.string().regex(CLOCK_TIME),
+  end: z.string().regex(CLOCK_TIME_OR_END_OF_DAY),
   label: z.string(),
 });
 

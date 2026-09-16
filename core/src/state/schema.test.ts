@@ -129,6 +129,67 @@ it("refuses a clock time it cannot read, an unpadded hour included", () => {
   expect(blockedTimeSchema.safeParse(written("09:00")).success).toBe(true);
 });
 
+/**
+ * "Work until midnight" is `22:00`-`24:00`. Written `22:00`-`00:00` it keeps no time free at
+ * all, and `22:00`-`23:59` quietly gives the last minute of the Day away, so `24:00` is the
+ * one spelling that means what a student meant. It is an `end` and only an `end`: a Day has
+ * nothing after the end of it for a span to start at, and `#39` already ruled that a Blocked
+ * Time never wraps, so the other half of a night shift is the next Day's own row.
+ */
+it("lets a Blocked Time end at 24:00, the end of the Day, but never start there", () => {
+  const untilMidnight = (start: string, end: string) => ({
+    semester: "fall",
+    day: "sunday",
+    start,
+    end,
+    label: "work",
+  });
+
+  expect(blockedTimeSchema.safeParse(untilMidnight("22:00", "24:00")).success).toBe(true);
+  expect(blockedTimeSchema.safeParse(untilMidnight("24:00", "24:00")).success).toBe(false);
+  expect(blockedTimeSchema.safeParse(untilMidnight("00:00", "24:00")).success).toBe(true);
+});
+
+it("refuses a time past the end of the Day wherever it accepts 24:00", () => {
+  const until = (end: string) => ({
+    semester: "fall",
+    day: "sunday",
+    start: "22:00",
+    end,
+    label: "work",
+  });
+
+  expect(blockedTimeSchema.safeParse(until("24:01")).success).toBe(false);
+  expect(blockedTimeSchema.safeParse(until("24:15")).success).toBe(false);
+  expect(blockedTimeSchema.safeParse(until("24:59")).success).toBe(false);
+  expect(blockedTimeSchema.safeParse(until("25:00")).success).toBe(false);
+  expect(blockedTimeSchema.safeParse(until("2400")).success).toBe(false);
+  // Both spellings of the clock have to stay anchored at both ends. An alternation written
+  // without a group around it anchors one branch and leaves the other trailing, and then
+  // "23:0024:00" is a time.
+  expect(blockedTimeSchema.safeParse(until("23:0024:00")).success).toBe(false);
+  expect(blockedTimeSchema.safeParse(until("23:000")).success).toBe(false);
+  expect(blockedTimeSchema.safeParse(until("0024:00")).success).toBe(false);
+  expect(blockedTimeSchema.safeParse(until(" 24:00")).success).toBe(false);
+});
+
+/**
+ * The end of the Day belongs to the Blocked Time and nowhere else. A Pick's snapshot is a
+ * Catalog Meeting as it stood, and Shoham publishes no such time, so widening this one too
+ * would put a value in a student's file that no Catalog could ever be compared against.
+ */
+it("keeps the end of the Day out of a Pick's snapshot of a Meeting", () => {
+  const snapshot = (end: string) => ({
+    courseNumber: "89-110",
+    lessonType: "\u05d4\u05e8\u05e6\u05d0\u05d4",
+    groupNumber: "01",
+    meetings: [{ semester: "fall", day: "sunday", start: "22:00", end }],
+  });
+
+  expect(groupPickSchema.safeParse(snapshot("24:00")).success).toBe(false);
+  expect(groupPickSchema.safeParse(snapshot("23:59")).success).toBe(true);
+});
+
 it("fills an all-but-empty file in, so a new State File is a version and nothing else", () => {
   const fresh = stateSchema.parse({ schemaVersion: CURRENT_STATE_SCHEMA_VERSION });
 

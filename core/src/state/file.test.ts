@@ -375,11 +375,12 @@ it("warns about a Blocked Time that ends at or before it starts, and keeps it", 
     { semester: "fall", day: "sunday", start: "23:00", end: "01:00", label: "night shift" },
     { semester: "fall", day: "monday", start: "10:00", end: "10:00", label: "nothing at all" },
     { semester: "fall", day: "tuesday", start: "08:00", end: "10:00", label: "commute" },
+    { semester: "fall", day: "wednesday", start: "22:00", end: "00:00", label: "until midnight" },
   ];
 
   const result = parseStateFile(onDisk(nightShift));
 
-  expect(result.state?.timetables[0]?.blockedTimes).toHaveLength(3);
+  expect(result.state?.timetables[0]?.blockedTimes).toHaveLength(4);
   expect(result.warnings).toEqual([
     {
       kind: "blocked-time-does-not-advance",
@@ -393,6 +394,49 @@ it("warns about a Blocked Time that ends at or before it starts, and keeps it", 
       start: "10:00",
       end: "10:00",
     },
+    {
+      kind: "blocked-time-does-not-advance",
+      at: "timetables[0].blockedTimes[3]",
+      start: "22:00",
+      end: "00:00",
+    },
+  ]);
+});
+
+/**
+ * The Warning above is what `22:00`-`00:00` still gets; this ticket gave the student a correct
+ * spelling of the same intent rather than making the old one mean something. `22:00`-`24:00`
+ * is the one that keeps the evening free, and it has to reach the file without a Warning — a
+ * Warning on the right answer is how a student learns to ignore all of them.
+ */
+it("keeps a Blocked Time that runs to 24:00, and says nothing about it", () => {
+  const untilMidnight = fullFile();
+  untilMidnight.timetables[0]!.blockedTimes = [
+    { semester: "fall", day: "sunday", start: "22:00", end: "24:00", label: "work" },
+    { semester: "fall", day: "monday", start: "00:00", end: "24:00", label: "all day" },
+  ];
+
+  const result = parseStateFile(onDisk(untilMidnight));
+
+  expect(result.state?.timetables[0]?.blockedTimes).toEqual(untilMidnight.timetables[0]!.blockedTimes);
+  expect(result.warnings).toEqual([]);
+});
+
+/**
+ * A `start` of `24:00` is not a time a Blocked Time can have, so the entry is dropped rather
+ * than kept with a range Warning — there is no Day left for it to name.
+ */
+it("drops a Blocked Time that starts at 24:00, naming the field", () => {
+  const impossible = fullFile();
+  impossible.timetables[0]!.blockedTimes = [
+    { semester: "fall", day: "sunday", start: "24:00", end: "24:00", label: "after the Day" },
+  ];
+
+  const result = parseStateFile(onDisk(impossible));
+
+  expect(result.state?.timetables[0]?.blockedTimes).toEqual([]);
+  expect(result.warnings).toEqual([
+    { kind: "entry-dropped", at: "timetables[0].blockedTimes[0]", field: "start" },
   ]);
 });
 
@@ -432,6 +476,38 @@ it("exports JSON Schema, so a hand-edited State File gets editor support", () =>
   // Only the version is required: everything a new State File leaves out has a default,
   // and a hand-written file that omits it should not be flagged in the editor.
   expect(schema.required).toEqual(["schemaVersion"]);
+});
+
+/**
+ * The JSON Schema is what an editor tells a hand-writing student, so it has to carry the one
+ * asymmetry in the clock: a Blocked Time's `end` takes `24:00` and nothing else does. Exported
+ * from the Zod schemas rather than maintained by hand, so this is a test of what they say.
+ */
+it("tells a hand-written State File that only a Blocked Time's end reaches 24:00", () => {
+  /** Follows a path of keys into the exported JSON Schema, failing the test if one is missing. */
+  const at = (...path: string[]): Record<string, unknown> => {
+    let node: unknown = stateJsonSchema();
+    for (const key of path) {
+      expect(node).toHaveProperty(key);
+      node = (node as Record<string, unknown>)[key];
+    }
+    return node as Record<string, unknown>;
+  };
+  const timetable = ["properties", "timetables", "items", "properties"];
+  const narrow = "^([01]\\d|2[0-3]):[0-5]\\d$";
+
+  const blockedTime = [...timetable, "blockedTimes", "items", "properties"];
+  expect(at(...blockedTime, "start").pattern).toBe(narrow);
+  expect(at(...blockedTime, "end").pattern).toBe("^(([01]\\d|2[0-3]):[0-5]\\d|24:00)$");
+
+  // A Pick's snapshot of a Meeting keeps the narrow clock on both ends.
+  const meeting = [
+    ...timetable,
+    ...["variants", "items", "properties", "picks", "items", "properties"],
+    ...["meetings", "items", "properties"],
+  ];
+  expect(at(...meeting, "start").pattern).toBe(narrow);
+  expect(at(...meeting, "end").pattern).toBe(narrow);
 });
 
 /**

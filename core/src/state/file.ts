@@ -210,6 +210,12 @@ function checkBlockedSemesters(
  * A period crossing midnight is therefore two Blocked Times, one either side of it. Whether
  * the product would rather have one row that wraps is a question this only defers: nothing
  * here forecloses it, since a wrapping reading would simply stop warning.
+ *
+ * The comparison is on the strings, which `blockedTimeSchema` has already proved are the
+ * clock zero-padded to `HH:MM`. `"24:00"` — the end of the Day, and the one `end` the clock
+ * takes above `"23:59"` — sorts after every `start` there is, so `22:00`-`24:00` advances and
+ * `22:00`-`00:00` still does not. Anything later added above `24:00` would have to be checked
+ * against that, which is why the clock is a closed set rather than any `HH:MM`.
  */
 function checkBlockedRanges(
   blockedTimes: BlockedTime[],
