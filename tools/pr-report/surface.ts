@@ -105,6 +105,13 @@ const everyBindingIsType = (
  * `import type { X }`, `import { type X }`, `import type * as ns` — all of them, and
  * nothing else. A default binding or a namespace binding is a value however the names
  * inside it are used, and a bare `import "./x"` is a side effect.
+ *
+ * The two spellings are not quite identical downstream. With `verbatimModuleSyntax` on,
+ * which `tsconfig.base.json` sets, `import type { X } from "m"` disappears entirely while
+ * `import { type X } from "m"` leaves `import "m"` behind, so the module is still
+ * evaluated. Both are recorded type-only here because both carry only knowledge of
+ * shapes, which is what the layering rule is about; a bundler pulling in a module for
+ * its side effects is a build concern and #51 says so explicitly.
  */
 export function importIsTypeOnly(clause: ts.ImportClause | undefined): boolean {
   if (!clause) return false;
