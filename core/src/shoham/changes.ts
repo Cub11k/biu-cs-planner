@@ -63,8 +63,9 @@ export type OfferingChange = {
 /** Every Offering that changed. An Offering nothing happened to is not in it. */
 export type ImportChanges = OfferingChange[];
 
+/** The Meetings are copied, so a report never shares an array with either Catalog it read. */
 function named(group: Group): GroupChange {
-  return { number: group.number, lessonType: group.lessonType, meetings: group.meetings };
+  return { number: group.number, lessonType: group.lessonType, meetings: [...group.meetings] };
 }
 
 /**
@@ -113,8 +114,8 @@ export function offeringChanges(before: Offering[], after: Offering[]): ImportCh
         moved.push({
           number: group.number,
           lessonType: group.lessonType,
-          before: held.meetings,
-          after: group.meetings,
+          before: [...held.meetings],
+          after: [...group.meetings],
         });
       }
     }
