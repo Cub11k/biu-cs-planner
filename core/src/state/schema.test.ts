@@ -1,4 +1,11 @@
 import { expect, it } from "vitest";
+/**
+ * The one import of the Catalog's own schemas here, and it is read-only: this file is where
+ * the two clocks are compared, so this is where the Catalog's narrower one is pinned. #42
+ * widened a Blocked Time's `end` alone, and a Catalog Meeting arriving from Shoham — which
+ * publishes no `24:00` — must not drift after it.
+ */
+import { examSchema, meetingSchema } from "../catalog/schema.ts";
 import {
   attemptSchema,
   blockedTimeSchema,
@@ -178,6 +185,16 @@ it("refuses a time past the end of the Day wherever it accepts 24:00", () => {
  * Catalog Meeting as it stood, and Shoham publishes no such time, so widening this one too
  * would put a value in a student's file that no Catalog could ever be compared against.
  */
+it("keeps the end of the Day out of the Catalog, on a Meeting and on an Exam", () => {
+  const meeting = (end: string) => ({ semester: "fall", day: "sunday", start: "22:00", end });
+  const exam = (time: string) => ({ moed: "\u05d0", date: "2027-02-01", time });
+
+  expect(meetingSchema.safeParse(meeting("24:00")).success).toBe(false);
+  expect(meetingSchema.safeParse(meeting("23:59")).success).toBe(true);
+  expect(examSchema.safeParse(exam("24:00")).success).toBe(false);
+  expect(examSchema.safeParse(exam("23:59")).success).toBe(true);
+});
+
 it("keeps the end of the Day out of a Pick's snapshot of a Meeting", () => {
   const snapshot = (end: string) => ({
     courseNumber: "89-110",
