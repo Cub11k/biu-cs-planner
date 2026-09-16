@@ -184,7 +184,11 @@ describe("renderGraphs", () => {
     const body = renderGraphs(graphsComment());
     expect(body).toContain("**Module graph:** acyclic.");
     expect(body).toContain("**Call graph:** no cycles between functions.");
-    expect(body).toContain("**Layering:** every import points the way");
+    expect(body).toContain(
+      "**Layering:** every import points the way the rule says it should — `core` imports " +
+        "none of the others, `app` imports `core`, `server` imports `core` and `app`, " +
+        "`web` imports `server`.",
+    );
   });
 });
 

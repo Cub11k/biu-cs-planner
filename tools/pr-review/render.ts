@@ -1,5 +1,5 @@
 import type { CallCycle, Cycle } from "./cycles.ts";
-import { explain, type ForbiddenEdge } from "./layering.ts";
+import { explain, summarise, type ForbiddenEdge } from "./layering.ts";
 import { MARKER, commitMarker } from "./outdated.ts";
 import type { Finding, PassOutcome } from "./review.ts";
 
@@ -157,9 +157,10 @@ export function renderGraphs({ headSha, graphs, judgement }: GraphsComment): str
   out.push("");
 
   if (!forbidden.length) {
+    // The rule is spelled out from the table, not beside it: a sentence written by hand
+    // here would go on reassuring readers after someone edited the table.
     out.push(
-      "**Layering:** every import points the way `docs/design.md` says it should — " +
-        "`app` over `core`, `server` over both, and `web` knowing only the API contract.",
+      `**Layering:** every import points the way the rule says it should — ${summarise()}.`,
     );
   } else {
     out.push(
@@ -203,11 +204,13 @@ export function renderGraphs({ headSha, graphs, judgement }: GraphsComment): str
   }
   out.push("");
   out.push(
-    "> Two things this check does not do. It records only calls that leave the module they " +
-      "are written in, so recursion that stays inside one file never shows up. And the " +
-      "layering check judges the direction between workspaces only — an import that leaves " +
-      "them, or a layer broken inside one workspace, is nobody's finding here and belongs to " +
-      "the Standards pass.",
+    "> Three things this check does not do. It records only calls that leave the module they " +
+      "are written in, so recursion that stays inside one file never shows up. It reads only " +
+      "the static `import` and `export … from` at the top of a file, so a dynamic " +
+      "`await import(…)` is in neither graph. And the layering check judges the direction " +
+      "between workspaces only: an import that leaves them, a layer broken inside one " +
+      "workspace, and the package names a *test* file imports — the graphs keep only a " +
+      "test's relative imports — are nobody's finding here and belong to the Standards pass.",
   );
 
   return out.join("\n").trimEnd();

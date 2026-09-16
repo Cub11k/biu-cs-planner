@@ -1,4 +1,5 @@
 import type { Module } from "../pr-report/surface.ts";
+import type { TestFile } from "../pr-report/tests.ts";
 
 /**
  * Which way the dependencies point. The other mechanical check
@@ -67,6 +68,19 @@ export const LAYERS: readonly Layer[] = [
 ];
 
 /**
+ * The whole rule as one sentence, generated from the table rather than written out
+ * beside it. The clean-state line in the pull request comment used to restate it in
+ * prose, which would have kept telling readers `web` knows only the API contract long
+ * after someone edited `LAYERS` to say otherwise.
+ */
+export const summarise = (): string =>
+  LAYERS.map((layer) =>
+    layer.mayImport.length === 0
+      ? `\`${layer.workspace}\` imports none of the others`
+      : `\`${layer.workspace}\` imports ${layer.mayImport.map((w) => `\`${w}\``).join(" and ")}`,
+  ).join(", ");
+
+/**
  * Keyed by name rather than by `Workspace`, so a path segment or a package name read out
  * of the source can be looked up directly without being asserted into the type first.
  */
@@ -112,7 +126,9 @@ function workspaceOfPackage(specifier: string): Workspace | undefined {
 
 /**
  * Every workspace edge the rule does not allow, sorted so the same tree always produces
- * the same list.
+ * the same list. Test files are judged too, and separately, because `collect` keeps them
+ * out of `modules` — a `web` test reaching into `core` is the same broken guardrail as a
+ * `web` module doing it, and it would otherwise pass unseen.
  *
  * **Type-only imports count exactly as much as value ones.** The rule is about what a
  * workspace is allowed to *know*, not about what survives into a bundle: a `web` module
@@ -123,37 +139,67 @@ function workspaceOfPackage(specifier: string): Workspace | undefined {
  * `docs/design.md`. Treating every import alike means that import keeps passing and a
  * type-only `web → core` still fails, which is the pair of answers the rule wants.
  *
+ * The cost is that `web → server` is open in *both* directions of that trade: nothing here
+ * stops `web` importing a runtime function out of `server` and pulling `node:fs` into the
+ * browser bundle. Narrowing the edge to type-only imports would need `surface.ts` to record
+ * which imports are type-only, which is a change to `tools/pr-report` and a ticket of its
+ * own. Until then the narrower guard is `web/package.json`, where `@biu-cs-planner/server`
+ * is a *devDependency* — nothing of it is meant to ship.
+ *
  * Edges that leave the four workspaces altogether — an import of `tools/`, of `zod`, of
  * `node:fs` — are not judged here. This check is about the direction between workspaces
  * and nothing else; see "Not in this ticket" on #33.
  *
- * What it sees is what `tools/pr-report/surface.ts` records: the `import` and
- * `export … from` statements at the top level of a file. A dynamic `import()` is not in
- * the module graph at all, so it is invisible to the report, to the cycle check and to
- * this — one derivation, one blind spot, rather than three that disagree.
+ * What it sees is what `tools/pr-report` records, and no more. Two blind spots come with
+ * that, and both are the price of deriving the graphs once rather than three times:
+ *
+ * - Only the static `import` and `export … from` statements at the top of a file are
+ *   recorded, so a dynamic `await import("…")` and an inline `import("…").Thing` type are
+ *   in no graph at all — invisible to the report, to the cycle check and to this alike.
+ * - A test file's *package* imports are not recorded — `tests.ts` keeps only the relative
+ *   ones, because what it is really after is what each test is a test **of**. So
+ *   `web/src/x.test.ts` reaching `../../core/src/y.ts` is caught and the same file writing
+ *   `@biu-cs-planner/core` is not.
  */
-export function forbiddenEdges(modules: readonly Module[]): ForbiddenEdge[] {
+export function forbiddenEdges(
+  modules: readonly Module[],
+  tests: readonly TestFile[],
+): ForbiddenEdge[] {
   const found: ForbiddenEdge[] = [];
 
-  for (const module of modules) {
+  const judge = (
+    from: string,
+    workspace: string,
+    imported: string,
+    to: Workspace | undefined,
+  ): void => {
     // Anything outside the four — `tools/`, say — is not governed by this rule at all.
-    const layer = BY_NAME.get(module.workspace);
-    if (!layer) continue;
+    const layer = BY_NAME.get(workspace);
+    if (!layer || to === undefined || to === layer.workspace) return;
+    if (layer.mayImport.includes(to)) return;
+    found.push({
+      from,
+      fromWorkspace: layer.workspace,
+      imported,
+      toWorkspace: to,
+      rule: layer.rule,
+    });
+  };
 
-    const check = (imported: string, to: Workspace | undefined): void => {
-      if (to === undefined || to === layer.workspace) return;
-      if (layer.mayImport.includes(to)) return;
-      found.push({
-        from: module.path,
-        fromWorkspace: layer.workspace,
-        imported,
-        toWorkspace: to,
-        rule: layer.rule,
-      });
-    };
+  for (const module of modules) {
+    for (const imported of module.imports) {
+      judge(module.path, module.workspace, imported, workspaceOfPath(imported));
+    }
+    for (const imported of module.packages) {
+      judge(module.path, module.workspace, imported, workspaceOfPackage(imported));
+    }
+  }
 
-    for (const imported of module.imports) check(imported, workspaceOfPath(imported));
-    for (const imported of module.packages) check(imported, workspaceOfPackage(imported));
+  for (const test of tests) {
+    const workspace = test.path.split("/")[0] ?? "";
+    for (const imported of test.targets) {
+      judge(test.path, workspace, imported, workspaceOfPath(imported));
+    }
   }
 
   return found.sort(

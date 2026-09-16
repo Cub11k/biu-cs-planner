@@ -56,7 +56,7 @@ const derived = collect(ROOT);
 const graphs = {
   moduleCycles: moduleCycles(derived.modules),
   callCycles: callCycles(derived.edges),
-  forbidden: forbiddenEdges(derived.modules),
+  forbidden: forbiddenEdges(derived.modules, derived.tests),
   scope: SOURCE_DIRS,
 };
 
