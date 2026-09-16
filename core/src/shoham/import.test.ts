@@ -883,3 +883,107 @@ it("prefers the meta block over a provenance handed in already shaped", () => {
   expect(catalog.sources).toHaveLength(1);
   expect(catalog.sources[0]!.crawlerVersion).toBe("scripts/crawl/v1-crawl.js");
 });
+
+it("warns when a Group's own Meetings overlap, naming the Course, the Group and both", () => {
+  // The crawl sends this Group as meeting twice on Tuesday, once 15:00-18:00 and once
+  // 16:00-17:00. #14 ruled that is not a Clash; it is a Catalog problem, and this is where
+  // it gets said.
+  const { catalog, warnings } = importRawCrawl(
+    { rows: [row({ day: "ג', ג'", hours: "15:00 - 18:00\n16:00 - 17:00" })] },
+    { academicYear: YEAR_2027 },
+  );
+
+  expect(exceptProvenance(warnings)).toEqual([
+    {
+      kind: "group-meetings-overlap",
+      courseNumber: "89-110",
+      semesters: ["fall"],
+      group: "01",
+      lessonType: "הרצאה",
+      first: { semester: "fall", day: "tuesday", start: "15:00", end: "18:00" },
+      second: { semester: "fall", day: "tuesday", start: "16:00", end: "17:00" },
+    },
+  ]);
+  // the Warning never blocks: both Meetings are imported exactly as they were read
+  expect(catalog.offerings[0]!.groups[0]!.meetings).toHaveLength(2);
+});
+
+it("names the Semesters too, since one Course can hold two Offerings numbered from 01", () => {
+  // 89-110 given Year-long and again in Fall only is two Offerings, each with its own 01
+  // lecture. Without the Semesters the two Warnings would read identically and a maintainer
+  // could not tell which Shoham page to open.
+  const { warnings } = importRawCrawl(
+    {
+      rows: [
+        row({ semester: "סמסטר א'סמסטר ב'", day: "ג', ג'", hours: "15:00 - 18:00\n16:00 - 17:00" }),
+        row({ day: "ג', ג'", hours: "15:00 - 18:00\n16:00 - 17:00" }),
+      ],
+    },
+    { academicYear: YEAR_2027 },
+  );
+
+  const overlaps = exceptProvenance(warnings).filter((w) => w.kind === "group-meetings-overlap");
+  expect(overlaps.map((w) => (w as { semesters: string[] }).semesters)).toEqual([
+    ["fall", "spring"],
+    ["fall", "spring"],
+    ["fall"],
+  ]);
+});
+
+it("does not warn about a Group whose Meetings merely abut", () => {
+  const { warnings } = importRawCrawl(
+    { rows: [row({ day: "ג', ג'", hours: "15:00 - 17:00\n17:00 - 19:00" })] },
+    { academicYear: YEAR_2027 },
+  );
+
+  expect(exceptProvenance(warnings)).toEqual([]);
+});
+
+it("does not warn about a Year-long Group for meeting at one hour in both Semesters", () => {
+  const { catalog, warnings } = importRawCrawl(
+    { rows: [row({ semester: "סמסטר א'סמסטר ב'" })] },
+    { academicYear: YEAR_2027 },
+  );
+
+  expect(catalog.offerings[0]!.groups[0]!.meetings).toHaveLength(2);
+  expect(exceptProvenance(warnings)).toEqual([]);
+});
+
+it("says nothing about a Group this part never carried, however the Catalog holds it", () => {
+  // Every Warning this Importer produces speaks about the part being imported. The
+  // overlapping Group below came from an earlier part, which is where it was reported;
+  // re-reading it out of the Catalog would repeat that Warning on every later merge.
+  const { warnings } = importRawCrawl(
+    { rows: [row({ code: "89132", group: "02" })] },
+    {
+      academicYear: YEAR_2027,
+      into: {
+        schemaVersion: 1,
+        academicYear: YEAR_2027,
+        sources: [],
+        offerings: [
+          {
+            courseNumber: "89-210",
+            nameHebrew: "מבני נתונים",
+            semesters: ["fall"],
+            credits: { known: false },
+            exams: { known: false, sittings: [] },
+            groups: [
+              {
+                number: "04",
+                lessonType: "תרגיל",
+                lecturers: [],
+                meetings: [
+                  { semester: "fall", day: "monday", start: "10:00", end: "12:00" },
+                  { semester: "fall", day: "monday", start: "11:00", end: "13:00" },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    },
+  );
+
+  expect(exceptProvenance(warnings)).toEqual([]);
+});

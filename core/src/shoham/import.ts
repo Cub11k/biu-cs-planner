@@ -6,6 +6,7 @@ import {
   parseWeeklyHours,
 } from "./details.ts";
 import { provenanceFromMeta } from "./meta.ts";
+import { overlappingMeetings } from "./overlaps.ts";
 import type { RawCrawl, RawCrawlRow } from "./raw-crawl.ts";
 
 export type { RawCrawl, RawCrawlRow };
@@ -13,6 +14,7 @@ import {
   CURRENT_CATALOG_SCHEMA_VERSION,
   type Catalog,
   type Group,
+  type Meeting,
   type Offering,
   type Provenance,
   type Semester,
@@ -21,6 +23,17 @@ import {
 
 export type Warning =
   | { kind: MeetingWarning | "semester-unreadable"; courseNumber: string; group: string }
+  | {
+      kind: "group-meetings-overlap";
+      courseNumber: string;
+      /** A Course can hold two Offerings -- Year-long and Fall-only, say -- and each numbers
+       * its Groups from 01, so the Semesters are part of saying which Group this is. */
+      semesters: Semester[];
+      group: string;
+      lessonType: string;
+      first: Meeting;
+      second: Meeting;
+    }
   | { kind: "unusual-course-number"; courseNumber: string }
   | { kind: "course-number-unreadable"; code: string }
   | { kind: "detail-key-unreadable"; key: string }
@@ -166,6 +179,10 @@ export function importRawCrawl(
     return index;
   }
 
+  // The Groups this part's rows carried, in the order they were first seen. A Group two rows
+  // name is held once, so what is checked is the Meetings it ends up with.
+  const carried = new Map<Group, Offering>();
+
   const warnings: Warning[] = [];
   const reportedNumbers = new Set<string>();
 
@@ -236,6 +253,7 @@ export function importRawCrawl(
     }
     group.lecturers = lecturersFrom(row.teachers);
     group.meetings = meetings;
+    carried.set(group, offering);
     // A row's identity is its lid, so two rows claiming one is the crawl contradicting
     // itself. The later row keeps the lid; where the two rows are different Groups, the
     // earlier is left without the hours its record would have carried, and where they are
@@ -243,6 +261,27 @@ export function importRawCrawl(
     if (row.lid) {
       if (groupsByLid.has(row.lid)) warnings.push({ kind: "lid-not-unique", lid: row.lid });
       groupsByLid.set(row.lid, { offering, group });
+    }
+  }
+
+  // A Group that claims to meet in two places at once is a Catalog problem, not a Clash
+  // (#14), and not a reason to refuse anything: the Meetings are imported as they were read
+  // and the Warning says what was found, so a maintainer can hold it against the Shoham page.
+  // Only the Groups this part carried are checked. Every other Warning here speaks about the
+  // part in hand, and a Group merged in from the Catalog was reported by the part that
+  // brought it; re-reading the whole Catalog would repeat that Warning on every later merge,
+  // which also makes the count of Groups caught depend on how many parts were imported.
+  for (const [group, offering] of carried) {
+    for (const { first, second } of overlappingMeetings(group.meetings)) {
+      warnings.push({
+        kind: "group-meetings-overlap",
+        courseNumber: offering.courseNumber,
+        semesters: [...offering.semesters],
+        group: group.number,
+        lessonType: group.lessonType,
+        first,
+        second,
+      });
     }
   }
 
