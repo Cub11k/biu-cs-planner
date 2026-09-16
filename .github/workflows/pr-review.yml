@@ -9,7 +9,11 @@
 # hand. Locally, `/code-review` is the primary path; this is for when you want the same
 # thing recorded on the pull request.
 #
-# It advises. It is never a required check and no finding here blocks a merge.
+# One thing here is a gate and the rest is advice. An import pointing the wrong way through
+# the layers — `web` importing `core`, say — fails the job, because that rule is not a
+# matter of taste (see tools/pr-review/layering.ts). Cycles and the two judgement passes
+# advise: they are reported, they are never a required check, and no finding among them
+# blocks a merge.
 #
 # The two passes need an ANTHROPIC_API_KEY repository secret. Without it they do not run,
 # the graph comment says so plainly, and the job still succeeds.

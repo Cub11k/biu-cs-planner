@@ -30,7 +30,7 @@ const clean: PassOutcome = {
 
 const graphsComment = (over: Partial<GraphsComment> = {}): GraphsComment => ({
   headSha: "abcdef1234567890",
-  graphs: { moduleCycles: [], callCycles: [], scope: ["core/src", "app/src"] },
+  graphs: { moduleCycles: [], callCycles: [], forbidden: [], scope: ["core/src", "app/src"] },
   judgement: { kind: "not-requested" },
   ...over,
 });
@@ -122,6 +122,7 @@ describe("renderGraphs", () => {
         graphs: {
           moduleCycles: [["core/src/a.ts", "app/src/b.ts", "core/src/a.ts"]],
           callCycles: [],
+          forbidden: [],
           scope: ["core/src", "app/src"],
         },
       }),
@@ -141,6 +142,7 @@ describe("renderGraphs", () => {
               modules: ["core/src/a.ts", "core/src/b.ts"],
             },
           ],
+          forbidden: [],
           scope: ["core/src"],
         },
       }),
@@ -150,10 +152,39 @@ describe("renderGraphs", () => {
     expect(body).toContain("recursion is legitimate");
   });
 
+  it("names the file, the imported module and the rule behind a forbidden edge", () => {
+    const body = renderGraphs(
+      graphsComment({
+        graphs: {
+          moduleCycles: [],
+          callCycles: [],
+          forbidden: [
+            {
+              from: "web/src/timetable/week.ts",
+              fromWorkspace: "web",
+              imported: "core/src/catalog/schema.ts",
+              toWorkspace: "core",
+              rule: "`web` knows only the HTTP API contract",
+            },
+          ],
+          scope: ["core/src", "web/src"],
+        },
+      }),
+    );
+    expect(body).toContain("**Layering: 1 import points the wrong way.**");
+    expect(body).toContain(
+      "`web/src/timetable/week.ts` imports `core/src/catalog/schema.ts`; `web` may not " +
+        "import `core` — `web` knows only the HTTP API contract.",
+    );
+    // A reader has to be told the red job is this and not a cycle.
+    expect(body).toContain("this job is red because of it");
+  });
+
   it("says a clean graph is clean instead of padding it", () => {
     const body = renderGraphs(graphsComment());
     expect(body).toContain("**Module graph:** acyclic.");
     expect(body).toContain("**Call graph:** no cycles between functions.");
+    expect(body).toContain("**Layering:** every import points the way");
   });
 });
 
