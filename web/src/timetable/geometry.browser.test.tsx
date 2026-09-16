@@ -19,7 +19,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cdp, userEvent } from "vitest/browser";
 import "../index.css";
-import { LANGUAGES, type Language } from "../i18n/strings.ts";
+import { LANGUAGES, t, type Language } from "../i18n/strings.ts";
 import type { Group, Offering } from "./catalog.ts";
 import { TimetableScreen } from "./TimetableScreen.tsx";
 
@@ -225,6 +225,29 @@ describe.each(LANGUAGES)("the week in %s", (language) => {
     // so an unisolated range in a Hebrew line renders as 18:00\u201315:00 — the bug #4 shipped.
     expect(start.left).toBeLessThan(end.left);
     expect(start.width).toBeGreaterThan(0);
+  });
+
+  it("puts a Meeting under the heading of the day it falls on", async () => {
+    const screen = await openWeek(language);
+    const heading = all(screen, ".week-head").find(
+      // the day name comes from the translation file, so this reads the same fixture the
+      // screen does rather than spelling "Tuesday" or "שלישי" here
+      (head) => head.textContent === t(language, "tuesday"),
+    );
+    if (heading === undefined) throw new Error("the week has no Tuesday heading");
+
+    const tile = findText(screen, `${TIME_RANGE.start}\u2013${TIME_RANGE.end}`).parentElement?.closest(
+      ".tile",
+    );
+    if (!(tile instanceof HTMLElement)) throw new Error("the times are on no tile");
+
+    // Which column a tile is in is DOM order, which render.test.ts can already see. That
+    // the column is under the right heading is a fact about where the two ended up, and it
+    // has to hold with the columns running the other way round.
+    const above = heading.getBoundingClientRect();
+    const box = tile.getBoundingClientRect();
+    expect(box.left).toBeGreaterThanOrEqual(above.left - HAIR);
+    expect(box.right).toBeLessThanOrEqual(above.right + HAIR);
   });
 
   it("keeps every tile inside the day column it belongs to", async () => {
