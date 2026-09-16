@@ -260,7 +260,8 @@ The rejected options (cookies, TLS, sockets) are in [ADR 0004](adr/0004-localhos
   - `core` is test-driven with small invented fixture Catalogs and Requirements Files, independent of real data. It covers the engine, solver, Clashes, Exam spacing, generator and migrations.
   - The Shoham Importer is tested against real Raw Crawls kept as fixtures. The crawler repo tests its parsing against saved Shoham HTML pages, including a Year-long Course.
   - The Workspace adapter gets integration tests against a temporary folder.
-  - UI end-to-end tests (Playwright) wait until the Timetable screen design stabilizes.
+  - The Timetable's layout is asserted in a real Chromium (Vitest browser mode, Playwright provider): that the week reads right to left in Hebrew, that a time range survives a Hebrew line, that tiles stay in their columns, that the dark tokens resolve, and that the runner can draw Hebrew at all. Geometry, not appearance — screenshot baselines wait for the Timetable design to stabilize.
+  - UI end-to-end tests (Playwright driving a running server) wait until the Timetable screen design stabilizes.
 - CI runs on Node 22 and 24, plus a start-up smoke test on Bun and Deno.
 
 ## Build order

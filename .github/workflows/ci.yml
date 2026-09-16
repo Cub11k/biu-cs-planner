@@ -1,12 +1,19 @@
 # The signal that says whether the code works. pr-report.yml builds the report a reviewer
 # reads; this is the pass/fail check beside it, on every pull request and every push to dev.
 #
-# Two claims get exercised. The matrix runs the tests on the supported floor (Node 22)
-# as well as the runtime development uses (Node 24), so an API that exists only in 24
-# fails here rather than on a student's machine. The smoke jobs start the real server
-# under Bun and under Deno, because "the server avoids native modules and Node-only APIs
-# where possible, so `bunx` and `deno run npm:` work too" (docs/design.md, "CLI and
-# distribution") is a property nothing else touches.
+# Three claims get exercised. The matrix runs the node project on the supported floor
+# (Node 22) as well as the runtime development uses (Node 24), so an API that exists only
+# in 24 fails here rather than on a student's machine. The smoke jobs start the real
+# server under Bun and under Deno, because "the server avoids native modules and
+# Node-only APIs where possible, so `bunx` and `deno run npm:` work too" (docs/design.md,
+# "CLI and distribution") is a property nothing else touches. The browser job runs the
+# geometry assertions in a real Chromium, which is the only place a right-to-left week
+# and a bidi-reordered time range can be looked at (issue #45).
+#
+# `npm test` is the two test jobs together: the matrix runs `npm run test:node` and the
+# browser job runs `npm run test:browser`. Split because they need different machines --
+# and because the matrix passing on a runner with no Chromium on it is itself the claim
+# that the node project needs no browser.
 #
 # That every workflow installs with --ignore-scripts is checked too, but by
 # tools/ci/workflows.test.ts in the test run above rather than by a job here.
@@ -64,7 +71,57 @@ jobs:
         run: npm run typecheck
 
       - name: Test
-        run: npm test
+        run: npm run test:node
+
+  browser:
+    name: Browser geometry
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci --ignore-scripts
+
+      # Chromium carries no fonts of its own and `playwright install-deps` installs
+      # shared libraries rather than typefaces, so a bare runner draws Hebrew as boxes --
+      # and every geometry assertion passes against boxes, because boxes have widths.
+      # The font is installed on purpose rather than hoped for; if this line ever stops
+      # working, web/src/hebrewFont.browser.test.tsx says so instead of the suite going
+      # quietly green.
+      - name: Install a Hebrew font, and the libraries Chromium needs
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fonts-noto-core
+          fc-cache -f
+          npx playwright install-deps chromium
+
+      # The exact version, not the lockfile's hash: the browser is ~300MB of the same
+      # bytes every run, and it only changes when Playwright does. Keying on the lockfile
+      # would throw it away whenever any dependency moved.
+      - name: Read the Playwright version
+        id: playwright
+        run: echo "version=$(node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the browser download
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+
+      # `npm ci --ignore-scripts` above is what makes this a step rather than a
+      # postinstall: the flag is a supply-chain rule (CLAUDE.md), and Playwright's browser
+      # download is an install script. A no-op when the cache hit.
+      - name: Download Chromium
+        run: npm run install:browsers
+
+      - name: Test
+        run: npm run test:browser
 
   smoke:
     name: ${{ matrix.name }} start-up
