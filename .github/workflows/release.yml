@@ -192,8 +192,9 @@ jobs:
           registry-url: https://registry.npmjs.org
           cache: npm
 
-      # Trusted publishing needs npm 11.5.1 or newer.
-      - run: npm install -g npm@latest
+      # Trusted publishing needs npm 11.5.1 or newer. npm itself declares no install
+      # scripts, so the flag costs nothing here and the rule stays without exceptions.
+      - run: npm install -g npm@latest --ignore-scripts
 
       - run: npm ci --ignore-scripts
       - run: npm run build

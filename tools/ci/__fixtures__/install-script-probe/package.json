@@ -1,0 +1,9 @@
+{
+  "name": "install-script-probe",
+  "version": "1.0.0",
+  "description": "A package that does nothing except leave a trace when its install script runs. CI installs it twice -- once with --ignore-scripts and once without -- so the flag is seen working rather than believed to work. It is never published and never depended on.",
+  "license": "MIT",
+  "scripts": {
+    "postinstall": "node -e \"require('node:fs').writeFileSync(process.env.PROBE_MARKER, 'the postinstall ran')\""
+  }
+}

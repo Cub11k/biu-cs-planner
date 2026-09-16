@@ -228,7 +228,7 @@ The rejected options (cookies, TLS, sockets) are in [ADR 0004](adr/0004-localhos
 7. **Supply chain:**
    - bundled server with zero runtime dependencies
    - committed lockfile
-   - no install scripts
+   - no install scripts: none in the published package, and none run by CI — every workflow installs with `--ignore-scripts`
    - published from GitHub Actions with npm provenance and trusted publishing
 
 ## CLI and distribution
