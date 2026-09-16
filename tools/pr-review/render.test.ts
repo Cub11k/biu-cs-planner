@@ -152,6 +152,34 @@ describe("renderGraphs", () => {
     expect(body).toContain("recursion is legitimate");
   });
 
+  it("says when the edge is allowed but the import carried a value along it", () => {
+    // `web → server` exists for `import type { ApiType }` and nothing else. A reader who
+    // sees only "may not import `server`" would go looking for a rule that does not exist.
+    const body = renderGraphs(
+      graphsComment({
+        graphs: {
+          moduleCycles: [],
+          callCycles: [],
+          forbidden: [
+            {
+              from: "web/src/api.ts",
+              fromWorkspace: "web",
+              imported: "@biu-cs-planner/server",
+              toWorkspace: "server",
+              kind: "value",
+              rule: "`web` knows only the HTTP API contract",
+            },
+          ],
+          scope: ["server/src", "web/src"],
+        },
+      }),
+    );
+    expect(body).toContain(
+      "`web/src/api.ts` imports a value from `@biu-cs-planner/server`; `web` may import " +
+        "only types from `server` — `web` knows only the HTTP API contract.",
+    );
+  });
+
   it("names the file, the imported module and the rule behind a forbidden edge", () => {
     const body = renderGraphs(
       graphsComment({
@@ -172,7 +200,7 @@ describe("renderGraphs", () => {
         },
       }),
     );
-    expect(body).toContain("**Layering: 1 import points the wrong way.**");
+    expect(body).toContain("**Layering: 1 import the rule does not allow.**");
     expect(body).toContain(
       "`web/src/timetable/week.ts` imports `core/src/catalog/schema.ts`; `web` may not " +
         "import `core` — `web` knows only the HTTP API contract.",
@@ -186,7 +214,7 @@ describe("renderGraphs", () => {
     expect(body).toContain("**Module graph:** acyclic.");
     expect(body).toContain("**Call graph:** no cycles between functions.");
     expect(body).toContain(
-      "**Layering:** every import points the way the rule says it should — `core` imports " +
+      "**Layering:** every import is one the rule allows — `core` imports " +
         "none of the others, `app` imports `core`, `server` imports `core` and `app`, " +
         "`web` imports `server` for types only.",
     );

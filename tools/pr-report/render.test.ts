@@ -98,6 +98,56 @@ describe("the report comment", () => {
     expect(summaries).toContain("1 modules");
   });
 
+  it("draws a type-only import as a dashed arrow and a value one as a solid arrow", () => {
+    // Two different dependencies. Both bind the modules together, only one carries code,
+    // and a reader should see which is which without opening either file.
+    const markdown = render(report());
+    const typed = render(
+      report({
+        modules: [
+          {
+            path: "core/src/a.ts",
+            workspace: "core",
+            exports: [],
+            imports: [{ specifier: "core/src/b.ts", typeOnly: true }],
+            packages: [],
+          },
+          { path: "core/src/b.ts", workspace: "core", exports: [], imports: [], packages: [] },
+        ],
+      }),
+    );
+
+    expect(markdown).toContain("core_src_a_ts --> core_src_b_ts");
+    expect(typed).toContain("core_src_a_ts -.-> core_src_b_ts");
+  });
+
+  it("says in the fold summary how many imports carry only types", () => {
+    const typed = render(
+      report({
+        modules: [
+          {
+            path: "core/src/a.ts",
+            workspace: "core",
+            exports: [],
+            imports: [{ specifier: "core/src/b.ts", typeOnly: true }],
+            packages: [],
+          },
+          { path: "core/src/b.ts", workspace: "core", exports: [], imports: [], packages: [] },
+        ],
+      }),
+    );
+    const summaries = folds(typed).map((f) => f.summary).join("\n");
+
+    expect(summaries).toContain("2 modules, 1 imports, 1 of them type-only");
+  });
+
+  it("leaves the count off when no edge is type-only, rather than saying 0", () => {
+    const summaries = folds(render(report())).map((f) => f.summary).join("\n");
+
+    expect(summaries).toContain("2 modules, 1 imports");
+    expect(summaries).not.toContain("type-only");
+  });
+
   it("leaves a blank line after every summary, which markdown inside needs", () => {
     // Without it GitHub renders the body as literal text, and a folded table becomes a
     // wall of pipes. It is invisible in review, so it is asserted here instead.

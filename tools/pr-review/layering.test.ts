@@ -208,6 +208,91 @@ describe("edges the rule forbids", () => {
   });
 });
 
+describe("the type-only edge, `web` to `server`", () => {
+  /**
+   * The narrowest entry in the table, and the only one that reads the kind of import.
+   * `web` learns the API's shape from `server`'s exported `ApiType` and must learn
+   * nothing else from it: a value import would pull `node:fs` and the rest of the Node
+   * runtime into the browser bundle, which the old rule allowed and nothing caught.
+   */
+
+  it("lets the contract in, by package name", () => {
+    expect(
+      broken([module("web/src/api.ts", { packages: [types("@biu-cs-planner/server")] })]),
+    ).toEqual([]);
+  });
+
+  it("lets the contract in by relative path too, which is the same knowledge", () => {
+    expect(
+      broken([module("web/src/api.ts", { imports: [types("server/src/api.ts")] })]),
+    ).toEqual([]);
+  });
+
+  it("fails a value import from web to server", () => {
+    expect(broken([module("web/src/api.ts", { packages: ["@biu-cs-planner/server"] })])).toEqual([
+      "web → server",
+    ]);
+  });
+
+  it("fails a value import written as a relative path", () => {
+    expect(broken([module("web/src/api.ts", { imports: ["server/src/api.ts"] })])).toEqual([
+      "web → server",
+    ]);
+  });
+
+  it("fails a deep value import into server", () => {
+    expect(
+      broken([module("web/src/api.ts", { packages: ["@biu-cs-planner/server/token"] })]),
+    ).toEqual(["web → server"]);
+  });
+
+  it("calls the value import a value finding and a forbidden edge a direction one", () => {
+    const edges = forbiddenEdges(
+      [
+        module("web/src/api.ts", { packages: ["@biu-cs-planner/server"] }),
+        module("web/src/plan.ts", { packages: [types("@biu-cs-planner/core")] }),
+      ],
+      [],
+    );
+    expect(edges.map((edge) => `${edge.toWorkspace}:${edge.kind}`)).toEqual([
+      "server:value",
+      "core:direction",
+    ]);
+  });
+
+  it("says a value arrived where only a type may, so the fix is legible", () => {
+    const [edge] = forbiddenEdges(
+      [module("web/src/api.ts", { packages: ["@biu-cs-planner/server"] })],
+      [],
+    );
+    expect(edge && explain(edge)).toBe(
+      "`web/src/api.ts` imports a value from `@biu-cs-planner/server`; `web` may import only " +
+        "types from `server` — `web` knows only the HTTP API contract, which it learns from " +
+        "`server`'s exported `ApiType`, so it may import types from `server` and nothing " +
+        "else — never a value from `server`, and never `core` or `app` at all.",
+    );
+  });
+
+  it("narrows nothing else: `app` may still import `core` either way", () => {
+    // "Not in this ticket" on #51: every other entry stays as wide as it was.
+    expect(
+      broken([
+        module("app/src/use.ts", { packages: [types("@biu-cs-planner/core")] }),
+        module("server/src/api.ts", { packages: ["@biu-cs-planner/app"] }),
+      ]),
+    ).toEqual([]);
+  });
+
+  it("lets a web test file take the contract, and not a value", () => {
+    expect(broken([], [testFile("web/src/api.test.ts", [types("server/src/api.ts")])])).toEqual(
+      [],
+    );
+    expect(broken([], [testFile("web/src/api.test.ts", ["server/src/api.ts"])])).toEqual([
+      "web → server",
+    ]);
+  });
+});
+
 describe("test files", () => {
   it("catches a web test reaching into core, which `modules` alone would never show", () => {
     // `collect` keeps test files out of `modules`, so judging only those would have let a
@@ -261,6 +346,48 @@ describe("real source text", () => {
       "@biu-cs-planner/core",
       "core/src/index.ts",
     ]);
+  });
+
+  it("catches a value pulled out of server, which no `import type` would have allowed", () => {
+    const smuggled = moduleFromSource(
+      "web/src/api.ts",
+      [
+        'import { serve } from "@biu-cs-planner/server";',
+        "export const start = () => serve();",
+      ].join("\n"),
+    );
+    expect(forbiddenEdges([smuggled], []).map((edge) => edge.kind)).toEqual(["value"]);
+  });
+
+  it("catches a mixed import, where one named binding is a value", () => {
+    const mixed = moduleFromSource(
+      "web/src/api.ts",
+      [
+        'import { type ApiType, serve } from "@biu-cs-planner/server";',
+        "export const start = (): ApiType => serve();",
+      ].join("\n"),
+    );
+    expect(forbiddenEdges([mixed], []).map((edge) => edge.kind)).toEqual(["value"]);
+  });
+
+  it("lets web re-export the contract, because a type re-export carries no code", () => {
+    const passing = moduleFromSource(
+      "web/src/contract.ts",
+      ['export type { ApiType } from "@biu-cs-planner/server";'].join("\n"),
+    );
+    expect(forbiddenEdges([passing], [])).toEqual([]);
+  });
+
+  it("lets web write the inline `import { type X }` form, the same knowledge spelled twice", () => {
+    const inline = moduleFromSource(
+      "web/src/api.ts",
+      [
+        'import { hc } from "hono/client";',
+        'import { type ApiType } from "@biu-cs-planner/server";',
+        'export const api = hc<ApiType>("/");',
+      ].join("\n"),
+    );
+    expect(forbiddenEdges([inline], [])).toEqual([]);
   });
 
   it("stays quiet for the contract arriving in web, which is how web is meant to work", () => {

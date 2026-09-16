@@ -149,7 +149,7 @@ export function renderGraphs({ headSha, graphs, judgement }: GraphsComment): str
 
   out.push(
     "Mechanical, not a judgement: the module and call graphs `tools/pr-report` derives " +
-      "from the source, checked for cycles and for which way their edges point. Nothing " +
+      "from the source, checked for cycles and against the layering rule. Nothing " +
       "here is re-parsed, so this and the PR report describe the same graphs. Derived from " +
       `${scope.map((d) => `\`${d}\``).join(", ")} and nowhere else — an edge outside those is ` +
       "not covered by anything below.",
@@ -160,14 +160,15 @@ export function renderGraphs({ headSha, graphs, judgement }: GraphsComment): str
     // The rule is spelled out from the table, not beside it: a sentence written by hand
     // here would go on reassuring readers after someone edited the table.
     out.push(
-      `**Layering:** every import points the way the rule says it should — ${summarise()}.`,
+      `**Layering:** every import is one the rule allows — ${summarise()}.`,
     );
   } else {
     out.push(
-      `**Layering: ${forbidden.length} import${forbidden.length === 1 ? "" : "s"} ` +
-        `point${forbidden.length === 1 ? "s" : ""} the wrong way.** The allowed edges are ` +
-        "declared in `tools/pr-review/layering.ts`; anything else is a broken guardrail " +
-        "rather than a style preference, and this job is red because of it.",
+      `**Layering: ${forbidden.length} import${forbidden.length === 1 ? "" : "s"} the rule ` +
+        "does not allow.** The allowed edges are declared in `tools/pr-review/layering.ts` — " +
+        "which way each may point, and which of them may carry nothing but types. Anything " +
+        "else is a broken guardrail rather than a style preference, and this job is red " +
+        "because of it.",
     );
     out.push("");
     for (const edge of forbidden) out.push(`- ${explain(edge)}`);
