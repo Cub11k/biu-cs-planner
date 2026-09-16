@@ -127,3 +127,23 @@ it("summarises the import for the preview shown before anything is written", () 
   // 89-110 and 89-132.
   expect(summary).toEqual({ offerings: 4, groups: 10, meetings: 6, exams: 4 });
 });
+
+it("reports nothing changed when the same crawl is imported over the Catalog it built", () => {
+  // The routine re-import: a student who crawled in September imports that same file again.
+  // Every Offering is spoken for by its own rows, so nothing is superseded and the preview
+  // shown before writing has nothing to show.
+  const again = importRawCrawl(crawl, { academicYear: 2027, into: catalog });
+
+  expect(again.changes).toEqual([]);
+  expect(again.warnings).toEqual([]);
+  expect(again.summary).toEqual(summary);
+});
+
+it("reports every Offering of the first import as added", () => {
+  const { changes } = importRawCrawl(crawl, { academicYear: 2027 });
+
+  expect(changes).toHaveLength(4);
+  expect(changes.flatMap((c) => c.added)).toHaveLength(10);
+  expect(changes.flatMap((c) => [...c.removed, ...c.moved])).toEqual([]);
+  expect(changes.some((c) => c.offeringRemoved)).toBe(false);
+});
