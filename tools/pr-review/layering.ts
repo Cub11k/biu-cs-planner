@@ -59,8 +59,13 @@ export type Layer = {
 
 /**
  * The allowed edges, as data, in one place — read it against "Architecture" in
- * `docs/design.md` and "Code guardrails" in `CLAUDE.md` and the two should say the same
- * thing.
+ * `docs/design.md` and "Code guardrails" in `CLAUDE.md` and the two should agree.
+ *
+ * They do not yet, on one point. Neither document mentions the type-only narrowing on
+ * `web → server`; both say only that `web` never imports `core` or `app`. This table is
+ * the stricter of the two and it is the one the job enforces, so a contributor who reads
+ * the prose and not this file can be surprised. Saying which is authoritative until the
+ * prose catches up is cheaper than letting a reader discover it from a red job (#51).
  *
  * "Nothing imports `web`" is not written as its own line because it does not need to be:
  * no layer below lists `web`, so every edge into `web` is already outside the set.
@@ -88,8 +93,9 @@ export const LAYERS: readonly Layer[] = [
   {
     // Type-only, and the narrowest entry in the table. `web/src/api.ts` writes
     // `import type { ApiType } from "@biu-cs-planner/server"` and nothing else of
-    // `server` is meant to reach the browser — a value import would pull `node:fs` and
-    // the rest of the Node runtime into the bundle. See #51.
+    // `server` is meant to be known here. What counts as type-only is decided by
+    // `importIsTypeOnly` in `tools/pr-report/surface.ts`, whose comment is also where
+    // "type-only" stops meaning "erased from the bundle". See #51.
     workspace: "web",
     mayImport: [{ workspace: "server", typeOnly: true }],
     rule:
@@ -181,10 +187,18 @@ function workspaceOfPackage(specifier: string): WorkspaceName | undefined {
  * either form, and only an entry that asks for `typeOnly` treats the two apart.
  *
  * One entry does. `web → server` exists for exactly one line — `import type { ApiType }` in
- * `web/src/api.ts`, the contract arriving, deliberate and named in `docs/design.md` — and
- * saying so in the table is what keeps the edge as narrow as the reason for it. A value
- * import from `web` to `server` would pull `node:fs` and the rest of the Node runtime into
- * the browser bundle, and it is now a finding rather than a broken build (#51).
+ * `web/src/api.ts`, the contract arriving, which is the typed client `CLAUDE.md` asks for —
+ * and saying so in the table is what keeps the edge as narrow as the reason for it. A value
+ * import from `web` to `server` is now a finding rather than a broken build discovered
+ * later (#51).
+ *
+ * It is not a promise about the bundle, and should not be read as one. `import type { X }`
+ * erases, but the inline `import { type X }` leaves `import "…"` behind under
+ * `verbatimModuleSyntax`, so the module is still evaluated and whatever `server` imports at
+ * its top comes with it. Both spellings pass here because this rule is about what `web` is
+ * allowed to *know*, and #51 asks for both by name. Keeping Node out of the browser bundle
+ * is the build's job; the guard that speaks to it is `web/package.json`, where
+ * `@biu-cs-planner/server` is a *devDependency*.
  *
  * Type-only-ness is read from the syntax by `tools/pr-report/surface.ts`, not from a type
  * checker, so an import that *could* have been written `import type` but was not is a

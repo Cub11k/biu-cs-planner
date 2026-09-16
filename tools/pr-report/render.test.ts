@@ -139,13 +139,18 @@ describe("the report comment", () => {
     const summaries = folds(typed).map((f) => f.summary).join("\n");
 
     expect(summaries).toContain("2 modules, 1 imports, 1 of them type-only");
+    expect(typed).toContain("A dashed arrow carries only types");
   });
 
-  it("leaves the count off when no edge is type-only, rather than saying 0", () => {
-    const summaries = folds(render(report())).map((f) => f.summary).join("\n");
+  it("leaves the count and the legend off when no edge is type-only", () => {
+    // Neither a "0 of them type-only" nor a sentence explaining a dashed arrow that is
+    // not on the page.
+    const markdown = render(report());
+    const summaries = folds(markdown).map((f) => f.summary).join("\n");
 
     expect(summaries).toContain("2 modules, 1 imports");
-    expect(summaries).not.toContain("type-only");
+    expect(markdown).not.toContain("type-only");
+    expect(markdown).not.toContain("A dashed arrow");
   });
 
   it("leaves a blank line after every summary, which markdown inside needs", () => {

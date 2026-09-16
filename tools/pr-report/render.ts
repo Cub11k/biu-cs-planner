@@ -132,8 +132,9 @@ export function render(report: Report): string {
     (typeOnly ? `, ${typeOnly} of them type-only` : "");
   out.push(
     ...fold(title("How the modules depend on each other", size), [
-      "A dashed arrow carries only types; a solid one carries code.",
-      "",
+      // Only worth saying when there is a dashed arrow to explain; a graph of solid
+      // arrows explains itself, and a graph with no arrows at all has nothing to explain.
+      ...(typeOnly ? ["A dashed arrow carries only types; a solid one carries code.", ""] : []),
       "```mermaid",
       moduleMap(modules),
       "```",

@@ -98,9 +98,11 @@ const everyBindingIsType = (
 ): boolean => elements.length > 0 && elements.every((el) => el.isTypeOnly);
 
 /**
- * `import type { X }`, `import { type X }`, `import type * as ns` — all of them, and
- * nothing else. A default binding or a namespace binding is a value however the names
- * inside it are used, and a bare `import "./x"` is a side effect.
+ * True for every form the `type` keyword can take: `import type` before the clause covers
+ * whatever follows it — a default binding, a namespace, a named list — and inside a named
+ * list, `type` on every element does the same. False for anything else, including a
+ * default or namespace binding without the keyword, however the names inside it are used,
+ * and a bare `import "./x"`, which is a side effect and so is code.
  *
  * The two spellings are not quite identical downstream. With `verbatimModuleSyntax` on,
  * which `tsconfig.base.json` sets, `import type { X } from "m"` disappears entirely while

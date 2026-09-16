@@ -60,6 +60,14 @@ describe("whether an import carries only types", () => {
     ]);
   });
 
+  it("reads `import type D` as type-only, keyword before clause beating binding shape", () => {
+    // `import type` covers whatever follows it, so a default binding under the keyword is
+    // still a type. Pinned because the same binding *without* the keyword is a value.
+    expect(kinds(['import type ApiClient from "@biu-cs-planner/server";'])).toEqual([
+      "@biu-cs-planner/server:type",
+    ]);
+  });
+
   it("reads a namespace import as a value, because the whole module arrives", () => {
     expect(kinds(['import * as api from "@biu-cs-planner/server";'])).toEqual([
       "@biu-cs-planner/server:value",
