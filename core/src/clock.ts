@@ -1,8 +1,15 @@
 /**
- * How `core` reads a clock string. One module rather than one per reader, because `web` reads
- * the same clock and cannot import this — the rule is already written twice, and a third copy
- * inside `core` is the drift issue #48 exists to stop. `fixtures/clock-ranges.json` is the
- * table both sides are tested against.
+ * How `core` reads a clock string. One module rather than one reading per reader: the Clashes
+ * module and the State File reader both need it, and `web` reads the same clock and cannot
+ * import this — the rule is already written twice, and a third reading inside `core` is the
+ * drift issue #48 exists to stop. `fixtures/clock-ranges.json` is the table both sides are
+ * tested against.
+ *
+ * Reading is not validating. What may be *written* into a State File or a Catalog is decided
+ * by the patterns on the schemas — `core/src/state/schema.ts` and `core/src/catalog/schema.ts`
+ * — and both are narrower than this: zero-padded `hh:mm` only, which is what `CONTEXT.md` says
+ * a time is written as. This is what turns a string that has already been stored, or that
+ * reached a `WeeklySpan` without passing a schema, into a number.
  */
 
 /** A literal pattern, never built from data (ADR-0007). */
@@ -13,9 +20,13 @@ const END_OF_DAY = 24 * 60;
 
 /**
  * Minutes since midnight, or `undefined` for a time this module cannot read. Comparing the
- * strings directly would be correct only while every one of them is zero-padded, and a Blocked
- * Time is student-entered: `"9:00"` sorts after `"10:00"`, which would quietly hide a Clash
- * rather than report it. Reading the number costs one literal pattern and removes the trap.
+ * strings directly would be correct only while every one of them is zero-padded: `"9:00"`
+ * sorts after `"10:00"`, so a Clash would be hidden rather than reported. Reading the number
+ * costs one literal pattern and removes that trap, and it is why a missing leading zero is
+ * read rather than refused — a `WeeklySpan` is a structural contract that anything can
+ * satisfy, and a span that reaches here without having passed a schema is better placed than
+ * silently ignored. A Blocked Time out of a State File is never one of those: `blockedTimeSchema`
+ * refuses `"9:00"` and `parseStateFile` drops the entry with a Warning long before this.
  *
  * The hour stops at 23, so `"24:00"` is not a time. A Day ends at `00:00` and has one spelling
  * of midnight; 1440 is a number this module computes, never a string anything stores or shows.

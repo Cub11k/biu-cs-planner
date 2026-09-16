@@ -331,7 +331,9 @@ it("keeps the two halves of a night shift on their own Days", () => {
  * — which is the whole of issue #48.
  *
  * Both the readings and the behaviour they drive are checked: a whole-Day Blocked Time Clashes
- * with exactly those ranges the table says occupy time, over exactly the range they name.
+ * with exactly those ranges the table says occupy time, over exactly the range they name. What
+ * the table deliberately leaves out — an unpadded hour, which the two sides read differently
+ * and always have — is written down in the file itself.
  */
 const clockRanges: {
   cases: { start: string; end: string; startMinutes: number; endMinutes: number; why: string }[];

@@ -7,8 +7,8 @@ import {
   formatClock,
   hourLines,
   hourRange,
+  parseClock,
   parseClockAsEnd,
-  parseClockAsStart,
   tileBox,
   tileText,
   tilesFor,
@@ -38,9 +38,9 @@ function group(
 
 describe("reading and writing a clock time", () => {
   it("reads a time as minutes since the beginning of the day", () => {
-    expect(parseClockAsStart("00:00")).toBe(0);
-    expect(parseClockAsStart("15:30")).toBe(930);
-    expect(parseClockAsStart("23:59")).toBe(1439);
+    expect(parseClock("00:00")).toBe(0);
+    expect(parseClock("15:30")).toBe(930);
+    expect(parseClock("23:59")).toBe(1439);
   });
 
   /**
@@ -49,13 +49,13 @@ describe("reading and writing a clock time", () => {
    */
   it("reads an end of 00:00 as the end of the day and a start of it as the beginning", () => {
     expect(parseClockAsEnd("00:00")).toBe(24 * 60);
-    expect(parseClockAsStart("00:00")).toBe(0);
+    expect(parseClock("00:00")).toBe(0);
     expect(parseClockAsEnd("15:30")).toBe(930);
   });
 
   it("refuses a time it cannot place rather than guessing at one", () => {
     for (const refused of ["24:00", "9:00", "", "23:0009:00"]) {
-      expect(parseClockAsStart(refused)).toBeUndefined();
+      expect(parseClock(refused)).toBeUndefined();
       expect(parseClockAsEnd(refused)).toBeUndefined();
     }
   });
@@ -302,7 +302,10 @@ describe("what a tile says", () => {
  * whose two readings drift apart fails here, there, or both — which is the whole of issue #48.
  *
  * Both the reading and what it draws are checked, so that agreeing on the minutes while
- * disagreeing on the tile is not a way to pass.
+ * disagreeing on the tile is not a way to pass. The `00:00`-`00:00` row is the load-bearing
+ * one: it is what fails if the end reading is ever made conditional on the start again, the
+ * way it was before issue #48. What the table deliberately leaves out — an unpadded hour, a
+ * refusal, the writing back of minutes — is written down in the file itself.
  */
 const clockRanges: {
   cases: { start: string; end: string; startMinutes: number; endMinutes: number; why: string }[];
@@ -317,7 +320,7 @@ describe("the clock the shared table says core and web both read", () => {
     for (const range of clockRanges.cases) {
       const read = `${range.start}-${range.end}: ${range.why}`;
 
-      expect([read, parseClockAsStart(range.start)]).toEqual([read, range.startMinutes]);
+      expect([read, parseClock(range.start)]).toEqual([read, range.startMinutes]);
       expect([read, parseClockAsEnd(range.end)]).toEqual([read, range.endMinutes]);
     }
   });

@@ -18,10 +18,13 @@ it("reads 00:00 as the beginning of the Day at a start and the end of it at an e
 });
 
 /**
- * A Blocked Time is student-entered and `"9:00"` is what a student types. Comparing the
- * strings would sort it after `"10:00"`; reading the number is what stops that.
+ * Reading the number rather than comparing the strings is what makes a missing leading zero
+ * harmless: `"9:00"` sorts after `"10:00"` but is plainly earlier than it. Nothing that has
+ * been through a schema arrives unpadded — `blockedTimeSchema` refuses `"9:00"` outright — but
+ * a `WeeklySpan` is a structural contract, and a span that reaches the Clashes module without
+ * one is better placed than silently ignored.
  */
-it("reads an hour the student wrote without a leading zero", () => {
+it("reads an hour written without a leading zero, rather than refusing it", () => {
   expect(clockAsStart("9:00")).toBe(540);
   expect(clockAsEnd("9:00")).toBe(540);
 });

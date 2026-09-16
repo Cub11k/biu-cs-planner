@@ -30,19 +30,15 @@ const CLOCK_TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
  */
 const END_OF_DAY = 24 * 60;
 
-/** Minutes since midnight, or undefined for a time the grid cannot place. */
-function parseClock(clock: string): number | undefined {
+/**
+ * Minutes since midnight, or undefined for a time the grid cannot place. This is the reading
+ * of a `start`: `00:00` is the beginning of the day, 0 minutes in, so a Meeting written
+ * `00:00`-`08:00` is the night and not the whole day. An `end` is read by `parseClockAsEnd`.
+ */
+export function parseClock(clock: string): number | undefined {
   if (!CLOCK_TIME.test(clock)) return undefined;
   const [hours, minutes] = clock.split(":");
   return Number(hours) * 60 + Number(minutes);
-}
-
-/**
- * A clock string read as the `start` of a range: `00:00` is the beginning of the day, 0
- * minutes in, so a Meeting written `00:00`-`08:00` is the night and not the whole day.
- */
-export function parseClockAsStart(clock: string): number | undefined {
-  return parseClock(clock);
 }
 
 /**
@@ -52,8 +48,9 @@ export function parseClockAsStart(clock: string): number | undefined {
  * day is meant; `core` reads the same clock the same way and `fixtures/clock-ranges.json` is
  * the table both are tested against (issue #48).
  *
- * Two functions rather than one with a flag: the position is the caller's, and a caller that
- * has to decide what to pass is a caller that can decide wrongly.
+ * A second function rather than a flag on `parseClock`: the position is the caller's and is
+ * fixed at the call site, and a flag invites `asEnd: someCondition` — which is the conditional
+ * reading this ticket came from.
  */
 export function parseClockAsEnd(clock: string): number | undefined {
   const read = parseClock(clock);
@@ -107,14 +104,16 @@ export function tilesFor(groups: readonly Group[], semester: Semester): Tile[] {
   groups.forEach((group, groupIndex) => {
     meetingsInSemester(group, semester).forEach((meeting, meetingIndex) => {
       // Each end read in its own position, unconditionally, so that `core` and this agree on
-      // every range: "22:00 - 00:00" is a class that runs to midnight, "00:00 - 08:00" one
+      // every range: "22:00 - 00:00" is a Meeting that runs to midnight, "00:00 - 08:00" one
       // that runs from it, and "00:00 - 00:00" the whole day (issue #48).
       //
-      // No Offering in the 2027 Catalog needs any of that: across all four workbooks the crawl
-      // has 15 distinct clock strings, none of them 00:00, and the latest a Meeting ends is
-      // 21:00. The rule is here because a Blocked Time is student-entered and a Day has to end
-      // somewhere, not because Shoham was observed writing it.
-      const startMinutes = parseClockAsStart(meeting.start);
+      // No Offering in the 2027 Catalog needs any of that. The sweep recorded on #48 found 15
+      // distinct clock strings across all four 2027 workbooks, none of them 00:00 or 24:00,
+      // and the latest any Meeting ends is 21:00 — so this rule is here because a Blocked Time
+      // is student-entered and a Day has to end somewhere, not because Shoham was observed
+      // writing it. The crawl lives outside this repo (ADR-0005), so nothing here re-checks
+      // that count; it is what the data said when the rule was decided.
+      const startMinutes = parseClock(meeting.start);
       const endMinutes = parseClockAsEnd(meeting.end);
       if (startMinutes === undefined || endMinutes === undefined) return;
       if (endMinutes <= startMinutes) return;
