@@ -62,7 +62,6 @@ export function mergeImports(refs: readonly ImportRef[]): ImportRef[] {
   return [...merged].map(([specifier, typeOnly]) => ({ specifier, typeOnly }));
 }
 
-
 const text = (node: ts.Node | undefined, source: ts.SourceFile): string =>
   node ? node.getText(source).replace(/\s+/g, " ").trim() : "";
 
