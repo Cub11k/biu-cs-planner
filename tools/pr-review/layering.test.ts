@@ -33,7 +33,9 @@ describe("the declared rule", () => {
 
 describe("edges the rule allows", () => {
   it("lets app import core", () => {
-    expect(broken([module("app/src/use.ts", { packages: ["@biu-cs-planner/core"] })])).toEqual([]);
+    expect(
+      broken([module("app/src/use.ts", { packages: ["@biu-cs-planner/core"] })]),
+    ).toEqual([]);
   });
 
   it("lets server import app and core", () => {
@@ -53,9 +55,9 @@ describe("edges the rule allows", () => {
   });
 
   it("says nothing about a module importing its own workspace", () => {
-    expect(broken([module("web/src/timetable/week.ts", { imports: ["web/src/api.ts"] })])).toEqual(
-      [],
-    );
+    expect(
+      broken([module("web/src/timetable/week.ts", { imports: ["web/src/api.ts"] })]),
+    ).toEqual([]);
   });
 
   it("says nothing about packages that are not this project's workspaces", () => {
@@ -64,11 +66,18 @@ describe("edges the rule allows", () => {
     ).toEqual([]);
   });
 
+  it("says nothing about a file outside the four workspaces", () => {
+    // `tools/` is not governed by this rule: it reads all four on purpose.
+    expect(
+      broken([module("tools/pr-review/main.ts", { packages: ["@biu-cs-planner/core"] })]),
+    ).toEqual([]);
+  });
+
   it("says nothing about an import that leaves the four workspaces", () => {
     // Out of scope on purpose: this check is about direction between workspaces.
-    expect(broken([module("core/src/plan.ts", { imports: ["tools/pr-report/surface.ts"] })])).toEqual(
-      [],
-    );
+    expect(
+      broken([module("core/src/plan.ts", { imports: ["tools/pr-report/surface.ts"] })]),
+    ).toEqual([]);
   });
 });
 
@@ -129,7 +138,9 @@ describe("edges the rule forbids", () => {
     // `Module` carries no type-only flag, and the rule does not want one: the guardrail
     // is about what `web` is allowed to know, not about what reaches the bundle.
     expect(
-      broken([module("web/src/timetable/catalog.ts", { imports: ["core/src/catalog/schema.ts"] })]),
+      broken([
+        module("web/src/timetable/catalog.ts", { imports: ["core/src/catalog/schema.ts"] }),
+      ]),
     ).toEqual(["web → core"]);
   });
 

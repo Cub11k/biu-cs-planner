@@ -46,12 +46,16 @@ export const LAYERS: readonly Layer[] = [
   {
     workspace: "app",
     mayImport: ["core"],
-    rule: "`app` is the use cases over `core`, so it may import `core` and nothing from `server` or `web`",
+    rule:
+      "`app` is the use cases over `core`, so it may import `core` and nothing from " +
+      "`server` or `web`",
   },
   {
     workspace: "server",
     mayImport: ["core", "app"],
-    rule: "`server` exposes `app` over HTTP, so it may import `app` and `core` but nothing from `web`",
+    rule:
+      "`server` exposes `app` over HTTP, so it may import `app` and `core` but nothing " +
+      "from `web`",
   },
   {
     workspace: "web",
@@ -62,7 +66,16 @@ export const LAYERS: readonly Layer[] = [
   },
 ];
 
-const BY_WORKSPACE = new Map(LAYERS.map((layer) => [layer.workspace, layer]));
+/**
+ * Keyed by name rather than by `Workspace`, so a path segment or a package name read out
+ * of the source can be looked up directly without being asserted into the type first.
+ */
+const BY_NAME: ReadonlyMap<string, Layer> = new Map(
+  LAYERS.map((layer) => [layer.workspace, layer]),
+);
+
+/** The workspace a name refers to, if this project has one by that name. */
+const workspaceNamed = (name: string): Workspace | undefined => BY_NAME.get(name)?.workspace;
 
 /** An import that points somewhere the layering rule does not allow. */
 export type ForbiddenEdge = {
@@ -81,14 +94,9 @@ export type ForbiddenEdge = {
   rule: string;
 };
 
-const isWorkspace = (name: string): name is Workspace =>
-  (WORKSPACES as readonly string[]).includes(name);
-
 /** The workspace a repo-relative module path lives in, if it lives in one at all. */
-function workspaceOfPath(path: string): Workspace | undefined {
-  const first = path.split("/")[0] ?? "";
-  return isWorkspace(first) ? first : undefined;
-}
+const workspaceOfPath = (path: string): Workspace | undefined =>
+  workspaceNamed(path.split("/")[0] ?? "");
 
 /**
  * The workspace a bare package specifier names. Only this project's own workspaces
@@ -96,12 +104,10 @@ function workspaceOfPath(path: string): Workspace | undefined {
  * not one of the four (`@biu-cs-planner/tools`, say) is not a layer either.
  */
 function workspaceOfPackage(specifier: string): Workspace | undefined {
-  const name = specifier.startsWith("@biu-cs-planner/")
-    ? specifier.slice("@biu-cs-planner/".length)
-    : "";
+  if (!specifier.startsWith("@biu-cs-planner/")) return undefined;
   // A deep import, `@biu-cs-planner/core/thing`, still lands in `core`.
-  const first = name.split("/")[0] ?? "";
-  return isWorkspace(first) ? first : undefined;
+  const name = specifier.slice("@biu-cs-planner/".length).split("/")[0] ?? "";
+  return workspaceNamed(name);
 }
 
 /**
@@ -120,12 +126,18 @@ function workspaceOfPackage(specifier: string): Workspace | undefined {
  * Edges that leave the four workspaces altogether — an import of `tools/`, of `zod`, of
  * `node:fs` — are not judged here. This check is about the direction between workspaces
  * and nothing else; see "Not in this ticket" on #33.
+ *
+ * What it sees is what `tools/pr-report/surface.ts` records: the `import` and
+ * `export … from` statements at the top level of a file. A dynamic `import()` is not in
+ * the module graph at all, so it is invisible to the report, to the cycle check and to
+ * this — one derivation, one blind spot, rather than three that disagree.
  */
 export function forbiddenEdges(modules: readonly Module[]): ForbiddenEdge[] {
   const found: ForbiddenEdge[] = [];
 
   for (const module of modules) {
-    const layer = BY_WORKSPACE.get(module.workspace as Workspace);
+    // Anything outside the four — `tools/`, say — is not governed by this rule at all.
+    const layer = BY_NAME.get(module.workspace);
     if (!layer) continue;
 
     const check = (imported: string, to: Workspace | undefined): void => {
