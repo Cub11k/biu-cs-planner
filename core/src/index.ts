@@ -20,3 +20,12 @@ export type {
   Offering,
   Semester,
 } from "./catalog/schema.ts";
+export { checkExams, DEFAULT_EXAM_SPACING_DAYS } from "./timetable/exams.ts";
+export type {
+  ExamCheck,
+  ExamCheckOptions,
+  ExamSitting,
+  ExamSource,
+  ExamWarning,
+  RailSitting,
+} from "./timetable/exams.ts";
