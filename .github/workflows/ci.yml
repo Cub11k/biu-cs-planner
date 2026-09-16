@@ -11,9 +11,10 @@
 # and a bidi-reordered time range can be looked at (issue #45).
 #
 # `npm test` is the two test jobs together: the matrix runs `npm run test:node` and the
-# browser job runs `npm run test:browser`. Split because they need different machines --
+# browser job runs `npm run test:browser`. Split because they want different machines --
 # and because the matrix passing on a runner with no Chromium on it is itself the claim
-# that the node project needs no browser.
+# that the node project needs no browser. release.yml is the one place that still runs
+# `npm test` whole, because a tag on master runs that workflow and not this one.
 #
 # That every workflow installs with --ignore-scripts is checked too, but by
 # tools/ci/workflows.test.ts in the test run above rather than by a job here.
@@ -114,9 +115,9 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
 
-      # `npm ci --ignore-scripts` above is what makes this a step rather than a
-      # postinstall: the flag is a supply-chain rule (CLAUDE.md), and Playwright's browser
-      # download is an install script. A no-op when the cache hit.
+      # `playwright` ships no install script, so nothing downloads a browser unless asked
+      # -- and were a future version to bring the postinstall back, the `--ignore-scripts`
+      # above would stop it. Explicit either way. A no-op when the cache hit.
       - name: Download Chromium
         run: npm run install:browsers
 
