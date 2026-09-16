@@ -104,8 +104,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Bun and Deno run the server, but the dependencies still come from the committed
+      # Whichever runtime starts the server, the dependencies come from the committed
       # lockfile, so that what starts here is what a student's `npm i -g` installs.
+      #
+      # For Bun and Deno this step is only the npm host. For the Node leg it is also the
+      # runtime under test, so the version is load-bearing: `--experimental-strip-types`
+      # does not exist before Node 22, and lowering this to the floor in `engines` would
+      # fail that leg with a flag error that reads like a broken server.
       - uses: actions/setup-node@v4
         with:
           node-version: 24
