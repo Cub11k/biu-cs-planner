@@ -10,7 +10,9 @@ const module = (path: string, imports: string[]): Module => ({
   path,
   workspace: path.split("/")[0] ?? "",
   exports: [],
-  imports,
+  // A cycle is a cycle whichever kind of import closes it, so these are value imports
+  // and the type-only case is the one `layering.test.ts` cares about.
+  imports: imports.map((specifier) => ({ specifier, typeOnly: false })),
   packages: [],
 });
 

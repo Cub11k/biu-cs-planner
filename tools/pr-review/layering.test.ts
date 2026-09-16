@@ -3,24 +3,37 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { collect } from "../pr-report/collect.ts";
-import { readModule, type Module } from "../pr-report/surface.ts";
+import { readModule, type ImportRef, type Module } from "../pr-report/surface.ts";
 import { readTestFile, type TestFile } from "../pr-report/tests.ts";
 import { LAYERS, WORKSPACES, explain, forbiddenEdges, summarise } from "./layering.ts";
 
 const ROOT = resolve(import.meta.dirname, "../..");
 
+/** A specifier written as a bare string is a value import; `types(…)` is the other kind. */
+const ref = (spec: string | ImportRef): ImportRef =>
+  typeof spec === "string" ? { specifier: spec, typeOnly: false } : spec;
+
+/** The same specifier, arriving as `import type`. */
+const types = (specifier: string): ImportRef => ({ specifier, typeOnly: true });
+
+type Specs = readonly (string | ImportRef)[];
+
 const module = (
   path: string,
-  edges: { imports?: string[]; packages?: string[] } = {},
+  edges: { imports?: Specs; packages?: Specs } = {},
 ): Module => ({
   path,
   workspace: path.split("/")[0] ?? "",
   exports: [],
-  imports: edges.imports ?? [],
-  packages: edges.packages ?? [],
+  imports: (edges.imports ?? []).map(ref),
+  packages: (edges.packages ?? []).map(ref),
 });
 
-const testFile = (path: string, targets: string[]): TestFile => ({ path, cases: [], targets });
+const testFile = (path: string, targets: Specs): TestFile => ({
+  path,
+  cases: [],
+  targets: targets.map(ref),
+});
 
 /**
  * One file written into a throwaway repo root and read back the way the report reads it.
@@ -60,7 +73,11 @@ describe("the declared rule", () => {
   });
 
   it("lets nothing import web", () => {
-    expect(LAYERS.flatMap((layer) => layer.mayImport)).not.toContain("web");
+    // Written against both forms an entry can take: a bare name and a narrowed one.
+    const allowed = LAYERS.flatMap((layer) =>
+      layer.mayImport.map((entry) => (typeof entry === "string" ? entry : entry.workspace)),
+    );
+    expect(allowed).not.toContain("web");
   });
 });
 
@@ -81,10 +98,10 @@ describe("edges the rule allows", () => {
     ).toEqual([]);
   });
 
-  it("lets web learn the contract from server", () => {
-    expect(broken([module("web/src/api.ts", { packages: ["@biu-cs-planner/server"] })])).toEqual(
-      [],
-    );
+  it("lets web learn the contract from server, as types", () => {
+    expect(
+      broken([module("web/src/api.ts", { packages: [types("@biu-cs-planner/server")] })]),
+    ).toEqual([]);
   });
 
   it("says nothing about a module importing its own workspace", () => {
@@ -167,12 +184,12 @@ describe("edges the rule forbids", () => {
     ).toEqual(["app → web", "server → web"]);
   });
 
-  it("counts a type-only import like any other, because it is still knowledge of core", () => {
-    // `Module` carries no type-only flag, and the rule does not want one: the guardrail
-    // is about what `web` is allowed to know, not about what reaches the bundle.
+  it("counts a type-only import like any other on an edge nobody allowed", () => {
+    // The guardrail on `web → core` is about what `web` is allowed to know, not about
+    // what reaches the bundle, so writing `import type` does not buy a way past it.
     expect(
       broken([
-        module("web/src/timetable/catalog.ts", { imports: ["core/src/catalog/schema.ts"] }),
+        module("web/src/timetable/catalog.ts", { imports: [types("core/src/catalog/schema.ts")] }),
       ]),
     ).toEqual(["web → core"]);
   });
@@ -187,6 +204,91 @@ describe("edges the rule forbids", () => {
       "web/src/a.ts @biu-cs-planner/app",
       "web/src/a.ts @biu-cs-planner/core",
       "web/src/b.ts @biu-cs-planner/core",
+    ]);
+  });
+});
+
+describe("the type-only edge, `web` to `server`", () => {
+  /**
+   * The narrowest entry in the table, and the only one that reads the kind of import.
+   * `web` learns the API's shape from `server`'s exported `ApiType` and must learn
+   * nothing else from it: a value import would pull `node:fs` and the rest of the Node
+   * runtime into the browser bundle, which the old rule allowed and nothing caught.
+   */
+
+  it("lets the contract in, by package name", () => {
+    expect(
+      broken([module("web/src/api.ts", { packages: [types("@biu-cs-planner/server")] })]),
+    ).toEqual([]);
+  });
+
+  it("lets the contract in by relative path too, which is the same knowledge", () => {
+    expect(
+      broken([module("web/src/api.ts", { imports: [types("server/src/api.ts")] })]),
+    ).toEqual([]);
+  });
+
+  it("fails a value import from web to server", () => {
+    expect(broken([module("web/src/api.ts", { packages: ["@biu-cs-planner/server"] })])).toEqual([
+      "web → server",
+    ]);
+  });
+
+  it("fails a value import written as a relative path", () => {
+    expect(broken([module("web/src/api.ts", { imports: ["server/src/api.ts"] })])).toEqual([
+      "web → server",
+    ]);
+  });
+
+  it("fails a deep value import into server", () => {
+    expect(
+      broken([module("web/src/api.ts", { packages: ["@biu-cs-planner/server/token"] })]),
+    ).toEqual(["web → server"]);
+  });
+
+  it("calls the value import a value finding and a forbidden edge a direction one", () => {
+    const edges = forbiddenEdges(
+      [
+        module("web/src/api.ts", { packages: ["@biu-cs-planner/server"] }),
+        module("web/src/plan.ts", { packages: [types("@biu-cs-planner/core")] }),
+      ],
+      [],
+    );
+    expect(edges.map((edge) => `${edge.toWorkspace}:${edge.kind}`)).toEqual([
+      "server:value",
+      "core:direction",
+    ]);
+  });
+
+  it("says a value arrived where only a type may, so the fix is legible", () => {
+    const [edge] = forbiddenEdges(
+      [module("web/src/api.ts", { packages: ["@biu-cs-planner/server"] })],
+      [],
+    );
+    expect(edge && explain(edge)).toBe(
+      "`web/src/api.ts` imports a value from `@biu-cs-planner/server`; `web` may import only " +
+        "types from `server` — `web` knows only the HTTP API contract, which it learns from " +
+        "`server`'s exported `ApiType`, so it may import types from `server` and nothing " +
+        "else — never a value from `server`, and never `core` or `app` at all.",
+    );
+  });
+
+  it("narrows nothing else: `app` may still import `core` either way", () => {
+    // "Not in this ticket" on #51: every other entry stays as wide as it was.
+    expect(
+      broken([
+        module("app/src/use.ts", { packages: [types("@biu-cs-planner/core")] }),
+        module("server/src/api.ts", { packages: ["@biu-cs-planner/app"] }),
+      ]),
+    ).toEqual([]);
+  });
+
+  it("lets a web test file take the contract, and not a value", () => {
+    expect(broken([], [testFile("web/src/api.test.ts", [types("server/src/api.ts")])])).toEqual(
+      [],
+    );
+    expect(broken([], [testFile("web/src/api.test.ts", ["server/src/api.ts"])])).toEqual([
+      "web → server",
     ]);
   });
 });
@@ -246,6 +348,67 @@ describe("real source text", () => {
     ]);
   });
 
+  it("catches a value pulled out of server, which no `import type` would have allowed", () => {
+    const smuggled = moduleFromSource(
+      "web/src/api.ts",
+      [
+        'import { serve } from "@biu-cs-planner/server";',
+        "export const start = () => serve();",
+      ].join("\n"),
+    );
+    expect(forbiddenEdges([smuggled], []).map((edge) => edge.kind)).toEqual(["value"]);
+  });
+
+  it("catches a mixed import, where one named binding is a value", () => {
+    const mixed = moduleFromSource(
+      "web/src/api.ts",
+      [
+        'import { type ApiType, serve } from "@biu-cs-planner/server";',
+        "export const start = (): ApiType => serve();",
+      ].join("\n"),
+    );
+    expect(forbiddenEdges([mixed], []).map((edge) => edge.kind)).toEqual(["value"]);
+  });
+
+  it("lets web re-export the contract, because a type re-export carries no code", () => {
+    const passing = moduleFromSource(
+      "web/src/contract.ts",
+      ['export type { ApiType } from "@biu-cs-planner/server";'].join("\n"),
+    );
+    expect(forbiddenEdges([passing], [])).toEqual([]);
+  });
+
+  it("lets web write the inline `import { type X }` form, the same knowledge spelled twice", () => {
+    const inline = moduleFromSource(
+      "web/src/api.ts",
+      [
+        'import { hc } from "hono/client";',
+        'import { type ApiType } from "@biu-cs-planner/server";',
+        'export const api = hc<ApiType>("/");',
+      ].join("\n"),
+    );
+    expect(forbiddenEdges([inline], [])).toEqual([]);
+  });
+
+  it("cannot see a dynamic import, because no graph records one", () => {
+    // A known hole, pinned here rather than left to be discovered. `readModule` reads the
+    // static `import` and `export … from` at the top of a file and nothing else, so this
+    // is invisible to the report, to the cycle check and to this alike — which is exactly
+    // the outcome the type-only rule is otherwise guarding against. Closing it means
+    // teaching `tools/pr-report` to walk call expressions; the module doc says so too.
+    const dynamic = moduleFromSource(
+      "web/src/api.ts",
+      [
+        "export const start = async () => {",
+        '  const { serve } = await import("@biu-cs-planner/server");',
+        "  return serve();",
+        "};",
+      ].join("\n"),
+    );
+    expect(dynamic.packages).toEqual([]);
+    expect(forbiddenEdges([dynamic], [])).toEqual([]);
+  });
+
   it("stays quiet for the contract arriving in web, which is how web is meant to work", () => {
     const client = moduleFromSource(
       "web/src/api.ts",
@@ -263,7 +426,7 @@ describe("summarise", () => {
   it("says the whole rule, generated from the table so the two cannot drift", () => {
     expect(summarise()).toBe(
       "`core` imports none of the others, `app` imports `core`, " +
-        "`server` imports `core` and `app`, `web` imports `server`",
+        "`server` imports `core` and `app`, `web` imports `server` for types only",
     );
   });
 });
@@ -277,7 +440,8 @@ describe("explain", () => {
     expect(edge && explain(edge)).toBe(
       "`web/src/timetable/week.ts` imports `core/src/catalog/schema.ts`; `web` may not import " +
         "`core` — `web` knows only the HTTP API contract, which it learns from `server`'s " +
-        "exported `ApiType`, so it may never import `core` or `app`.",
+        "exported `ApiType`, so it may import types from `server` and nothing else — never " +
+        "a value from `server`, and never `core` or `app` at all.",
     );
   });
 });

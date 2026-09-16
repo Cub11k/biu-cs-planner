@@ -76,6 +76,10 @@ export function findCycles(graph: ReadonlyMap<string, readonly string[]>): Cycle
  * Cycles among the modules, as repo-relative paths. A module graph cycle is a finding
  * every time: it is how the layering rules (`core → app → server`, with `web` reaching
  * only the API) fail in practice, so a back edge is a broken guardrail.
+ *
+ * A type-only import is an edge here like any other. Mutually recursive types across two
+ * files are legal and harmless at run time, but they still make the pair impossible to
+ * read or move apart, which is what this check is for.
  */
 export function moduleCycles(modules: readonly Module[]): Cycle[] {
   const known = new Set(modules.map((m) => m.path));
@@ -83,7 +87,7 @@ export function moduleCycles(modules: readonly Module[]): Cycle[] {
   for (const m of modules) {
     graph.set(
       m.path,
-      m.imports.filter((dep) => known.has(dep)),
+      m.imports.map((dep) => dep.specifier).filter((dep) => known.has(dep)),
     );
   }
   return findCycles(graph);
