@@ -84,7 +84,9 @@ jobs:
       - name: Mark the review already there as outdated
         run: node tools/pr-review/outdate.ts
 
-      - run: npm ci
+      # The checkout above is the pull request's merge commit, so its package.json and
+      # its lockfile are the pull request's. Nothing out of them gets to run.
+      - run: npm ci --ignore-scripts
 
       - name: Check the graphs, and judge the change when asked to
         env:

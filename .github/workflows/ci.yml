@@ -1,12 +1,14 @@
 # The signal that says whether the code works. pr-report.yml builds the report a reviewer
 # reads; this is the pass/fail check beside it, on every pull request and every push to dev.
 #
-# Two claims get exercised. The matrix runs the tests on the supported floor (Node 22) as
-# well as the runtime development uses (Node 24), so an API that exists only in 24 fails
-# here rather than on a student's machine. The smoke jobs start the real server under Bun
-# and under Deno, because "the server avoids native modules and Node-only APIs where
-# possible, so `bunx` and `deno run npm:` work too" (docs/design.md, "CLI and
-# distribution") is a property nothing else touches.
+# Three claims get exercised. The matrix runs the tests on the supported floor (Node 22)
+# as well as the runtime development uses (Node 24), so an API that exists only in 24
+# fails here rather than on a student's machine. The smoke jobs start the real server
+# under Bun and under Deno, because "the server avoids native modules and Node-only APIs
+# where possible, so `bunx` and `deno run npm:` work too" (docs/design.md, "CLI and
+# distribution") is a property nothing else touches. And the install-scripts job shows
+# that --ignore-scripts, which every workflow here leans on, still suppresses what it
+# claims to.
 name: CI
 
 on:
@@ -15,6 +17,9 @@ on:
     branches:
       - dev
 
+# Read the tree and nothing else: this workflow runs tests and starts a server, and
+# writes to no part of GitHub. Every workflow here declares its own block rather than
+# inheriting one, and tools/ci/workflows.test.ts keeps that true.
 permissions:
   contents: read
 
@@ -59,6 +64,28 @@ jobs:
 
       - name: Test
         run: npm test
+
+  # Every workflow installs with --ignore-scripts, so that a dependency reached through a
+  # pull request cannot run code on a runner -- pr-report.yml's runner holds a token that
+  # can write to this repository. The flag is the whole defence, so it is watched rather
+  # than trusted: the script installs a package whose postinstall leaves a file behind,
+  # once without the flag and once with it, and fails unless the file appears the first
+  # time and not the second.
+  install-scripts:
+    name: An install script does not run
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # No cache: this job installs nothing of this repository's, on purpose. What it
+          # installs is one throwaway package built from tools/ci/__fixtures__.
+          node-version: 24
+
+      - name: Install a package that would leave a trace, and look for the trace
+        run: tools/ci/no-install-scripts.sh
 
   smoke:
     name: ${{ matrix.name }} start-up
