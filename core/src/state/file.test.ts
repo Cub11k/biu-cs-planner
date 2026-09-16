@@ -365,9 +365,9 @@ it("warns when a Blocked Time sits in a different Semester from its Timetable", 
 });
 
 /**
- * Comparing zero-padded "HH:MM" as strings is what every consumer of this shape will do, and
- * `23:00`–`01:00` is empty under that comparison rather than wrapping into the next Day. The
- * file keeps the entry; the Warning is what stops it from quietly keeping no time free.
+ * A Blocked Time lies within the one Day it names and never wraps, so `23:00`–`01:00` keeps no
+ * time free at all rather than running into the next Day. The file keeps the entry; the Warning
+ * is what stops it from quietly keeping no time free.
  */
 it("warns about a Blocked Time that ends at or before it starts, and keeps it", () => {
   const nightShift = fullFile();
@@ -394,6 +394,43 @@ it("warns about a Blocked Time that ends at or before it starts, and keeps it", 
       end: "10:00",
     },
   ]);
+});
+
+/**
+ * The other half of that night shift, and the reason this check reads minutes rather than
+ * comparing strings: as an `end`, `00:00` is the end of the Day, so `22:00`–`00:00` keeps the
+ * evening free and is the correct spelling of it. A Warning on the right answer is how a
+ * student learns to ignore all of them (issue #48).
+ */
+it("says nothing about a Blocked Time that runs to the end of the Day", () => {
+  const evening = fullFile();
+  evening.timetables[0]!.blockedTimes = [
+    { semester: "fall", day: "sunday", start: "22:00", end: "00:00", label: "work" },
+    { semester: "fall", day: "monday", start: "23:59", end: "00:00", label: "the last minute" },
+    { semester: "fall", day: "tuesday", start: "00:00", end: "08:00", label: "the night" },
+  ];
+
+  const result = parseStateFile(onDisk(evening));
+
+  expect(result.state?.timetables[0]?.blockedTimes).toEqual(evening.timetables[0]!.blockedTimes);
+  expect(result.warnings).toEqual([]);
+});
+
+/**
+ * Read from both ends of the same spelling, `00:00`–`00:00` is 0 to 1440: a Blocked Time over
+ * the whole Day. It is drawn full height, which is hard to enter by accident and impossible to
+ * miss, so it is taken at its word rather than warned about (issue #48).
+ */
+it("takes a Blocked Time of 00:00 to 00:00 as the whole Day, and says nothing", () => {
+  const allDay = fullFile();
+  allDay.timetables[0]!.blockedTimes = [
+    { semester: "fall", day: "sunday", start: "00:00", end: "00:00", label: "reserve duty" },
+  ];
+
+  const result = parseStateFile(onDisk(allDay));
+
+  expect(result.state?.timetables[0]?.blockedTimes).toEqual(allDay.timetables[0]!.blockedTimes);
+  expect(result.warnings).toEqual([]);
 });
 
 it("strips a key it does not know rather than carrying it", () => {
