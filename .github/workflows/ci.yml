@@ -74,6 +74,21 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Node is not one of the "it works here too" runtimes: it is the one the
+          # package runs on, and the one whose type stripping erases types instead of
+          # compiling them. `enum`, parameter properties, a namespace with values and
+          # `import =` have nothing to erase to, so they start the server on Bun and on
+          # Deno and fail here. tsconfig.base.json's erasableSyntaxOnly catches that when
+          # it is written; this leg catches what the compiler never sees -- a dependency,
+          # a generated file, or that flag being turned off again.
+          - runtime: node
+            name: Node
+            # The flag `npm run dev:server` passes. Node 22.18 and later strip types
+            # without being asked, but `engines` allows older 22s, and asking for
+            # stripping by name also says which of the two it is: stripping, never
+            # `--experimental-transform-types`, which would compile an enum and hide the
+            # very thing this leg is here to find.
+            start: node --experimental-strip-types server/src/serve.ts
           - runtime: bun
             name: Bun
             start: bun server/src/serve.ts
