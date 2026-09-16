@@ -6,6 +6,7 @@ import {
   parseWeeklyHours,
 } from "./details.ts";
 import { provenanceFromMeta } from "./meta.ts";
+import { overlappingMeetings } from "./overlaps.ts";
 import type { RawCrawl, RawCrawlRow } from "./raw-crawl.ts";
 
 export type { RawCrawl, RawCrawlRow };
@@ -13,6 +14,7 @@ import {
   CURRENT_CATALOG_SCHEMA_VERSION,
   type Catalog,
   type Group,
+  type Meeting,
   type Offering,
   type Provenance,
   type Semester,
@@ -21,6 +23,14 @@ import {
 
 export type Warning =
   | { kind: MeetingWarning | "semester-unreadable"; courseNumber: string; group: string }
+  | {
+      kind: "group-meetings-overlap";
+      courseNumber: string;
+      group: string;
+      lessonType: string;
+      first: Meeting;
+      second: Meeting;
+    }
   | { kind: "unusual-course-number"; courseNumber: string }
   | { kind: "course-number-unreadable"; code: string }
   | { kind: "detail-key-unreadable"; key: string }
@@ -310,6 +320,26 @@ export function importRawCrawl(
   }
 
   for (const offering of offerings.values()) offering.credits = creditsOf(offering);
+
+  // A Group that claims to meet in two places at once is a Catalog problem, not a Clash
+  // (#14), and not a reason to refuse anything: the Meetings are imported as they were read
+  // and the Warning says what was found, so a maintainer can compare it against the Shoham
+  // page. Every Group the merged Catalog holds is checked, since the Warnings describe what
+  // the import produces rather than only the rows this part carried.
+  for (const offering of offerings.values()) {
+    for (const group of offering.groups) {
+      for (const { first, second } of overlappingMeetings(group.meetings)) {
+        warnings.push({
+          kind: "group-meetings-overlap",
+          courseNumber: offering.courseNumber,
+          group: group.number,
+          lessonType: group.lessonType,
+          first,
+          second,
+        });
+      }
+    }
+  }
 
   const catalog: Catalog = {
     schemaVersion: CURRENT_CATALOG_SCHEMA_VERSION,
