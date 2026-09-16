@@ -16,16 +16,21 @@ import type { TestFile } from "../pr-report/tests.ts";
 /** The four workspaces the layering rule governs, in the order they may depend. */
 export const WORKSPACES = ["core", "app", "server", "web"] as const;
 
-export type Workspace = (typeof WORKSPACES)[number];
+/**
+ * Not the Workspace of `CONTEXT.md` — that is a student's folder of Catalogs and State
+ * Files, and `app` exports a `Workspace` type for it. This is the npm sense, the one
+ * `package.json` and `docs/design.md` use, so the name says which.
+ */
+export type WorkspaceName = (typeof WORKSPACES)[number];
 
 /**
  * One workspace's half of the rule: who it may import, and the sentence a reader gets
  * when something imports what it may not.
  */
 export type Layer = {
-  workspace: Workspace;
+  workspace: WorkspaceName;
   /** The workspaces this one may import. Every other workspace edge is forbidden. */
-  mayImport: readonly Workspace[];
+  mayImport: readonly WorkspaceName[];
   /** The rule in one sentence, quoted back beside any edge that breaks it. */
   rule: string;
 };
@@ -81,35 +86,37 @@ export const summarise = (): string =>
   ).join(", ");
 
 /**
- * Keyed by name rather than by `Workspace`, so a path segment or a package name read out
- * of the source can be looked up directly without being asserted into the type first.
+ * Keyed by plain string rather than by `WorkspaceName`, so a path segment or a package
+ * name read out of the source can be looked up directly without being asserted into the
+ * type first.
  */
 const BY_NAME: ReadonlyMap<string, Layer> = new Map(
   LAYERS.map((layer) => [layer.workspace, layer]),
 );
 
 /** The workspace a name refers to, if this project has one by that name. */
-const workspaceNamed = (name: string): Workspace | undefined => BY_NAME.get(name)?.workspace;
+const workspaceNamed = (name: string): WorkspaceName | undefined =>
+  BY_NAME.get(name)?.workspace;
 
 /** An import that points somewhere the layering rule does not allow. */
 export type ForbiddenEdge = {
   /** Repo-relative path of the file that writes the import. */
   from: string;
   /** The workspace that file belongs to. */
-  fromWorkspace: Workspace;
+  fromWorkspace: WorkspaceName;
   /**
    * What it imports: the repo-relative path when the import was written as a relative
    * one, the package name when it was written as `@biu-cs-planner/…`.
    */
   imported: string;
   /** The workspace the import lands in. */
-  toWorkspace: Workspace;
+  toWorkspace: WorkspaceName;
   /** The rule this edge breaks, as one sentence. */
   rule: string;
 };
 
 /** The workspace a repo-relative module path lives in, if it lives in one at all. */
-const workspaceOfPath = (path: string): Workspace | undefined =>
+const workspaceOfPath = (path: string): WorkspaceName | undefined =>
   workspaceNamed(path.split("/")[0] ?? "");
 
 /**
@@ -117,7 +124,7 @@ const workspaceOfPath = (path: string): Workspace | undefined =>
  * count: `zod`, `hono` and `react` say nothing about layering, and a scoped name that is
  * not one of the four (`@biu-cs-planner/tools`, say) is not a layer either.
  */
-function workspaceOfPackage(specifier: string): Workspace | undefined {
+function workspaceOfPackage(specifier: string): WorkspaceName | undefined {
   if (!specifier.startsWith("@biu-cs-planner/")) return undefined;
   // A deep import, `@biu-cs-planner/core/thing`, still lands in `core`.
   const name = specifier.slice("@biu-cs-planner/".length).split("/")[0] ?? "";
@@ -171,7 +178,7 @@ export function forbiddenEdges(
     from: string,
     workspace: string,
     imported: string,
-    to: Workspace | undefined,
+    to: WorkspaceName | undefined,
   ): void => {
     // Anything outside the four — `tools/`, say — is not governed by this rule at all.
     const layer = BY_NAME.get(workspace);
