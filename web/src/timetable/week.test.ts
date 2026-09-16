@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { Group, Semester } from "./catalog.ts";
 import {
@@ -6,7 +7,8 @@ import {
   formatClock,
   hourLines,
   hourRange,
-  parseClock,
+  parseClockAsEnd,
+  parseClockAsStart,
   tileBox,
   tileText,
   tilesFor,
@@ -35,21 +37,42 @@ function group(
 }
 
 describe("reading and writing a clock time", () => {
-  it("reads a time as minutes since midnight", () => {
-    expect(parseClock("00:00")).toBe(0);
-    expect(parseClock("15:30")).toBe(930);
-    expect(parseClock("23:59")).toBe(1439);
+  it("reads a time as minutes since the beginning of the day", () => {
+    expect(parseClockAsStart("00:00")).toBe(0);
+    expect(parseClockAsStart("15:30")).toBe(930);
+    expect(parseClockAsStart("23:59")).toBe(1439);
+  });
+
+  /**
+   * One spelling of midnight, and the position says which end of the day is meant: an `end`
+   * of `00:00` closes the day rather than opening it (issue #48).
+   */
+  it("reads an end of 00:00 as the end of the day and a start of it as the beginning", () => {
+    expect(parseClockAsEnd("00:00")).toBe(24 * 60);
+    expect(parseClockAsStart("00:00")).toBe(0);
+    expect(parseClockAsEnd("15:30")).toBe(930);
   });
 
   it("refuses a time it cannot place rather than guessing at one", () => {
-    expect(parseClock("24:00")).toBeUndefined();
-    expect(parseClock("9:00")).toBeUndefined();
-    expect(parseClock("")).toBeUndefined();
+    for (const refused of ["24:00", "9:00", "", "23:0009:00"]) {
+      expect(parseClockAsStart(refused)).toBeUndefined();
+      expect(parseClockAsEnd(refused)).toBeUndefined();
+    }
   });
 
   it("writes minutes back as a padded clock time", () => {
     expect(formatClock(0)).toBe("00:00");
     expect(formatClock(930)).toBe("15:30");
+  });
+
+  /**
+   * The end of the day is written the way it is read. A tile for `22:00`-`00:00` used to be
+   * labelled `22:00-24:00` and the hour gutter's last line read `24:00`; `24:00` is a number
+   * the grid computes with and a string the student never sees.
+   */
+  it("writes the end of the day back as 00:00, never as 24:00", () => {
+    expect(formatClock(24 * 60)).toBe("00:00");
+    expect(formatClock(23 * 60 + 59)).toBe("23:59");
   });
 });
 
@@ -109,6 +132,19 @@ describe("placing a Semester's Meetings", () => {
     const [tile] = tilesFor([lateClass], FALL);
 
     expect(tile).toMatchObject({ startMinutes: 22 * 60, endMinutes: 24 * 60 });
+  });
+
+  /**
+   * A start of `00:00` is the beginning of the day, so a Meeting written `00:00`-`08:00` is
+   * the night and a Meeting written `00:00`-`00:00` is the whole day. The reading no longer
+   * asks what the start was before deciding what the end means (issue #48).
+   */
+  it("reads a start of 00:00 as the beginning of the day, whatever the end says", () => {
+    const night = group("01", "הרצאה", [["tuesday", "00:00", "08:00"]]);
+    const allDay = group("02", "הרצאה", [["wednesday", "00:00", "00:00"]]);
+
+    expect(tilesFor([night], FALL)[0]).toMatchObject({ startMinutes: 0, endMinutes: 8 * 60 });
+    expect(tilesFor([allDay], FALL)[0]).toMatchObject({ startMinutes: 0, endMinutes: 24 * 60 });
   });
 
   it("gives Meetings that overlap a lane each, so none hides another", () => {
@@ -256,5 +292,48 @@ describe("what a tile says", () => {
   it("wraps the name to two lines, or one in a short block", () => {
     expect(tileText({ ...base, heightPx: 120 }).nameLines).toBe(2);
     expect(tileText({ ...base, heightPx: 40 }).nameLines).toBe(1);
+  });
+});
+
+/**
+ * `core` reads this same clock when it looks for Clashes, and `web` never imports `core`, so
+ * the rule is necessarily written twice and this table is the one place it is written down.
+ * `core/src/timetable/clashes.test.ts` asserts the same file against its own reading: a range
+ * whose two readings drift apart fails here, there, or both — which is the whole of issue #48.
+ *
+ * Both the reading and what it draws are checked, so that agreeing on the minutes while
+ * disagreeing on the tile is not a way to pass.
+ */
+const clockRanges: {
+  cases: { start: string; end: string; startMinutes: number; endMinutes: number; why: string }[];
+} = JSON.parse(
+  readFileSync(new URL("../../../fixtures/clock-ranges.json", import.meta.url), "utf8"),
+);
+
+describe("the clock the shared table says core and web both read", () => {
+  it("reads every range in the table the way the table says", () => {
+    expect(clockRanges.cases.length).toBeGreaterThan(0);
+
+    for (const range of clockRanges.cases) {
+      const read = `${range.start}-${range.end}: ${range.why}`;
+
+      expect([read, parseClockAsStart(range.start)]).toEqual([read, range.startMinutes]);
+      expect([read, parseClockAsEnd(range.end)]).toEqual([read, range.endMinutes]);
+    }
+  });
+
+  it("draws exactly those ranges in the table that occupy time, at the minutes it gives", () => {
+    for (const range of clockRanges.cases) {
+      const read = `${range.start}-${range.end}: ${range.why}`;
+      const occupiesTime = range.endMinutes > range.startMinutes;
+      const meeting = group("01", "הרצאה", [["sunday", range.start, range.end]]);
+
+      const drawn = tilesFor([meeting], FALL).map((tile) => [tile.startMinutes, tile.endMinutes]);
+
+      expect([read, drawn]).toEqual([
+        read,
+        occupiesTime ? [[range.startMinutes, range.endMinutes]] : [],
+      ]);
+    }
   });
 });
