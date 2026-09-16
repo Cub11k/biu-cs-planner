@@ -8,7 +8,8 @@ import type { TestFile } from "../pr-report/tests.ts";
  * that breaks the layering rule without closing a loop.
  *
  * So the rule is stated here the way `CLAUDE.md` and `docs/design.md` state it — as a
- * direction — and every edge outside it is a finding. Nothing here re-reads the source:
+ * direction, and for one edge as a direction and a kind — and every edge outside it is a
+ * finding. Nothing here re-reads the source:
  * the modules come from `tools/pr-report/collect.ts`, the same ones the report and the
  * cycle check describe.
  */
@@ -47,7 +48,10 @@ const terms = (
  */
 export type Layer = {
   workspace: WorkspaceName;
-  /** The workspaces this one may import. Every other workspace edge is forbidden. */
+  /**
+   * The edges this workspace may have, a bare name each unless the edge is narrower than
+   * the workspace. Every other workspace edge is forbidden.
+   */
   mayImport: readonly AllowedImport[];
   /** The rule in one sentence, quoted back beside any edge that breaks it. */
   rule: string;
