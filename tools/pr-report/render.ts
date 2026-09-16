@@ -66,6 +66,23 @@ function logicFlow(edges: CallEdge[]): string {
   return lines.join("\n");
 }
 
+/**
+ * A section GitHub keeps shut until someone asks for it.
+ *
+ * Most of this report is reference material — every test title, every edge of two graphs —
+ * and a reviewer scanning a pull request reads none of it in passing. Shut, each section is
+ * one line carrying its own size, so the choice to open it is made knowing what it costs.
+ *
+ * The blank line after `</summary>` is load-bearing. Without it GitHub renders the body as
+ * literal text instead of markdown, which is how a folded table becomes a wall of pipes.
+ */
+function fold(summary: string, body: readonly string[]): string[] {
+  return ["<details>", `<summary>${summary}</summary>`, "", ...body, "</details>", ""];
+}
+
+/** A fold's title. Bold rather than a heading: `<summary>` renders no `###`. */
+const title = (text: string, size: string): string => `<strong>${text}</strong> — ${size}`;
+
 export function render(report: Report): string {
   const { modules, tests, coverage, edges, unmeasured } = report;
   const cases = tests.reduce((n, t) => n + t.cases.length, 0);
@@ -77,6 +94,8 @@ export function render(report: Report): string {
     "Everything below is derived from the source and from a real test run. " +
       "Nothing is summarised by hand, so if it disagrees with the code, it is the report that is wrong.",
   );
+  out.push("");
+  out.push("The sections fold open. Each says how much is inside before you spend the scroll on it.");
   out.push("");
 
   const t = coverage.total;
@@ -96,65 +115,73 @@ export function render(report: Report): string {
   if (unmeasured.length) out.push(`| Modules with no coverage at all | ${unmeasured.length} |`);
   out.push("");
 
-  out.push("### How the modules depend on each other");
-  out.push("");
-  out.push("```mermaid");
-  out.push(moduleMap(modules));
-  out.push("```");
-  out.push("");
+  const paths = new Set(modules.map((m) => m.path));
+  const imports = modules.reduce((n, m) => n + m.imports.filter((d) => paths.has(d)).length, 0);
+  out.push(
+    ...fold(title("How the modules depend on each other", `${modules.length} modules, ${imports} imports`), [
+      "```mermaid",
+      moduleMap(modules),
+      "```",
+      "",
+    ]),
+  );
 
-  out.push("### How a value flows through the functions");
-  out.push("");
-  out.push("Calls between the project's own functions. Library calls are left out.");
-  out.push("");
-  out.push("```mermaid");
-  out.push(logicFlow(edges));
-  out.push("```");
-  out.push("");
+  const functions = new Set(edges.flatMap((e) => [e.from, e.to])).size;
+  const calls = new Set(edges.map((e) => `${e.from}->${e.to}`)).size;
+  out.push(
+    ...fold(title("How a value flows through the functions", `${functions} functions, ${calls} calls`), [
+      "Calls between the project's own functions. Library calls are left out.",
+      "",
+      "```mermaid",
+      logicFlow(edges),
+      "```",
+      "",
+    ]),
+  );
 
-  out.push("### The shapes the data takes");
-  out.push("");
-  out.push("<details><summary>Exported types, as declared</summary>");
-  out.push("");
+  const shapes: string[] = [];
+  let typeCount = 0;
   for (const m of modules) {
     const types = m.exports.filter((e) => e.kind === "type");
     if (!types.length) continue;
-    out.push(`**${moduleName(m.path)}**`);
-    out.push("");
-    out.push("```ts");
-    for (const e of types) out.push(`type ${e.name} = ${e.signature}`);
-    out.push("```");
-    out.push("");
+    typeCount += types.length;
+    shapes.push(`**${moduleName(m.path)}**`);
+    shapes.push("");
+    shapes.push("```ts");
+    for (const e of types) shapes.push(`type ${e.name} = ${e.signature}`);
+    shapes.push("```");
+    shapes.push("");
   }
-  out.push("</details>");
-  out.push("");
+  out.push(...fold(title("The shapes the data takes", `${typeCount} exported types`), shapes));
 
-  out.push("### What the tests claim the code does");
-  out.push("");
-  out.push("Test titles, verbatim. This is the specification the change is held to.");
-  out.push("");
+  const claims: string[] = [];
+  claims.push("Test titles, verbatim. This is the specification the change is held to.");
+  claims.push("");
   for (const file of tests) {
     if (!file.cases.length) continue;
-    out.push(`**${file.path}** — ${file.cases.length} tests`);
-    out.push("");
+    claims.push(`**${file.path}** — ${file.cases.length} tests`);
+    claims.push("");
     for (const c of file.cases) {
-      out.push(`- ${c.suite.length ? `*${c.suite.join(" › ")}* — ` : ""}${c.title}`);
+      claims.push(`- ${c.suite.length ? `*${c.suite.join(" › ")}* — ` : ""}${c.title}`);
     }
-    out.push("");
+    claims.push("");
   }
+  out.push(...fold(title("What the tests claim the code does", `${cases} tests in ${tests.length} files`), claims));
 
-  out.push("### Coverage, file by file");
-  out.push("");
-  out.push("| Module | Statements | Branches | Functions | Uncovered lines |");
-  out.push("|---|---:|---:|---:|---:|");
   const rows = [...coverage.byFile.entries()].sort((a, b) => a[1].branches - b[1].branches);
+  const byFile: string[] = [];
+  byFile.push("| Module | Statements | Branches | Functions | Uncovered lines |");
+  byFile.push("|---|---:|---:|---:|---:|");
   for (const [path, c] of rows) {
-    out.push(
+    byFile.push(
       `| \`${moduleName(path)}\` | ${c.statements}% | ${c.branches}% | ${c.functions}% | ${c.uncoveredLines} |`,
     );
   }
-  out.push("");
+  byFile.push("");
+  out.push(...fold(title("Coverage, file by file", `${rows.length} modules`), byFile));
 
+  // Open, and last. It is the only section that says where to spend attention, and folding
+  // it would hide the one part of this report written to be read rather than consulted.
   out.push("### Where to look, if you look anywhere");
   out.push("");
   const weak = rows.filter(([, c]) => c.branches < 85);
