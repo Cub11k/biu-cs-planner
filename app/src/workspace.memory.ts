@@ -1,4 +1,5 @@
 import {
+  requireStateFileName,
   WORKSPACE_LAYOUT,
   type Workspace,
   type WorkspaceChanged,
@@ -28,12 +29,39 @@ export type MemoryWorkspace = Workspace & {
   watching(): number;
 };
 
-const key = (ref: WorkspaceRef): string => `${ref.kind}:${ref.academicYear}`;
+/**
+ * A ref as one string, so a Map can be keyed by it — and the place the double makes the same
+ * refusal the real adapter makes when it turns a name into a path, through the same function.
+ * A double that accepted a name a disk refuses would prove a use case works where it does not.
+ *
+ * Two things a Map cannot stand in for, and they are the double's known limits rather than
+ * the port's: a key is matched exactly, so `alice` and `Alice` are two files here and one on
+ * macOS or Windows, and a name is held in the form it arrived in, where macOS stores it
+ * decomposed and hands a different string back. A use case that turns on either belongs in
+ * `server/src/workspace.fs.test.ts`, against a real folder.
+ */
+const key = (ref: WorkspaceRef): string => {
+  switch (ref.kind) {
+    case "catalog":
+      return `catalog:${ref.academicYear}`;
+    case "state":
+      requireStateFileName(ref.name);
+      return `state:${ref.name}`;
+  }
+};
+
+/**
+ * What a file holds: JSON, so a value JSON cannot express is refused here as the real adapter
+ * refuses it, and what `read` hands back is a copy rather than the caller's own object. A
+ * double that stored the object itself would let a use case mutate a "file" after writing it
+ * and still pass.
+ */
+const stored = (data: unknown): unknown => JSON.parse(JSON.stringify(data)) as unknown;
 
 export function memoryWorkspace(
   options: { created?: boolean } = {},
 ): MemoryWorkspace {
-  const files = new Map<string, unknown>();
+  const files = new Map<string, { ref: WorkspaceRef; data: unknown }>();
   const writes: WorkspaceRef[] = [];
   let folders: WorkspaceFolder[] = options.created ? [...WORKSPACE_LAYOUT] : [];
   const watchers = new Set<WorkspaceChanged>();
@@ -57,15 +85,24 @@ export function memoryWorkspace(
       changed();
     },
     async list(kind): Promise<WorkspaceRef[]> {
-      return [...files.keys()]
-        .filter((k) => k.startsWith(`${kind}:`))
-        .map((k) => ({ kind: "catalog", academicYear: Number(k.split(":")[1]) }));
+      // Ordered by key, because the real adapter's listing is ordered: a test that read this
+      // one in the order things were written in would pass here and not on a disk.
+      return [...files]
+        .filter(([, held]) => held.ref.kind === kind)
+        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+        .map(([, held]) => held.ref);
     },
     async read(ref): Promise<unknown> {
-      return files.get(key(ref));
+      return files.get(key(ref))?.data;
     },
     async write(ref, data): Promise<void> {
-      files.set(key(ref), data);
+      const at = key(ref);
+      // Refused before the layout exists, as the real adapter refuses it: nothing is written
+      // into a folder the student has not agreed to make a Workspace.
+      if (folders.length < WORKSPACE_LAYOUT.length) {
+        throw new Error("refusing to write: the Workspace layout does not exist yet");
+      }
+      files.set(at, { ref, data: stored(data) });
       writes.push(ref);
       changed();
     },
@@ -76,7 +113,7 @@ export function memoryWorkspace(
     },
     written: () => [...writes],
     seed: (ref, data) => {
-      files.set(key(ref), data);
+      files.set(key(ref), { ref, data: stored(data) });
       changed();
     },
     remove: (ref) => {

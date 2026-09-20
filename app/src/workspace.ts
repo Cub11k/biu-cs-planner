@@ -9,7 +9,53 @@ export type WorkspaceFolder = "catalogs" | "requirements" | "backups";
 /** A Catalog holds one Academic Year, so the year identifies the file. */
 export type CatalogRef = { kind: "catalog"; academicYear: number };
 
-export type WorkspaceRef = CatalogRef;
+/**
+ * A Workspace holds one or more State Files, at its root rather than in a folder of the
+ * layout — `alice.state.json` — so the name is what tells them apart (docs/design.md,
+ * "Storage"). The name is a name and never a path: `isStateFileName` says which ones are,
+ * and an adapter refuses the rest.
+ */
+export type StateFileRef = { kind: "state"; name: string };
+
+export type WorkspaceRef = CatalogRef | StateFileRef;
+
+/**
+ * Literal patterns, never built from data (ADR-0007).
+ *
+ * `NAME_FORBIDS`: a path separator on either platform, a character Windows refuses in a file
+ * name, and — through `\p{C}` — every control, format, surrogate and unassigned code point.
+ * The `\p{C}` half is what refuses a zero-width space or a left-to-right mark, which pass a
+ * `trim()` and leave two State Files that are indistinguishable in a listing and in the UI.
+ * Hebrew, its punctuation and an emoji all pass, which is the point of naming what is refused
+ * rather than an alphabet to draw from.
+ *
+ * `WINDOWS_DEVICE`: names Win32 reserves whatever is appended to them, so `NUL.state.json`
+ * resolves to the null device — a save that reports success and writes the bytes nowhere,
+ * which is the one failure worse than a refusal. Nothing in the repo claims Windows support
+ * and no CI leg runs there, so this is untestable here and is refused rather than risked.
+ */
+const NAME_FORBIDS = /[/\\:*?"<>|]|\p{C}/u;
+const WINDOWS_DEVICE = /^(con|prn|aux|nul|com[1-9]|lpt[1-9]|conin\$|conout\$)$/i;
+
+/**
+ * Whether a name can be a State File's. This is the first ref that carries free text rather
+ * than a number, so it is the first that could smuggle a path across the boundary — and the
+ * rule lives here, in the port, so that both adapters refuse the same set rather than one of
+ * them relying on a check the other happens to make (ADR-0003).
+ *
+ * A list of what a name may not be rather than an alphabet it must be drawn from, because a
+ * student writing Hebrew should be able to name their own file: empty, longer than 64
+ * characters, something `NAME_FORBIDS` or `WINDOWS_DEVICE` names, starting with a dot — which
+ * is `.` and `..` and every hidden file, the adapter's own temporary among them — or padded
+ * with whitespace, which no one can see in a name.
+ */
+export function isStateFileName(name: string): boolean {
+  if (name.length === 0 || name.length > 64) return false;
+  if (name.startsWith(".")) return false;
+  if (name !== name.trim()) return false;
+  if (WINDOWS_DEVICE.test(name)) return false;
+  return !NAME_FORBIDS.test(name);
+}
 
 export type WorkspaceStatus = {
   ready: boolean;
@@ -27,6 +73,17 @@ export const WORKSPACE_LAYOUT: WorkspaceFolder[] = ["catalogs", "requirements", 
  */
 export class WorkspaceRefusedError extends Error {
   override readonly name = "WorkspaceRefusedError";
+}
+
+/**
+ * The refusal itself, so that both adapters make it in the same words rather than each
+ * spelling out its own: a name that is not one is a target a Workspace will not touch.
+ */
+export function requireStateFileName(name: string): void {
+  if (isStateFileName(name)) return;
+  throw new WorkspaceRefusedError(
+    `refusing a State File named ${JSON.stringify(name)}: a name, never a path`,
+  );
 }
 
 /**

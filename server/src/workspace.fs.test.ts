@@ -398,3 +398,108 @@ it("watches an ordinary folder that is not a Workspace yet without failing", asy
   expect(watcher).toBeDefined();
   watcher.stop();
 });
+
+/**
+ * A State File sits at the Workspace root rather than in a folder of the layout, because a
+ * Workspace holds one or more of them and the name is what tells them apart
+ * (docs/design.md, "Storage").
+ */
+const STATE = {
+  schemaVersion: 1,
+  attempts: [],
+  timetables: [],
+  pins: [],
+  settings: { language: "en", examSpacingDays: 3 },
+};
+
+it("stores a State File at the Workspace root, under the name it was given", async () => {
+  const workspace = fileSystemWorkspace(root);
+  await workspace.create();
+
+  await workspace.write({ kind: "state", name: "alice" }, STATE);
+
+  expect(await workspace.read({ kind: "state", name: "alice" })).toEqual(STATE);
+  const raw = await readFile(join(root, "alice.state.json"), "utf8");
+  expect(JSON.parse(raw)).toEqual(STATE);
+});
+
+it("reports a State File that is not there as absent rather than failing", async () => {
+  const workspace = fileSystemWorkspace(root);
+  await workspace.create();
+
+  expect(await workspace.read({ kind: "state", name: "nobody" })).toBeUndefined();
+});
+
+it("lists the State Files the Workspace holds, and nothing else at its root", async () => {
+  const workspace = fileSystemWorkspace(root);
+  await workspace.create();
+  await workspace.write({ kind: "state", name: "bob" }, STATE);
+  await workspace.write({ kind: "state", name: "alice" }, STATE);
+  await workspace.write({ kind: "catalog", academicYear: 2027 }, CATALOG);
+  // neither a Catalog nor anything else at the root is a State File
+  await writeFile(join(root, "notes.txt"), "ignore me");
+  await writeFile(join(root, "alice.json"), "{}");
+
+  expect(await workspace.list("state")).toEqual([
+    { kind: "state", name: "alice" },
+    { kind: "state", name: "bob" },
+  ]);
+  expect(await workspace.list("catalog")).toEqual([{ kind: "catalog", academicYear: 2027 }]);
+});
+
+/**
+ * The first ref that carries free text rather than a number, so this is where a path could be
+ * smuggled in. A name is a name: the adapter builds the path and refuses anything that would
+ * steer it (ADR-0003).
+ */
+it("refuses a State File whose name is a path rather than a name", async () => {
+  const workspace = fileSystemWorkspace(root);
+  await workspace.create();
+
+  for (const name of ["../escaped", "sub/alice", "alice/../../escaped", "", ".hidden", ".."]) {
+    await expect(workspace.read({ kind: "state", name })).rejects.toThrow(
+      /WorkspaceRefusedError|refusing/,
+    );
+    await expect(workspace.write({ kind: "state", name }, STATE)).rejects.toThrow(
+      /WorkspaceRefusedError|refusing/,
+    );
+  }
+  expect((await readdir(root)).sort()).toEqual([".backups", "catalogs", "requirements"]);
+});
+
+/**
+ * A State File's temporary is written at the Workspace root rather than in a folder of the
+ * layout, so the cleanup that keeps a failed save from littering the Workspace has a path of
+ * its own. The failure has to come from the *rename* for that path to run at all: a value
+ * `JSON.stringify` rejects never reaches the filesystem, and a root a write cannot open never
+ * gets a temporary to clean up. A directory where the file belongs is a rename that cannot be
+ * made with the temporary already written — which is the only shape that proves the `rm`.
+ */
+it("cleans up its temporary when the rename it needs cannot be made", async () => {
+  const workspace = fileSystemWorkspace(root);
+  await workspace.create();
+  await mkdir(join(root, "alice.state.json"));
+
+  await expect(workspace.write({ kind: "state", name: "alice" }, STATE)).rejects.toThrow();
+
+  expect((await readdir(root)).sort()).toEqual([
+    ".backups",
+    "alice.state.json",
+    "catalogs",
+    "requirements",
+  ]);
+});
+
+/**
+ * A State File sits at the root, and a root exists whether or not the folder is a Workspace,
+ * so the refusal a Catalog gets from the folder that is not there has to be made outright for
+ * this one. Nothing is written into a folder the student has not agreed to (docs/design.md).
+ */
+it("refuses to write a State File into a folder that is not a Workspace yet", async () => {
+  const workspace = fileSystemWorkspace(root);
+
+  await expect(workspace.write({ kind: "state", name: "alice" }, STATE)).rejects.toThrow(
+    /layout does not exist/,
+  );
+  expect(await readdir(root)).toEqual([]);
+});

@@ -1,7 +1,9 @@
 import { watch, type FSWatcher } from "node:fs";
 import { mkdir, readdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, join, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import {
+  isStateFileName,
+  requireStateFileName,
   WORKSPACE_LAYOUT,
   WorkspaceRefusedError,
   type Workspace,
@@ -18,6 +20,7 @@ import {
  *
  *   <root>/catalogs/<year>.json
  *   <root>/requirements/
+ *   <root>/<name>.state.json
  *   <root>/.backups/
  */
 const DIRECTORY: Record<WorkspaceFolder, string> = {
@@ -26,7 +29,12 @@ const DIRECTORY: Record<WorkspaceFolder, string> = {
   backups: ".backups",
 };
 
+/** The refusal a write makes before the student has agreed to the layout. */
+const NOT_A_WORKSPACE = "refusing to write: the Workspace layout does not exist yet";
+
+/** Literal patterns, never built from data (ADR-0007). */
 const CATALOG_FILE = /^(\d{4})\.json$/;
+const STATE_FILE = /^(.+)\.state\.json$/;
 
 /**
  * The folders a watch covers: the Workspace root, plus these. The layout minus `.backups`,
@@ -54,9 +62,38 @@ async function realPathOrAbsent(path: string): Promise<string | undefined> {
 export function fileSystemWorkspace(rootPath: string): Workspace {
   const root = resolve(rootPath);
 
-  const folderPath = (ref: WorkspaceRef): string => join(root, DIRECTORY[folderFor(ref)]);
-  const filePath = (ref: WorkspaceRef): string =>
-    join(folderPath(ref), `${ref.academicYear}.json`);
+  /** Where a kind of file lives: a folder of the layout, or the Workspace root itself. */
+  const folderPath = (ref: { kind: WorkspaceRef["kind"] }): string => {
+    const folder = folderFor(ref);
+    return folder === undefined ? root : join(root, DIRECTORY[folder]);
+  };
+
+  const filePath = (ref: WorkspaceRef): string => {
+    switch (ref.kind) {
+      case "catalog":
+        return join(folderPath(ref), `${ref.academicYear}.json`);
+      case "state":
+        // The only ref carrying free text, so the only one that could steer this anywhere
+        // but the root. The rule and the refusal are both the port's, so the in-memory double
+        // refuses the same names in the same words; refusing here, before a path is built, is
+        // what keeps `..` from ever being resolved.
+        requireStateFileName(ref.name);
+        return join(root, `${ref.name}.state.json`);
+    }
+  };
+
+  /**
+   * The temporary file a write goes through, in the folder holding the file it replaces so
+   * that the rename stays within one filesystem and is therefore atomic. The pid is in the
+   * name so two servers on one Workspace cannot write the same temporary, and the real name
+   * follows it so a stray one says which file it was a write of.
+   *
+   * A State File's temporary still ends in `.state.json`, so what keeps it out of a listing
+   * is the leading dot: `isStateFileName` refuses a name starting with one, and `list`
+   * filters by the same rule it writes by.
+   */
+  const temporaryPath = (ref: WorkspaceRef): string =>
+    join(folderPath(ref), `.tmp-${process.pid}-${basename(filePath(ref))}`);
 
   const within = (real: string, realRoot: string): boolean =>
     real === realRoot || real.startsWith(realRoot + sep);
@@ -88,21 +125,30 @@ export function fileSystemWorkspace(rootPath: string): Workspace {
     return { path: target };
   };
 
-  /** A folder counts towards the layout only if it exists *and* stays inside. */
-  const usableFolder = async (folder: WorkspaceFolder): Promise<string | undefined> => {
-    const path = join(root, DIRECTORY[folder]);
+  /** A folder is usable only if it exists *and* stays inside the Workspace. */
+  const usablePath = async (path: string): Promise<string | undefined> => {
     const realRoot = await realPathOrAbsent(root);
     const real = await realPathOrAbsent(path);
     if (realRoot === undefined || real === undefined) return undefined;
     return within(real, realRoot) ? path : undefined;
   };
 
+  /** A folder counts towards the layout only if it is usable. */
+  const usableFolder = (folder: WorkspaceFolder): Promise<string | undefined> =>
+    usablePath(join(root, DIRECTORY[folder]));
+
+  /** The parts of the layout that are not there, which is what "not a Workspace" means. */
+  const missingFolders = async (): Promise<WorkspaceFolder[]> => {
+    const missing: WorkspaceFolder[] = [];
+    for (const folder of WORKSPACE_LAYOUT) {
+      if ((await usableFolder(folder)) === undefined) missing.push(folder);
+    }
+    return missing;
+  };
+
   return {
     async status(): Promise<WorkspaceStatus> {
-      const missing: WorkspaceFolder[] = [];
-      for (const folder of WORKSPACE_LAYOUT) {
-        if ((await usableFolder(folder)) === undefined) missing.push(folder);
-      }
+      const missing = await missingFolders();
       return { ready: missing.length === 0, missing };
     },
 
@@ -113,7 +159,7 @@ export function fileSystemWorkspace(rootPath: string): Workspace {
     },
 
     async list(kind): Promise<WorkspaceRef[]> {
-      const folder = await usableFolder(folderFor({ kind }));
+      const folder = await usablePath(folderPath({ kind }));
       if (folder === undefined) return [];
 
       let entries: string[];
@@ -121,6 +167,18 @@ export function fileSystemWorkspace(rootPath: string): Workspace {
         entries = await readdir(folder);
       } catch {
         return [];
+      }
+      if (kind === "state") {
+        // A State File shares the root with the layout and with whatever else the student
+        // keeps there, so a name this adapter would refuse to write is not listed either —
+        // its own temporary file, which starts with a dot, among them.
+        return entries
+          .flatMap((entry) => {
+            const name = STATE_FILE.exec(entry)?.[1];
+            return name !== undefined && isStateFileName(name) ? [name] : [];
+          })
+          .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+          .map((name) => ({ kind: "state" as const, name }));
       }
       return entries
         .map((name) => CATALOG_FILE.exec(name))
@@ -161,16 +219,19 @@ export function fileSystemWorkspace(rootPath: string): Workspace {
       requireJsonName(target);
 
       const check = await contained(target);
-      if ("missing" in check) {
-        throw new Error("refusing to write: the Workspace layout does not exist yet");
+      // A Catalog's folder not being there is what makes the target missing, so that check
+      // is also the one that keeps a Catalog out of a folder nobody agreed to.
+      if ("missing" in check) throw new Error(NOT_A_WORKSPACE);
+      // A State File lives at the root, and a root exists whether or not the folder is a
+      // Workspace, so for that one the layout is asked about outright. Nothing is written
+      // into a folder the student has not agreed to (docs/design.md, "Storage").
+      if (ref.kind === "state" && (await missingFolders()).length > 0) {
+        throw new Error(NOT_A_WORKSPACE);
       }
       // serialise first: a value that cannot be written must not reach the filesystem
       const json = JSON.stringify(data, null, 2) + "\n";
 
-      const temporary = join(
-        folderPath(ref),
-        `.tmp-${ref.academicYear}-${process.pid}.json`,
-      );
+      const temporary = temporaryPath(ref);
       try {
         await writeFile(temporary, json, "utf8");
         await rename(temporary, check.path);
@@ -280,17 +341,23 @@ export function fileSystemWorkspace(rootPath: string): Workspace {
   };
 }
 
-/** Which part of the layout a reference lives in. */
-function folderFor(ref: { kind: WorkspaceRef["kind"] }): WorkspaceFolder {
+/**
+ * Which part of the layout a reference lives in, or `undefined` for one that lives at the
+ * Workspace root — which a State File does, because a Workspace holds one or more of them
+ * and the design puts them there (docs/design.md, "Storage").
+ */
+function folderFor(ref: { kind: WorkspaceRef["kind"] }): WorkspaceFolder | undefined {
   switch (ref.kind) {
     case "catalog":
       return "catalogs";
+    case "state":
+      return undefined;
   }
 }
 
 /**
  * Only `.json` is read or written, the temporary file a write goes through included —
- * which is why that one is named `.tmp-<year>-<pid>.json` rather than ending in `.tmp`.
+ * which is why that one is named `.tmp-<pid>-<the real name>` rather than ending in `.tmp`.
  * Every name this module builds satisfies the rule, so this guards a future caller
  * rather than today's one. That is the point: the rule should not depend on being
  * remembered.

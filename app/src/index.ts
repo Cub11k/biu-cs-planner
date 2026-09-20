@@ -15,9 +15,12 @@ export {
   type WorkspaceChangesOptions,
 } from "./changes.ts";
 export {
+  isStateFileName,
+  requireStateFileName,
   WORKSPACE_LAYOUT,
   WorkspaceRefusedError,
   type CatalogRef,
+  type StateFileRef,
   type Workspace,
   type WorkspaceChanged,
   type WorkspaceFolder,
