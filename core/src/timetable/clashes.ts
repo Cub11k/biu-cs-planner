@@ -93,6 +93,12 @@ function overlapOf(a: WeeklySpan, b: WeeklySpan): WeeklySpan | undefined {
   const aEnd = clockAsEnd(a.end);
   const bStart = clockAsStart(b.start);
   const bEnd = clockAsEnd(b.end);
+  // `undefined` says four things here: another Day or Semester, a time that could not be read, a
+  // range occupying no time, and two ranges that simply do not meet. The unreadable one is an
+  // accepted silence, not an oversight: the Shoham dialect refuses such a time and never builds the
+  // Meeting, and `blockedTimeSchema` and `pickedMeetingSchema` refuse it with `parseStateFile`
+  // dropping the entry, so a span arriving here unreadable is a schema bug to fix at the schema.
+  // That it Clashes with nothing instead of warning is the cost #71 accepted (ADR-0012).
   if (aStart === undefined || aEnd === undefined) return undefined;
   if (bStart === undefined || bEnd === undefined) return undefined;
   if (aEnd <= aStart || bEnd <= bStart) return undefined;

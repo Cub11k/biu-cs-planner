@@ -92,6 +92,9 @@ export function meetingsOccupyingNoTime(meetings: readonly Meeting[]): MeetingOc
   for (const meeting of meetings) {
     const start = clockAsStart(meeting.start);
     const end = clockAsEnd(meeting.end);
+    // The same accepted silence as `overlapOf`'s, one layer over and for the same reason: the
+    // Importer has already refused such a time, so a second Warning would be one nobody can act
+    // on (#71).
     if (start === undefined || end === undefined) continue;
     if (end > start) continue;
     empty.push({ meeting, shape: end === start ? "does-not-advance" : "reads-as-wrapping" });
