@@ -999,6 +999,125 @@ it("says nothing about a Group this part never carried, however the Catalog hold
   expect(exceptProvenance(warnings)).toEqual([]);
 });
 
+it("warns when a Meeting occupies no time, naming the Course, the Group and the Meeting", () => {
+  // Shoham sends this Group as meeting on Tuesday from 16:00 to 16:00. Such a Meeting Clashes
+  // with nothing and is placed nowhere, so without this nothing anywhere would mention it --
+  // and unlike a Blocked Time (#39) the student cannot repair it, since it is the university's
+  // data or the crawl's reading of it.
+  const { catalog, warnings } = importRawCrawl(
+    { rows: [row({ hours: "16:00 - 16:00" })] },
+    { academicYear: YEAR_2027 },
+  );
+
+  expect(exceptProvenance(warnings)).toEqual([
+    {
+      kind: "meeting-occupies-no-time",
+      courseNumber: "89-110",
+      semesters: ["fall"],
+      group: "01",
+      lessonType: "הרצאה",
+      meeting: { semester: "fall", day: "tuesday", start: "16:00", end: "16:00" },
+      range: "does-not-advance",
+    },
+  ]);
+  // the Warning never blocks: the Meeting is imported as it was read, neither repaired nor dropped
+  expect(catalog.offerings[0]!.groups[0]!.meetings).toEqual([
+    { semester: "fall", day: "tuesday", start: "16:00", end: "16:00" },
+  ]);
+});
+
+it("says a Meeting that reads as wrapping past midnight apart from one that does not advance", () => {
+  const { warnings } = importRawCrawl(
+    { rows: [row({ hours: "23:00 - 01:00" })] },
+    { academicYear: YEAR_2027 },
+  );
+
+  expect(exceptProvenance(warnings)).toEqual([
+    {
+      kind: "meeting-occupies-no-time",
+      courseNumber: "89-110",
+      semesters: ["fall"],
+      group: "01",
+      lessonType: "הרצאה",
+      meeting: { semester: "fall", day: "tuesday", start: "23:00", end: "01:00" },
+      range: "reads-as-wrapping",
+    },
+  ]);
+});
+
+it("does not warn about a Meeting of 16:00 - 17:00, which occupies an hour", () => {
+  const { warnings } = importRawCrawl(
+    { rows: [row({ hours: "16:00 - 17:00" })] },
+    { academicYear: YEAR_2027 },
+  );
+
+  expect(exceptProvenance(warnings)).toEqual([]);
+});
+
+it("does not warn about an evening Meeting that ends at 00:00", () => {
+  // #48: as an `end`, 00:00 is the end of the Day, so 22:00-00:00 is two evening hours.
+  const { warnings } = importRawCrawl(
+    { rows: [row({ hours: "22:00 - 00:00" })] },
+    { academicYear: YEAR_2027 },
+  );
+
+  expect(exceptProvenance(warnings)).toEqual([]);
+});
+
+it("names the Semesters, since a Year-long Offering numbers its Groups from 01 as well", () => {
+  const { warnings } = importRawCrawl(
+    {
+      rows: [
+        row({ semester: "סמסטר א'סמסטר ב'", hours: "16:00 - 16:00\n16:00 - 16:00" }),
+        row({ hours: "16:00 - 16:00" }),
+      ],
+    },
+    { academicYear: YEAR_2027 },
+  );
+
+  const noTime = exceptProvenance(warnings).filter((w) => w.kind === "meeting-occupies-no-time");
+  expect(noTime.map((w) => (w as { semesters: string[] }).semesters)).toEqual([
+    ["fall", "spring"],
+    ["fall", "spring"],
+    ["fall"],
+  ]);
+});
+
+it("says nothing about a no-time Meeting on a Group this part never carried", () => {
+  // As with an overlap: the part that brought the Group is where it was reported, and
+  // re-reading it out of the Catalog would repeat the Warning on every later merge.
+  const { warnings } = importRawCrawl(
+    { rows: [row({ code: "89132", group: "02" })] },
+    {
+      academicYear: YEAR_2027,
+      into: {
+        schemaVersion: 1,
+        academicYear: YEAR_2027,
+        sources: [],
+        offerings: [
+          {
+            courseNumber: "89-210",
+            nameHebrew: "מבני נתונים",
+            semesters: ["fall"],
+            credits: { known: false },
+            exams: { known: false, sittings: [] },
+            groups: [
+              {
+                number: "04",
+                lessonType: "תרגיל",
+                lecturers: [],
+                meetings: [{ semester: "fall", day: "monday", start: "10:00", end: "10:00" }],
+              },
+            ],
+          },
+        ],
+      },
+    },
+  );
+
+  expect(exceptProvenance(warnings)).toEqual([]);
+});
+
 // --- what a part supersedes, and what it reports changing (issue #22) ---------
 //
 // #9 settled a repeated row updating the Group it names. The other half of a re-crawl is a

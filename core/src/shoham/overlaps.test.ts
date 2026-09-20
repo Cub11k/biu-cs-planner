@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import type { Meeting } from "../catalog/schema.ts";
-import { overlappingMeetings } from "./overlaps.ts";
+import { meetingsOccupyingNoTime, overlappingMeetings } from "./overlaps.ts";
 
 /** A Tuesday afternoon Meeting in Fall; each test overrides only what it is about. */
 function meeting(overrides: Partial<Meeting> = {}): Meeting {
@@ -82,12 +82,62 @@ it("reports a Meeting duplicated exactly, which claims the same hour twice", () 
 
 it("ignores a Meeting whose range occupies no time, which collides with nothing", () => {
   // Inherited from #14, where a span that does not advance occupies no time and so Clashes
-  // with nothing. Whether such a Meeting deserves a Warning of its own is a separate
-  // question from overlap, and not one this ticket asked.
+  // with nothing. Such a Meeting does deserve a Warning of its own, which is #52's, and it is
+  // `meetingsOccupyingNoTime` below that gives it -- overlap still has nothing to say here.
   expect(
     overlappingMeetings([
       meeting({ start: "15:00", end: "18:00" }),
       meeting({ start: "16:00", end: "16:00" }),
     ]),
   ).toEqual([]);
+});
+
+it("reports no Meeting of a Group whose hours all advance", () => {
+  expect(meetingsOccupyingNoTime([])).toEqual([]);
+  expect(meetingsOccupyingNoTime([meeting({ start: "16:00", end: "17:00" })])).toEqual([]);
+});
+
+it("reports a Meeting whose end is its start as a range that does not advance", () => {
+  const still = meeting({ start: "16:00", end: "16:00" });
+
+  expect(meetingsOccupyingNoTime([still])).toEqual([
+    { meeting: still, range: "does-not-advance" },
+  ]);
+});
+
+it("reports a Meeting whose end falls before its start as one that reads as wrapping", () => {
+  // 23:00-01:00 is the shape a night class takes when something read it as a single range.
+  // It is told apart from a range that does not advance because the causes differ: this one
+  // is likelier the crawl, the other likelier the Shoham page.
+  const wrapping = meeting({ start: "23:00", end: "01:00" });
+
+  expect(meetingsOccupyingNoTime([wrapping])).toEqual([
+    { meeting: wrapping, range: "reads-as-wrapping" },
+  ]);
+});
+
+it("reports nothing about an evening Meeting ending at 00:00, which is the end of the Day", () => {
+  // #48's ruling, and the reason this reads the clock through `clockAsEnd` rather than
+  // comparing the two strings: 22:00-00:00 is the evening, not a range that wraps.
+  expect(meetingsOccupyingNoTime([meeting({ start: "22:00", end: "00:00" })])).toEqual([]);
+});
+
+it("reports nothing about a Meeting of 00:00-00:00, which is the whole Day", () => {
+  expect(meetingsOccupyingNoTime([meeting({ start: "00:00", end: "00:00" })])).toEqual([]);
+});
+
+it("reports every such Meeting, in the order the Group holds them", () => {
+  const wrapping = meeting({ start: "23:00", end: "01:00" });
+  const still = meeting({ start: "16:00", end: "16:00" });
+
+  expect(meetingsOccupyingNoTime([wrapping, meeting(), still])).toEqual([
+    { meeting: wrapping, range: "reads-as-wrapping" },
+    { meeting: still, range: "does-not-advance" },
+  ]);
+});
+
+it("reports nothing about a Meeting whose clock cannot be read at all", () => {
+  // "25:00" is not a time, so nothing here can say whether its range advances. What a Group's
+  // unreadable hours get said about them is the dialect's `meeting-unreadable`, not this.
+  expect(meetingsOccupyingNoTime([meeting({ start: "25:00", end: "25:00" })])).toEqual([]);
 });

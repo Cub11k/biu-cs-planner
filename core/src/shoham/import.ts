@@ -14,7 +14,7 @@ import {
   type ImportChanges,
 } from "./changes.ts";
 import { provenanceFromMeta } from "./meta.ts";
-import { overlappingMeetings } from "./overlaps.ts";
+import { meetingsOccupyingNoTime, overlappingMeetings, type EmptyRange } from "./overlaps.ts";
 import type { RawCrawl, RawCrawlRow } from "./raw-crawl.ts";
 
 export type { RawCrawl, RawCrawlRow };
@@ -42,6 +42,17 @@ export type Warning =
       lessonType: string;
       first: Meeting;
       second: Meeting;
+    }
+  | {
+      kind: "meeting-occupies-no-time";
+      courseNumber: string;
+      /** Which of the Course's Offerings holds it, since each numbers its Groups from 01. */
+      semesters: Semester[];
+      group: string;
+      lessonType: string;
+      meeting: Meeting;
+      /** Which shape the empty range has, because the two point at different causes. */
+      range: EmptyRange;
     }
   | {
       kind: "group-superseded";
@@ -274,9 +285,10 @@ export function importRawCrawl(
     }
   }
 
-  // A Group that claims to meet in two places at once is a Catalog problem, not a Clash
-  // (#14), and not a reason to refuse anything: the Meetings are imported as they were read
-  // and the Warning says what was found, so a maintainer can hold it against the Shoham page.
+  // A Group that claims to meet in two places at once, or at an hour occupying no time, is a
+  // Catalog problem, not a Clash (#14, #52), and not a reason to refuse anything: the Meetings
+  // are imported as they were read and the Warning says what was found, so a maintainer can
+  // hold it against the Shoham page.
   // Only the Groups this part carried are checked. Every other Warning here speaks about the
   // part in hand, and a Group merged in from the Catalog was reported by the part that
   // brought it; re-reading the whole Catalog would repeat that Warning on every later merge,
@@ -291,6 +303,21 @@ export function importRawCrawl(
         lessonType: group.lessonType,
         first,
         second,
+      });
+    }
+    // A Meeting whose end does not advance past its start Clashes with nothing and is placed
+    // nowhere, so this is the only place it can be said at all. Which of the two shapes it has
+    // is part of the Warning: a maintainer holding 16:00-16:00 against the Shoham page is
+    // looking for a typo, while 23:00-01:00 sends them at how the crawl read a night class.
+    for (const { meeting, range } of meetingsOccupyingNoTime(group.meetings)) {
+      warnings.push({
+        kind: "meeting-occupies-no-time",
+        courseNumber: offering.courseNumber,
+        semesters: [...offering.semesters],
+        group: group.number,
+        lessonType: group.lessonType,
+        meeting,
+        range,
       });
     }
   }
