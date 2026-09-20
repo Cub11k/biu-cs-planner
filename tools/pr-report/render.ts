@@ -17,7 +17,13 @@ const id = (s: string): string => s.replace(/[^A-Za-z0-9]/g, "_");
 const esc = (s: string): string => s.replace(/"/g, "'").replace(/\|/g, "\\|");
 const bar = (n: number): string => "█".repeat(Math.round(n / 10)).padEnd(10, "░");
 
-/** Modules as nodes, imports as edges, grouped by workspace. */
+/**
+ * Modules as nodes, imports as edges, grouped by workspace.
+ *
+ * A dashed arrow carries only types. It is a real dependency — the shapes it names still
+ * bind the two modules together — but no code travels along it, which is a different
+ * thing to know about an edge and worth seeing without opening either file.
+ */
 function moduleMap(modules: Module[]): string {
   const byWorkspace = new Map<string, Module[]>();
   for (const m of modules) {
@@ -33,7 +39,8 @@ function moduleMap(modules: Module[]): string {
   const paths = new Set(modules.map((m) => m.path));
   for (const m of modules) {
     for (const dep of m.imports) {
-      if (paths.has(dep)) lines.push(`  ${id(m.path)} --> ${id(dep)}`);
+      if (!paths.has(dep.specifier)) continue;
+      lines.push(`  ${id(m.path)} ${dep.typeOnly ? "-.->" : "-->"} ${id(dep.specifier)}`);
     }
   }
   return lines.join("\n");
@@ -116,9 +123,18 @@ export function render(report: Report): string {
   out.push("");
 
   const paths = new Set(modules.map((m) => m.path));
-  const imports = modules.reduce((n, m) => n + m.imports.filter((d) => paths.has(d)).length, 0);
+  const drawn = modules.flatMap((m) => m.imports.filter((d) => paths.has(d.specifier)));
+  const typeOnly = drawn.filter((d) => d.typeOnly).length;
+  // The type-only count is named in the summary rather than left inside, so a reviewer
+  // deciding whether to open the fold already knows whether any edge is only a shape.
+  const size =
+    `${modules.length} modules, ${drawn.length} imports` +
+    (typeOnly ? `, ${typeOnly} of them type-only` : "");
   out.push(
-    ...fold(title("How the modules depend on each other", `${modules.length} modules, ${imports} imports`), [
+    ...fold(title("How the modules depend on each other", size), [
+      // Only worth saying when there is a dashed arrow to explain; a graph of solid
+      // arrows explains itself, and a graph with no arrows at all has nothing to explain.
+      ...(typeOnly ? ["A dashed arrow carries only types; a solid one carries code.", ""] : []),
       "```mermaid",
       moduleMap(modules),
       "```",

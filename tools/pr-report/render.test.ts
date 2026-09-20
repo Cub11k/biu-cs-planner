@@ -23,8 +23,8 @@ function report(over: Partial<Report> = {}): Report {
         path: "core/src/a.ts",
         workspace: "core",
         exports: [{ name: "Thing", kind: "type", signature: "{ id: string }" }],
-        imports: ["core/src/b.ts"],
-        packages: ["zod"],
+        imports: [{ specifier: "core/src/b.ts", typeOnly: false }],
+        packages: [{ specifier: "zod", typeOnly: false }],
       },
       { path: "core/src/b.ts", workspace: "core", exports: [], imports: [], packages: [] },
     ],
@@ -96,6 +96,61 @@ describe("the report comment", () => {
     expect(summaries).toContain("1 exported types");
     expect(summaries).toContain("1 tests in 1 files");
     expect(summaries).toContain("1 modules");
+  });
+
+  it("draws a type-only import as a dashed arrow and a value one as a solid arrow", () => {
+    // Two different dependencies. Both bind the modules together, only one carries code,
+    // and a reader should see which is which without opening either file.
+    const markdown = render(report());
+    const typed = render(
+      report({
+        modules: [
+          {
+            path: "core/src/a.ts",
+            workspace: "core",
+            exports: [],
+            imports: [{ specifier: "core/src/b.ts", typeOnly: true }],
+            packages: [],
+          },
+          { path: "core/src/b.ts", workspace: "core", exports: [], imports: [], packages: [] },
+        ],
+      }),
+    );
+
+    expect(markdown).toContain("core_src_a_ts --> core_src_b_ts");
+    expect(typed).toContain("core_src_a_ts -.-> core_src_b_ts");
+  });
+
+  it("says in the fold summary how many imports carry only types", () => {
+    const typed = render(
+      report({
+        modules: [
+          {
+            path: "core/src/a.ts",
+            workspace: "core",
+            exports: [],
+            imports: [{ specifier: "core/src/b.ts", typeOnly: true }],
+            packages: [],
+          },
+          { path: "core/src/b.ts", workspace: "core", exports: [], imports: [], packages: [] },
+        ],
+      }),
+    );
+    const summaries = folds(typed).map((f) => f.summary).join("\n");
+
+    expect(summaries).toContain("2 modules, 1 imports, 1 of them type-only");
+    expect(typed).toContain("A dashed arrow carries only types");
+  });
+
+  it("leaves the count and the legend off when no edge is type-only", () => {
+    // Neither a "0 of them type-only" nor a sentence explaining a dashed arrow that is
+    // not on the page.
+    const markdown = render(report());
+    const summaries = folds(markdown).map((f) => f.summary).join("\n");
+
+    expect(summaries).toContain("2 modules, 1 imports");
+    expect(markdown).not.toContain("type-only");
+    expect(markdown).not.toContain("A dashed arrow");
   });
 
   it("leaves a blank line after every summary, which markdown inside needs", () => {
