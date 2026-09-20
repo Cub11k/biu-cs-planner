@@ -1,4 +1,5 @@
 import { serve, type ServerType } from "@hono/node-server";
+import { watchWorkspace } from "@biu-cs-planner/app";
 import { Hono } from "hono";
 import { createApi } from "./api.ts";
 import { parseArguments, type Launch } from "./cli.ts";
@@ -35,7 +36,12 @@ async function main(argv: readonly string[]): Promise<void> {
 
 async function start({ workspace, host, open }: Launch): Promise<void> {
   const token = await launchToken();
-  const api = createApi({ workspace: fileSystemWorkspace(workspace), token });
+  const folder = fileSystemWorkspace(workspace);
+  // watched for as long as the process runs, so a Catalog dropped in by hand reaches the
+  // page without a manual reload (docs/design.md, "Storage"). Nothing stops it by hand:
+  // Ctrl-C ends the process, and see server/src/serve.ts for why no handler intercepts it.
+  const changes = await watchWorkspace(folder);
+  const api = createApi({ workspace: folder, changes, token });
 
   // the API first, so a route of its own is never shadowed by a file
   const app = new Hono().route("/", api).get("*", serveBuiltUi(builtUiRoot()));

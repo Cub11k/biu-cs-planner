@@ -1,3 +1,4 @@
+import { watch, type FSWatcher } from "node:fs";
 import { mkdir, readdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import {
@@ -7,6 +8,7 @@ import {
   type WorkspaceFolder,
   type WorkspaceRef,
   type WorkspaceStatus,
+  type WorkspaceWatcher,
 } from "@biu-cs-planner/app";
 
 /**
@@ -168,6 +170,95 @@ export function fileSystemWorkspace(rootPath: string): Workspace {
         await rm(temporary, { force: true });
         throw error;
       }
+    },
+
+    /**
+     * One `fs.watch` per folder of the Workspace — the root and each part of the layout
+     * that is there — and none on a file. A folder watch is what sees a Catalog *appear*;
+     * a file watch cannot, because there is nothing to attach it to yet (docs/design.md,
+     * "Storage").
+     *
+     * Not `{ recursive: true }`, which would be one line instead of these: a Workspace that
+     * came from a git clone has `.git` inside it, and a recursive watch turns every git
+     * operation into a page reload. Non-recursive sees `.git` as one entry in the root and
+     * stays quiet about what happens inside it. Recursive support also differs by platform
+     * and by runtime, and this has to hold on Bun and Deno as well as Node.
+     *
+     * Every event reconciles the set, so a `catalogs/` that appears after the server
+     * started — the layout being created, or a clone landing — gets a watcher of its own,
+     * and one that is deleted loses the stale watcher it left behind.
+     */
+    async watch(onChange): Promise<WorkspaceWatcher> {
+      const open = new Map<string, FSWatcher>();
+      let stopped = false;
+      let reconciling = false;
+      let againAfter = false;
+
+      const watchFolder = (path: string): void => {
+        if (stopped || open.has(path)) return;
+        let watcher: FSWatcher;
+        try {
+          // `persistent: false` so the watcher does not hold the event loop open on Node
+          // and Bun. Deno ignores it — measured, not assumed — so `stop` below is what the
+          // promise of letting go actually rests on.
+          watcher = watch(path, { persistent: false }, () => {
+            if (stopped) return;
+            void reconcile();
+            onChange();
+          });
+        } catch {
+          // Node and Bun refuse a folder that is not there by throwing from `watch`
+          return;
+        }
+        // Deno reports the same refusal asynchronously, on the watcher. Unhandled, it is
+        // an uncaught error that takes the server down, so both spellings are handled.
+        watcher.on("error", () => {
+          watcher.close();
+          if (open.get(path) === watcher) open.delete(path);
+        });
+        open.set(path, watcher);
+      };
+
+      /** The folders that exist right now, watched; the ones that no longer do, let go. */
+      const reconcile = async (): Promise<void> => {
+        if (reconciling) {
+          againAfter = true;
+          return;
+        }
+        reconciling = true;
+        try {
+          do {
+            againAfter = false;
+
+            const wanted = new Set<string>();
+            if ((await realPathOrAbsent(root)) !== undefined) wanted.add(root);
+            for (const folder of WORKSPACE_LAYOUT) {
+              const path = await usableFolder(folder);
+              if (path !== undefined) wanted.add(path);
+            }
+            if (stopped) return;
+
+            for (const [path, watcher] of [...open]) {
+              if (wanted.has(path)) continue;
+              watcher.close();
+              open.delete(path);
+            }
+            for (const path of wanted) watchFolder(path);
+          } while (againAfter && !stopped);
+        } finally {
+          reconciling = false;
+        }
+      };
+
+      await reconcile();
+
+      return {
+        stop: () => {
+          stopped = true;
+          for (const watcher of open.values()) watcher.close();
+          open.clear();
+        },
+      };
     },
   };
 }

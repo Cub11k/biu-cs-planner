@@ -1,4 +1,14 @@
-import { chmod, mkdtemp, mkdir, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdtemp,
+  mkdir,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
@@ -170,4 +180,163 @@ it("leaves the previous Catalog intact when the write itself fails", async () =>
 
   expect(await workspace.read({ kind: "catalog", academicYear: 2027 })).toEqual(CATALOG);
   expect(await readdir(join(root, "catalogs"))).toEqual(["2027.json"]);
+});
+
+/**
+ * Watching the folder, against a real one. The debounce that turns these raw events into
+ * one reload lives in `app/src/changes.ts` and is tested there with a clock the test holds;
+ * what only a disk can answer is whether the events arrive at all — and whether a file that
+ * *appears* is among them, which is the whole reason the design says folder and not file.
+ *
+ * Every wait here is bounded and polled rather than slept through: `fs.watch` says nothing
+ * about how soon it will call back, and a fixed sleep is either slower than it needs to be
+ * or flaky.
+ */
+const WITHIN_MS = 4000;
+
+/** Polls a condition rather than trusting a delay. Returns whether it came true in time. */
+async function within(condition: () => boolean, ms = WITHIN_MS): Promise<boolean> {
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline) {
+    if (condition()) return true;
+    await new Promise((settle) => setTimeout(settle, 20));
+  }
+  return condition();
+}
+
+/**
+ * Repeats a stimulus until it is observed. A folder cannot be watched before the event
+ * announcing it has been heard, so a file written in that same instant is legitimately
+ * missed — by any watcher, on any runtime. What is under test is that a folder which
+ * appeared ends up watched, not that it is watched within a microsecond of appearing.
+ */
+async function observed(stimulus: () => Promise<void>, events: () => number): Promise<boolean> {
+  const before = events();
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    await stimulus();
+    if (await within(() => events() > before, 500)) return true;
+  }
+  return false;
+}
+
+/** A watcher on `root`, counting raw events, stopped for you when the test ends. */
+async function watching(): Promise<{ events: () => number; stop: () => void }> {
+  const workspace = fileSystemWorkspace(root);
+  let count = 0;
+  const watcher = await workspace.watch(() => {
+    count += 1;
+  });
+  const stop = () => watcher.stop();
+  stoppers.push(stop);
+  return { events: () => count, stop };
+}
+
+let stoppers: Array<() => void> = [];
+beforeEach(() => {
+  stoppers = [];
+});
+afterEach(() => {
+  for (const stop of stoppers) stop();
+});
+
+it("sees a Catalog that appears in catalogs/ without the app writing it", async () => {
+  const workspace = fileSystemWorkspace(root);
+  await workspace.create();
+  const watched = await watching();
+
+  // by hand, not through `write`: this is the Dropbox, git-clone, text-editor case
+  await writeFile(join(root, "catalogs", "2027.json"), JSON.stringify(CATALOG), "utf8");
+
+  expect(await within(() => watched.events() > 0)).toBe(true);
+});
+
+it("sees a Catalog that is modified, deleted and renamed", async () => {
+  const workspace = fileSystemWorkspace(root);
+  await workspace.create();
+  const file = join(root, "catalogs", "2027.json");
+  await writeFile(file, JSON.stringify(CATALOG), "utf8");
+  const watched = await watching();
+
+  await writeFile(file, JSON.stringify({ ...CATALOG, sources: [] }), "utf8");
+  expect(await within(() => watched.events() > 0)).toBe(true);
+
+  const modified = watched.events();
+  await rename(file, join(root, "catalogs", "2028.json"));
+  expect(await within(() => watched.events() > modified)).toBe(true);
+
+  const renamed = watched.events();
+  await rm(join(root, "catalogs", "2028.json"));
+  expect(await within(() => watched.events() > renamed)).toBe(true);
+});
+
+/** A State File sits in the root itself, so the root is watched as well as the layout. */
+it("sees a file that appears in the Workspace root", async () => {
+  const workspace = fileSystemWorkspace(root);
+  await workspace.create();
+  const watched = await watching();
+
+  await writeFile(join(root, "alice.state.json"), "{}", "utf8");
+
+  expect(await within(() => watched.events() > 0)).toBe(true);
+});
+
+/**
+ * A Workspace can be watched before it is one. The layout appearing afterwards — created
+ * by the student, or arriving with a clone — has to be picked up, or the first Catalog of
+ * a brand new Workspace would be the one change nobody hears about.
+ */
+it("picks up a layout folder that appears after watching started", async () => {
+  const workspace = fileSystemWorkspace(root);
+  const watched = await watching();
+
+  await workspace.create();
+  expect(await within(() => watched.events() > 0)).toBe(true);
+
+  const appeared = () =>
+    writeFile(join(root, "catalogs", "2027.json"), JSON.stringify(CATALOG), "utf8");
+  expect(await observed(appeared, watched.events)).toBe(true);
+});
+
+/**
+ * Non-recursive on purpose. A Workspace that came from a git clone keeps `.git` inside it,
+ * and a recursive watch would turn every commit, fetch and checkout into a page reload.
+ */
+it("stays quiet about churn deep inside a nested folder such as .git", async () => {
+  const workspace = fileSystemWorkspace(root);
+  await workspace.create();
+  await mkdir(join(root, ".git", "objects", "ab"), { recursive: true });
+  const watched = await watching();
+
+  await writeFile(join(root, ".git", "objects", "ab", "cdef"), "object", "utf8");
+
+  // deliberately the opposite assertion: the wait has to pass without an event
+  expect(await within(() => watched.events() > 0, 500)).toBe(false);
+});
+
+it("stops watching when asked, and reports nothing afterwards", async () => {
+  const workspace = fileSystemWorkspace(root);
+  await workspace.create();
+  const watched = await watching();
+
+  await writeFile(join(root, "catalogs", "2027.json"), JSON.stringify(CATALOG), "utf8");
+  expect(await within(() => watched.events() > 0)).toBe(true);
+
+  watched.stop();
+  const afterStopping = watched.events();
+  await writeFile(join(root, "catalogs", "2028.json"), JSON.stringify(CATALOG), "utf8");
+  await rm(join(root, "catalogs", "2027.json"));
+
+  expect(await within(() => watched.events() > afterStopping, 500)).toBe(false);
+  // stopping twice is a no-op, not a crash: the server may stop after an error already did
+  watched.stop();
+});
+
+/** A folder that is not there is not an error: nothing is watched and nothing throws. */
+it("watches an ordinary folder that is not a Workspace yet without failing", async () => {
+  const workspace = fileSystemWorkspace(join(root, "not-here"));
+
+  const watcher = await workspace.watch(() => {});
+
+  expect(watcher).toBeDefined();
+  watcher.stop();
 });

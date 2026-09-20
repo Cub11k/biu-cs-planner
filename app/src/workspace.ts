@@ -29,6 +29,23 @@ export class WorkspaceRefusedError extends Error {
   override readonly name = "WorkspaceRefusedError";
 }
 
+/**
+ * A folder being watched. `stop` is idempotent and must leave nothing behind that keeps
+ * the process alive: the server runs in the foreground of a terminal and Ctrl-C has to
+ * end it (docs/design.md, "CLI and distribution").
+ */
+export type WorkspaceWatcher = {
+  stop(): void;
+};
+
+/**
+ * Something in the Workspace moved. Deliberately says nothing about *what*: `fs.watch`
+ * names a file only on some platforms and never says what happened to it, so a port that
+ * promised the name would be promising something an adapter cannot keep. The UI reloads
+ * (docs/design.md, "Storage"), and reloading needs no name.
+ */
+export type WorkspaceChanged = () => void;
+
 export type Workspace = {
   status(): Promise<WorkspaceStatus>;
   /** Creates the layout. Called only after the student accepts. */
@@ -44,4 +61,16 @@ export type Workspace = {
    * `WorkspaceRefusedError` on a target a Workspace will not touch.
    */
   write(ref: WorkspaceRef, data: unknown): Promise<void>;
+  /**
+   * Watches the **folder**, not individual files, and calls back once per event it sees —
+   * creation, modification, deletion and rename alike. Watching individual files cannot
+   * see the file that appears, which is the case this exists for: a Catalog dropped into
+   * `catalogs/` by hand, or a Workspace arriving from a git clone (docs/design.md,
+   * "Storage").
+   *
+   * Raw events, not one per change: an editor saving a file emits several and a clone
+   * emits a burst. Collapsing them belongs one layer up, in `watchWorkspace`, so that
+   * both adapters get the same collapsing and a test can drive a burst without a disk.
+   */
+  watch(onChange: WorkspaceChanged): Promise<WorkspaceWatcher>;
 };

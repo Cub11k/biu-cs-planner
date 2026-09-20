@@ -193,7 +193,9 @@ web/      thin React UI; talks only to the HTTP API through Hono's typed client.
 - **Undo/redo:** every edit is a command in `app`; the server keeps the undo history for the session.
 - **Backups:** rotating snapshots in `.backups/` (last 20 saves plus one per day for 30 days), restorable from the Workspace screen.
 - **External edits:** each save carries the file version it was based on. If the file changed on disk meanwhile (Dropbox, git, an editor), the server refuses the overwrite. The app then reloads and reports whether the last edit could be re-applied.
-- The server watches the Workspace folder, not individual files, and the UI reloads on external changes.
+- The server watches the Workspace folder, not individual files, and the UI reloads on external changes. Watching the folder is what sees a Catalog *appear* — dropped into `catalogs/` by hand, arriving with a git clone, landing over Dropbox — which watching a file cannot. One `fs.watch` per folder of the layout, non-recursive so that a `.git` inside the Workspace does not turn every git operation into a reload.
+- **How the page hears about it:** each settled burst of filesystem events moves a counter, and `GET /api/workspace/changes` serves it; the page remembers the last counter it saw and reloads what it is showing when the number differs. A counter the page **asks for**, not news the server pushes: `web` reaches the domain only through the HTTP API and may gain no second source of truth, an `EventSource` cannot send the launch token in an `Authorization` header (which would put it in a query string, the arrangement [ADR-0004](adr/0004-localhost-auth-bearer-token.md) turned down), and a websocket upgrade needs a different adapter on each of Node, Bun and Deno — a Node-only API in a server that avoids them. Pushing can be added behind the same counter later without `web` learning anything new.
+- Bursts are debounced rather than throttled: an editor writing one file emits several events and a clone emits many, and each should be one reload, after the folder is quiet.
 
 ## Security
 

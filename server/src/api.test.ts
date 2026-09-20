@@ -7,13 +7,25 @@ import { fileSystemWorkspace } from "./workspace.fs.ts";
 
 let root: string;
 let api: ReturnType<typeof createApi>;
+/**
+ * The Workspace's change counter, held by the test rather than by a real watcher: what the
+ * route owes the page is the number it was given, and a real `fs.watch` would make that a
+ * question about timing instead. The watcher itself is tested in ./workspace.fs.test.ts and
+ * the settling in app/src/changes.test.ts.
+ */
+let revision: number;
 
 /** Stands in for the launch token the CLI reads from the user config directory. */
 const TOKEN = "test-launch-token-long-enough-to-look-like-a-real-one";
 
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "biu-api-"));
-  api = createApi({ workspace: fileSystemWorkspace(root), token: TOKEN });
+  revision = 0;
+  api = createApi({
+    workspace: fileSystemWorkspace(root),
+    token: TOKEN,
+    changes: { revision: () => revision },
+  });
 });
 afterEach(async () => {
   await rm(root, { recursive: true, force: true });
@@ -307,4 +319,28 @@ it("never writes the token into the Workspace, which may be synced or committed"
     const contents = await readFile(join(entry.parentPath, entry.name), "utf8");
     expect(contents, entry.name).not.toContain(TOKEN);
   }
+});
+
+/**
+ * How the page hears that the Workspace changed under it. One integer behind the same guard
+ * as everything else, asked for over the same typed client — see the route's own comment in
+ * ./api.ts for why that, and not Server-Sent Events or a websocket.
+ */
+it("reports the Workspace's change counter, and moves it when the folder changes", async () => {
+  const before = await get("/api/workspace/changes");
+
+  expect(before.status).toBe(200);
+  await expect(before.json()).resolves.toEqual({ revision: 0 });
+
+  revision = 3;
+  const after = await get("/api/workspace/changes");
+
+  await expect(after.json()).resolves.toEqual({ revision: 3 });
+});
+
+/** Not an open route: the counter says the Workspace moved, which is the student's business. */
+it("refuses the change counter to a request with no launch token", async () => {
+  const answer = await api.request("/api/workspace/changes");
+
+  expect(answer.status).toBe(401);
 });
