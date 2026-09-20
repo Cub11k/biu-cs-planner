@@ -1,8 +1,9 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
-import { mergeImports, readModule, type ImportRef } from "./surface.ts";
+import { mergeImports, readModule, type ImportKind, type ImportRef } from "./surface.ts";
 
 /**
  * How an import is written decides what the layering rule may allow, so the forms are
@@ -24,13 +25,25 @@ function moduleFromSource(relPath: string, lines: readonly string[]) {
   }
 }
 
-/** Every import the module records, local and package alike, as `specifier:type|value`. */
-const kinds = (lines: readonly string[]): string[] => {
+/** Every import the module records, local and package alike. */
+const refs = (lines: readonly string[]): ImportRef[] => {
   const module = moduleFromSource("web/src/subject.ts", lines);
-  return [...module.imports, ...module.packages].map(
-    (ref) => `${ref.specifier}:${ref.typeOnly ? "type" : "value"}`,
-  );
+  return [...module.imports, ...module.packages];
 };
+
+/** Every import the module records, as `specifier:type|value`. */
+const kinds = (lines: readonly string[]): string[] =>
+  refs(lines).map((ref) => `${ref.specifier}:${ref.typeOnly ? "type" : "value"}`);
+
+/**
+ * The same imports, as `specifier:erased|kept` — whether the statement survives the emit.
+ *
+ * A separate reading from `kinds` because it is a separate question, and the whole reason
+ * `ImportKind` has two fields: the answers differ for the inline `type` spellings, which
+ * is the trap #59 was filed about.
+ */
+const emits = (lines: readonly string[]): string[] =>
+  refs(lines).map((ref) => `${ref.specifier}:${ref.erasable ? "erased" : "kept"}`);
 
 describe("whether an import carries only types", () => {
   it("reads `import type { X }` as type-only", () => {
@@ -40,8 +53,9 @@ describe("whether an import carries only types", () => {
   });
 
   it("reads the inline `import { type X }` form as type-only too", () => {
-    // Same meaning, different spelling. Missing it would make the narrower rule depend on
-    // which of two equivalent lines an author happened to write.
+    // Same bindings, different spelling: nothing but a type arrives either way, so this
+    // answer is about knowledge and says nothing about the emit. `erasable` is where the
+    // two lines part, in the suite below.
     expect(kinds(['import { type ApiType } from "@biu-cs-planner/server";'])).toEqual([
       "@biu-cs-planner/server:type",
     ]);
@@ -134,13 +148,170 @@ describe("whether an import carries only types", () => {
   });
 });
 
+describe("what the compiler actually emits", () => {
+  /**
+   * The premise the whole `erasable` field rests on, asked of the compiler rather than
+   * asserted in a comment. `ImportKind`'s doc carries this as a table, and a table in a
+   * comment is exactly the kind of claim that is true when written and wrong two releases
+   * later — so the table is pinned here instead, against the same `typescript` the report
+   * parses with.
+   *
+   * Each source below keeps a second, ordinary export. Without one, a file whose only
+   * statement was erased picks up a bare `export {};` module marker, which says nothing
+   * about the import and would read as though `import type` emitted something.
+   */
+  const emitted = (line: string): string =>
+    ts.transpileModule(`${line}\nexport const a = 1;`, {
+      compilerOptions: {
+        target: ts.ScriptTarget.ES2023,
+        module: ts.ModuleKind.ESNext,
+        verbatimModuleSyntax: true,
+        isolatedModules: true,
+        allowImportingTsExtensions: true,
+      },
+    }).outputText.trim();
+
+  it("erases the three keyword-before-clause forms, leaving no specifier", () => {
+    expect(emitted('import type { X } from "./m.ts";')).toBe("export const a = 1;");
+    expect(emitted('import type * as ns from "./m.ts";')).toBe("export const a = 1;");
+    expect(emitted('export type { X } from "./m.ts";')).toBe("export const a = 1;");
+  });
+
+  it("keeps the specifier for both inline forms, which is the whole of #59", () => {
+    // `import {}` and `export {}` still name a module a bundler must resolve, so
+    // `server/src/index.ts` is reached and `node:fs/promises` arrives with it.
+    expect(emitted('import { type X } from "./m.ts";')).toBe(
+      'import {} from "./m.ts";\nexport const a = 1;',
+    );
+    expect(emitted('export { type X } from "./m.ts";')).toBe(
+      'export {} from "./m.ts";\nexport const a = 1;',
+    );
+  });
+});
+
+describe("whether the statement survives the emit", () => {
+  /**
+   * The reader's answer to the question the suite above asks the compiler. The two must
+   * agree: `erasable` is true for exactly the forms `transpileModule` erases.
+   */
+
+  it("erases `import type { X }`, leaving no specifier at all", () => {
+    expect(emits(['import type { ApiType } from "@biu-cs-planner/server";'])).toEqual([
+      "@biu-cs-planner/server:erased",
+    ]);
+  });
+
+  it("keeps the inline `import { type X }`, matching what the compiler emitted", () => {
+    // The whole of #59: type-only and *not* erased. A bundler still resolves the
+    // specifier, so `server/src/index.ts` is reached and `node:fs/promises` comes with it.
+    expect(emits(['import { type ApiType } from "@biu-cs-planner/server";'])).toEqual([
+      "@biu-cs-planner/server:kept",
+    ]);
+  });
+
+  it("erases `export type { X } from`", () => {
+    expect(emits(['export type { ApiType } from "@biu-cs-planner/server";'])).toEqual([
+      "@biu-cs-planner/server:erased",
+    ]);
+  });
+
+  it("keeps the inline `export { type X } from`, the same trap in the other direction", () => {
+    expect(emits(['export { type ApiType } from "@biu-cs-planner/server";'])).toEqual([
+      "@biu-cs-planner/server:kept",
+    ]);
+  });
+
+  it("erases `import type * as ns`, because the keyword before the clause covers it", () => {
+    expect(emits(['import type * as api from "@biu-cs-planner/server";'])).toEqual([
+      "@biu-cs-planner/server:erased",
+    ]);
+  });
+
+  it("erases `import type D`, for the same reason", () => {
+    expect(emits(['import type ApiClient from "@biu-cs-planner/server";'])).toEqual([
+      "@biu-cs-planner/server:erased",
+    ]);
+  });
+
+  it("keeps every import that carries code", () => {
+    expect(
+      emits([
+        'import { serve } from "@biu-cs-planner/server";',
+        'import "./styles.ts";',
+        'export * from "./api.ts";',
+      ]),
+    ).toEqual([
+      "web/src/styles.ts:kept",
+      "web/src/api.ts:kept",
+      "@biu-cs-planner/server:kept",
+    ]);
+  });
+
+  it("keeps the edge when one mention of the module is the inline form", () => {
+    // Type-only twice over and still not erased: the re-export leaves the specifier.
+    expect(
+      refs([
+        'import type { ApiType } from "@biu-cs-planner/server";',
+        'export { type ApiType } from "@biu-cs-planner/server";',
+      ]),
+    ).toEqual([{ specifier: "@biu-cs-planner/server", typeOnly: true, erasable: false }]);
+  });
+
+  it("never calls an import erasable without calling it type-only", () => {
+    // The invariant the layering rule leans on: `erasable` is the stricter of the two, so
+    // demanding it also rules out a value import. Asserted over every form above.
+    const forms = [
+      'import type { A } from "./a.ts";',
+      'import { type B } from "./b.ts";',
+      'import type * as c from "./c.ts";',
+      'import type D from "./d.ts";',
+      'import { e } from "./e.ts";',
+      'import * as f from "./f.ts";',
+      'import g from "./g.ts";',
+      'import "./h.ts";',
+      'import {} from "./i.ts";',
+      'export type { J } from "./j.ts";',
+      'export { type K } from "./k.ts";',
+      'export { l } from "./l.ts";',
+      'export * from "./m.ts";',
+      'export type * from "./n.ts";',
+    ];
+    const broken = refs(forms).filter((ref) => ref.erasable && !ref.typeOnly);
+    expect(broken).toEqual([]);
+    // And the set that *is* erasable is exactly the four keyword-before-clause forms.
+    expect(refs(forms).filter((ref) => ref.erasable).map((ref) => ref.specifier)).toEqual([
+      "web/src/a.ts",
+      "web/src/c.ts",
+      "web/src/d.ts",
+      "web/src/j.ts",
+      // `export type * from` puts the keyword before the clause too, so it erases.
+      "web/src/n.ts",
+    ]);
+  });
+});
+
 describe("mergeImports", () => {
-  const ref = (specifier: string, typeOnly: boolean): ImportRef => ({ specifier, typeOnly });
+  /**
+   * The three legal states, spelled out. `ImportKind` is a union, not two free booleans, so
+   * a helper taking `(typeOnly: boolean, erasable: boolean)` would not type-check here —
+   * which is the point of the union: the illegal fourth pair has no way in, not even
+   * through a test.
+   */
+  const ERASED: ImportKind = { typeOnly: true, erasable: true };
+  const KEPT: ImportKind = { typeOnly: true, erasable: false };
+  const CODE: ImportKind = { typeOnly: false, erasable: false };
+
+  const ref = (specifier: string, kind: ImportKind): ImportRef => ({ specifier, ...kind });
 
   it("keeps one entry per specifier, in the order first met", () => {
-    expect(mergeImports([ref("./b.ts", false), ref("./a.ts", true), ref("./b.ts", true)])).toEqual([
-      ref("./b.ts", false),
-      ref("./a.ts", true),
+    expect(
+      mergeImports([ref("./b.ts", CODE), ref("./a.ts", ERASED), ref("./b.ts", ERASED)]),
+    ).toEqual([ref("./b.ts", CODE), ref("./a.ts", ERASED)]);
+  });
+
+  it("merges the two flags separately, so one kept statement keeps the edge", () => {
+    expect(mergeImports([ref("./a.ts", ERASED), ref("./a.ts", KEPT)])).toEqual([
+      ref("./a.ts", KEPT),
     ]);
   });
 

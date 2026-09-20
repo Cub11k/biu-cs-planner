@@ -8,10 +8,9 @@ import type { TestFile } from "../pr-report/tests.ts";
  * that breaks the layering rule without closing a loop.
  *
  * So the rule is stated here the way `CLAUDE.md` and `docs/design.md` state it — as a
- * direction, and for one edge as a direction and a kind — and every edge outside it is a
- * finding. Nothing here re-reads the source:
- * the modules come from `tools/pr-report/collect.ts`, the same ones the report and the
- * cycle check describe.
+ * direction, and for one edge as a direction, a kind and a spelling — and every edge
+ * outside it is a finding. Nothing here re-reads the source: the modules come from
+ * `tools/pr-report/collect.ts`, the same ones the report and the cycle check describe.
  */
 
 /** The four workspaces the layering rule governs, in the order they may depend. */
@@ -28,19 +27,34 @@ export type WorkspaceName = (typeof WORKSPACES)[number];
  * One edge the rule allows, and on what terms.
  *
  * A bare workspace name allows any import of it. The object form narrows the edge to
- * imports that carry nothing but types, so `import type { ApiType }` satisfies it and
- * `import { serve }` does not — the terse form is the common case and stays terse, and
- * the narrowing is visible wherever it is used.
+ * imports that are **erased from the emit** — `import type { ApiType } from "…"` and
+ * `export type { ApiType } from "…"` satisfy it; `import { serve }` does not, and neither
+ * does the inline `import { type ApiType }`, which carries only types but leaves a
+ * specifier behind for a bundler to resolve (see `ImportKind` in
+ * `tools/pr-report/surface.ts` for what each spelling emits).
+ *
+ * **There is only one strength of narrowing, and it is this one.** An entry could have
+ * carried a choice — types-only, or types-only-and-erasable — and deliberately does not.
+ * The reason to narrow an edge below "may import" is that code must not travel along it,
+ * and the inline spelling lets code travel: the module is still reached and whatever it
+ * imports at its top comes with it. A knob with one setting is not a knob, and a knob with
+ * a default would let a later author weaken the narrowing by leaving a field out. Should
+ * an edge ever genuinely want the inline form, adding the choice then — with the reason
+ * written down — is cheap; discovering that a silent default was wrong is not.
+ *
+ * So `erasable: true` is the whole of the object form, and `erasable` rather than
+ * `typeOnly` is its name because that is the question it asks. It implies type-only: a
+ * value import fails it too, with its own sentence (see `ForbiddenEdge["kind"]`).
  */
 export type AllowedImport =
   | WorkspaceName
-  | { readonly workspace: WorkspaceName; readonly typeOnly: true };
+  | { readonly workspace: WorkspaceName; readonly erasable: true };
 
 /** An allowed edge in one shape, whichever way the table wrote it. */
 const terms = (
   allowed: AllowedImport,
-): { workspace: WorkspaceName; typeOnly: boolean } =>
-  typeof allowed === "string" ? { workspace: allowed, typeOnly: false } : allowed;
+): { workspace: WorkspaceName; erasable: boolean } =>
+  typeof allowed === "string" ? { workspace: allowed, erasable: false } : allowed;
 
 /**
  * One workspace's half of the rule: who it may import, and the sentence a reader gets
@@ -53,19 +67,20 @@ export type Layer = {
    * the workspace. Every other workspace edge is forbidden.
    */
   mayImport: readonly AllowedImport[];
-  /** The rule in one sentence, quoted back beside any edge that breaks it. */
+  /**
+   * The rule in one sentence, quoted back beside any edge that breaks it — every kind of
+   * edge, so it stays a statement of the rule and leaves the specific remedy to `explain`.
+   * A `web → core` finding should not have to read a paragraph about import spelling.
+   */
   rule: string;
 };
 
 /**
  * The allowed edges, as data, in one place — read it against "Architecture" in
- * `docs/design.md` and "Code guardrails" in `CLAUDE.md` and the two should agree.
- *
- * They do not yet, on one point. Neither document mentions the type-only narrowing on
- * `web → server`; both say only that `web` never imports `core` or `app`. This table is
- * the stricter of the two and it is the one the job enforces, so a contributor who reads
- * the prose and not this file can be surprised. Saying which is authoritative until the
- * prose catches up is cheaper than letting a reader discover it from a red job (#51).
+ * `docs/design.md` and "Code guardrails" in `CLAUDE.md`, which now state the narrowing on
+ * `web → server` too, so the three say the same thing. This file stays the one the job
+ * enforces; if it and the prose ever disagree again, the prose is the stale one and #59 is
+ * the ticket that says why the narrowing is there at all.
  *
  * "Nothing imports `web`" is not written as its own line because it does not need to be:
  * no layer below lists `web`, so every edge into `web` is already outside the set.
@@ -91,17 +106,17 @@ export const LAYERS: readonly Layer[] = [
       "from `web`",
   },
   {
-    // Type-only, and the narrowest entry in the table. `web/src/api.ts` writes
-    // `import type { ApiType } from "@biu-cs-planner/server"` and nothing else of
-    // `server` is meant to be known here. What counts as type-only is decided by
-    // `importIsTypeOnly` in `tools/pr-report/surface.ts`, whose comment is also where
-    // "type-only" stops meaning "erased from the bundle". See #51.
+    // The narrowest entry in the table, and the only one that reads the kind of import.
+    // `web/src/api.ts` writes `import type { ApiType } from "@biu-cs-planner/server"` and
+    // nothing else of `server` is meant to be known here — nor, since the entry asks for
+    // the erasable spelling, to be left in the emit for a bundler to resolve. What each
+    // spelling emits is in `ImportKind` in `tools/pr-report/surface.ts`. See #51, #59.
     workspace: "web",
-    mayImport: [{ workspace: "server", typeOnly: true }],
+    mayImport: [{ workspace: "server", erasable: true }],
     rule:
       "`web` knows only the HTTP API contract, which it learns from `server`'s exported " +
       "`ApiType`, so it may import types from `server` and nothing else — never a value " +
-      "from `server`, and never `core` or `app` at all",
+      "from `server`, only in the spelling that erases, and never `core` or `app` at all",
   },
 ];
 
@@ -116,7 +131,7 @@ export const summarise = (): string =>
     if (layer.mayImport.length === 0) return `\`${layer.workspace}\` imports none of the others`;
     const allowed = layer.mayImport
       .map(terms)
-      .map((t) => `\`${t.workspace}\`${t.typeOnly ? " for types only" : ""}`)
+      .map((t) => `\`${t.workspace}\`${t.erasable ? " for types only, written `import type`" : ""}`)
       .join(" and ");
     return `\`${layer.workspace}\` imports ${allowed}`;
   }).join(", ");
@@ -148,12 +163,16 @@ export type ForbiddenEdge = {
   /** The workspace the import lands in. */
   toWorkspace: WorkspaceName;
   /**
-   * Which half of the rule the edge breaks.
+   * Which part of the rule the edge breaks, and so which sentence a reader needs.
    *
    * - `"direction"` — the rule allows no edge from this workspace to that one at all.
-   * - `"value"` — the rule allows this edge for types only, and this import carries code.
+   * - `"value"` — the rule narrows this edge to types, and this import carries code.
+   * - `"spelling"` — the import carries only types, but in the inline `{ type X }` form,
+   *   which `verbatimModuleSyntax` leaves in the emit. The knowledge is allowed; the
+   *   statement surviving is not. The fix is one keyword and nothing else, which is why
+   *   this is its own kind rather than another `"value"`.
    */
-  kind: "direction" | "value";
+  kind: "direction" | "value" | "spelling";
   /** The rule this edge breaks, as one sentence. */
   rule: string;
 };
@@ -184,7 +203,7 @@ function workspaceOfPackage(specifier: string): WorkspaceName | undefined {
  * about what a workspace is allowed to *know*: a `web` module holding `import type { Plan }
  * from "@biu-cs-planner/core"` is coupled to `core`'s shapes and will break when they
  * change, however little of it reaches the browser. So a forbidden edge is forbidden in
- * either form, and only an entry that asks for `typeOnly` treats the two apart.
+ * either form, and only an entry that narrows the edge treats the two apart.
  *
  * One entry does. `web → server` exists for exactly one line — `import type { ApiType }` in
  * `web/src/api.ts`, the contract arriving, which is the typed client `CLAUDE.md` asks for —
@@ -192,15 +211,19 @@ function workspaceOfPackage(specifier: string): WorkspaceName | undefined {
  * import from `web` to `server` is now a finding rather than a broken build discovered
  * later (#51).
  *
- * It is not a promise about the bundle, and should not be read as one. `import type { X }`
- * erases, but the inline `import { type X }` leaves `import "…"` behind under
- * `verbatimModuleSyntax`, so the module is still evaluated and whatever `server` imports at
- * its top comes with it. Both spellings pass here because this rule is about what `web` is
- * allowed to *know*, and #51 asks for both by name. Keeping Node out of the browser bundle
- * is the build's job; the guard that speaks to it is `web/package.json`, where
- * `@biu-cs-planner/server` is a *devDependency*.
+ * **And the narrowed edge asks for the erasable spelling, not merely a type-only one.**
+ * `import type { X }` is erased outright; the inline `import { type X }` leaves a specifier
+ * behind under `verbatimModuleSyntax`, so `server/src/index.ts` is still reached and
+ * `workspace.fs.ts` → `node:fs/promises` comes with it. The two lines read as synonyms, so
+ * #51's check — which asked only "does this carry types?" — would have passed the dangerous
+ * one, and #59 was filed by its author rather than left to be found. A narrowed edge now
+ * guards both halves at once: what `web` may know, and what a bundler can follow.
  *
- * Type-only-ness is read from the syntax by `tools/pr-report/surface.ts`, not from a type
+ * That makes this a review-time reading of the source, not a build-time guarantee; the
+ * other guard on the same failure is `web/package.json`, where `@biu-cs-planner/server` is
+ * a *devDependency*.
+ *
+ * Both flags are read from the syntax by `tools/pr-report/surface.ts`, not from a type
  * checker, so an import that *could* have been written `import type` but was not is a
  * value import here. That is the safe direction to err in: the fix is to write what was
  * meant.
@@ -236,13 +259,14 @@ export function forbiddenEdges(
     const layer = BY_NAME.get(workspace);
     if (!layer || to === undefined || to === layer.workspace) return;
     const allowed = layer.mayImport.map(terms).find((t) => t.workspace === to);
-    if (allowed && (!allowed.typeOnly || imported.typeOnly)) return;
+    // A wide entry allows the edge outright; a narrowed one allows only the erased form.
+    if (allowed && (!allowed.erasable || imported.erasable)) return;
     found.push({
       from,
       fromWorkspace: layer.workspace,
       imported: imported.specifier,
       toWorkspace: to,
-      kind: allowed ? "value" : "direction",
+      kind: !allowed ? "direction" : imported.typeOnly ? "spelling" : "value",
       rule: layer.rule,
     });
   };
@@ -271,11 +295,29 @@ export function forbiddenEdges(
 /**
  * One forbidden edge as a sentence: who imports what, and which rule that breaks. A
  * reader should never have to work out why an edge nobody listed is wrong — nor, when the
- * edge itself is allowed, why writing `import type` would have been enough.
+ * edge itself is allowed, why writing `import type` would have been enough. The spelling
+ * sentence names the fix in the exact words that fix it, because "this import carries only
+ * types and is still wrong" is the one finding here nobody would guess the remedy for. It
+ * says "takes types from" rather than "imports": a `ForbiddenEdge` does not record whether
+ * the statement was an `import` or an `export … from`, and both reach this branch.
  */
-export const explain = (edge: ForbiddenEdge): string =>
-  edge.kind === "value"
-    ? `\`${edge.from}\` imports a value from \`${edge.imported}\`; \`${edge.fromWorkspace}\` may ` +
+export const explain = (edge: ForbiddenEdge): string => {
+  if (edge.kind === "spelling") {
+    return (
+      `\`${edge.from}\` takes types from \`${edge.imported}\` with the \`type\` keyword inside ` +
+      `the clause, which \`verbatimModuleSyntax\` leaves in the emit as a specifier a bundler ` +
+      `must resolve; write \`import type { … } from\` (or \`export type { … } from\`) instead, ` +
+      `which is erased — ${edge.rule}.`
+    );
+  }
+  if (edge.kind === "value") {
+    return (
+      `\`${edge.from}\` imports a value from \`${edge.imported}\`; \`${edge.fromWorkspace}\` may ` +
       `import only types from \`${edge.toWorkspace}\` — ${edge.rule}.`
-    : `\`${edge.from}\` imports \`${edge.imported}\`; \`${edge.fromWorkspace}\` may not import ` +
-      `\`${edge.toWorkspace}\` — ${edge.rule}.`;
+    );
+  }
+  return (
+    `\`${edge.from}\` imports \`${edge.imported}\`; \`${edge.fromWorkspace}\` may not import ` +
+    `\`${edge.toWorkspace}\` — ${edge.rule}.`
+  );
+};

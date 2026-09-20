@@ -174,6 +174,8 @@ web/      thin React UI; talks only to the HTTP API through Hono's typed client.
 ```
 
 - `web` never imports `core` or `app`. It knows only the API contract, which is typed from the shared schemas without code generation.
+- That one edge, `web → server`, is narrowed twice over: to types, and to the **erasable** spelling of a type import. `import type { ApiType } from "@biu-cs-planner/server"` is what `web/src/api.ts` writes and the only form allowed. Under `verbatimModuleSyntax` (set in `tsconfig.base.json`) TypeScript emits imports as written: `import type { X } from "m"` disappears, while the inline `import { type X } from "m"` emits `import {} from "m"` — a specifier a bundler still has to resolve, which would pull `server/src/index.ts` → `workspace.fs.ts` → `node:fs/promises` into the browser bundle. The re-export forms split the same way (`export type { X } from` erases, `export { type X } from` does not) and are judged by the same rule.
+- The allowed edges are data in `tools/pr-review/layering.ts`, which is what the graph check on every pull request enforces. A narrowed entry there **always** means erasable: there is no weaker narrowing to choose, because the only reason to narrow an edge is that code must not travel along it.
 - One repo with npm workspaces, published as **one** npm package, `biu-cs-planner`. It contains the bundled server (zero runtime dependencies), the built UI and a `bin` entry. The name was unclaimed on npm on 2026-09-11.
 
 ## Storage

@@ -216,7 +216,7 @@ describe("renderGraphs", () => {
     expect(body).toContain(
       "**Layering:** every import is one the rule allows — `core` imports " +
         "none of the others, `app` imports `core`, `server` imports `core` and `app`, " +
-        "`web` imports `server` for types only.",
+        "`web` imports `server` for types only, written `import type`.",
     );
   });
 });

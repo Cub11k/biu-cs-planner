@@ -15,24 +15,74 @@ export type ExportedSymbol = {
 };
 
 /**
- * One import, and whether anything of it can reach the running program.
+ * The two questions about an import that are not "where does it point".
  *
- * `typeOnly` is true when every binding the statement brings in is a type — written
- * `import type { X } from "…"`, `import { type X } from "…"`, or the same two forms of
- * `export … from`. It is what tells a dependency that only constrains shapes apart from
- * one that carries code, which the module graph draws differently and the layering rule
- * (`tools/pr-review/layering.ts`) is allowed to demand.
+ * `typeOnly` answers whether anything but knowledge of shapes arrives. `erasable` answers
+ * whether the statement leaves anything behind for a bundler to resolve, and it is the
+ * stricter of the two: every erasable import is type-only, and not every type-only import
+ * is erasable.
  *
- * It is read from the syntax, not from a type checker: a module that writes
+ * The gap between them is `verbatimModuleSyntax`, which `tsconfig.base.json` sets.
+ * TypeScript then emits import statements as written rather than working out what
+ * survives, and where the `type` keyword sits decides the outcome. Each form emits:
+ *
+ * | written                             | emitted                   | erasable |
+ * | ----------------------------------- | ------------------------- | -------- |
+ * | `import type { X } from "./m.ts"`   | *nothing*                 | yes      |
+ * | `import type * as ns from "./m.ts"` | *nothing*                 | yes      |
+ * | `export type { X } from "./m.ts"`   | *nothing*                 | yes      |
+ * | `import { type X } from "./m.ts"`   | `import {} from "./m.ts"` | no       |
+ * | `export { type X } from "./m.ts"`   | `export {} from "./m.ts"` | no       |
+ *
+ * So the keyword *before* the clause — `import type`, `export type` — erases the statement
+ * whatever binding follows it, and the keyword *on a binding inside* the clause does not:
+ * the specifier stays, a bundler must resolve it, and whatever the target imports at its
+ * top comes along. The two spellings read as synonyms and are not.
+ *
+ * That table is not a claim to take on trust. `surface.test.ts` runs `ts.transpileModule`
+ * over these five lines and asserts these outputs, so a comment that drifts from the
+ * compiler fails the build rather than misleading the next reader. Three details it pins:
+ *
+ * - The specifier keeps its `.ts`, because this repo sets `allowImportingTsExtensions` and
+ *   not `rewriteRelativeImportExtensions`.
+ * - *Nothing* means nothing **from the statement**. A file left with no other export picks
+ *   up a bare `export {};` module marker, which says nothing about the import that was
+ *   erased — so the test keeps a second export in every case, to tell the two apart.
+ * - This repo's own `tsc` has `noEmit`, so it never writes any of this: the emit that
+ *   reaches a browser is the bundler's. What the table is really about is the *shape of
+ *   the statement*, which is what a bundler reads too.
+ */
+export type ImportKind =
+  /** `import type` / `export type` before the clause: nothing but types, nothing emitted. */
+  | { typeOnly: true; erasable: true }
+  /** The inline `{ type X }`: nothing but types, and the specifier stays in the emit. */
+  | { typeOnly: true; erasable: false }
+  /** Anything else: code can travel along it. */
+  | { typeOnly: false; erasable: false };
+
+/**
+ * One import: where it points, and what travels along it.
+ *
+ * `typeOnly` tells a dependency that only constrains shapes apart from one that carries
+ * code, which the module graph draws differently. `erasable` is what a rule asks for when
+ * it needs the target kept out of a bundle rather than merely out of the importer's
+ * vocabulary; the layering rule (`tools/pr-review/layering.ts`) uses both.
+ *
+ * **`erasable` implies `typeOnly`, and `ImportKind` is a union of three states rather than
+ * two free booleans so that the fourth cannot be written down.** That is not tidiness:
+ * `forbiddenEdges` decides a narrowed edge on `erasable` alone, so a hand-built
+ * `{ typeOnly: false, erasable: true }` would walk a *value* import from `web` to `server`
+ * straight past the check with no finding at all. Three named states, and the bad one is a
+ * type error at every construction site — the test helpers included.
+ *
+ * All of it is read from the syntax, not from a type checker: a module that writes
  * `import { Thing } from "./x"` and uses `Thing` only in a type position is recorded as a
  * value import, because that is what it says. Erring that way is the safe direction — a
- * rule that only permits type-only edges then asks for the import to say so.
+ * rule that only permits type-only or erasable edges then asks for the import to say so.
  */
-export type ImportRef = {
+export type ImportRef = ImportKind & {
   /** Repo-relative path for a local import, the package name for a bare one. */
   specifier: string;
-  /** True when the statement brings in nothing but types. */
-  typeOnly: boolean;
 };
 
 export type Module = {
@@ -46,20 +96,52 @@ export type Module = {
   packages: ImportRef[];
 };
 
+/** Nothing but types, and no specifier left in the emit either. */
+const ERASED: ImportKind = { typeOnly: true, erasable: true };
+
+/** Types only, but the specifier stays: the inline `type` keyword. */
+const KEPT: ImportKind = { typeOnly: true, erasable: false };
+
+/** Code can travel along it. */
+const CODE: ImportKind = { typeOnly: false, erasable: false };
+
 /**
- * One entry per specifier, with a value import beating a type-only one.
+ * A pair of booleans as one of the three legal states. `erasable` without `typeOnly` is not
+ * a state this project has, so it resolves to `CODE` — the safe answer, and the one that
+ * makes a narrowed edge fail rather than silently pass.
+ */
+const kindOf = (typeOnly: boolean, erasable: boolean): ImportKind =>
+  !typeOnly ? CODE : erasable ? ERASED : KEPT;
+
+/**
+ * One entry per specifier, with the weaker statement winning on both counts.
  *
  * A module may name the same specifier twice — `import type { A } from "./x"` beside
  * `import { b } from "./x"` — and the graph has one arrow for the pair. What that arrow
  * has to answer is whether code can travel along it, so a single value import is enough
  * to make the edge a value edge.
+ *
+ * `erasable` merges the same way and separately, because the pair `import type { A }` and
+ * `export { type A } from` is type-only twice over and still leaves a specifier in the
+ * emit. An edge is erasable only when every statement naming it is.
  */
 export function mergeImports(refs: readonly ImportRef[]): ImportRef[] {
-  const merged = new Map<string, boolean>();
+  const merged = new Map<string, ImportKind>();
   for (const ref of refs) {
-    merged.set(ref.specifier, (merged.get(ref.specifier) ?? true) && ref.typeOnly);
+    const seen = merged.get(ref.specifier);
+    merged.set(
+      ref.specifier,
+      // Both flags AND together, and `kindOf` puts the pair back into one of the three
+      // legal states. Legal inputs cannot produce the illegal pair — `erasable` implies
+      // `typeOnly` on each side, so it implies it on the conjunction — but `kindOf` is
+      // what says so to the compiler rather than an assertion.
+      kindOf(
+        (seen?.typeOnly ?? true) && ref.typeOnly,
+        (seen?.erasable ?? true) && ref.erasable,
+      ),
+    );
   }
-  return [...merged].map(([specifier, typeOnly]) => ({ specifier, typeOnly }));
+  return [...merged].map(([specifier, kind]) => ({ specifier, ...kind }));
 }
 
 const text = (node: ts.Node | undefined, source: ts.SourceFile): string =>
@@ -98,36 +180,36 @@ const everyBindingIsType = (
 ): boolean => elements.length > 0 && elements.every((el) => el.isTypeOnly);
 
 /**
- * True for every form the `type` keyword can take: `import type` before the clause covers
- * whatever follows it — a default binding, a namespace, a named list — and inside a named
- * list, `type` on every element does the same. False for anything else, including a
- * default or namespace binding without the keyword, however the names inside it are used,
- * and a bare `import "./x"`, which is a side effect and so is code.
+ * What an import statement carries and what it leaves behind.
  *
- * The two spellings are not quite identical downstream. With `verbatimModuleSyntax` on,
- * which `tsconfig.base.json` sets, `import type { X } from "m"` disappears entirely while
- * `import { type X } from "m"` leaves `import "m"` behind, so the module is still
- * evaluated. Both are recorded type-only here because both carry only knowledge of
- * shapes, which is what the layering rule is about; a bundler pulling in a module for
- * its side effects is a build concern and #51 says so explicitly.
+ * `import type` before the clause covers whatever follows it — a default binding, a
+ * namespace, a named list — and is the one import form TypeScript erases outright, so it
+ * is type-only *and* erasable. `type` on every element inside a named list says the same
+ * thing about the bindings and nothing about the emit: type-only, not erasable. See
+ * `ImportKind` for the table this was read off.
+ *
+ * Everything else is code: a default or namespace binding without the keyword, however
+ * the names inside it are used, and a bare `import "./x"`, which is a side effect.
  */
-export function importIsTypeOnly(clause: ts.ImportClause | undefined): boolean {
-  if (!clause) return false;
-  if (clause.isTypeOnly) return true;
-  if (clause.name) return false;
+export function importKind(clause: ts.ImportClause | undefined): ImportKind {
+  if (!clause) return CODE;
+  if (clause.isTypeOnly) return ERASED;
+  if (clause.name) return CODE;
   const bindings = clause.namedBindings;
-  if (!bindings || !ts.isNamedImports(bindings)) return false;
-  return everyBindingIsType(bindings.elements);
+  if (!bindings || !ts.isNamedImports(bindings)) return CODE;
+  return everyBindingIsType(bindings.elements) ? KEPT : CODE;
 }
 
 /**
- * The same question for a re-export. `export type { X } from "./y"` and `export { type X
- * } from "./y"` carry only types; `export * from "./y"` carries whatever `./y` has.
+ * The same question for a re-export, answered by the same rule, because the two forms
+ * differ in exactly the same way: `export type { X } from "./y"` emits `export {};` and
+ * loses the specifier, `export { type X } from "./y"` emits `export {} from "./y.js"` and
+ * keeps it. `export * from "./y"` carries whatever `./y` has.
  */
-function reExportIsTypeOnly(node: ts.ExportDeclaration): boolean {
-  if (node.isTypeOnly) return true;
-  if (!node.exportClause || !ts.isNamedExports(node.exportClause)) return false;
-  return everyBindingIsType(node.exportClause.elements);
+function reExportKind(node: ts.ExportDeclaration): ImportKind {
+  if (node.isTypeOnly) return ERASED;
+  if (!node.exportClause || !ts.isNamedExports(node.exportClause)) return CODE;
+  return everyBindingIsType(node.exportClause.elements) ? KEPT : CODE;
 }
 
 export function readModule(absPath: string, root: string): Module {
@@ -142,23 +224,23 @@ export function readModule(absPath: string, root: string): Module {
   const imports: ImportRef[] = [];
   const packages: ImportRef[] = [];
 
-  const addSpecifier = (spec: string, typeOnly: boolean) => {
+  const addSpecifier = (spec: string, kind: ImportKind) => {
     if (spec.startsWith(".")) {
-      imports.push({ specifier: relative(root, resolve(dirname(absPath), spec)), typeOnly });
+      imports.push({ specifier: relative(root, resolve(dirname(absPath), spec)), ...kind });
     } else if (!spec.startsWith("node:")) {
-      packages.push({ specifier: spec, typeOnly });
+      packages.push({ specifier: spec, ...kind });
     }
   };
 
   for (const node of source.statements) {
     if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
-      addSpecifier(node.moduleSpecifier.text, importIsTypeOnly(node.importClause));
+      addSpecifier(node.moduleSpecifier.text, importKind(node.importClause));
       continue;
     }
     // `export { x } from "./y"` re-exports: an edge, and the symbols travel with it
     if (ts.isExportDeclaration(node)) {
       if (node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
-        addSpecifier(node.moduleSpecifier.text, reExportIsTypeOnly(node));
+        addSpecifier(node.moduleSpecifier.text, reExportKind(node));
       }
       if (node.exportClause && ts.isNamedExports(node.exportClause)) {
         for (const el of node.exportClause.elements) {

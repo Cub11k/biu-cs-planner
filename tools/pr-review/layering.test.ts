@@ -11,10 +11,21 @@ const ROOT = resolve(import.meta.dirname, "../..");
 
 /** A specifier written as a bare string is a value import; `types(…)` is the other kind. */
 const ref = (spec: string | ImportRef): ImportRef =>
-  typeof spec === "string" ? { specifier: spec, typeOnly: false } : spec;
+  typeof spec === "string" ? { specifier: spec, typeOnly: false, erasable: false } : spec;
 
-/** The same specifier, arriving as `import type`. */
-const types = (specifier: string): ImportRef => ({ specifier, typeOnly: true });
+/** The same specifier, arriving as `import type` — type-only and erased from the emit. */
+const types = (specifier: string): ImportRef => ({ specifier, typeOnly: true, erasable: true });
+
+/**
+ * The same specifier, arriving as the inline `import { type X }` — type-only and *not*
+ * erased: `verbatimModuleSyntax` leaves the specifier behind for a bundler to resolve.
+ * The distinction #59 exists for.
+ */
+const inlineTypes = (specifier: string): ImportRef => ({
+  specifier,
+  typeOnly: true,
+  erasable: false,
+});
 
 type Specs = readonly (string | ImportRef)[];
 
@@ -78,6 +89,16 @@ describe("the declared rule", () => {
       layer.mayImport.map((entry) => (typeof entry === "string" ? entry : entry.workspace)),
     );
     expect(allowed).not.toContain("web");
+  });
+
+  it("has one strength of narrowing, and it is erasable", () => {
+    // The ruling on #59, pinned: a narrowed entry always means the erased spelling, so
+    // there is no weaker object form for a later edit to reach for by accident. If this
+    // ever needs to become per-entry, this test is the place the reason gets written.
+    const narrowed = LAYERS.flatMap((layer) =>
+      layer.mayImport.filter((entry) => typeof entry !== "string"),
+    );
+    expect(narrowed).toEqual([{ workspace: "server", erasable: true }]);
   });
 });
 
@@ -208,12 +229,17 @@ describe("edges the rule forbids", () => {
   });
 });
 
-describe("the type-only edge, `web` to `server`", () => {
+describe("the erasable type-only edge, `web` to `server`", () => {
   /**
    * The narrowest entry in the table, and the only one that reads the kind of import.
    * `web` learns the API's shape from `server`'s exported `ApiType` and must learn
    * nothing else from it: a value import would pull `node:fs` and the rest of the Node
    * runtime into the browser bundle, which the old rule allowed and nothing caught.
+   *
+   * And it must learn it in the spelling that leaves nothing behind. #59: the inline
+   * `import { type ApiType }` carries only types and still emits a specifier, so the
+   * bundler resolves `server/src/index.ts` → `workspace.fs.ts` → `node:fs/promises` and
+   * the edge fails the purpose it was narrowed for.
    */
 
   it("lets the contract in, by package name", () => {
@@ -246,18 +272,48 @@ describe("the type-only edge, `web` to `server`", () => {
     ).toEqual(["web → server"]);
   });
 
-  it("calls the value import a value finding and a forbidden edge a direction one", () => {
+  it("fails the inline `import { type X }` form, which is not erased from the emit", () => {
+    expect(
+      broken([module("web/src/api.ts", { packages: [inlineTypes("@biu-cs-planner/server")] })]),
+    ).toEqual(["web → server"]);
+  });
+
+  it("fails the inline form written as a relative path too", () => {
+    expect(
+      broken([module("web/src/api.ts", { imports: [inlineTypes("server/src/api.ts")] })]),
+    ).toEqual(["web → server"]);
+  });
+
+  it("tells the three failures apart, since each has a different fix", () => {
     const edges = forbiddenEdges(
       [
         module("web/src/api.ts", { packages: ["@biu-cs-planner/server"] }),
+        module("web/src/contract.ts", { packages: [inlineTypes("@biu-cs-planner/server")] }),
         module("web/src/plan.ts", { packages: [types("@biu-cs-planner/core")] }),
       ],
       [],
     );
-    expect(edges.map((edge) => `${edge.toWorkspace}:${edge.kind}`)).toEqual([
-      "server:value",
-      "core:direction",
+    expect(edges.map((edge) => `${edge.from}:${edge.kind}`)).toEqual([
+      "web/src/api.ts:value",
+      "web/src/contract.ts:spelling",
+      "web/src/plan.ts:direction",
     ]);
+  });
+
+  it("names the erasable spelling as the fix, since nothing else would hint at it", () => {
+    const [edge] = forbiddenEdges(
+      [module("web/src/api.ts", { packages: [inlineTypes("@biu-cs-planner/server")] })],
+      [],
+    );
+    expect(edge && explain(edge)).toBe(
+      "`web/src/api.ts` takes types from `@biu-cs-planner/server` with the `type` keyword " +
+        "inside the clause, which `verbatimModuleSyntax` leaves in the emit as a specifier a " +
+        "bundler must resolve; write `import type { … } from` (or `export type { … } from`) " +
+        "instead, which is erased — `web` knows only the HTTP API contract, which it learns " +
+        "from `server`'s exported `ApiType`, so it may import types from `server` and nothing " +
+        "else — never a value from `server`, only in the spelling that erases, and never " +
+        "`core` or `app` at all.",
+    );
   });
 
   it("says a value arrived where only a type may, so the fix is legible", () => {
@@ -269,7 +325,8 @@ describe("the type-only edge, `web` to `server`", () => {
       "`web/src/api.ts` imports a value from `@biu-cs-planner/server`; `web` may import only " +
         "types from `server` — `web` knows only the HTTP API contract, which it learns from " +
         "`server`'s exported `ApiType`, so it may import types from `server` and nothing " +
-        "else — never a value from `server`, and never `core` or `app` at all.",
+        "else — never a value from `server`, only in the spelling that erases, and never " +
+        "`core` or `app` at all.",
     );
   });
 
@@ -290,6 +347,13 @@ describe("the type-only edge, `web` to `server`", () => {
     expect(broken([], [testFile("web/src/api.test.ts", ["server/src/api.ts"])])).toEqual([
       "web → server",
     ]);
+  });
+
+  it("holds a web test file to the erasable spelling too", () => {
+    // `tests.ts` records the same two flags a module carries, so the rule reads the same.
+    expect(
+      broken([], [testFile("web/src/api.test.ts", [inlineTypes("server/src/api.ts")])]),
+    ).toEqual(["web → server"]);
   });
 });
 
@@ -370,7 +434,7 @@ describe("real source text", () => {
     expect(forbiddenEdges([mixed], []).map((edge) => edge.kind)).toEqual(["value"]);
   });
 
-  it("lets web re-export the contract, because a type re-export carries no code", () => {
+  it("lets web re-export the contract with `export type { X } from`, which is erased", () => {
     const passing = moduleFromSource(
       "web/src/contract.ts",
       ['export type { ApiType } from "@biu-cs-planner/server";'].join("\n"),
@@ -378,7 +442,11 @@ describe("real source text", () => {
     expect(forbiddenEdges([passing], [])).toEqual([]);
   });
 
-  it("lets web write the inline `import { type X }` form, the same knowledge spelled twice", () => {
+  it("fails web writing the inline `import { type X }`, which the emit keeps", () => {
+    // The line #59 is about, read from source through the same reader the report uses.
+    // It carries only a type and it is still a finding: `import { type ApiType } from
+    // "@biu-cs-planner/server"` emits `import {} from "@biu-cs-planner/server"`, so the
+    // bundler resolves `server/src/index.ts` and `node:fs/promises` arrives with it.
     const inline = moduleFromSource(
       "web/src/api.ts",
       [
@@ -387,7 +455,27 @@ describe("real source text", () => {
         'export const api = hc<ApiType>("/");',
       ].join("\n"),
     );
-    expect(forbiddenEdges([inline], [])).toEqual([]);
+    const edges = forbiddenEdges([inline], []);
+    expect(edges.map((edge) => `${edge.toWorkspace}:${edge.kind}`)).toEqual(["server:spelling"]);
+    expect(edges.map(explain).join("\n")).toContain("write `import type { … } from`");
+  });
+
+  it("fails the inline `export { type X } from` re-export by the very same rule", () => {
+    // The other direction, judged the same way and for the same reason: `export { type
+    // ApiType } from "…"` emits `export {} from "…"` and keeps the specifier.
+    const inline = moduleFromSource(
+      "web/src/contract.ts",
+      ['export { type ApiType } from "@biu-cs-planner/server";'].join("\n"),
+    );
+    expect(forbiddenEdges([inline], []).map((edge) => edge.kind)).toEqual(["spelling"]);
+  });
+
+  it("still fails a value re-export out of server, which is not a spelling problem", () => {
+    const value = moduleFromSource(
+      "web/src/contract.ts",
+      ['export { launchToken } from "@biu-cs-planner/server";'].join("\n"),
+    );
+    expect(forbiddenEdges([value], []).map((edge) => edge.kind)).toEqual(["value"]);
   });
 
   it("cannot see a dynamic import, because no graph records one", () => {
@@ -426,7 +514,8 @@ describe("summarise", () => {
   it("says the whole rule, generated from the table so the two cannot drift", () => {
     expect(summarise()).toBe(
       "`core` imports none of the others, `app` imports `core`, " +
-        "`server` imports `core` and `app`, `web` imports `server` for types only",
+        "`server` imports `core` and `app`, " +
+        "`web` imports `server` for types only, written `import type`",
     );
   });
 });
@@ -441,7 +530,8 @@ describe("explain", () => {
       "`web/src/timetable/week.ts` imports `core/src/catalog/schema.ts`; `web` may not import " +
         "`core` — `web` knows only the HTTP API contract, which it learns from `server`'s " +
         "exported `ApiType`, so it may import types from `server` and nothing else — never " +
-        "a value from `server`, and never `core` or `app` at all.",
+        "a value from `server`, only in the spelling that erases, and never `core` or `app` " +
+        "at all.",
     );
   });
 });
