@@ -35,9 +35,12 @@ import {
 
 
 export type Warning =
-  // What the dialect could not read of one row's hours, with the Course and Group that row
-  // names. Each of the dialect's Warnings carries its own fields, so they are spread in.
+  // What the dialect could not read of one row's hours, on the Course and Group that row names.
+  // One of these carries the cell it was read from, so each is spread in rather than the kind
+  // alone being copied out of it.
   | ({ courseNumber: string; group: string } & MeetingWarning)
+  // Not one of those: it is the Semester cell rather than the hours, and a row that will not say
+  // which Semester it is in also stops the part superseding that Course's Groups further down.
   | { kind: "semester-unreadable"; courseNumber: string; group: string }
   | {
       kind: "group-meetings-overlap";
@@ -233,6 +236,9 @@ export function importRawCrawl(
   for (const row of crawl.rows ?? []) {
     const { semesters, meetings, warnings: meetingWarnings } = parseGroupMeetings(row);
     const courseNumber = parseCourseNumber(row.code);
+    // The row's Course and Group are named here rather than in the dialect, which reads a row's
+    // hours and is handed no course number; they are written last so they stand whatever a
+    // dialect Warning carries.
     for (const meetingWarning of meetingWarnings) {
       warnings.push({ ...meetingWarning, courseNumber, group: row.group });
     }
