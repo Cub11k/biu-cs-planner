@@ -375,3 +375,89 @@ export function readStateFile(input: unknown, migrations: Migrations): StateFile
 export function parseStateFile(input: unknown): StateFileRead {
   return readStateFile(input, STATE_MIGRATIONS);
 }
+
+/**
+ * A State File value this build could not read back, which `writeStateFile` refuses. Named
+ * rather than a bare `Error` so that whatever routes a save can tell it from a disk that
+ * would not take the file: this one is a bug in the caller and never the student's doing, and
+ * turning it into a Warning is the API's job (docs/design.md, "API and data rules").
+ */
+export class StateFileUnwritableError extends Error {
+  override readonly name = "StateFileUnwritableError";
+  /** The part of the value the schema objected to, or the file itself. */
+  readonly at: string;
+
+  constructor(at: string) {
+    super(`refusing to write a State File this build could not read back: ${at}`);
+    this.at = at;
+  }
+}
+
+/**
+ * Which revision of a State File a save was based on.
+ *
+ * Opaque by intent rather than by the type system: it is a bare alias, so any string passes,
+ * and treating it as anything but a token to hand back is a mistake the compiler will not
+ * catch. `docs/design.md`, "External edits" has each save carry the version of
+ * the file it was based on so the server can refuse an overwrite of a file that changed on
+ * disk meanwhile — Dropbox, git, an editor — and what identifies a revision is that guard's
+ * decision, not this module's: reading a file is the only way to produce one and this module
+ * performs no I/O. It is neither the `schemaVersion` a file records nor the burst count
+ * `watchWorkspace` serves, both of which are versions of something else (`app/src/changes.ts`
+ * says the same thing from the other side).
+ */
+export type StateFileVersion = string;
+
+/**
+ * A save: the JSON to write, and the version of the file it was based on. They are produced
+ * together so that no caller has to remember to ask for the version — `write` the JSON alone
+ * and the external-edit guard has nothing to check, which is the overwrite it exists to refuse
+ * (ADR-0013). Produced together and not yet *enforced* together: `Workspace.write(ref, data)`
+ * takes no version, so until the guard ticket gives the port one, a caller can still drop
+ * `basedOn` on the floor and the compiler will not mind.
+ */
+export type StateFileSave = {
+  /** What a `Workspace` writes. Plain JSON values, detached from the State it came from. */
+  json: Record<string, unknown>;
+  /** `undefined` when the save is based on no file: this State File does not exist yet. */
+  basedOn: StateFileVersion | undefined;
+};
+
+/**
+ * Writes a State File — as a value. The Workspace port already promises an atomic write
+ * (`app/src/workspace.ts`), so there is nothing to do here but produce what it stores, which
+ * is also what makes the round trip through `parseStateFile` testable without a filesystem.
+ *
+ * **It takes the version the save is based on** (ADR-0013: the save path is the undo path, so
+ * an undo is an ordinary guarded save and needs to carry a version exactly as a first-hand
+ * edit does). Enforcing the refusal is a later ticket; this signature is what lets it happen
+ * at all, and there is deliberately no second way to produce a State File's JSON.
+ *
+ * The version *in* the file is the one this build reads, never the one the value arrived
+ * carrying: a file that migrated forward on the way in is written back at the current
+ * version, which is what stops the next build from migrating it a second time.
+ *
+ * Unlike the reader it is not forgiving, and for the opposite reason. A file is untrusted
+ * input, so one unreadable Pick costs a Pick rather than the Variant holding it; the value
+ * here is this app's own, so one the schema rejects is a bug in the caller. Writing it anyway
+ * would cost the student whatever the next read then dropped, silently, so it throws instead.
+ * Only a cast can get there — the argument is a `State` — and this is the assertion that says
+ * so out loud rather than leaving it to the type system.
+ */
+export function writeStateFile(
+  state: State,
+  save: { basedOn: StateFileVersion | undefined },
+): StateFileSave {
+  // Parsed rather than copied: this fills the defaulted fields in the way the reader fills
+  // them, so a file saved twice is the same file, and strips every key the schema does not
+  // know — `__proto__` among them, which the reader refuses a whole file for.
+  const checked = stateSchema.safeParse({
+    ...state,
+    schemaVersion: CURRENT_STATE_SCHEMA_VERSION,
+  });
+  if (!checked.success) {
+    throw new StateFileUnwritableError(fieldOf(checked.error) ?? "the file itself");
+  }
+
+  return { json: checked.data, basedOn: save.basedOn };
+}
