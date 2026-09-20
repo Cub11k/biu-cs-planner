@@ -50,15 +50,16 @@ it("does not report the same Day and hours in different Semesters, as a Year-lon
   ).toEqual([]);
 });
 
-it("compares times as minutes, so one written without its leading zero still overlaps", () => {
-  // The rule is #14's, and #14 reads minutes rather than comparing the strings because a
-  // Blocked Time is student-entered: "9:00" sorts after "10:00". Today's Shoham dialect only
-  // ever emits a padded time, so this is the rule holding rather than a case the Importer
-  // meets -- which is the point of testing it here, where the rule is, and not there.
+it("finds no overlap with a Meeting written without its leading zero, which is no time at all", () => {
+  // #14 read an unpadded hour; #54 ruled that reading out (ADR-0012), because the Shoham
+  // dialect refuses a time that lacks its leading zero and drops the Meeting, so nothing the
+  // Importer produces can reach here unpadded. A Meeting written that way now occupies no
+  // time, and a Meeting occupying no time overlaps nothing -- the same answer the zero-length
+  // Meeting gets further down, and reached the same way.
   const morning = meeting({ start: "9:00", end: "11:00" });
   const late = meeting({ start: "10:00", end: "12:00" });
 
-  expect(overlappingMeetings([morning, late])).toEqual([{ first: morning, second: late }]);
+  expect(overlappingMeetings([morning, late])).toEqual([]);
 });
 
 it("reports each overlapping pair once when three Meetings sit on top of each other", () => {
