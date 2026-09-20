@@ -281,4 +281,32 @@ export function readModule(absPath: string, root: string): Module {
 export const moduleName = (path: string): string =>
   path.replace(/^[^/]+\/src\//, "").replace(/\.ts$/, "");
 
+/**
+ * The npm scope this project's own workspaces are published under. A bare specifier that
+ * starts with it names one of them; `zod`, `hono`, `react` and `@types/node` do not.
+ */
+const SCOPE = "@biu-cs-planner/";
+
+/**
+ * The workspace a bare specifier refers to, or `undefined` if it names something outside
+ * this repo.
+ *
+ * `readModule` records a cross-workspace import under the name the source writes —
+ * `@biu-cs-planner/core`, never `core/src/index.ts` — because that is what the statement
+ * says and because the package boundary is the thing the layering rule is about. A
+ * consumer that wants to place such an edge back in the tree needs the workspace name
+ * back, and this is where that mapping lives for `tools/pr-report`. It sits beside
+ * `moduleName` for the same reason: both turn a specifier into the label a reader
+ * recognises.
+ *
+ * A deep import, `@biu-cs-planner/core/thing`, still lands in `core`. Whether this project
+ * actually *has* a workspace by that name is the caller's question, not this function's —
+ * the module graph answers it by checking the name against the workspaces it drew a box
+ * for, so a stale `@biu-cs-planner/tools` gets no arrow rather than an invented node.
+ */
+export function packageWorkspace(specifier: string): string | undefined {
+  if (!specifier.startsWith(SCOPE)) return undefined;
+  return specifier.slice(SCOPE.length).split("/")[0] || undefined;
+}
+
 export { join };
