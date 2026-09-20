@@ -10,8 +10,12 @@ export type {
   Warning,
 } from "./shoham/import.ts";
 export { parseSemesters, parseGroupMeetings } from "./shoham/dialect.ts";
-export { overlappingMeetings } from "./shoham/overlaps.ts";
-export type { MeetingOverlap } from "./shoham/overlaps.ts";
+export { meetingsOccupyingNoTime, overlappingMeetings } from "./shoham/overlaps.ts";
+export type {
+  EmptyRangeShape,
+  MeetingOccupyingNoTime,
+  MeetingOverlap,
+} from "./shoham/overlaps.ts";
 export { rawCrawlSchema, rawDetailSchema, rawCrawlRowSchema } from "./shoham/raw-crawl.ts";
 export { parseCatalogFile, catalogJsonSchema } from "./catalog/file.ts";
 export type { CatalogFileWarning } from "./catalog/file.ts";
