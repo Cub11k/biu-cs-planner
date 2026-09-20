@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 import { createApiClient } from "./api.ts";
 import {
   DEFAULT_EVERY_MS,
-  watchWorkspaceChanges,
+  pollWorkspaceChanges,
   workspaceChangePoll,
   type Repeat,
 } from "./changes.ts";
@@ -10,14 +10,14 @@ import {
 const TOKEN = "Zm9vYmFyLXRoaXMtaXMtd2hhdC1hLXJlYWwtdG9rZW4tbG9va3MtbGlrZQ";
 
 /**
- * Stands in for the server: answers the change counter with whatever the test last set,
+ * Stands in for the server: answers the change count with whatever the test last set,
  * and records every ask. The real typed client is used, not a fake of it — the route path
  * and the response shape are half of what is being asserted.
  */
 function servingRevision() {
   const asked: string[] = [];
-  let revision = 0;
-  let answer: () => Response = () => Response.json({ revision });
+  let changeCount = 0;
+  let answer: () => Response = () => Response.json({ changeCount });
 
   const fetchImpl = (async (input: RequestInfo | URL) => {
     asked.push(new URL(String(input), "http://localhost:8900").pathname);
@@ -28,7 +28,7 @@ function servingRevision() {
     asked,
     client: createApiClient(() => TOKEN, fetchImpl),
     moveTo: (next: number) => {
-      revision = next;
+      changeCount = next;
     },
     failWith: (status: number) => {
       answer = () => new Response("no", { status });
@@ -59,7 +59,7 @@ function manualRepeat(): { repeat: Repeat; tick: () => void; running: () => bool
   };
 }
 
-it("asks the API for the Workspace's change counter, and nothing else", async () => {
+it("asks the API for the Workspace's change count, and nothing else", async () => {
   const server = servingRevision();
   const poll = workspaceChangePoll(server.client, () => {});
 
@@ -69,7 +69,7 @@ it("asks the API for the Workspace's change counter, and nothing else", async ()
 });
 
 /** The first answer is the baseline: opening a page is not an external change. */
-it("reports nothing on the first answer, whatever the counter says", async () => {
+it("reports nothing on the first answer, whatever the count says", async () => {
   const server = servingRevision();
   server.moveTo(9);
   let changed = 0;
@@ -80,7 +80,7 @@ it("reports nothing on the first answer, whatever the counter says", async () =>
   expect(changed).toBe(0);
 });
 
-it("reports a change once the counter moves", async () => {
+it("reports a change once the count moves", async () => {
   const server = servingRevision();
   let changed = 0;
   const poll = workspaceChangePoll(server.client, () => (changed += 1));
@@ -92,8 +92,8 @@ it("reports a change once the counter moves", async () => {
   expect(changed).toBe(1);
 });
 
-/** A counter that has not moved is the ordinary case, and the quiet one. */
-it("reports nothing while the counter stays where it was", async () => {
+/** A count that has not moved is the ordinary case, and the quiet one. */
+it("reports nothing while the count stays where it was", async () => {
   const server = servingRevision();
   let changed = 0;
   const poll = workspaceChangePoll(server.client, () => (changed += 1));
@@ -120,10 +120,10 @@ it("reports each further movement separately", async () => {
 });
 
 /**
- * The server restarting sets the counter back to 0, which is a movement and reloads the
+ * The server restarting sets the count back to 0, which is a movement and reloads the
  * page — which is right: a server that restarted may be looking at a different Workspace.
  */
-it("treats the counter going backwards as a change, not as nothing", async () => {
+it("treats the count going backwards as a change, not as nothing", async () => {
   const server = servingRevision();
   server.moveTo(7);
   let changed = 0;
@@ -170,7 +170,7 @@ it("asks once immediately, then once per tick, and stops when stopped", async ()
   const server = servingRevision();
   const clock = manualRepeat();
 
-  const stop = watchWorkspaceChanges(server.client, () => {}, { repeat: clock.repeat });
+  const stop = pollWorkspaceChanges(server.client, () => {}, { repeat: clock.repeat });
   await settled();
 
   expect(server.asked).toEqual(["/api/workspace/changes"]);
@@ -195,7 +195,7 @@ it("asks once immediately, then once per tick, and stops when stopped", async ()
 it("keeps asking on its own clock when no repeat is given", async () => {
   const server = servingRevision();
   let changed = 0;
-  const stop = watchWorkspaceChanges(server.client, () => (changed += 1), { everyMs: 5 });
+  const stop = pollWorkspaceChanges(server.client, () => (changed += 1), { everyMs: 5 });
 
   await new Promise((settle) => setTimeout(settle, 60));
 
@@ -216,4 +216,37 @@ it("keeps asking on its own clock when no repeat is given", async () => {
 /** A value, not a guess: the interval is part of what the design promises. */
 it("asks every two seconds by default", () => {
   expect(DEFAULT_EVERY_MS).toBe(2000);
+});
+
+/**
+ * Stopping silences an answer that is already on its way. Without this, a poll in flight
+ * when the page moves on would report a change to something that is no longer there.
+ */
+it("reports nothing from an ask that was already in flight when it stopped", async () => {
+  let release: (() => void) | undefined;
+  const held = new Promise<void>((done) => {
+    release = done;
+  });
+  let count = 0;
+  const fetchImpl = (async () => {
+    // the first ask answers at once, so the poller has a baseline; the second is held
+    if (count++ === 0) return Response.json({ changeCount: 0 });
+    await held;
+    return Response.json({ changeCount: 1 });
+  }) as typeof fetch;
+
+  const clock = manualRepeat();
+  let changed = 0;
+  const stop = pollWorkspaceChanges(createApiClient(() => TOKEN, fetchImpl), () => (changed += 1), {
+    repeat: clock.repeat,
+  });
+  await settled();
+  clock.tick(); // this ask is now waiting on `held`
+
+  stop();
+  release?.();
+  await settled();
+
+  expect(count).toBe(2); // the held ask really did answer
+  expect(changed).toBe(0); // and reported nothing, because the poller had stopped
 });

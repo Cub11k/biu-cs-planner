@@ -13,18 +13,18 @@ let api: ReturnType<typeof createApi>;
  * question about timing instead. The watcher itself is tested in ./workspace.fs.test.ts and
  * the settling in app/src/changes.test.ts.
  */
-let revision: number;
+let changeCount: number;
 
 /** Stands in for the launch token the CLI reads from the user config directory. */
 const TOKEN = "test-launch-token-long-enough-to-look-like-a-real-one";
 
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "biu-api-"));
-  revision = 0;
+  changeCount = 0;
   api = createApi({
     workspace: fileSystemWorkspace(root),
     token: TOKEN,
-    changes: { revision: () => revision },
+    changes: { changeCount: () => changeCount },
   });
 });
 afterEach(async () => {
@@ -326,20 +326,20 @@ it("never writes the token into the Workspace, which may be synced or committed"
  * as everything else, asked for over the same typed client — see the route's own comment in
  * ./api.ts for why that, and not Server-Sent Events or a websocket.
  */
-it("reports the Workspace's change counter, and moves it when the folder changes", async () => {
+it("reports the Workspace's change count, and reports it again once it has moved", async () => {
   const before = await get("/api/workspace/changes");
 
   expect(before.status).toBe(200);
-  await expect(before.json()).resolves.toEqual({ revision: 0 });
+  await expect(before.json()).resolves.toEqual({ changeCount: 0 });
 
-  revision = 3;
+  changeCount = 3;
   const after = await get("/api/workspace/changes");
 
-  await expect(after.json()).resolves.toEqual({ revision: 3 });
+  await expect(after.json()).resolves.toEqual({ changeCount: 3 });
 });
 
-/** Not an open route: the counter says the Workspace moved, which is the student's business. */
-it("refuses the change counter to a request with no launch token", async () => {
+/** Not an open route: the count says the Workspace moved, which is the student's business. */
+it("refuses the change count to a request with no launch token", async () => {
   const answer = await api.request("/api/workspace/changes");
 
   expect(answer.status).toBe(401);

@@ -35,7 +35,7 @@ export type ApiDependencies = {
    * The Workspace's change counter. Only the reading half: starting and stopping the watch
    * belongs to whoever owns the process, not to a request.
    */
-  changes: Pick<WorkspaceChanges, "revision">;
+  changes: Pick<WorkspaceChanges, "changeCount">;
 };
 
 /**
@@ -91,10 +91,15 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
     // Is this folder a Workspace yet, and what is missing if not?
     .get("/api/workspace", async (c) => c.json(await workspaceStatus(workspace)))
 
+    // Creating the layout is an explicit act, which is why it is a POST and not a
+    // side effect of the GET above: nothing is written until the student asks.
+    .post("/api/workspace", capped, async (c) => c.json(await createWorkspace(workspace)))
+
     /**
      * How the page hears that the Workspace changed under it (docs/design.md, "Storage").
      * One integer, moved once per settled burst of filesystem events; `web` remembers the
-     * last one it saw and reloads what it is showing when this one differs.
+     * last one it saw and reloads what it is showing when this one differs. A count, not a
+     * version: it restarts at 0 with the server, and nothing may compare a file against it.
      *
      * **Why a number a page asks for, rather than the server pushing one.** `web` reaches
      * the domain only through this API and the typed client (CLAUDE.md, ADR-0002), and it
@@ -123,11 +128,7 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
      * the cheapest mechanism that keeps the one edge and the one token wins. Pushing can be
      * added behind this same counter later without `web` learning anything new.
      */
-    .get("/api/workspace/changes", (c) => c.json({ revision: changes.revision() }))
-
-    // Creating the layout is an explicit act, which is why it is a POST and not a
-    // side effect of the GET above: nothing is written until the student asks.
-    .post("/api/workspace", capped, async (c) => c.json(await createWorkspace(workspace)))
+    .get("/api/workspace/changes", (c) => c.json({ changeCount: changes.changeCount() }))
 
     .post(
       "/api/catalog/:year/import",

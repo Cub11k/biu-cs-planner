@@ -32,7 +32,7 @@ it("starts at nothing having changed", async () => {
 
   const changes = await watchWorkspace(workspace, manualClock());
 
-  expect(changes.revision()).toBe(0);
+  expect(changes.changeCount()).toBe(0);
   changes.stop();
 });
 
@@ -45,7 +45,7 @@ it("counts a file that appeared from outside", async () => {
   workspace.seed(CATALOG_2027, { schemaVersion: 1 });
   clock.settle();
 
-  expect(changes.revision()).toBe(1);
+  expect(changes.changeCount()).toBe(1);
   changes.stop();
 });
 
@@ -62,10 +62,10 @@ it("collapses a burst into one change", async () => {
   for (const academicYear of [2025, 2026, 2027, 2028, 2029]) {
     workspace.seed({ kind: "catalog", academicYear }, { schemaVersion: 1 });
   }
-  expect(changes.revision()).toBe(0); // nothing yet: the folder is still busy
+  expect(changes.changeCount()).toBe(0); // nothing yet: the folder is still busy
   clock.settle();
 
-  expect(changes.revision()).toBe(1);
+  expect(changes.changeCount()).toBe(1);
   changes.stop();
 });
 
@@ -81,7 +81,7 @@ it("counts a later burst separately", async () => {
   workspace.seed(CATALOG_2027, { schemaVersion: 1, offerings: [] });
   clock.settle();
 
-  expect(changes.revision()).toBe(2);
+  expect(changes.changeCount()).toBe(2);
   changes.stop();
 });
 
@@ -98,7 +98,7 @@ it("counts a file that went away from outside", async () => {
   workspace.remove(CATALOG_2027);
   clock.settle();
 
-  expect(changes.revision()).toBe(1);
+  expect(changes.changeCount()).toBe(1);
   changes.stop();
 });
 
@@ -115,7 +115,7 @@ it("counts the app's own write, because a watcher cannot tell whose it was", asy
   await workspace.write(CATALOG_2027, { schemaVersion: 1 });
   clock.settle();
 
-  expect(changes.revision()).toBe(1);
+  expect(changes.changeCount()).toBe(1);
   changes.stop();
 });
 
@@ -132,7 +132,7 @@ it("counts the layout being created", async () => {
   await workspace.create();
   clock.settle();
 
-  expect(changes.revision()).toBe(1);
+  expect(changes.changeCount()).toBe(1);
   changes.stop();
 });
 
@@ -165,7 +165,7 @@ it("reports nothing after it has stopped, and stops twice without complaint", as
   workspace.seed(CATALOG_2027, { schemaVersion: 1 });
   clock.settle();
 
-  expect(changes.revision()).toBe(0);
+  expect(changes.changeCount()).toBe(0);
   expect(workspace.watching()).toBe(0);
 });
 
@@ -180,10 +180,10 @@ it("settles on its own clock when no schedule is given", async () => {
 
   workspace.seed(CATALOG_2027, { schemaVersion: 1 });
   workspace.seed(CATALOG_2027, { schemaVersion: 1 });
-  expect(changes.revision()).toBe(0);
+  expect(changes.changeCount()).toBe(0);
   await new Promise((settle) => setTimeout(settle, 80));
 
-  expect(changes.revision()).toBe(1);
+  expect(changes.changeCount()).toBe(1);
   changes.stop();
 });
 

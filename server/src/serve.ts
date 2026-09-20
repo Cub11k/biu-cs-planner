@@ -22,12 +22,20 @@ const token = await launchToken();
 const workspace = fileSystemWorkspace(path);
 
 /**
- * The folder is watched from here on, and until the process ends. No `SIGINT` handler
- * closes it: the server itself is what holds the process open, `Ctrl-C` with no handler
- * ends the process outright, and a handler that closed the watcher but forgot the listening
- * socket would leave a server that cannot be stopped — which is what the smoke legs in
- * `.github/workflows/ci.yml` fail on. `persistent: false` in the adapter keeps the watcher
- * from being the thing that holds the loop open on Node and Bun.
+ * The folder is watched from here on, and until the process ends.
+ *
+ * Nothing calls `changes.stop()`, because there is no shutdown path here to call it from:
+ * the server runs in the foreground of a terminal and `Ctrl-C` with no handler ends the
+ * process outright. A `SIGINT` handler is deliberately not added — one that closed the
+ * watcher but forgot the listening socket would leave a server that cannot be stopped,
+ * which is what the smoke legs in `.github/workflows/ci.yml` fail on, and it would also
+ * replace the exit status those legs read. `stop` is for a caller that does have a
+ * shutdown path, and for the tests that assert the watcher lets go.
+ *
+ * `persistent: false` in the adapter keeps the watcher from being the thing that holds the
+ * loop open on Node and Bun. Deno ignores it, so there the watcher outlives everything
+ * until the process dies — measured, and harmless: the listening socket holds the loop open
+ * anyway, and `SIGINT` ends the process whatever is still attached to it.
  */
 const changes = await watchWorkspace(workspace);
 const api = createApi({ workspace, changes, token });

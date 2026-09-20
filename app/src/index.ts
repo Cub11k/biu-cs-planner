@@ -1,13 +1,6 @@
 export { createWorkspace, workspaceStatus } from "./setup.ts";
 export { importCrawl, type ImportResult } from "./catalog.ts";
 export {
-  watchWorkspace,
-  DEFAULT_SETTLE_MS,
-  type Schedule,
-  type WorkspaceChanges,
-  type WorkspaceChangesOptions,
-} from "./changes.ts";
-export {
   getOffering,
   listOfferings,
   type ListResult,
@@ -15,12 +8,19 @@ export {
   type QueryWarning,
 } from "./queries.ts";
 export {
+  watchWorkspace,
+  DEFAULT_SETTLE_MS,
+  type Schedule,
+  type WorkspaceChanges,
+  type WorkspaceChangesOptions,
+} from "./changes.ts";
+export {
   WORKSPACE_LAYOUT,
   WorkspaceRefusedError,
   type CatalogRef,
   type Workspace,
-  type WorkspaceFolder,
   type WorkspaceChanged,
+  type WorkspaceFolder,
   type WorkspaceRef,
   type WorkspaceStatus,
   type WorkspaceWatcher,

@@ -38,8 +38,8 @@ async function start({ workspace, host, open }: Launch): Promise<void> {
   const token = await launchToken();
   const folder = fileSystemWorkspace(workspace);
   // watched for as long as the process runs, so a Catalog dropped in by hand reaches the
-  // page without a manual reload (docs/design.md, "Storage"). Nothing stops it by hand:
-  // Ctrl-C ends the process, and see server/src/serve.ts for why no handler intercepts it.
+  // page without a manual reload (docs/design.md, "Storage"). Nothing calls `stop`: Ctrl-C
+  // ends the process, and see server/src/serve.ts for why no handler intercepts it.
   const changes = await watchWorkspace(folder);
   const api = createApi({ workspace: folder, changes, token });
 

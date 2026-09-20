@@ -204,6 +204,15 @@ async function within(condition: () => boolean, ms = WITHIN_MS): Promise<boolean
   return condition();
 }
 
+/** Waits until no event has arrived for `ms`, so a later one can only be the stimulus. */
+async function quiet(events: () => number, ms = 700): Promise<void> {
+  let last = -1;
+  while (last !== events()) {
+    last = events();
+    await new Promise((settle) => setTimeout(settle, ms));
+  }
+}
+
 /**
  * Repeats a stimulus until it is observed. A folder cannot be watched before the event
  * announcing it has been heard, so a file written in that same instant is legitimately
@@ -292,9 +301,53 @@ it("picks up a layout folder that appears after watching started", async () => {
   await workspace.create();
   expect(await within(() => watched.events() > 0)).toBe(true);
 
+  // The root's own events die down first. Without this, a trailing event from one of
+  // `create`'s three `mkdir`s would satisfy the assertion below and the new `catalogs/`
+  // watcher would never have had to exist.
+  await quiet(watched.events);
+
   const appeared = () =>
     writeFile(join(root, "catalogs", "2027.json"), JSON.stringify(CATALOG), "utf8");
   expect(await observed(appeared, watched.events)).toBe(true);
+});
+
+/**
+ * `.backups/` is not watched. A rotating snapshot is written only by the app and nothing in
+ * it is ever shown, so it is not news — and once autosave lands, watching it would make
+ * every save's snapshot a page reload.
+ */
+it("ignores .backups, and still hears the folders that matter", async () => {
+  const workspace = fileSystemWorkspace(root);
+  await workspace.create();
+  const watched = await watching();
+
+  await writeFile(join(root, ".backups", "2027.json"), JSON.stringify(CATALOG), "utf8");
+  expect(await within(() => watched.events() > 0, 500)).toBe(false);
+
+  // the positive control: the same write in a watched folder is heard, so the silence
+  // above is `.backups` being left out and not a watcher that does nothing
+  await writeFile(join(root, "catalogs", "2027.json"), JSON.stringify(CATALOG), "utf8");
+  expect(await within(() => watched.events() > 0)).toBe(true);
+});
+
+/**
+ * A folder the operating system will not let it watch is one folder lost, not a server
+ * down. Node and Bun refuse by throwing from `watch`; Deno does it asynchronously on the
+ * watcher, which unhandled would be an uncaught error.
+ */
+it("skips a folder it cannot watch, and keeps watching the rest", async () => {
+  const workspace = fileSystemWorkspace(root);
+  await workspace.create();
+  await chmod(join(root, "requirements"), 0o000);
+
+  try {
+    const watched = await watching();
+
+    await writeFile(join(root, "catalogs", "2027.json"), JSON.stringify(CATALOG), "utf8");
+    expect(await within(() => watched.events() > 0)).toBe(true);
+  } finally {
+    await chmod(join(root, "requirements"), 0o700);
+  }
 });
 
 /**
@@ -311,6 +364,11 @@ it("stays quiet about churn deep inside a nested folder such as .git", async () 
 
   // deliberately the opposite assertion: the wait has to pass without an event
   expect(await within(() => watched.events() > 0, 500)).toBe(false);
+
+  // and the watcher is awake, not merely absent: the same write one folder up is seen.
+  // Without this, a `watch` that did nothing at all would pass the assertion above.
+  await writeFile(join(root, "catalogs", "2027.json"), JSON.stringify(CATALOG), "utf8");
+  expect(await within(() => watched.events() > 0)).toBe(true);
 });
 
 it("stops watching when asked, and reports nothing afterwards", async () => {

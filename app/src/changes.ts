@@ -40,11 +40,15 @@ export type WorkspaceChangesOptions = {
 
 export type WorkspaceChanges = {
   /**
-   * Starts at 0 and moves by one per burst. `web` compares it against the last one it
-   * saw, so only the movement means anything — never the value, which restarts at 0 with
-   * the server and says nothing about how many times the folder has ever changed.
+   * Bursts counted so far. Starts at 0 and moves by one per burst; `web` compares it
+   * against the last one it saw, so only the movement means anything — never the value,
+   * which restarts at 0 with the server.
+   *
+   * A count and deliberately not a version. `schemaVersion` on a file and the file version
+   * a save carries (docs/design.md, "External edits") are both versions of one file; this
+   * is neither, and naming it one would invite a save to compare against it.
    */
-  revision(): number;
+  changeCount(): number;
   /** Stops watching. Idempotent, and leaves no timer and no watcher behind. */
   stop(): void;
 };
@@ -56,6 +60,12 @@ export type WorkspaceChanges = {
  * clone emits a burst, and both should reload the page once, after the folder is quiet.
  * A throttle would report the first event and then the tail of the burst as a second
  * change, which is one reload too many on every save.
+ *
+ * There is no maximum wait, so a folder written to continuously — a long sync, a build
+ * dropping files into the Workspace — never settles and the page is never told. Known, and
+ * left alone: capping the wait would report a change while the folder is still moving, which
+ * is the reload this exists to avoid, and none of the cases the design names behaves that
+ * way.
  */
 export async function watchWorkspace(
   workspace: Workspace,
@@ -64,14 +74,14 @@ export async function watchWorkspace(
   const settleMs = options.settleMs ?? DEFAULT_SETTLE_MS;
   const schedule = options.schedule ?? realSchedule;
 
-  let revision = 0;
+  let changeCount = 0;
   let stopped = false;
   let cancelPending: (() => void) | undefined;
 
   const settled = (): void => {
     cancelPending = undefined;
     if (stopped) return;
-    revision += 1;
+    changeCount += 1;
   };
 
   const watcher: WorkspaceWatcher = await workspace.watch(() => {
@@ -82,7 +92,7 @@ export async function watchWorkspace(
   });
 
   return {
-    revision: () => revision,
+    changeCount: () => changeCount,
     stop(): void {
       stopped = true;
       cancelPending?.();

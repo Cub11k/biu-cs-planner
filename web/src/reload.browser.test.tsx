@@ -50,8 +50,8 @@ let host: HTMLElement | undefined;
 let root: Root | undefined;
 const realFetch = globalThis.fetch;
 let served: Offering[] = [BEFORE];
-/** The counter the server would serve; moving it is a file having changed on disk. */
-let revision = 0;
+/** The count the server would serve; moving it is a file having changed on disk. */
+let changeCount = 0;
 let polls = 0;
 let asks = 0;
 
@@ -63,7 +63,7 @@ const json = (body: unknown): Response =>
 
 beforeEach(() => {
   served = [BEFORE];
-  revision = 0;
+  changeCount = 0;
   polls = 0;
   asks = 0;
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -73,7 +73,7 @@ beforeEach(() => {
 
     if (pathname === "/api/workspace/changes") {
       polls += 1;
-      return json({ revision });
+      return json({ changeCount });
     }
     asks += 1;
     return json({ offerings: served });
@@ -114,11 +114,12 @@ async function show(workspaceChanges: number): Promise<HTMLElement> {
   return mounted;
 }
 
+/** The Courses the picker is actually offering, named exactly and in the order shown. */
 const courseNumbers = (mounted: HTMLElement): string[] =>
-  [...mounted.querySelectorAll("button")]
-    .map((button) => button.textContent ?? "")
-    .filter((text) => text.includes("89-"))
-    .map((text) => (text.includes(BEFORE.courseNumber) ? BEFORE.courseNumber : AFTER.courseNumber));
+  [...mounted.querySelectorAll("button")].flatMap((button) => {
+    const text = button.textContent ?? "";
+    return [BEFORE.courseNumber, AFTER.courseNumber].filter((number) => text.includes(number));
+  });
 
 it("reads the Catalog again when the Workspace changed, and shows what it found", async () => {
   const mounted = await show(0);
@@ -162,7 +163,7 @@ it("leaves the Catalog alone when nothing in the Workspace changed", async () =>
  * (`DEFAULT_EVERY_MS` in ./changes.ts), because a page that only reloads when a test hands it
  * a number is not the claim the design makes.
  */
-it("reloads the whole app when the server's change counter moves", async () => {
+it("reloads the whole app when the server's change count moves", async () => {
   const mounted = document.createElement("div");
   host = mounted;
   document.body.append(mounted);
@@ -171,16 +172,16 @@ it("reloads the whole app when the server's change counter moves", async () => {
 
   await vi.waitFor(() => {
     if (courseNumbers(mounted).length === 0) throw new Error("the Catalog served no Course");
-    // and the counter has been read once, which is the baseline every later answer is
+    // and the count has been read once, which is the baseline every later answer is
     // compared against: a change made before the page ever asked is not one it can see
-    if (polls === 0) throw new Error("the page has not asked for the change counter yet");
+    if (polls === 0) throw new Error("the page has not asked for the change count yet");
   });
   expect(courseNumbers(mounted)).toEqual([BEFORE.courseNumber]);
 
   // a Catalog is dropped into `catalogs/` by hand: the file changes, the server's watcher
-  // settles the burst, and its counter moves. Nothing tells the page directly.
+  // settles the burst, and its count moves. Nothing tells the page directly.
   served = [AFTER];
-  revision = 1;
+  changeCount = 1;
 
   await vi.waitFor(
     () => {

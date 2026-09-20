@@ -30,9 +30,10 @@ export class WorkspaceRefusedError extends Error {
 }
 
 /**
- * A folder being watched. `stop` is idempotent and must leave nothing behind that keeps
- * the process alive: the server runs in the foreground of a terminal and Ctrl-C has to
- * end it (docs/design.md, "CLI and distribution").
+ * A folder being watched. `stop` is idempotent and leaves nothing behind that could keep
+ * the process alive, which is what a caller with a shutdown path needs: the server runs in
+ * the foreground of a terminal and Ctrl-C has to end it (docs/design.md, "CLI and
+ * distribution").
  */
 export type WorkspaceWatcher = {
   stop(): void;
