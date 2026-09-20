@@ -24,6 +24,7 @@ Development happens on temporary machines. The project lives on GitHub at `Cub11
 ## Code guardrails
 
 - `core` is pure and developed test-first. `web` talks only to the HTTP API through the typed client, never importing `core` or `app`.
+- **`web`'s one edge into `server` is the API contract, and it must be written in the erasable spelling**: `import type { ApiType } from "@biu-cs-planner/server"`, never the inline `import { type ApiType }`. `verbatimModuleSyntax` erases the first entirely and leaves the second behind as a specifier a bundler must resolve — `server/src/index.ts` → `workspace.fs.ts` → `node:fs/promises`, in a browser bundle. `export type { X } from` and `export { type X } from` differ the same way and are judged by the same rule. The allowed edges are data in `tools/pr-review/layering.ts`, and a narrowed entry there always means erasable.
 - The API exposes domain operations, never file paths.
 - Data from files is interpreted, never executed: no `eval`, `new Function`, or regular expressions built from data.
 - Every domain check produces a Warning; edits always go through.

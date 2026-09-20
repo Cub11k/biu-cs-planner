@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import ts from "typescript";
-import { importIsTypeOnly, mergeImports, type ImportRef } from "./surface.ts";
+import { importKind, mergeImports, type ImportRef } from "./surface.ts";
 
 /**
  * The test titles, read out of the test files. Written as behaviour ("warns when a
@@ -15,10 +15,10 @@ export type TestFile = {
   path: string;
   cases: TestCase[];
   /**
-   * Local modules this test file imports: what it is a test *of*. Type-only-ness is
-   * recorded here for the same reason it is on a module — the layering rule judges a
-   * test file too, and a test may legitimately reach for a type where it may not reach
-   * for a value.
+   * Local modules this test file imports: what it is a test *of*. What each import
+   * carries is recorded here for the same reason it is on a module — the layering rule
+   * judges a test file too, and a test may legitimately reach for a type where it may not
+   * reach for a value, and must spell that reach the erasable way where the rule says so.
    */
   targets: ImportRef[];
 };
@@ -50,7 +50,7 @@ export function readTestFile(absPath: string, root: string): TestFile {
       if (spec.startsWith(".")) {
         targets.push({
           specifier: relative(root, resolve(dirname(absPath), spec)),
-          typeOnly: importIsTypeOnly(node.importClause),
+          ...importKind(node.importClause),
         });
       }
     }

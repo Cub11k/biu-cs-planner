@@ -166,7 +166,8 @@ export function renderGraphs({ headSha, graphs, judgement }: GraphsComment): str
     out.push(
       `**Layering: ${forbidden.length} import${forbidden.length === 1 ? "" : "s"} the rule ` +
         "does not allow.** The allowed edges are declared in `tools/pr-review/layering.ts` — " +
-        "which way each may point, and which of them may carry nothing but types. Anything " +
+        "which way each may point, which of them may carry nothing but types, and in which " +
+        "spelling — an import the emit keeps is not the same as one it erases. Anything " +
         "else is a broken guardrail rather than a style preference, and this job is red " +
         "because of it.",
     );
