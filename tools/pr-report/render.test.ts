@@ -438,6 +438,79 @@ describe("the report comment", () => {
   });
 });
 
+/** The call graph's mermaid source, which is the code block in the second fold. */
+const callGraph = (markdown: string): string => {
+  const body = folds(markdown)[1]?.body ?? "";
+  return body.split("```mermaid")[1]?.split("```")[0] ?? "";
+};
+
+/** The second fold whole, because half of what this graph says is on the outside of it. */
+const callFold = (markdown: string): { summary: string; body: string } =>
+  folds(markdown)[1] ?? { summary: "", body: "" };
+
+/**
+ * The call graph, whose nodes are `module#function` — and the module half is the whole of
+ * #86. `calls.ts` is where a call is resolved and `calls.test.ts` is where that resolution is
+ * held to account; what is asked here is what the report *says* about it, including the one
+ * thing the graph used to say by saying nothing.
+ */
+describe("the call graph", () => {
+  /** One call placed, one not. Both drawn. */
+  const unplaced = report({
+    edges: [
+      { from: "core/src/a.ts#one", to: "core/src/b.ts#two" },
+      { from: "core/src/a.ts#one", to: "(unresolved)#three" },
+    ],
+  });
+
+  it("labels a node with the module the function is written in", () => {
+    const graph = callGraph(render(report()));
+
+    expect(graph).toContain('core_src_b_ts_two["b.two"]');
+    expect(graph).toContain("core_src_a_ts_one --> core_src_b_ts_two");
+  });
+
+  it("draws a callee it could not place instead of leaving the call out", () => {
+    // A dropped edge and a misdrawn one are the same failure: the graph is read before the
+    // diff, so its silence is taken for an absence. The label is what a reader sees; the node
+    // id is `id()`'s escaping and says nothing to anybody.
+    const graph = callGraph(render(unplaced));
+
+    expect(graph).toContain('["three — unresolved"]');
+    expect(graph.split("\n").filter((line) => /^ {2}\w+ --> \w+$/.test(line))).toHaveLength(2);
+  });
+
+  it("counts the unresolved callees outside the fold, and not as functions", () => {
+    // Two functions and one unresolved callee, which is not a third function: it stands for one
+    // whose module could not be found. Counting it among them would be the summary making the
+    // same confident claim the graph itself used to make.
+    expect(callFold(render(unplaced)).summary).toContain("2 functions, 2 calls, 1 unresolved");
+  });
+
+  it("explains an unresolved node only when the graph holds one", () => {
+    const placed = callFold(render(report()));
+
+    // Rendered, and then silent on unresolved calls: a graph with none has nothing to explain
+    // and a count of zero is noise. The first assertion is what stops the other two passing
+    // over a fold that was never drawn.
+    expect(placed.body).toContain("```mermaid");
+    expect(placed.summary).not.toContain("unresolved");
+    expect(placed.body).not.toContain("unresolved");
+    expect(callFold(render(unplaced)).body).toContain("**unresolved**");
+  });
+
+  it("says what the graph is a graph of, resolution included", () => {
+    // The sentence beside the picture used to be "Calls between the project's own functions.
+    // Library calls are left out." — true, and silent on the question the graph was getting
+    // wrong. What a reader needs to know is that a name is read as the caller's import of it,
+    // and that a call staying inside its module is not an edge.
+    const said = callFold(render(report())).body;
+
+    expect(said).toContain("resolved through the calling module's own imports");
+    expect(said).toContain("does not leave the module it is written in");
+  });
+});
+
 /**
  * The graph against the tree it describes. The unit tests above prove the rule; these prove
  * that this repo's own dependencies land in the picture a reviewer is told to read first.

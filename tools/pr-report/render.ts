@@ -1,4 +1,4 @@
-import type { CallEdge } from "./calls.ts";
+import { UNRESOLVED, type CallEdge } from "./calls.ts";
 import type { Coverage } from "./coverage.ts";
 import type { ImportKind, Module } from "./surface.ts";
 import { mergeImports, moduleName, packageWorkspace } from "./surface.ts";
@@ -178,12 +178,24 @@ function moduleMap(modules: Module[]): string {
   return lines.join("\n");
 }
 
-/** Function-level call graph: the path a value actually takes through the code. */
+/**
+ * Function-level call graph: the path a value actually takes through the code.
+ *
+ * A node is `module#function`, and the module half is the point. `calls.ts` resolves a call
+ * through the importing module's own import statements, so a `groupKey()` written in `core`
+ * is `core`'s `groupKey` whatever else in the repository exports that name (#86).
+ *
+ * A callee this repo owns that could not be placed in a module gets a node of its own,
+ * labelled unresolved, rather than being left out — see `UNRESOLVED` for why silence would be
+ * the worse answer. The graph is read before the diff, so a missing arrow makes a claim too.
+ */
 function logicFlow(edges: CallEdge[]): string {
   if (!edges.length) return "flowchart LR\n  none[\"no internal calls found\"]";
   const label = (ref: string): string => {
     const [path, fn] = ref.split("#");
-    return `${moduleName(path ?? "")}.${fn ?? ""}`;
+    return path === UNRESOLVED
+      ? `${fn ?? ""} — unresolved`
+      : `${moduleName(path ?? "")}.${fn ?? ""}`;
   };
   const lines = ["flowchart LR"];
   const seen = new Set<string>();
@@ -315,17 +327,46 @@ export function render(report: Report): string {
     ]),
   );
 
-  const functions = new Set(edges.flatMap((e) => [e.from, e.to])).size;
+  const refs = new Set(edges.flatMap((e) => [e.from, e.to]));
   const calls = new Set(edges.map((e) => `${e.from}->${e.to}`)).size;
+  // Counted outside the fold for the same reason the crossing arrows are: it is the one
+  // number here that says how much of this graph is not known rather than how big it is, and
+  // a reviewer deciding whether to open the fold should not have to open it to learn that.
+  //
+  // Counted apart from the functions, too, because an unresolved node is not one: it stands
+  // for a callee whose module could not be found, and adding it to a count of functions would
+  // be the summary making the same kind of confident claim the graph itself used to make.
+  const unresolved = [...refs].filter((ref) => ref.startsWith(`${UNRESOLVED}#`)).length;
+  const functions = refs.size - unresolved;
   out.push(
-    ...fold(title("How a value flows through the functions", `${functions} functions, ${calls} calls`), [
-      "Calls between the project's own functions. Library calls are left out.",
-      "",
-      "```mermaid",
-      logicFlow(edges),
-      "```",
-      "",
-    ]),
+    ...fold(
+      title(
+        "How a value flows through the functions",
+        `${functions} functions, ${calls} calls` + (unresolved ? `, ${unresolved} unresolved` : ""),
+      ),
+      [
+        "Calls between the project's own functions, each resolved through the calling " +
+          "module's own imports — so a name two modules both export is not confused for " +
+          "itself. Library calls are left out, and so is a call that does not leave the " +
+          "module it is written in.",
+        "",
+        ...(unresolved
+          ? [
+              "A node marked **unresolved** is a call to something this repository owns whose " +
+                "module could not be found — a name imported from a barrel that no longer " +
+                "re-exports it, say, or from a workspace with no package entry to reach it by. " +
+                "`tools/pr-report/calls.ts` lists the ways one can arise. It is drawn rather " +
+                "than dropped: an arrow missing from this graph reads as \"nothing is here\", " +
+                "which is a claim, and a wrong one.",
+              "",
+            ]
+          : []),
+        "```mermaid",
+        logicFlow(edges),
+        "```",
+        "",
+      ],
+    ),
   );
 
   const shapes: string[] = [];

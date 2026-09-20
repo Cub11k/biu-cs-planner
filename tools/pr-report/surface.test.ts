@@ -7,6 +7,7 @@ import {
   mergeImports,
   packageWorkspace,
   readModule,
+  specifierTarget,
   type ImportKind,
   type ImportRef,
 } from "./surface.ts";
@@ -354,5 +355,110 @@ describe("packageWorkspace", () => {
     // still reading as a workspace to a caller checking only for `undefined`.
     expect(packageWorkspace("@biu-cs-planner/")).toBeUndefined();
     expect(packageWorkspace("@biu-cs-planner")).toBeUndefined();
+  });
+});
+
+/**
+ * A specifier says what it points at, and one rule answers for both consumers: `readModule`
+ * sorts an import into `Module.imports` or `Module.packages` by it, and
+ * `tools/pr-report/calls.ts` asks the same question of the specifier a *name* arrived on, to
+ * find the module that declares it. Two readings of that rule were two places for it to
+ * drift.
+ */
+describe("specifierTarget", () => {
+  it("resolves a relative specifier against the module that writes it", () => {
+    expect(specifierTarget("./dialect.ts", "core/src/shoham/import.ts")).toEqual({
+      kind: "module",
+      path: "core/src/shoham/dialect.ts",
+    });
+    expect(specifierTarget("../catalog/schema.ts", "core/src/shoham/import.ts")).toEqual({
+      kind: "module",
+      path: "core/src/catalog/schema.ts",
+    });
+  });
+
+  it("reads a bare specifier as a package, this repo's own workspaces included", () => {
+    expect(specifierTarget("@biu-cs-planner/core", "app/src/queries.ts")).toEqual({
+      kind: "package",
+      name: "@biu-cs-planner/core",
+    });
+    expect(specifierTarget("zod", "app/src/queries.ts")).toEqual({ kind: "package", name: "zod" });
+  });
+
+  it("reads a `node:` specifier as the platform, which is in no graph", () => {
+    expect(specifierTarget("node:fs/promises", "app/src/workspace.fs.ts")).toEqual({
+      kind: "builtin",
+    });
+  });
+});
+
+/**
+ * Where a name comes from, as data rather than as the rendered `"(re-exported)"`.
+ *
+ * `tools/pr-report/calls.ts` resolves a call to the module that **declares** the function, so
+ * a barrel is the one thing between a caller's import and that module. Before #86 it had no
+ * way to tell a re-export from a declaration, and the call graph ended paths at whichever of
+ * the two the alphabet handed it.
+ */
+describe("where an exported name comes from", () => {
+  const exportsOf = (lines: readonly string[]) =>
+    moduleFromSource("core/src/index.ts", lines).exports.map(
+      (e) => `${e.name}:${e.from ? `${e.from.specifier}#${e.from.name}` : "(declared here)"}`,
+    );
+
+  it("records the module a local re-export comes from, repo-relative", () => {
+    expect(exportsOf(['export { importRawCrawl } from "./shoham/import.ts";'])).toEqual([
+      "importRawCrawl:core/src/shoham/import.ts#importRawCrawl",
+    ]);
+  });
+
+  it("records the package name when a re-export comes from one", () => {
+    expect(exportsOf(['export { thing } from "@biu-cs-planner/core";'])).toEqual([
+      "thing:@biu-cs-planner/core#thing",
+    ]);
+  });
+
+  it("records the name the other end knows, not the one this module exports", () => {
+    // `export { a as b }` exports `b`, and `m.ts` has never heard of `b`. A consumer given the
+    // module alone would go looking for a name that is not there and conclude nothing is.
+    expect(exportsOf(['export { groupKey as key } from "./shoham/changes.ts";'])).toEqual([
+      "key:core/src/shoham/changes.ts#groupKey",
+    ]);
+  });
+
+  it("follows an `export { x }` with no clause to the import that brought `x` in", () => {
+    // The module does not declare `join`; it imported it. "Absent means declared here" is the
+    // sentence `from` makes, and this is the case that would have made it false — `surface.ts`
+    // itself ends with `export { join }`.
+    expect(
+      exportsOf(['import { join } from "node:path";', "export { join };"]),
+    ).toEqual(["join:node:path#join"]);
+  });
+
+  it("keeps a `node:` specifier as written, since no other field records one", () => {
+    // The platform is in no graph, so this resolves to no module — which is the truth. Absent
+    // would have read as "this module declares it".
+    expect(exportsOf(['export { readFileSync } from "node:fs";'])).toEqual([
+      "readFileSync:node:fs#readFileSync",
+    ]);
+  });
+
+  it("says nothing for a name the module declares itself", () => {
+    expect(
+      exportsOf(["export function groupKey(of: string): string {", "  return of;", "}"]),
+    ).toEqual(["groupKey:(declared here)"]);
+  });
+
+  it("says nothing for a name this module both declares and exports in a clause", () => {
+    // `export { groupKey }` where `groupKey` is declared here: nothing to follow, and the
+    // module is the answer.
+    expect(
+      exportsOf([
+        "function groupKey(of: string): string {",
+        "  return of;",
+        "}",
+        "export { groupKey };",
+      ]),
+    ).toEqual(["groupKey:(declared here)"]);
   });
 });
