@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { render, type Report } from "./render.ts";
+import type { ImportKind, Module } from "./surface.ts";
 
 /**
  * The report is posted as one pull request comment, and most of it is reference material
@@ -16,6 +17,44 @@ const coverageOf = (branches: number) => ({
   uncoveredLines: 3,
 });
 
+/** `ImportKind`'s three states, named as `surface.ts` and `surface.test.ts` name them. */
+const ERASED: ImportKind = { typeOnly: true, erasable: true };
+const KEPT: ImportKind = { typeOnly: true, erasable: false };
+const CODE: ImportKind = { typeOnly: false, erasable: false };
+
+/** A node with no edges of its own, to be the far end of one. */
+const leaf = (path: string): Module => ({
+  path,
+  workspace: "core",
+  exports: [],
+  imports: [],
+  packages: [],
+});
+
+/** One module importing another once, in whichever of the three states is given. */
+const one = (kind: ImportKind): Module[] => [
+  { ...leaf("core/src/a.ts"), imports: [{ specifier: "core/src/b.ts", ...kind }] },
+  leaf("core/src/b.ts"),
+];
+
+/**
+ * All three states at once: `a` imports `b` erasably, `c` with the inline `{ type X }`, and
+ * `d` for its code.
+ */
+const threeStates: Module[] = [
+  {
+    ...leaf("core/src/a.ts"),
+    imports: [
+      { specifier: "core/src/b.ts", ...ERASED },
+      { specifier: "core/src/c.ts", ...KEPT },
+      { specifier: "core/src/d.ts", ...CODE },
+    ],
+  },
+  leaf("core/src/b.ts"),
+  leaf("core/src/c.ts"),
+  leaf("core/src/d.ts"),
+];
+
 function report(over: Partial<Report> = {}): Report {
   return {
     modules: [
@@ -23,10 +62,10 @@ function report(over: Partial<Report> = {}): Report {
         path: "core/src/a.ts",
         workspace: "core",
         exports: [{ name: "Thing", kind: "type", signature: "{ id: string }" }],
-        imports: [{ specifier: "core/src/b.ts", typeOnly: false, erasable: false }],
-        packages: [{ specifier: "zod", typeOnly: false, erasable: false }],
+        imports: [{ specifier: "core/src/b.ts", ...CODE }],
+        packages: [{ specifier: "zod", ...CODE }],
       },
-      { path: "core/src/b.ts", workspace: "core", exports: [], imports: [], packages: [] },
+      leaf("core/src/b.ts"),
     ],
     tests: [{ path: "core/src/a.test.ts", cases: [{ title: "works", suite: [] }], targets: [] }],
     coverage: {
@@ -98,59 +137,78 @@ describe("the report comment", () => {
     expect(summaries).toContain("1 modules");
   });
 
-  it("draws a type-only import as a dashed arrow and a value one as a solid arrow", () => {
-    // Two different dependencies. Both bind the modules together, only one carries code,
-    // and a reader should see which is which without opening either file.
-    const markdown = render(report());
-    const typed = render(
-      report({
-        modules: [
-          {
-            path: "core/src/a.ts",
-            workspace: "core",
-            exports: [],
-            imports: [{ specifier: "core/src/b.ts", typeOnly: true, erasable: true }],
-            packages: [],
-          },
-          { path: "core/src/b.ts", workspace: "core", exports: [], imports: [], packages: [] },
-        ],
-      }),
-    );
+  it("draws an erased import dashed and every import that survives the emit solid", () => {
+    // The dashed arrow answers `erasable`, not `typeOnly`: it says nothing of the target
+    // reaches the output. `a -> c` is the inline `import { type X }`, which carries only
+    // types and still emits `import {} from "…"`, so it draws like the value edge beside
+    // it — the review job fails that spelling on a narrowed edge, and a dashed arrow here
+    // would tell a reviewer the opposite of the review's own comment on the pull request.
+    const markdown = render(report({ modules: threeStates }));
+
+    expect(markdown).toContain("core_src_a_ts -.-> core_src_b_ts");
+    expect(markdown).toContain("core_src_a_ts --> core_src_c_ts");
+    expect(markdown).toContain("core_src_a_ts --> core_src_d_ts");
+    expect(markdown.match(/-\.->/g)).toHaveLength(1);
+  });
+
+  it("draws the inline spelling solid when it is the only narrowed import on the page", () => {
+    // The middle state alone, with no erased edge to be compared against and no legend
+    // sentence about dashed arrows: still not drawn as one.
+    const markdown = render(report({ modules: one(KEPT) }));
 
     expect(markdown).toContain("core_src_a_ts --> core_src_b_ts");
-    expect(typed).toContain("core_src_a_ts -.-> core_src_b_ts");
+    expect(markdown).not.toContain("-.->");
+    expect(markdown).not.toContain("A dashed arrow");
   });
 
-  it("says in the fold summary how many imports carry only types", () => {
-    const typed = render(
-      report({
-        modules: [
-          {
-            path: "core/src/a.ts",
-            workspace: "core",
-            exports: [],
-            imports: [{ specifier: "core/src/b.ts", typeOnly: true, erasable: true }],
-            packages: [],
-          },
-          { path: "core/src/b.ts", workspace: "core", exports: [], imports: [], packages: [] },
-        ],
-      }),
+  it("counts the inline spelling apart from the imports that are erased", () => {
+    const summaries = folds(render(report({ modules: threeStates })))
+      .map((f) => f.summary)
+      .join("\n");
+
+    expect(summaries).toContain("4 modules, 3 imports, 1 erased, 1 type-only but not erased");
+  });
+
+  it("keeps the inline spelling out of the erased count when it is the only type-only edge", () => {
+    // The count a reviewer reads before opening the fold. Grouping this edge with the
+    // erased ones is the same claim the arrow used to make, one level up.
+    const summaries = folds(render(report({ modules: one(KEPT) })))
+      .map((f) => f.summary)
+      .join("\n");
+
+    expect(summaries).toContain("2 modules, 1 imports, 1 type-only but not erased");
+    expect(summaries).not.toContain("1 erased");
+  });
+
+  it("explains what each arrow distinguishes, and names the spelling that draws solid", () => {
+    const markdown = render(report({ modules: threeStates }));
+
+    expect(markdown).toContain(
+      "A dashed arrow is erased at compile time; a solid one leaves a statement in the output.",
     );
-    const summaries = folds(typed).map((f) => f.summary).join("\n");
-
-    expect(summaries).toContain("2 modules, 1 imports, 1 of them type-only");
-    expect(typed).toContain("A dashed arrow carries only types");
+    expect(markdown).toContain('emits `import {} from "…"`');
   });
 
-  it("leaves the count and the legend off when no edge is type-only", () => {
-    // Neither a "0 of them type-only" nor a sentence explaining a dashed arrow that is
-    // not on the page.
+  it("says nothing about the inline spelling when no edge is written that way", () => {
+    // A legend line for a state the graph does not contain is one more thing to hold in
+    // mind while scanning, for nothing.
+    const markdown = render(report({ modules: one(ERASED) }));
+
+    expect(markdown).toContain("A dashed arrow is erased");
+    expect(markdown).not.toContain("import {} from");
+    expect(markdown).not.toContain("type-only but not erased");
+  });
+
+  it("leaves the count and the legend off when every edge carries code", () => {
+    // Neither a "0 of them erased" nor a sentence explaining a dashed arrow that is not
+    // on the page.
     const markdown = render(report());
     const summaries = folds(markdown).map((f) => f.summary).join("\n");
 
     expect(summaries).toContain("2 modules, 1 imports");
-    expect(markdown).not.toContain("type-only");
+    expect(summaries).not.toContain("erased");
     expect(markdown).not.toContain("A dashed arrow");
+    expect(markdown).not.toContain("import {} from");
   });
 
   it("leaves a blank line after every summary, which markdown inside needs", () => {
