@@ -1,7 +1,18 @@
 import { expect, it } from "vitest";
-import { parseStateFile, readStateFile, stateJsonSchema } from "./file.ts";
+import {
+  parseStateFile,
+  readStateFile,
+  StateFileUnwritableError,
+  stateJsonSchema,
+  writeStateFile,
+} from "./file.ts";
 import type { Migrations } from "./migrate.ts";
-import { CURRENT_STATE_SCHEMA_VERSION, stateSchema, statusSchema } from "./schema.ts";
+import {
+  CURRENT_STATE_SCHEMA_VERSION,
+  stateSchema,
+  statusSchema,
+  type State,
+} from "./schema.ts";
 
 /** What actually reaches disk: JSON, so every type has survived a round trip. */
 function onDisk(state: unknown): unknown {
@@ -667,4 +678,194 @@ it("warns about a second Timetable for the same Semester, and keeps both", () =>
       semester: "fall",
     },
   ]);
+});
+
+/**
+ * The writer. A save is a value and nothing else — `core` performs no I/O — so these tests
+ * produce one the way the app will: read a file, and hand back what came back.
+ */
+
+/** The State the reader makes of a file, which is the only thing the writer is ever given. */
+function stateOf(file: unknown): State {
+  const { state, warnings } = parseStateFile(onDisk(file));
+  expect(warnings).toEqual([]);
+  if (!state) throw new Error("the fixture did not read");
+  return state;
+}
+
+/** A file that leans on every default the schema has: a version and nothing else. */
+const BARE_FILE = { schemaVersion: CURRENT_STATE_SCHEMA_VERSION };
+
+/**
+ * The defaults that are not at the top of the file: a Timetable without `variants` or
+ * `blockedTimes`, holding a Variant without `picks` or `primary`. A writer that recorded a
+ * nested default differently from the way the reader fills it would grow the file one level
+ * down, where `BARE_FILE` cannot see it.
+ */
+const NESTED_DEFAULTS_FILE = {
+  schemaVersion: CURRENT_STATE_SCHEMA_VERSION,
+  timetables: [
+    // a Timetable with neither list
+    { academicYear: 2027, semester: "fall" },
+    // and a Variant with no Picks yet. `primary` is spelled out rather than defaulted: a
+    // Variant that leans on that default leaves its Timetable with no primary at all, which
+    // the reader reports as a Warning of its own, so it cannot appear in a clean round trip.
+    {
+      academicYear: 2027,
+      semester: "spring",
+      variants: [{ name: "first week", primary: true }],
+    },
+  ],
+};
+
+it("writes a State File the reader reads back unchanged", () => {
+  const state = stateOf(fullFile());
+
+  const reread = parseStateFile(onDisk(writeStateFile(state, { basedOn: undefined }).json));
+
+  expect(reread.warnings).toEqual([]);
+  expect(reread.state).toEqual(state);
+});
+
+/**
+ * A read fills the defaulted fields in, so a writer that recorded them differently from the
+ * way it reads them would change the file on every save — a Workspace on Dropbox syncing a
+ * file that never settles. The second save is compared as text because that is what grows.
+ */
+it.each([
+  ["a file that is a version and nothing else", BARE_FILE, ["attempts", "timetables", "pins"]],
+  [
+    "a file whose Timetable and Variant lean on their own defaults",
+    NESTED_DEFAULTS_FILE,
+    ["variants", "picks", "blockedTimes"],
+  ],
+])("round-trips %s, and saves it the same way twice", (_what, file, defaulted) => {
+  const first = writeStateFile(stateOf(file), { basedOn: undefined });
+  const reread = parseStateFile(onDisk(first.json));
+
+  expect(reread.warnings).toEqual([]);
+  expect(reread.state).toEqual(stateOf(file));
+
+  const second = writeStateFile(reread.state!, { basedOn: "a-first-save" });
+  expect(JSON.stringify(second.json)).toBe(JSON.stringify(first.json));
+  // The defaults the file left out are recorded, rather than left out again: the growth this
+  // guards against is a save that writes them differently from the way the reader fills them.
+  for (const field of defaulted) expect(JSON.stringify(first.json)).toContain(`"${field}"`);
+});
+
+it("writes the version this build reads, not the one the value arrived carrying", () => {
+  const stale: State = { ...stateOf(fullFile()), schemaVersion: CURRENT_STATE_SCHEMA_VERSION - 1 };
+
+  expect(writeStateFile(stale, { basedOn: undefined }).json["schemaVersion"]).toBe(
+    CURRENT_STATE_SCHEMA_VERSION,
+  );
+});
+
+/**
+ * An old file opens, is edited, and is saved back — at the version this build writes. The
+ * stamp itself is pinned by the test above, which hands the writer a stale version directly:
+ * while there is only one schema version, a reader-produced State is already current because
+ * `readState` stamps it, so this covers the path rather than the stamp. When a real version 2
+ * lands, a fixture at version 1 makes it falsifiable and this is where it joins in.
+ */
+it("writes a file that migrated forward on the way in at the current version", () => {
+  const chain: Migrations = {
+    [pretendCurrent - 1]: (file) => ({
+      schemaVersion: pretendCurrent,
+      attempts: (file as { courses?: unknown }).courses,
+    }),
+  };
+  const { state } = readStateFile(
+    {
+      schemaVersion: pretendCurrent - 1,
+      courses: [
+        { courseNumber: "89-110", academicYear: 2027, semester: "fall", status: "passed" },
+      ],
+    },
+    chain,
+  );
+
+  const save = writeStateFile(state!, { basedOn: "the-old-file" });
+
+  expect(save.json["schemaVersion"]).toBe(CURRENT_STATE_SCHEMA_VERSION);
+  expect(parseStateFile(onDisk(save.json)).state?.attempts[0]?.courseNumber).toBe("89-110");
+});
+
+/**
+ * ADR-0013: the save path is the undo path, so a save carries the version of the file it was
+ * based on and the external-edit guard applies to an undo exactly as to a first-hand edit.
+ * Enforcing the refusal is a later ticket; carrying the version is this one's job.
+ */
+it("carries the version of the file the save was based on", () => {
+  const state = stateOf(fullFile());
+
+  expect(writeStateFile(state, { basedOn: "a-version-of-the-file" })).toMatchObject({
+    basedOn: "a-version-of-the-file",
+  });
+  // Nothing to be based on: the State File does not exist yet, and a file appearing where
+  // the save expected none is the same breach as one that changed underneath it.
+  expect(writeStateFile(state, { basedOn: undefined }).basedOn).toBeUndefined();
+});
+
+it("leaves out what the schema does not know, so it cannot write a file the reader refuses", () => {
+  // Only a cast reaches here. `notes` is a hand edit or an older build's field; `__proto__`
+  // is one of the three prototype-shaped keys the reader refuses a whole file for, so writing
+  // it back would cost the student the file. `JSON.parse` is what makes it an own key at all.
+  const meddled = JSON.parse(
+    '{"schemaVersion":1,"attempts":[],"timetables":[],"pins":[],' +
+      '"settings":{"language":"en","examSpacingDays":3},' +
+      '"notes":"hand-edited","__proto__":{"isAdmin":true}}',
+  ) as State;
+
+  const save = writeStateFile(meddled, { basedOn: undefined });
+
+  expect(Object.keys(save.json).sort()).toEqual([
+    "attempts",
+    "pins",
+    "schemaVersion",
+    "settings",
+    "timetables",
+  ]);
+  expect(parseStateFile(onDisk(save.json)).warnings).toEqual([]);
+});
+
+/**
+ * The reader is forgiving on purpose — one unreadable Pick costs a Pick, not the Variant
+ * holding it — because a file is untrusted input. The writer has no such latitude: its input
+ * is this app's own value, so a value the schema rejects is a bug here, and writing it would
+ * silently cost the student whatever the next read then dropped.
+ */
+it("refuses a value the reader could not read back, naming the part that was wrong", () => {
+  const broken = {
+    ...stateOf(fullFile()),
+    attempts: [{ courseNumber: "89-110" }],
+  } as unknown as State;
+
+  // Named rather than a bare Error, and carrying where it went wrong, so that whatever routes
+  // a save can tell a bug in this build from a disk that would not take the file.
+  expect(() => writeStateFile(broken, { basedOn: undefined })).toThrow(StateFileUnwritableError);
+  try {
+    writeStateFile(broken, { basedOn: undefined });
+  } catch (error) {
+    expect((error as StateFileUnwritableError).at).toBe("attempts.0.academicYear");
+  }
+});
+
+/**
+ * Autosave saves after a delay, so the value a save was made of must not keep changing while
+ * it waits: what is written is what the state held when the writer was called.
+ */
+it("writes a value detached from the State it was made from", () => {
+  const state = stateOf(fullFile());
+
+  const save = writeStateFile(state, { basedOn: undefined });
+  state.attempts.push({
+    courseNumber: "89-999",
+    academicYear: 2027,
+    semester: "fall",
+    status: "planned",
+  });
+  state.timetables[0]!.variants[0]!.name = "renamed after the save";
+
+  expect(parseStateFile(onDisk(save.json)).state).toEqual(stateOf(fullFile()));
 });
