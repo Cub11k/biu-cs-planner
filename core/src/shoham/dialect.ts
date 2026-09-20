@@ -42,6 +42,8 @@ export function parseCourseNumber(code: string): string {
  * The labels are found wherever they sit rather than by splitting the cell, because the same
  * Year-long cell reaches us both as two lines and as one run-together string, and both have to
  * mean the same thing (ADR-0010). Order follows the cell, not the table above.
+ *
+ * The hours cell is read the same way and for the same reason, by scanRanges below (#74).
  */
 export function parseSemesters(cell: string): Semester[] {
   const found: Array<{ at: number; semester: Semester }> = [];
@@ -61,10 +63,16 @@ export type MeetingWarning =
   | { kind: "hours-do-not-divide" }
   | { kind: "meeting-unreadable" }
   /**
-   * An hours cell holding more than two `-`-separated fields, so not one range: neither
-   * `16:00 - 16:00 - 17:00`, whose meaning is not established, nor two ranges run together on
-   * one line, whose meaning is plain but whose reading is not this ticket's to settle (#70, #74).
-   * Either way no Meeting is made of it rather than a range being picked out of the fields.
+   * An hours cell holding more than two `-`-separated fields, so not one range:
+   * `16:00 - 16:00 - 17:00`, whose meaning is not established, so no Meeting is made of it
+   * rather than a range being picked out of the fields (#70).
+   *
+   * Two ranges run together on one line are no longer this. Their meaning is established -- by
+   * the repository's own finding, which says a reader has to accept both spellings -- so they
+   * read as the two ranges they are (#74). What is left here is the cell that is neither one
+   * range nor a run of them, which is still reported rather than guessed at. A cell that holds
+   * one range's worth of fields and fails to be one, `1500 - 1800`, is `meeting-unreadable`
+   * still: what is wrong with it is the time, not the shape of the cell.
    *
    * `cell` is the text as it stood, so a maintainer can find it on the Shoham page. Where the
    * cell holds a range per line it is the offending line, which is the line no Meeting came of.
@@ -81,6 +89,56 @@ function isNotOneRange(text: string): boolean {
   return text.split("-").length > 2;
 }
 
+/**
+ * A literal pattern, never one built from data: ADR-0007 and the Code guardrails forbid
+ * regular expressions assembled from Catalog or Requirements content. One `HH:MM - HH:MM`
+ * range, with or without spaces around its own separator, since Shoham's cells carry both.
+ *
+ * The clock spelling is CLOCK_TIME's, written out again rather than composed, because composing
+ * it means building the pattern from a string and a literal is what the guardrail asks for. That
+ * makes this the same body ADR-0012 says five files carry without varying, now written twice more
+ * inside one of the five. Unlike those five, the pair is not left entirely to review:
+ * dialect.test.ts asserts that every time the clock accepts is a time this pattern finds, which
+ * is the direction that can go quiet -- narrow this pattern, or widen the clock, and a cell that
+ * imported its Meetings stops doing so. The other direction needs no guard, because CLOCK_TIME
+ * stays the authority: isClockTime is asked again of every range a scan finds, so a spelling this
+ * pattern admits and the clock refuses is reported, never trusted.
+ *
+ * Only ever read with `matchAll`: `exec` and `test` on a `g` pattern leave a position behind on
+ * the pattern itself, and two calls would stop agreeing.
+ */
+const CLOCK_RANGE = /([01]\d|2[0-3]):[0-5]\d\s*-\s*([01]\d|2[0-3]):[0-5]\d/g;
+
+/**
+ * The ranges one line of an hours cell holds, or null when the line is not a run of them.
+ *
+ * The ranges are found wherever they sit rather than by splitting the line, for the reason
+ * parseSemesters scans for its labels: the same cell reaches us both as one range per line and
+ * as the ranges run together on one line, and both have to mean the same thing (#74, ADR-0010).
+ * A split cannot do it -- a range writes spaces around its own `-`, so splitting on whitespace
+ * tears `16:00 - 18:00` into three -- so the occurrences are scanned for instead. (`matchAll`
+ * reads a copy of the pattern, so the shared CLOCK_RANGE keeps no position between calls.)
+ *
+ * A line is a run only when nothing but whitespace lies between the occurrences and at either
+ * end -- nothing at all counts, since the artifact's worst form leaves no separator, as the
+ * Semester cell's does. That rule is what holds this to the one shape #74 settled:
+ * `14:00 - 16:00 - 18:00` has a `-` between its two occurrences, so it is no run and stays what
+ * #70 made it, a cell reported as itself. Null says "not a run", leaving the line to be read
+ * exactly as it was before #74.
+ */
+function scanRanges(line: string): string[] | null {
+  const ranges: string[] = [];
+  let after = 0;
+  for (const found of line.matchAll(CLOCK_RANGE)) {
+    if (line.slice(after, found.index).trim()) return null;
+    ranges.push(found[0]);
+    after = found.index + found[0].length;
+  }
+  if (line.slice(after).trim()) return null;
+  // A blank line is a run of no ranges, and cannot arrive here anyway: the caller drops it.
+  return ranges;
+}
+
 export function parseGroupMeetings(row: {
   day: string;
   hours: string;
@@ -90,7 +148,15 @@ export function parseGroupMeetings(row: {
   if (!row.day.trim()) return { semesters, meetings: [], warnings: [] };
 
   const days = row.day.split(",").map((d) => d.trim());
-  const ranges = row.hours.split("\n").map((h) => h.trim()).filter(Boolean);
+  // One range per line is the clean spelling and a run of ranges on one line is the same cell
+  // damaged by a crawl, so both give the ranges they hold. A line that is neither is kept whole
+  // and read exactly as it was before #74: as one range if that is what it turns out to be, and
+  // otherwise reported -- as the cell it is, or as a time that could not be read.
+  const ranges = row.hours
+    .split("\n")
+    .map((h) => h.trim())
+    .filter(Boolean)
+    .flatMap((line) => scanRanges(line) ?? [line]);
 
   // A Year-long Group repeats its weekly hours once per Semester, so the ranges arrive as
   // one block per Semester. Cut them back into blocks before pairing them with the days.
