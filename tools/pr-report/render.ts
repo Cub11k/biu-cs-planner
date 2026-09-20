@@ -20,9 +20,40 @@ const bar = (n: number): string => "█".repeat(Math.round(n / 10)).padEnd(10, "
 /**
  * Modules as nodes, imports as edges, grouped by workspace.
  *
- * A dashed arrow carries only types. It is a real dependency — the shapes it names still
- * bind the two modules together — but no code travels along it, which is a different
- * thing to know about an edge and worth seeing without opening either file.
+ * A dashed arrow is **erased**: every statement on that edge compiles to nothing, so the
+ * edge leaves no specifier for a bundler to resolve. (Only the edge — another importer may
+ * still reach the same module.) It is still a real dependency — the shapes it names bind
+ * the two modules together — and that is worth seeing without opening either file.
+ *
+ * A solid arrow leaves a statement in the output. Usually because it carries code, and also
+ * for the inline `import { type X } from "…"`, which carries only types and still emits
+ * `import {} from "…"` — `ImportKind`'s table measures each of the five static forms
+ * against the compiler. That specifier is resolved, so the target module is reached and
+ * whatever it imports at its top comes with it.
+ *
+ * **So the arrow asks `erasable`, not `typeOnly`.** `typeOnly` is the weaker of the two
+ * fields and splits the wrong way for a graph: it would draw the inline spelling like the
+ * erased imports, while `tools/pr-review/layering.ts` decides a narrowed edge on `erasable`
+ * alone and posts a `spelling` finding against that same edge — in the review's own
+ * comment, under its own marker, beside this one on the same pull request. A reviewer is
+ * told to read this report before the diff, so a dashed arrow here would be the reassuring
+ * half of a pair of comments that disagree.
+ *
+ * Two styles, not three for `ImportKind`'s three states. What a reader scans this graph for
+ * is whether an edge survives to the output. Mermaid can draw a third — `==>`, or a
+ * labelled edge — but solid and dashed are the pair that read as "real" and "not real" on
+ * sight, and a third mark would carry its meaning entirely in the legend. The legend is
+ * what misled here: "carries only types" was true and still wrong. And the inline spelling
+ * is a state to notice and fix rather than one to give standing notation to. It is not
+ * hidden — solid is the safe direction, and `render` counts it separately and names the
+ * spelling whenever the graph holds one.
+ *
+ * One limit to know while reading the graph: it draws only edges between modules it has
+ * nodes for, so a bare specifier goes into `Module.packages` and is drawn nowhere — and
+ * `@biu-cs-planner/server`, the project's one narrowed edge, is bare. `forbiddenEdges`
+ * judges both. So what this arrow now agrees with the check about is every cross-workspace
+ * edge written as a relative path, and the bare-package spelling is outside this graph and
+ * its counts entirely.
  */
 function moduleMap(modules: Module[]): string {
   const byWorkspace = new Map<string, Module[]>();
@@ -40,7 +71,7 @@ function moduleMap(modules: Module[]): string {
   for (const m of modules) {
     for (const dep of m.imports) {
       if (!paths.has(dep.specifier)) continue;
-      lines.push(`  ${id(m.path)} ${dep.typeOnly ? "-.->" : "-->"} ${id(dep.specifier)}`);
+      lines.push(`  ${id(m.path)} ${dep.erasable ? "-.->" : "-->"} ${id(dep.specifier)}`);
     }
   }
   return lines.join("\n");
@@ -124,17 +155,36 @@ export function render(report: Report): string {
 
   const paths = new Set(modules.map((m) => m.path));
   const drawn = modules.flatMap((m) => m.imports.filter((d) => paths.has(d.specifier)));
-  const typeOnly = drawn.filter((d) => d.typeOnly).length;
-  // The type-only count is named in the summary rather than left inside, so a reviewer
-  // deciding whether to open the fold already knows whether any edge is only a shape.
+  const erased = drawn.filter((d) => d.erasable).length;
+  // Counted apart from the erased ones, never folded in with them: an import written
+  // `import { type X }` carries only types and still leaves `import {} from "…"` in the
+  // output, which is the difference `tools/pr-review/layering.ts` fails a narrowed edge
+  // over. A summary that added the two together would make the same claim the arrow used
+  // to make, one level up and read even sooner.
+  const kept = drawn.filter((d) => d.typeOnly && !d.erasable).length;
+  // Both counts are named in the summary rather than left inside, so a reviewer deciding
+  // whether to open the fold already knows whether any edge is only a shape — and whether
+  // any edge only looks like one.
   const size =
     `${modules.length} modules, ${drawn.length} imports` +
-    (typeOnly ? `, ${typeOnly} of them type-only` : "");
+    (erased ? `, ${erased} erased` : "") +
+    (kept ? `, ${kept} type-only but not erased` : "");
   out.push(
     ...fold(title("How the modules depend on each other", size), [
-      // Only worth saying when there is a dashed arrow to explain; a graph of solid
-      // arrows explains itself, and a graph with no arrows at all has nothing to explain.
-      ...(typeOnly ? ["A dashed arrow carries only types; a solid one carries code.", ""] : []),
+      // Each line is worth saying only when the graph contains the thing it explains. A
+      // graph of solid arrows explains itself, and a graph with no arrows at all has
+      // nothing to explain.
+      ...(erased
+        ? ["A dashed arrow is erased at compile time; a solid one leaves a statement in the output.", ""]
+        : []),
+      ...(kept
+        ? [
+            'An inline `import { type X } from "…"` carries only types and still emits ' +
+              '`import {} from "…"`, so the target is reached. Those draw solid, and where the ' +
+              "layering table narrows an edge, that spelling fails it.",
+            "",
+          ]
+        : []),
       "```mermaid",
       moduleMap(modules),
       "```",
