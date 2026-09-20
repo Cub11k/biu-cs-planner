@@ -1,9 +1,11 @@
 import {
   WORKSPACE_LAYOUT,
   type Workspace,
+  type WorkspaceChanged,
   type WorkspaceFolder,
   type WorkspaceRef,
   type WorkspaceStatus,
+  type WorkspaceWatcher,
 } from "./workspace.ts";
 
 /**
@@ -14,8 +16,16 @@ import {
 export type MemoryWorkspace = Workspace & {
   /** Refs written so far, in order, so a test can assert that nothing was written. */
   written(): WorkspaceRef[];
-  /** Puts a file there without going through `write`, to set a test up. */
+  /**
+   * Puts a file there without going through `write`, to set a test up — and, because it
+   * is the one change this double can make that the app did not, the stand-in for an
+   * external edit. Watchers hear it, exactly as a real one hears Dropbox.
+   */
   seed(ref: WorkspaceRef, data: unknown): void;
+  /** Takes a file away from outside, so a watcher can be asked about a deletion. */
+  remove(ref: WorkspaceRef): void;
+  /** How many watchers are still open, so a test can assert that `stop` let go. */
+  watching(): number;
 };
 
 const key = (ref: WorkspaceRef): string => `${ref.kind}:${ref.academicYear}`;
@@ -26,6 +36,16 @@ export function memoryWorkspace(
   const files = new Map<string, unknown>();
   const writes: WorkspaceRef[] = [];
   let folders: WorkspaceFolder[] = options.created ? [...WORKSPACE_LAYOUT] : [];
+  const watchers = new Set<WorkspaceChanged>();
+
+  /**
+   * Every change to the folder, whoever made it. A real watcher cannot tell the app's own
+   * write from an editor's, so this one does not either — a double that were quieter than
+   * the thing it stands in for would prove the quieter behaviour.
+   */
+  const changed = (): void => {
+    for (const watcher of [...watchers]) watcher();
+  };
 
   return {
     async status(): Promise<WorkspaceStatus> {
@@ -34,6 +54,7 @@ export function memoryWorkspace(
     },
     async create(): Promise<void> {
       folders = [...WORKSPACE_LAYOUT];
+      changed();
     },
     async list(kind): Promise<WorkspaceRef[]> {
       return [...files.keys()]
@@ -46,8 +67,22 @@ export function memoryWorkspace(
     async write(ref, data): Promise<void> {
       files.set(key(ref), data);
       writes.push(ref);
+      changed();
+    },
+    async watch(onChange): Promise<WorkspaceWatcher> {
+      watchers.add(onChange);
+      // `stop` is idempotent: a Set forgets a watcher once, and a second call is a no-op
+      return { stop: () => void watchers.delete(onChange) };
     },
     written: () => [...writes],
-    seed: (ref, data) => void files.set(key(ref), data),
+    seed: (ref, data) => {
+      files.set(key(ref), data);
+      changed();
+    },
+    remove: (ref) => {
+      files.delete(key(ref));
+      changed();
+    },
+    watching: () => watchers.size,
   };
 }

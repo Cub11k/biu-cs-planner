@@ -9,6 +9,7 @@ import {
   workspaceStatus,
   type QueryWarning,
   type Workspace,
+  type WorkspaceChanges,
 } from "@biu-cs-planner/app";
 import {
   CURRENT_CATALOG_SCHEMA_VERSION,
@@ -30,6 +31,11 @@ export type ApiDependencies = {
   workspace: Workspace;
   /** The launch token this server was started with; see ./token.ts. */
   token: string;
+  /**
+   * The Workspace's change counter. Only the reading half: starting and stopping the watch
+   * belongs to whoever owns the process, not to a request.
+   */
+  changes: Pick<WorkspaceChanges, "changeCount">;
 };
 
 /**
@@ -73,7 +79,7 @@ function hasDangerousKey(value: unknown, depth = 0): boolean {
   return false;
 }
 
-export function createApi({ workspace, token }: ApiDependencies) {
+export function createApi({ workspace, token, changes }: ApiDependencies) {
   const guarded = new Hono();
   guarded.use("/api/*", onlyTheLauncher({ token, openPaths: [HEALTH_PATH] }));
 
@@ -88,6 +94,41 @@ export function createApi({ workspace, token }: ApiDependencies) {
     // Creating the layout is an explicit act, which is why it is a POST and not a
     // side effect of the GET above: nothing is written until the student asks.
     .post("/api/workspace", capped, async (c) => c.json(await createWorkspace(workspace)))
+
+    /**
+     * How the page hears that the Workspace changed under it (docs/design.md, "Storage").
+     * One integer, moved once per settled burst of filesystem events; `web` remembers the
+     * last one it saw and reloads what it is showing when this one differs. A count, not a
+     * version: it restarts at 0 with the server, and nothing may compare a file against it.
+     *
+     * **Why a number a page asks for, rather than the server pushing one.** `web` reaches
+     * the domain only through this API and the typed client (CLAUDE.md, ADR-0002), and it
+     * must gain no second source of truth — so whatever carries the notification has to be
+     * a route on this contract. Of the three ways to do that:
+     *
+     *   polling  one `GET` on the same typed client, the same launch token in the same
+     *            `Authorization` header, the same guard, and nothing held open. Costs one
+     *            request every couple of seconds on loopback, which reads an integer that
+     *            is already in memory and touches no disk: the watcher, not the poll, is
+     *            what looks at the folder.
+     *   SSE      `EventSource` cannot send an `Authorization` header, so the launch token
+     *            would have to move into the query string — logged, and in the Referer —
+     *            which is the arrangement ADR-0004 turned down. Reading a stream through
+     *            `fetch` instead keeps the header but holds a response open for the life of
+     *            the page, which is a connection the server has to be able to drop before
+     *            Ctrl-C can end it.
+     *   websocket an upgrade needs a per-runtime adapter (`@hono/node-ws` and the `ws`
+     *            dependency on Node, Bun's and Deno's own elsewhere). That is a Node-only
+     *            API in the one place the design says to avoid one and a runtime dependency
+     *            in a server that is meant to bundle with none (docs/design.md, "CLI and
+     *            distribution", "Supply chain"), and a browser `WebSocket` cannot send the
+     *            header either.
+     *
+     * A localhost app that reloads a hand-dropped Catalog does not need sub-second news, so
+     * the cheapest mechanism that keeps the one edge and the one token wins. Pushing can be
+     * added behind this same counter later without `web` learning anything new.
+     */
+    .get("/api/workspace/changes", (c) => c.json({ changeCount: changes.changeCount() }))
 
     .post(
       "/api/catalog/:year/import",

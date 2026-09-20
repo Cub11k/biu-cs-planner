@@ -35,6 +35,14 @@ export type TimetableScreenProps = {
   onLanguage: (language: Language) => void;
   /** Taken as an argument so the screen can be opened on any date, and tested. */
   today?: Date;
+  /**
+   * How many times the Workspace has changed on disk since the page loaded. The screen does
+   * nothing with the number but notice that it moved, which is how "the UI reloads on
+   * external changes" (docs/design.md, "Storage") reaches a React effect. It arrives as a
+   * prop rather than being watched here because the folder is the whole app's business, not
+   * this screen's: `App` asks for it, `web/src/changes.ts` is where the asking happens.
+   */
+  workspaceChanges?: number;
 };
 
 /**
@@ -48,6 +56,7 @@ export function TimetableScreen({
   language,
   onLanguage,
   today = new Date(),
+  workspaceChanges = 0,
 }: TimetableScreenProps): React.JSX.Element {
   const academicYear = academicYearOf(today);
   const semester = semesterOf(today);
@@ -66,7 +75,9 @@ export function TimetableScreen({
     return () => {
       current = false;
     };
-  }, [academicYear, semester]);
+    // `workspaceChanges` is a dependency and nothing else: a Catalog that appeared in the
+    // folder is read again here, because the Catalog this screen is showing may be it
+  }, [academicYear, semester, workspaceChanges]);
 
   const offerings = catalog.kind === "served" ? catalog.offerings : [];
   const chosen = offerings.find((offering) => offering.courseNumber === selected);

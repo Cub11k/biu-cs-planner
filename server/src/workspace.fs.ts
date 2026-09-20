@@ -1,3 +1,4 @@
+import { watch, type FSWatcher } from "node:fs";
 import { mkdir, readdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import {
@@ -7,6 +8,7 @@ import {
   type WorkspaceFolder,
   type WorkspaceRef,
   type WorkspaceStatus,
+  type WorkspaceWatcher,
 } from "@biu-cs-planner/app";
 
 /**
@@ -25,6 +27,14 @@ const DIRECTORY: Record<WorkspaceFolder, string> = {
 };
 
 const CATALOG_FILE = /^(\d{4})\.json$/;
+
+/**
+ * The folders a watch covers: the Workspace root, plus these. The layout minus `.backups`,
+ * because a rotating snapshot is written only by the app and nothing in it is ever shown —
+ * so a backup is not news, and watching it would turn every future autosave's snapshot into
+ * a page reload (docs/design.md, "Storage").
+ */
+const WATCHED_FOLDERS: WorkspaceFolder[] = ["catalogs", "requirements"];
 
 class OutsideWorkspaceError extends WorkspaceRefusedError {
   constructor(what: string) {
@@ -168,6 +178,104 @@ export function fileSystemWorkspace(rootPath: string): Workspace {
         await rm(temporary, { force: true });
         throw error;
       }
+    },
+
+    /**
+     * One `fs.watch` per watched folder — the Workspace root and each of `WATCHED_FOLDERS`
+     * that is there — and none on a file. A folder watch is what sees a Catalog *appear*; a
+     * file watch cannot, because there is nothing to attach it to yet (docs/design.md,
+     * "Storage").
+     *
+     * Not `{ recursive: true }`, which would be one line instead of these: a Workspace that
+     * came from a git clone has `.git` inside it, and a recursive watch turns every git
+     * operation into a page reload. Non-recursive sees `.git` as one entry in the root and
+     * stays quiet about what happens inside it. Recursive support also differs by platform
+     * and by runtime, and this has to hold on Bun and Deno as well as Node.
+     *
+     * Every event reconciles the set, so a `catalogs/` that appears after the server
+     * started — the layout being created, or a clone landing — gets a watcher of its own,
+     * and one that is deleted loses the stale watcher it left behind. A folder that could
+     * not be watched is retried by the next event from any other folder, which means a
+     * Workspace whose *every* watcher has failed stays unwatched until the server restarts.
+     * Saying so out loud rather than hiding it: reporting that needs a channel the port does
+     * not have, and giving it one is a design question of its own.
+     */
+    async watch(onChange): Promise<WorkspaceWatcher> {
+      const open = new Map<string, FSWatcher>();
+      let stopped = false;
+      let reconciling = false;
+      let againAfter = false;
+
+      const watchFolder = (path: string): void => {
+        if (stopped || open.has(path)) return;
+        let watcher: FSWatcher;
+        try {
+          // `persistent: false` so the watcher does not hold the event loop open on Node
+          // and Bun. Deno ignores it — measured, not assumed — so there only `stop` below
+          // releases the handle; server/src/serve.ts says why no production path calls it
+          // and why that is still safe.
+          watcher = watch(path, { persistent: false }, () => {
+            if (stopped) return;
+            void reconcile();
+            onChange();
+          });
+        } catch {
+          // Node and Bun refuse a folder they cannot watch by throwing from here — most
+          // often one that has just gone away, but a permission or a descriptor limit says
+          // the same thing in the same place, and this cannot tell them apart. All of them
+          // mean this folder is not watched; the others still are.
+          return;
+        }
+        // Deno reports the same refusal asynchronously, on the watcher. Unhandled, it is
+        // an uncaught error that takes the server down, so both spellings are handled. The
+        // path is left out of `open`, so the next reconcile may pick it up again.
+        watcher.on("error", () => {
+          watcher.close();
+          if (open.get(path) === watcher) open.delete(path);
+        });
+        open.set(path, watcher);
+      };
+
+      /** The folders that exist right now, watched; the ones that no longer do, let go. */
+      const reconcile = async (): Promise<void> => {
+        if (reconciling) {
+          againAfter = true;
+          return;
+        }
+        reconciling = true;
+        try {
+          do {
+            againAfter = false;
+
+            const wanted = new Set<string>();
+            if ((await realPathOrAbsent(root)) !== undefined) wanted.add(root);
+            for (const folder of WATCHED_FOLDERS) {
+              const path = await usableFolder(folder);
+              if (path !== undefined) wanted.add(path);
+            }
+            if (stopped) return;
+
+            for (const [path, watcher] of [...open]) {
+              if (wanted.has(path)) continue;
+              watcher.close();
+              open.delete(path);
+            }
+            for (const path of wanted) watchFolder(path);
+          } while (againAfter && !stopped);
+        } finally {
+          reconciling = false;
+        }
+      };
+
+      await reconcile();
+
+      return {
+        stop: () => {
+          stopped = true;
+          for (const watcher of open.values()) watcher.close();
+          open.clear();
+        },
+      };
     },
   };
 }

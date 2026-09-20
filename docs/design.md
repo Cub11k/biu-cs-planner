@@ -168,7 +168,7 @@ The three states need to differ in more than one property at once. Border style 
 core/     pure domain: Requirement engine, Assignment solver, Plan checks, Clashes, Exams, generator.
           No I/O, no DOM, no fetch.
 app/      use cases (importRawCrawl, addAttempt, createVariant, diffVariantAgainstPlan, …)
-          plus a Workspace port: list, read, write and watch files.
+          plus a Workspace port: status, create, list, read, write and watch files.
 server/   Hono HTTP API exposing app/, filesystem Workspace adapter, static UI, CLI entry point.
 web/      thin React UI; talks only to the HTTP API through Hono's typed client.
 ```
@@ -193,7 +193,9 @@ web/      thin React UI; talks only to the HTTP API through Hono's typed client.
 - **Undo/redo:** every edit is a command in `app`; the server keeps the undo history for the session.
 - **Backups:** rotating snapshots in `.backups/` (last 20 saves plus one per day for 30 days), restorable from the Workspace screen.
 - **External edits:** each save carries the file version it was based on. If the file changed on disk meanwhile (Dropbox, git, an editor), the server refuses the overwrite. The app then reloads and reports whether the last edit could be re-applied.
-- The server watches the Workspace folder, not individual files, and the UI reloads on external changes.
+- The server watches the Workspace folder, not individual files, and the UI reloads on external changes. Watching the folder is what sees a Catalog *appear* — dropped into `catalogs/` by hand, arriving with a git clone, landing over Dropbox — which watching a file cannot. One `fs.watch` per watched folder — the Workspace root, `catalogs/` and `requirements/` — non-recursive, so that a `.git` inside the Workspace does not turn every git operation into a reload. `.backups/` is not watched: a rotating snapshot is written only by the app and nothing in it is shown, so once autosave lands its snapshots would otherwise be a reload each.
+- **How the page hears about it:** each settled burst of filesystem events moves a count, and `GET /api/workspace/changes` serves it; the page remembers the last count it saw and reloads what it is showing when the number differs. A count and not a version: it restarts at 0 with the server, and nothing compares a file against it. A number the page **asks for**, not news the server pushes: `web` reaches the domain only through the HTTP API and may gain no second source of truth, an `EventSource` cannot send the launch token in an `Authorization` header (which would put it in a query string, the arrangement [ADR-0004](adr/0004-localhost-auth-bearer-token.md) turned down), and a websocket upgrade needs a different adapter on each of Node, Bun and Deno — a Node-only API in a server that avoids them. Pushing can be added behind the same count later without `web` learning anything new.
+- Bursts are debounced rather than throttled: an editor writing one file emits several events and a clone emits many, and each should be one reload, after the folder is quiet.
 
 ## Security
 
