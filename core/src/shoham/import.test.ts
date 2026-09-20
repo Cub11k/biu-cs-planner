@@ -452,27 +452,24 @@ it("names a Year-long Group's broken hours cell once, however many Semesters rep
   expect(catalog.offerings[0]!.groups[0]!.meetings).toEqual([]);
 });
 
-it("reports two ranges run together on one line as the cell it is, rather than as an unreadable time", () => {
+it("reads two ranges run together on one line as the two Meetings the two-line form gives", () => {
   // The run-together damage docs/research/shoham-raw-shape.md records: some files write a
-  // Group's ranges on one line instead of one per line. Split on "-" that is three fields whose
-  // middle one is two clock times, so the clock has always refused it -- but as
-  // `meeting-unreadable`, which says nothing about what is in the cell. Same refusal, named.
-  // Accepting it as the two Meetings it plainly means is #74, not this: the research file says a
-  // reader has to accept both forms, and the dialect does not, before this change or after it.
+  // Group's ranges on one line instead of one per line, and the file says "a reader has to
+  // accept both". #74 rules that it does, on the terms the Semester cell already accepts the
+  // same damage on (ADR-0010). Until then the cell was three `-`-separated fields whose middle
+  // one is two clock times, so it was refused -- as `hours-cell-not-one-range`, which is what
+  // #70 named it, and as `meeting-unreadable` before that. Now the ranges are scanned for
+  // wherever they sit, so the damaged spelling imports the Meetings the clean one does.
   const { catalog, warnings } = importRawCrawl(
-    { rows: [row({ day: "ג'", hours: "14:00 - 16:00 18:00 - 20:00" })] },
+    { rows: [row({ day: "ג',ה'", hours: "14:00 - 16:00 18:00 - 20:00" })] },
     { academicYear: YEAR_2027 },
   );
 
-  expect(exceptProvenance(warnings)).toEqual([
-    {
-      kind: "hours-cell-not-one-range",
-      courseNumber: "89-110",
-      group: "01",
-      cell: "14:00 - 16:00 18:00 - 20:00",
-    },
+  expect(exceptProvenance(warnings)).toEqual([]);
+  expect(catalog.offerings[0]!.groups[0]!.meetings).toEqual([
+    { semester: "fall", day: "tuesday", start: "14:00", end: "16:00" },
+    { semester: "fall", day: "thursday", start: "18:00", end: "20:00" },
   ]);
-  expect(catalog.offerings[0]!.groups[0]!.meetings).toEqual([]);
 });
 
 it("makes no Meeting of an hours cell ending in a separator, and says so instead of reading the fields before it", () => {
