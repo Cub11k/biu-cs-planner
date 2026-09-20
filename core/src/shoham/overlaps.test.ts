@@ -1,6 +1,21 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { expect, it } from "vitest";
 import type { Meeting } from "../catalog/schema.ts";
 import { meetingsOccupyingNoTime, overlappingMeetings } from "./overlaps.ts";
+
+/**
+ * The shared table of clock ranges, read the way `clashes.ts` reads it. `meetingsOccupyingNoTime`
+ * restates the half-open comparison that decides whether a range occupies time at all, so it is
+ * a third reader of the rule this table exists to stop drifting (#48) and is held to it here.
+ * Every case in the table is zero-padded, which is what a Catalog lets in; the unpadded hour the
+ * table deliberately leaves out is the Importer's own business, pinned in `import.test.ts`.
+ */
+const clockRanges: {
+  cases: { start: string; end: string; startMinutes: number; endMinutes: number; why: string }[];
+} = JSON.parse(
+  readFileSync(join(import.meta.dirname, "../../../fixtures/clock-ranges.json"), "utf8"),
+);
 
 /** A Tuesday afternoon Meeting in Fall; each test overrides only what it is about. */
 function meeting(overrides: Partial<Meeting> = {}): Meeting {
@@ -101,7 +116,7 @@ it("reports a Meeting whose end is its start as a range that does not advance", 
   const still = meeting({ start: "16:00", end: "16:00" });
 
   expect(meetingsOccupyingNoTime([still])).toEqual([
-    { meeting: still, range: "does-not-advance" },
+    { meeting: still, shape: "does-not-advance" },
   ]);
 });
 
@@ -112,7 +127,7 @@ it("reports a Meeting whose end falls before its start as one that reads as wrap
   const wrapping = meeting({ start: "23:00", end: "01:00" });
 
   expect(meetingsOccupyingNoTime([wrapping])).toEqual([
-    { meeting: wrapping, range: "reads-as-wrapping" },
+    { meeting: wrapping, shape: "reads-as-wrapping" },
   ]);
 });
 
@@ -131,8 +146,8 @@ it("reports every such Meeting, in the order the Group holds them", () => {
   const still = meeting({ start: "16:00", end: "16:00" });
 
   expect(meetingsOccupyingNoTime([wrapping, meeting(), still])).toEqual([
-    { meeting: wrapping, range: "reads-as-wrapping" },
-    { meeting: still, range: "does-not-advance" },
+    { meeting: wrapping, shape: "reads-as-wrapping" },
+    { meeting: still, shape: "does-not-advance" },
   ]);
 });
 
@@ -140,4 +155,47 @@ it("reports nothing about a Meeting whose clock cannot be read at all", () => {
   // "25:00" is not a time, so nothing here can say whether its range advances. What a Group's
   // unreadable hours get said about them is the dialect's `meeting-unreadable`, not this.
   expect(meetingsOccupyingNoTime([meeting({ start: "25:00", end: "25:00" })])).toEqual([]);
+});
+
+it("reports a plainly backwards range as reading like a wrap, which is the line #52 drew", () => {
+  // 12:00-08:00 is a swapped pair rather than a night class, and the table calls it "plainly
+  // backwards" for that reason. #52 asked for two shapes, so it shares the bucket with a real
+  // wrap; pinned here so that the choice is on the record rather than incidental.
+  const backwards = meeting({ start: "12:00", end: "08:00" });
+
+  expect(meetingsOccupyingNoTime([backwards])).toEqual([
+    { meeting: backwards, shape: "reads-as-wrapping" },
+  ]);
+});
+
+it("reports nothing about a Meeting whose end alone cannot be read", () => {
+  // The start reads fine and the end does not, so nothing here can say whether the range
+  // advances. Without this the unreadable end would compare as `undefined > 960`, come out
+  // false, and be reported as a wrap -- a Warning naming a shape it never determined.
+  expect(meetingsOccupyingNoTime([meeting({ start: "16:00", end: "25:00" })])).toEqual([]);
+  expect(meetingsOccupyingNoTime([meeting({ start: "25:00", end: "16:00" })])).toEqual([]);
+});
+
+it("reports exactly those ranges in the shared table that occupy no time", () => {
+  expect(clockRanges.cases.length).toBeGreaterThan(0);
+
+  for (const range of clockRanges.cases) {
+    const read = `${range.start}-${range.end}: ${range.why}`;
+    const occupiesTime = range.endMinutes > range.startMinutes;
+
+    expect([read, meetingsOccupyingNoTime([meeting({ start: range.start, end: range.end })])])
+      .toEqual([
+        read,
+        occupiesTime
+          ? []
+          : [
+              {
+                meeting: meeting({ start: range.start, end: range.end }),
+                shape: range.endMinutes === range.startMinutes
+                  ? "does-not-advance"
+                  : "reads-as-wrapping",
+              },
+            ],
+      ]);
+  }
 });

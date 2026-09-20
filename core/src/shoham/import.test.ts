@@ -1017,7 +1017,7 @@ it("warns when a Meeting occupies no time, naming the Course, the Group and the 
       group: "01",
       lessonType: "הרצאה",
       meeting: { semester: "fall", day: "tuesday", start: "16:00", end: "16:00" },
-      range: "does-not-advance",
+      shape: "does-not-advance",
     },
   ]);
   // the Warning never blocks: the Meeting is imported as it was read, neither repaired nor dropped
@@ -1040,9 +1040,25 @@ it("says a Meeting that reads as wrapping past midnight apart from one that does
       group: "01",
       lessonType: "הרצאה",
       meeting: { semester: "fall", day: "tuesday", start: "23:00", end: "01:00" },
-      range: "reads-as-wrapping",
+      shape: "reads-as-wrapping",
     },
   ]);
+});
+
+it("never sees an hour written without its leading zero, which the dialect drops first", () => {
+  // The fifth criterion of #52, answered where the Importer actually decides it: the Shoham
+  // dialect's clock is strictly zero-padded, so "9:00" is not a time to it and the row's hours
+  // are reported unreadable instead. An unpadded hour therefore never reaches a Meeting whose
+  // range this could judge, and the Group is left Untimed rather than given an invented one.
+  const { catalog, warnings } = importRawCrawl(
+    { rows: [row({ hours: "9:00 - 9:00" })] },
+    { academicYear: YEAR_2027 },
+  );
+
+  expect(exceptProvenance(warnings)).toEqual([
+    { kind: "meeting-unreadable", courseNumber: "89-110", group: "01" },
+  ]);
+  expect(catalog.offerings[0]!.groups[0]!.meetings).toEqual([]);
 });
 
 it("does not warn about a Meeting of 16:00 - 17:00, which occupies an hour", () => {

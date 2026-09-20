@@ -14,7 +14,11 @@ import {
   type ImportChanges,
 } from "./changes.ts";
 import { provenanceFromMeta } from "./meta.ts";
-import { meetingsOccupyingNoTime, overlappingMeetings, type EmptyRange } from "./overlaps.ts";
+import {
+  meetingsOccupyingNoTime,
+  overlappingMeetings,
+  type EmptyRangeShape,
+} from "./overlaps.ts";
 import type { RawCrawl, RawCrawlRow } from "./raw-crawl.ts";
 
 export type { RawCrawl, RawCrawlRow };
@@ -52,7 +56,7 @@ export type Warning =
       lessonType: string;
       meeting: Meeting;
       /** Which shape the empty range has, because the two point at different causes. */
-      range: EmptyRange;
+      shape: EmptyRangeShape;
     }
   | {
       kind: "group-superseded";
@@ -307,9 +311,9 @@ export function importRawCrawl(
     }
     // A Meeting whose end does not advance past its start Clashes with nothing and is placed
     // nowhere, so this is the only place it can be said at all. Which of the two shapes it has
-    // is part of the Warning: a maintainer holding 16:00-16:00 against the Shoham page is
-    // looking for a typo, while 23:00-01:00 sends them at how the crawl read a night class.
-    for (const { meeting, range } of meetingsOccupyingNoTime(group.meetings)) {
+    // is part of the Warning: 16:00-16:00 sends a maintainer to the Shoham page looking for a
+    // typo, while an end before its start sends them at how the crawl read the cell.
+    for (const { meeting, shape } of meetingsOccupyingNoTime(group.meetings)) {
       warnings.push({
         kind: "meeting-occupies-no-time",
         courseNumber: offering.courseNumber,
@@ -317,7 +321,7 @@ export function importRawCrawl(
         group: group.number,
         lessonType: group.lessonType,
         meeting,
-        range,
+        shape,
       });
     }
   }
