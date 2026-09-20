@@ -13,7 +13,8 @@ A local course planner for Bar-Ilan CS students: degree Plan across Semesters pl
 
 Development happens on temporary machines. The project lives on GitHub at `Cub11k/biu-cs-planner` (public, default branch `dev`), so a new machine gets it with a clone.
 
-- Node and npm come from the machine. The only project-local things are `package.json`, the npm workspaces and `node_modules/`; a clean slate is `rm -rf node_modules && npm install`.
+- Node and npm come from the machine. The only project-local things are `package.json`, the npm workspaces and `node_modules/`; a clean slate is `rm -rf node_modules && npm install && npm run install:browsers`.
+  The browser download is its own command because `playwright` ships no install script: nothing fetches a Chromium unless asked, and `--ignore-scripts` would stop it if a future version brought the postinstall back. Without it `npm test` cannot start the browser project; `npm run test:node` is the rest of the suite and needs nothing.
 - **Branching follows git flow.** `dev` is the default branch and where work lands; `master` holds releases only. A feature branches off `dev`, is named `<issue number>-<slug>`, and opens a pull request back into `dev`. A release is `dev` merged into `master`, and a tag on `master` is what triggers CI to test, build and publish.
 - Every pull request that touches code gets a generated report posted to it: the module and call graphs, every test title, coverage, and the functions no test entered. Read that before reading a diff — it is derived from the source, so it cannot drift from it. `npm run report` builds the same thing locally.
 - Project knowledge lives in this folder (this file, `docs/`) rather than in `~/.claude` memory.
