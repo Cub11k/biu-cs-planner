@@ -176,14 +176,19 @@ it("ignores a span whose end does not come after its start, so it occupies no ti
   expect(clashes).toEqual([]);
 });
 
-it("reads a Blocked Time the student wrote without a leading zero", () => {
+/**
+ * The clock this module reads — `core/src/clock.ts` — accepted an unpadded hour until #54 ruled
+ * that reading out (ADR-0012): `blockedTimeSchema` already refuses `"9:00"` where a Blocked Time
+ * is stored, so the looser reading guarded against data no path can produce. A span written that
+ * way now occupies no time, which is the same answer as any other time the clock cannot place.
+ */
+it("ignores a Blocked Time written without a leading zero, which no schema admits", () => {
   const clashes = findMeetingClashes(
     [group("99-101", [span("sunday", "10:00", "12:00")])],
     [span("sunday", "9:00", "17:00")],
   );
 
-  expect(clashes).toHaveLength(1);
-  expect(clashes[0]?.overlap).toEqual(span("sunday", "10:00", "12:00"));
+  expect(clashes).toEqual([]);
 });
 
 it("ignores a time it cannot read at all, rather than guessing where it falls", () => {
@@ -331,9 +336,9 @@ it("keeps the two halves of a night shift on their own Days", () => {
  * — which is the whole of issue #48.
  *
  * Both the readings and the behaviour they drive are checked: a whole-Day Blocked Time Clashes
- * with exactly those ranges the table says occupy time, over exactly the range they name. What
- * the table deliberately leaves out — an unpadded hour, which the two sides read differently
- * and always have — is written down in the file itself.
+ * with exactly those ranges the table says occupy time, over exactly the range they name. Since
+ * #54 the two sides read the same set of clock strings, so the table states no difference to
+ * cover; what it leaves out, and why, is written down in the file itself.
  */
 const clockRanges: {
   cases: { start: string; end: string; startMinutes: number; endMinutes: number; why: string }[];

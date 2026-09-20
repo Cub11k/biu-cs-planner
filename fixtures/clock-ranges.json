@@ -5,7 +5,7 @@
     "web/src/timetable/week.test.ts, against web/src/timetable/week.ts"
   ],
   "why": "core and web each read this clock, and web never imports core, so the rule is necessarily written twice. This table is the one place it is written down, so that a change to either reading fails a test instead of drifting quietly (issue #48).",
-  "notCovered": "Every case here is zero-padded, which is what a schema lets into a State File or a Catalog, so the table says nothing about an unpadded hour: core reads \"9:00\" as 540 and web refuses it, a difference older than issue #48 and one the ruling did not settle. Each side pins its own answer to that — core/src/clock.test.ts and web/src/timetable/week.test.ts — and neither pretends the two agree. Nor does the table cover refusals, since a case is two numbers and cannot say \"no time at all\", or the writing back of minutes as a clock string, which only web does.",
+  "notCovered": "Every case here is zero-padded, because zero-padded is the only thing either side reads: issue #54 narrowed core to the pattern the schemas and web already carried, so an unpadded \"9:00\" is refused by both and there is no difference left for the table to state. No unpadded row was added for that reason. Refusals cannot be a row in any case — a case is two numbers and cannot say \"no time at all\" — so each side pins its own, core/src/clock.test.ts and web/src/timetable/week.test.ts. Nor does the table cover the writing back of minutes as a clock string, which only web does.",
   "cases": [
     {
       "start": "08:00",

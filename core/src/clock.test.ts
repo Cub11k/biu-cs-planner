@@ -18,15 +18,19 @@ it("reads 00:00 as the beginning of the Day at a start and the end of it at an e
 });
 
 /**
- * Reading the number rather than comparing the strings is what makes a missing leading zero
- * harmless: `"9:00"` sorts after `"10:00"` but is plainly earlier than it. Nothing that has
- * been through a schema arrives unpadded — `blockedTimeSchema` refuses `"9:00"` outright — but
- * a `WeeklySpan` is a structural contract, and a span that reaches the Clashes module without
- * one is better placed than silently ignored.
+ * The narrowing ruled on #54 (ADR-0012). `core` reads exactly the set the schemas let in and no
+ * more: every schema that admits a span this module is asked to read — `blockedTimeSchema` and
+ * `pickedMeetingSchema` in a State File, `meetingSchema` in a Catalog, `isClockTime` in the
+ * Shoham dialect — already refuses an unpadded hour, so reading one here was a second and looser
+ * opinion about data none of them can produce. Were one ever to arrive, that is a schema bug to
+ * fix at the schema, not a reading to widen; here it arrives as no time at all, which keeps it
+ * out of every Clash.
  */
-it("reads an hour written without a leading zero, rather than refusing it", () => {
-  expect(clockAsStart("9:00")).toBe(540);
-  expect(clockAsEnd("9:00")).toBe(540);
+it("refuses an hour written without a leading zero, the way every schema does", () => {
+  for (const refused of ["9:00", "0:00", "1:30"]) {
+    expect(clockAsStart(refused)).toBeUndefined();
+    expect(clockAsEnd(refused)).toBeUndefined();
+  }
 });
 
 /**
