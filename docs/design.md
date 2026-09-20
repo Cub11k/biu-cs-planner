@@ -190,7 +190,10 @@ web/      thin React UI; talks only to the HTTP API through Hono's typed client.
   ```
 - On first run the app offers to create this layout. Nothing is written without asking.
 - **Autosave:** every edit saves the State File after a short delay, using atomic writes.
-- **Undo/redo:** every edit is a command in `app`; the server keeps the undo history for the session.
+- **Undo/redo:** an edit is a pure function in `core`; `app` keeps the previous State File value on a
+  stack with the label the use case supplied, and undo writes an earlier value back through the same
+  guarded save. One stack per open State File, settings excluded, the last 100 edits or 8 MB, held in
+  memory and gone on restart. There is no command concept ([ADR 0013](adr/0013-undo-is-snapshots-not-commands.md)).
 - **Backups:** rotating snapshots in `.backups/` (last 20 saves plus one per day for 30 days), restorable from the Workspace screen.
 - **External edits:** each save carries the file version it was based on. If the file changed on disk meanwhile (Dropbox, git, an editor), the server refuses the overwrite. The app then reloads and reports whether the last edit could be re-applied.
 - The server watches the Workspace folder, not individual files, and the UI reloads on external changes. Watching the folder is what sees a Catalog *appear* — dropped into `catalogs/` by hand, arriving with a git clone, landing over Dropbox — which watching a file cannot. One `fs.watch` per watched folder — the Workspace root, `catalogs/` and `requirements/` — non-recursive, so that a `.git` inside the Workspace does not turn every git operation into a reload. `.backups/` is not watched: a rotating snapshot is written only by the app and nothing in it is shown, so once autosave lands its snapshots would otherwise be a reload each.
