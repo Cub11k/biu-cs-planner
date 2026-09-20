@@ -35,7 +35,10 @@ import {
 
 
 export type Warning =
-  | { kind: MeetingWarning | "semester-unreadable"; courseNumber: string; group: string }
+  // What the dialect could not read of one row's hours, with the Course and Group that row
+  // names. Each of the dialect's Warnings carries its own fields, so they are spread in.
+  | ({ courseNumber: string; group: string } & MeetingWarning)
+  | { kind: "semester-unreadable"; courseNumber: string; group: string }
   | {
       kind: "group-meetings-overlap";
       courseNumber: string;
@@ -230,8 +233,8 @@ export function importRawCrawl(
   for (const row of crawl.rows ?? []) {
     const { semesters, meetings, warnings: meetingWarnings } = parseGroupMeetings(row);
     const courseNumber = parseCourseNumber(row.code);
-    for (const kind of meetingWarnings) {
-      warnings.push({ kind, courseNumber, group: row.group });
+    for (const meetingWarning of meetingWarnings) {
+      warnings.push({ ...meetingWarning, courseNumber, group: row.group });
     }
     if (!semesters.length) {
       warnings.push({ kind: "semester-unreadable", courseNumber, group: row.group });

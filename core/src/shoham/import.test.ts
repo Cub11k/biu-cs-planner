@@ -343,6 +343,137 @@ it("warns on a Meeting it cannot read, and keeps the rest of the Group", () => {
   ]);
 });
 
+it("warns on an hours cell holding more than two fields, naming the cell, rather than reading the first two of them", () => {
+  // #70: `16:00 - 16:00 - 17:00` splits into three fields, and keeping the first two both
+  // invents a Meeting of 16:00-16:00 and loses the third silently. Worse than losing it: the
+  // Meeting that comes out occupies no time, so #52's Warning reports it as a Shoham typo
+  // where the same time was written twice, which is a confident and wrong diagnosis. The cell
+  // is reported as the cell it is instead, and yields no Meeting.
+  const { catalog, warnings } = importRawCrawl(
+    { rows: [row({ day: "ג'", hours: "16:00 - 16:00 - 17:00" })] },
+    { academicYear: YEAR_2027 },
+  );
+
+  expect(exceptProvenance(warnings)).toEqual([
+    {
+      kind: "hours-cell-extra-fields",
+      courseNumber: "89-110",
+      group: "01",
+      cell: "16:00 - 16:00 - 17:00",
+    },
+  ]);
+  // No Meeting, so nothing for `meeting-occupies-no-time` to misdiagnose -- and the Offering,
+  // the Group and its lecturers still import, as every domain check must let them.
+  expect(catalog.offerings[0]!.groups[0]!.meetings).toEqual([]);
+  expect(catalog.offerings[0]!.groups[0]!.lecturers).toEqual(["פרופ' נועה אגמון"]);
+});
+
+it("reports a three-field hours cell of a Group whose hours divide evenly, and keeps the Meeting the Group's other line reads", () => {
+  // Two days and two ranges divide evenly, which is the case #70 is about: nothing else about
+  // the Group is wrong, so nothing else explains the missing Meeting. One line of the cell is
+  // read and kept, the three-field line is named, and the Group is not left Untimed by it.
+  const { catalog, warnings } = importRawCrawl(
+    { rows: [row({ day: "ג',ה'", hours: "15:00 - 18:00\n10:00 - 11:00 - 12:00" })] },
+    { academicYear: YEAR_2027 },
+  );
+
+  expect(exceptProvenance(warnings)).toEqual([
+    {
+      kind: "hours-cell-extra-fields",
+      courseNumber: "89-110",
+      group: "01",
+      cell: "10:00 - 11:00 - 12:00",
+    },
+  ]);
+  expect(catalog.offerings[0]!.groups[0]!.meetings).toEqual([
+    { semester: "fall", day: "tuesday", start: "15:00", end: "18:00" },
+  ]);
+});
+
+it("reports a three-field hours cell even when the hours do not divide, which suppresses the one-by-one Warning", () => {
+  // The other side of the suppression: an uneven split already explains every missing
+  // Meeting, so `meeting-unreadable` is deliberately not also emitted. That reason does not
+  // cover a cell with too many fields -- the cell is broken however many lines the Group has
+  // -- so it is reported alongside `hours-do-not-divide` rather than swallowed with the rest.
+  const { catalog, warnings } = importRawCrawl(
+    {
+      rows: [
+        row({
+          semester: "סמסטר א'\nסמסטר ב'",
+          day: "א',ה',ו'",
+          hours: "09:00 - 11:00\n09:00 - 11:00\n08:00 - 13:00\n10:00 - 12:00 - 14:00",
+        }),
+      ],
+    },
+    { academicYear: YEAR_2027 },
+  );
+
+  expect(exceptProvenance(warnings)).toEqual([
+    { kind: "hours-do-not-divide", courseNumber: "89-110", group: "01" },
+    {
+      kind: "hours-cell-extra-fields",
+      courseNumber: "89-110",
+      group: "01",
+      cell: "10:00 - 12:00 - 14:00",
+    },
+  ]);
+  // What could be read is still kept, exactly as an uneven split keeps it today.
+  expect(catalog.offerings[0]!.groups[0]!.meetings).toEqual([
+    { semester: "fall", day: "sunday", start: "09:00", end: "11:00" },
+    { semester: "fall", day: "thursday", start: "09:00", end: "11:00" },
+    { semester: "fall", day: "friday", start: "08:00", end: "13:00" },
+  ]);
+});
+
+it("names a Year-long Group's broken hours cell once, however many Semesters repeat it", () => {
+  // A Year-long Group writes its block once per Semester, so the same text arrives twice.
+  // There is still one cell to go and look at on the Shoham page, so it is said once.
+  const { catalog, warnings } = importRawCrawl(
+    {
+      rows: [
+        row({
+          semester: "סמסטר א'\nסמסטר ב'",
+          day: "ג'",
+          hours: "16:00 - 16:00 - 17:00\n16:00 - 16:00 - 17:00",
+        }),
+      ],
+    },
+    { academicYear: YEAR_2027 },
+  );
+
+  expect(exceptProvenance(warnings)).toEqual([
+    {
+      kind: "hours-cell-extra-fields",
+      courseNumber: "89-110",
+      group: "01",
+      cell: "16:00 - 16:00 - 17:00",
+    },
+  ]);
+  expect(catalog.offerings[0]!.groups[0]!.meetings).toEqual([]);
+});
+
+it("reports two ranges run together on one line as the cell it cannot read, not as an unreadable time", () => {
+  // The shape a crawl really produced before the crawler wrote each range on its own line:
+  // two ranges on one line separated by a space. Split on "-" it is three fields whose middle
+  // one is two clock times, so today's guard already refuses it -- but it refuses it as
+  // `meeting-unreadable`, which says nothing about what is wrong with it. Same refusal,
+  // named: the cell holds more than one range and the dialect does not guess which is meant.
+  const { catalog, warnings } = importRawCrawl(
+    { rows: [row({ day: "ג'", hours: "14:00 - 16:00 18:00 - 20:00" })] },
+    { academicYear: YEAR_2027 },
+  );
+
+  expect(exceptProvenance(warnings)).toEqual([
+    {
+      kind: "hours-cell-extra-fields",
+      courseNumber: "89-110",
+      group: "01",
+      cell: "14:00 - 16:00 18:00 - 20:00",
+    },
+  ]);
+  expect(catalog.offerings[0]!.groups[0]!.meetings).toEqual([]);
+});
+
 it("imports an Untimed Group without complaint", () => {
   const { catalog, warnings } = importRawCrawl(
     { rows: [row({ group: "05", kind: "פרויקט", day: "", hours: "" })] },

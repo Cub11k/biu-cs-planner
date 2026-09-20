@@ -54,7 +54,17 @@ export function parseSemesters(cell: string): Semester[] {
 }
 
 /** Why a Group's Meetings could not be read in full. Never blocks the import. */
-export type MeetingWarning = "hours-do-not-divide" | "meeting-unreadable";
+export type MeetingWarning =
+  | { kind: "hours-do-not-divide" }
+  | { kind: "meeting-unreadable" }
+  /**
+   * An hours cell holding more than two `-`-separated fields, such as `16:00 - 16:00 - 17:00`.
+   * Shoham's meaning for such a cell is not established, so it yields no Meeting (#70).
+   *
+   * `cell` is the text as it stood, so a maintainer can find it on the Shoham page. Where the
+   * cell holds a range per line it is the offending line, which is the line no Meeting came of.
+   */
+  | { kind: "hours-cell-extra-fields"; cell: string };
 
 export function parseGroupMeetings(row: {
   day: string;
@@ -75,7 +85,17 @@ export function parseGroupMeetings(row: {
   const repeated = ranges.length === days.length * semesters.length;
   const shared = ranges.length === days.length;
   const divides = repeated || shared;
-  const warnings: MeetingWarning[] = divides ? [] : ["hours-do-not-divide"];
+  const warnings: MeetingWarning[] = divides ? [] : [{ kind: "hours-do-not-divide" }];
+
+  // A cell with more than two fields is a fact about the cell rather than about a Meeting, so
+  // it is read off the cell here, once, before the ranges are paired with the days: a Year-long
+  // Group writes its block once per Semester, and the same broken text would otherwise be
+  // reported once per repeat when there is one cell to go and look at. Reported however the
+  // hours divide, because an uneven split does not explain this one -- the reason the
+  // one-by-one Warning at the foot of this function is suppressed does not reach it.
+  for (const cell of new Set(ranges.filter((range) => range.split("-").length > 2))) {
+    warnings.push({ kind: "hours-cell-extra-fields", cell });
+  }
 
   const meetings: Meeting[] = [];
   let unreadable = false;
@@ -92,7 +112,15 @@ export function parseGroupMeetings(row: {
         unreadable = true;
         return;
       }
-      const [start, end] = range.split("-").map((t) => t.trim());
+      const fields = range.split("-").map((t) => t.trim());
+      // Too many fields is already reported above as the cell it is, and yields no Meeting:
+      // keeping the first two would read `16:00 - 16:00 - 17:00` as 16:00-16:00, which drops a
+      // field silently and hands #52's check a Meeting occupying no time to diagnose as a
+      // Shoham typo -- a confident wrong answer where the truth is that the cell holds three
+      // fields (#70). It is not counted unreadable on top of that, which would say the same
+      // thing twice and less precisely.
+      if (fields.length > 2) return;
+      const [start, end] = fields;
       if (!start || !end || !isClockTime(start) || !isClockTime(end)) {
         unreadable = true;
         return;
@@ -102,6 +130,6 @@ export function parseGroupMeetings(row: {
   });
   // An uneven split already explains every Meeting missing from the short block, so it is
   // not also reported one by one: a Warning nobody can act on is a Warning nobody reads.
-  if (unreadable && divides) warnings.push("meeting-unreadable");
+  if (unreadable && divides) warnings.push({ kind: "meeting-unreadable" });
   return { semesters, meetings, warnings };
 }
