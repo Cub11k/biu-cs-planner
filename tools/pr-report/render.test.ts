@@ -1,6 +1,10 @@
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { collect } from "./collect.ts";
 import { render, type Report } from "./render.ts";
-import type { ImportKind, Module } from "./surface.ts";
+import { packageWorkspace, type ImportKind, type Module } from "./surface.ts";
+
+const ROOT = resolve(import.meta.dirname, "../..");
 
 /**
  * The report is posted as one pull request comment, and most of it is reference material
@@ -30,6 +34,33 @@ const leaf = (path: string): Module => ({
   imports: [],
   packages: [],
 });
+
+/** The same, somewhere other than `core`, so an edge can cross a workspace. */
+const leafIn = (workspace: string, path: string): Module => ({ ...leaf(path), workspace });
+
+/** A module whose only imports are bare specifiers, the way a cross-workspace one is written. */
+const importing = (workspace: string, path: string, ...packages: Module["packages"]): Module => ({
+  ...leafIn(workspace, path),
+  packages,
+});
+
+/**
+ * This repo's architecture in miniature: one module per workspace, each reaching the next
+ * by package name, and `web`'s single edge written `import type` so it is erased. Every one
+ * of these is in `Module.packages` and none in `Module.imports`, which is the whole reason
+ * the graph used to draw four boxes and no arrow between any two of them.
+ */
+const chain: Module[] = [
+  importing("web", "web/src/api.ts", { specifier: "@biu-cs-planner/server", ...ERASED }),
+  importing(
+    "server",
+    "server/src/api.ts",
+    { specifier: "@biu-cs-planner/app", ...CODE },
+    { specifier: "@biu-cs-planner/core", ...CODE },
+  ),
+  importing("app", "app/src/queries.ts", { specifier: "@biu-cs-planner/core", ...CODE }),
+  leafIn("core", "core/src/plan.ts"),
+];
 
 /** One module importing another once, in whichever of the three states is given. */
 const one = (kind: ImportKind): Module[] => [
@@ -78,6 +109,24 @@ function report(over: Partial<Report> = {}): Report {
     unmeasured: [],
     ...over,
   };
+}
+
+/** The module graph's mermaid source, which is the code block in the first fold. */
+function moduleGraph(markdown: string): string {
+  const body = folds(markdown)[0]?.body ?? "";
+  return body.split("```mermaid")[1]?.split("```")[0] ?? "";
+}
+
+/**
+ * What every arrow in the module graph points at. A negative assertion about a package
+ * belongs here rather than over the whole graph text: `not.toContain("react")` across the
+ * markdown would also fail on a module named `react-bridge.ts`, which is not what it claims
+ * to test. The pattern is literal — two spaces, an id, either arrow, the target.
+ */
+function arrowTargets(markdown: string): string[] {
+  return moduleGraph(markdown)
+    .split("\n")
+    .flatMap((line) => /^ {2}\w+ (?:-\.->|-->) (\S+)$/.exec(line)?.[1] ?? []);
 }
 
 /** The bodies of every fold, in order. */
@@ -211,6 +260,138 @@ describe("the report comment", () => {
     expect(markdown).not.toContain("import {} from");
   });
 
+  it("draws an arrow at the imported workspace's box for an import written as a package name", () => {
+    // The defect this covers: a cross-workspace import is always a bare specifier, so
+    // `readModule` files it under `Module.packages`, and a graph built from
+    // `Module.imports` alone drew all four workspaces as boxes and no arrow between any
+    // two of them. A test over relative imports cannot see that field go unread.
+    const graph = moduleGraph(render(report({ modules: chain })));
+
+    // The arrow ends at the subgraph id, which is what makes it land in the box.
+    expect(graph).toContain('subgraph server["server"]');
+    expect(graph).toContain("web_src_api_ts -.-> server");
+    expect(graph).toContain("server_src_api_ts --> app");
+    expect(graph).toContain("server_src_api_ts --> core");
+    expect(graph).toContain("app_src_queries_ts --> core");
+  });
+
+  it("draws a package edge dashed only when it is erased, the same rule as a local one", () => {
+    // `web`'s one edge is `import type { ApiType } from "@biu-cs-planner/server"`, so it
+    // is erased and dashed. Written with the inline `{ type ApiType }` it carries the same
+    // type, still emits a specifier, and must draw solid — which is the spelling the
+    // review job fails on this exact edge. The arrow and the gate ask one question.
+    const inline = [
+      importing("web", "web/src/api.ts", { specifier: "@biu-cs-planner/server", ...KEPT }),
+      leafIn("server", "server/src/index.ts"),
+    ];
+
+    expect(moduleGraph(render(report({ modules: inline })))).toContain("web_src_api_ts --> server");
+    expect(moduleGraph(render(report({ modules: inline })))).not.toContain("-.->");
+  });
+
+  it("draws no arrow for a package that is not one of this repo's workspaces", () => {
+    // A node per library would bury the shape of the repo under its dependencies, and
+    // `@biu-cs-planner/tools` is a box this graph never drew — an arrow at it would point
+    // at nothing.
+    //
+    // The fixture draws one real arrow so that the negatives below are load-bearing: with
+    // no arrow at all they would hold for a graph that was never rendered, which is how a
+    // test passes for a reason its title does not mention.
+    const markdown = render(
+      report({
+        modules: [
+          {
+            ...importing(
+              "core",
+              "core/src/plan.ts",
+              { specifier: "zod", ...CODE },
+              { specifier: "@types/node", ...ERASED },
+              { specifier: "@biu-cs-planner/tools", ...CODE },
+            ),
+            imports: [{ specifier: "core/src/clock.ts", ...CODE }],
+          },
+          leaf("core/src/clock.ts"),
+        ],
+      }),
+    );
+
+    expect(arrowTargets(markdown)).toEqual(["core_src_clock_ts"]);
+  });
+
+  it("draws no arrow from a module to the box around it", () => {
+    // A workspace importing its own package is an arrow from a node to its own container:
+    // nothing a reader learns, and nothing mermaid draws sensibly. Anchored the same way —
+    // the relative import beside it must still be drawn.
+    const markdown = render(
+      report({
+        modules: [
+          {
+            ...importing("server", "server/src/api.ts", { specifier: "@biu-cs-planner/server", ...CODE }),
+            imports: [{ specifier: "server/src/guard.ts", ...CODE }],
+          },
+          leafIn("server", "server/src/guard.ts"),
+        ],
+      }),
+    );
+
+    expect(arrowTargets(markdown)).toEqual(["server_src_guard_ts"]);
+  });
+
+  it("draws one arrow for a workspace imported twice, and lets the value import decide it", () => {
+    // `@biu-cs-planner/core` beside a deep `@biu-cs-planner/core/thing` is one edge, and
+    // `mergeImports` already says what one edge claims when two statements disagree: the
+    // weaker wins, so a single value import makes it a value edge.
+    const graph = moduleGraph(
+      render(
+        report({
+          modules: [
+            importing(
+              "app",
+              "app/src/queries.ts",
+              { specifier: "@biu-cs-planner/core", ...ERASED },
+              { specifier: "@biu-cs-planner/core/thing", ...CODE },
+            ),
+            leafIn("core", "core/src/plan.ts"),
+          ],
+        }),
+      ),
+    );
+
+    expect(graph.match(/app_src_queries_ts/g)).toHaveLength(2);
+    expect(graph).toContain("app_src_queries_ts --> core");
+    expect(graph).not.toContain("-.->");
+  });
+
+  it("counts a package edge among the imports, and says how many leave their workspace", () => {
+    // The counts and the arrows come from one function, so a field read for the picture
+    // and not for the number is not a state this can be in.
+    const summaries = folds(render(report({ modules: chain })))
+      .map((f) => f.summary)
+      .join("\n");
+
+    expect(summaries).toContain("4 modules, 4 imports, 4 into another workspace, 1 erased");
+  });
+
+  it("explains that an arrow at a workspace box is an import written as a package name", () => {
+    const markdown = render(report({ modules: chain }));
+
+    expect(markdown).toContain("An arrow that ends at a **workspace box**");
+    expect(markdown).toContain("names a package and not a file");
+    // And does not claim these are the only edges the layering rule is about: a relative
+    // cross-workspace import lands on a module, and test files are judged but not drawn.
+    expect(markdown).toContain("relative path lands on a module rather than a box");
+  });
+
+  it("says nothing about workspace boxes when every arrow ends at a module", () => {
+    // The default report imports `zod`, which is drawn nowhere, so there is no box edge to
+    // explain and no count to print for one.
+    const markdown = render(report());
+    const summaries = folds(markdown).map((f) => f.summary).join("\n");
+
+    expect(markdown).not.toContain("workspace box");
+    expect(summaries).not.toContain("into another workspace");
+  });
+
   it("leaves a blank line after every summary, which markdown inside needs", () => {
     // Without it GitHub renders the body as literal text, and a folded table becomes a
     // wall of pipes. It is invisible in review, so it is asserted here instead.
@@ -254,5 +435,65 @@ describe("the report comment", () => {
     expect(empty).toContain("0 modules, 0 imports");
     expect(empty).toContain("Nothing stands out");
     expect(folds(empty)).toHaveLength(5);
+  });
+});
+
+/**
+ * The graph against the tree it describes. The unit tests above prove the rule; these prove
+ * that this repo's own dependencies land in the picture a reviewer is told to read first.
+ */
+describe("this repository", () => {
+  it("draws the narrowed `web → server` edge, and draws it dashed", () => {
+    // `web/src/api.ts` writes `import type { ApiType } from "@biu-cs-planner/server"`: the
+    // project's only narrowed edge, the subject of #51, #58, #59 and #69 — and, until #77,
+    // in neither this graph nor its counts.
+    expect(moduleGraph(render(collect(ROOT)))).toContain("web_src_api_ts -.-> server");
+  });
+
+  it("draws every cross-workspace dependency the source actually writes", () => {
+    // Re-derived from `Module.packages` rather than listed by hand, so a new cross-workspace
+    // import is covered the day it is written and this does not go stale.
+    //
+    // That makes `expected` and the implementation share an oracle — both apply
+    // `packageWorkspace` and read `erasable` — so the count is then checked the other way
+    // round as well, against arrows counted straight out of the mermaid by shape. A
+    // dropped edge fails the loop below; an invented one, or an edge dropped on both
+    // sides, fails the length. `packageWorkspace` itself is pinned by its own tests in
+    // `surface.test.ts`, and the one hardcoded edge is the test above.
+    const derived = collect(ROOT);
+    const graph = moduleGraph(render(derived));
+
+    // The same boxes the graph drew, so a `@biu-cs-planner/<something not a workspace>`
+    // import would not fail this test for behaving exactly as designed.
+    const boxes = new Set(derived.modules.map((m) => m.workspace));
+    const expected = derived.modules.flatMap((m) =>
+      m.packages.flatMap((dep) => {
+        const workspace = packageWorkspace(dep.specifier);
+        if (!workspace || workspace === m.workspace || !boxes.has(workspace)) return [];
+        const arrow = dep.erasable ? "-.->" : "-->";
+        return [`${m.path.replace(/[^A-Za-z0-9]/g, "_")} ${arrow} ${workspace}`];
+      }),
+    );
+
+    // A literal pattern, not one built from data: two spaces, an id, either arrow, and a
+    // target that is one of the four workspace box ids and nothing longer.
+    const boxArrows = graph
+      .split("\n")
+      .filter((line) => /^ {2}\w+ (-\.->|-->) (core|app|server|web)$/.test(line));
+
+    expect(expected.length).toBeGreaterThan(1);
+    expect(boxArrows).toHaveLength(expected.length);
+    for (const edge of expected) expect(graph).toContain(edge);
+  });
+
+  it("points no arrow at a third-party package", () => {
+    // `zod`, `hono` and `react` are in `Module.packages` beside the workspace names, and an
+    // arrow is the only way a package could enter this graph. Asserted against the arrow
+    // targets rather than the graph text, so a module file named after a library does not
+    // fail it.
+    const targets = arrowTargets(render(collect(ROOT)));
+
+    for (const pkg of ["zod", "hono", "react"]) expect(targets).not.toContain(pkg);
+    expect(targets.length).toBeGreaterThan(1);
   });
 });

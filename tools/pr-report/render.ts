@@ -1,7 +1,7 @@
 import type { CallEdge } from "./calls.ts";
 import type { Coverage } from "./coverage.ts";
-import type { Module } from "./surface.ts";
-import { moduleName } from "./surface.ts";
+import type { ImportKind, Module } from "./surface.ts";
+import { mergeImports, moduleName, packageWorkspace } from "./surface.ts";
 import type { TestFile } from "./tests.ts";
 
 export type Report = {
@@ -18,7 +18,113 @@ const esc = (s: string): string => s.replace(/"/g, "'").replace(/\|/g, "\\|");
 const bar = (n: number): string => "█".repeat(Math.round(n / 10)).padEnd(10, "░");
 
 /**
- * Modules as nodes, imports as edges, grouped by workspace.
+ * One arrow, ready to draw.
+ *
+ * Deliberately **not** an `ImportRef` with fields added. `ImportRef.specifier` is documented
+ * as "repo-relative path for a local import, the package name for a bare one", and `to` here
+ * is neither of those for a package edge: it is the **workspace name**, which is the id of
+ * its box. Widening a documented field to mean a third thing is how a report starts
+ * disagreeing with itself, so the mermaid target gets its own name and the import's kind is
+ * carried whole rather than spread flat.
+ *
+ * `box` says whether the arrow ends at a workspace box or at a module, so the legend can
+ * explain the first only when the graph holds one. The two workspaces are carried because
+ * the count a reviewer reads before opening the fold is how many arrows leave their
+ * workspace, and that is a question about where an arrow lands rather than how it was
+ * written.
+ */
+type DrawnEdge = {
+  /** Repo-relative path of the module that writes the import. */
+  from: string;
+  /** The workspace that module lives in. */
+  fromWorkspace: string;
+  /** What the arrow points at: a module's repo-relative path, or a workspace's name. */
+  to: string;
+  /** The workspace the arrow lands in. */
+  toWorkspace: string;
+  /** Whether `to` is a workspace box rather than a module. */
+  box: boolean;
+  /** What travels along the import, and whether the statement survives the emit. */
+  kind: ImportKind;
+};
+
+/**
+ * Every arrow the module graph draws, from **both** of the fields an import can land in.
+ *
+ * `readModule` splits an import two ways: a relative one goes to `Module.imports` as a
+ * repo-relative path, and a bare one goes to `Module.packages` under the name it was
+ * written with. A cross-workspace import in this repo is always bare, so it is always in
+ * `packages` — and a version of this drawing read `imports` alone. It drew all four
+ * workspaces as boxes and **not one arrow between two of them**: the whole
+ * `web → server → app → core` chain that `docs/design.md` "Architecture" describes and
+ * `tools/pr-review/layering.ts` polices was absent from the picture `CLAUDE.md` sends a
+ * reviewer to before the diff (#77). `forbiddenEdges` reads both fields and always has,
+ * which is why the check was right about `web → server` while the graph beside it was
+ * silent.
+ *
+ * So the counts and the arrows both come from here, one function, rather than each field
+ * being remembered in each place: it was exactly one field going unread in one place that
+ * caused this, and `render` used to recompute the drawn set for its own summary.
+ *
+ * What still gets no arrow, and each for its own reason:
+ *
+ * - A third-party package — `zod`, `hono`, `react`. This graph is the shape of *this* repo,
+ *   and a node per library would bury that.
+ * - A scoped name with no workspace behind it. `@biu-cs-planner/tools` would be an arrow at
+ *   a box this graph never drew, so it is dropped rather than invented.
+ * - A workspace importing its own package. That is an arrow from a node to the box around
+ *   it, which tells a reader nothing and which mermaid has no sensible drawing for.
+ * - A `node:` builtin and a dynamic `import()`, neither of which `readModule` records at
+ *   all.
+ */
+function drawnEdges(modules: readonly Module[]): DrawnEdge[] {
+  const paths = new Set(modules.map((m) => m.path));
+  const boxes = new Set(modules.map((m) => m.workspace));
+  const out: DrawnEdge[] = [];
+
+  for (const m of modules) {
+    for (const dep of m.imports) {
+      if (!paths.has(dep.specifier)) continue;
+      out.push({
+        from: m.path,
+        fromWorkspace: m.workspace,
+        to: dep.specifier,
+        toWorkspace: dep.specifier.split("/")[0] ?? "",
+        box: false,
+        kind: dep,
+      });
+    }
+
+    // Re-specified from the package name to the workspace name, which is the id of its
+    // box, and then merged: `@biu-cs-planner/core` beside `@biu-cs-planner/core/thing` is
+    // one arrow, and `mergeImports` is already the rule for what that one arrow says —
+    // the weaker statement wins, so a single value import makes the edge a value edge.
+    const crossing = m.packages.flatMap((dep) => {
+      const workspace = packageWorkspace(dep.specifier);
+      if (!workspace || workspace === m.workspace || !boxes.has(workspace)) return [];
+      return [{ ...dep, specifier: workspace }];
+    });
+    for (const dep of mergeImports(crossing)) {
+      out.push({
+        from: m.path,
+        fromWorkspace: m.workspace,
+        to: dep.specifier,
+        toWorkspace: dep.specifier,
+        box: true,
+        kind: dep,
+      });
+    }
+  }
+
+  return out;
+}
+
+/**
+ * Modules as nodes, grouped into a box per workspace, and every import an edge — but not
+ * every edge ends at a module. A relative import points at the module it names; a
+ * cross-workspace import is written as a package name and points at the **workspace box**.
+ * `drawnEdges` is where that is decided, and where what is deliberately drawn nowhere is
+ * listed.
  *
  * A dashed arrow is **erased**: every statement on that edge compiles to nothing, so the
  * edge leaves no specifier for a bundler to resolve. (Only the edge — another importer may
@@ -48,12 +154,11 @@ const bar = (n: number): string => "█".repeat(Math.round(n / 10)).padEnd(10, "
  * hidden — solid is the safe direction, and `render` counts it separately and names the
  * spelling whenever the graph holds one.
  *
- * One limit to know while reading the graph: it draws only edges between modules it has
- * nodes for, so a bare specifier goes into `Module.packages` and is drawn nowhere — and
- * `@biu-cs-planner/server`, the project's one narrowed edge, is bare. `forbiddenEdges`
- * judges both. So what this arrow now agrees with the check about is every cross-workspace
- * edge written as a relative path, and the bare-package spelling is outside this graph and
- * its counts entirely.
+ * **A package edge is drawn by that same rule**, which is much of the point of drawing them
+ * at all: the project's one narrowed edge is `web/src/api.ts -.-> server`, dashed because
+ * `import type { ApiType } from "@biu-cs-planner/server"` is erased. Four tickets in a row
+ * (#51, #58, #59, #69) reasoned about how that edge is drawn while it was in neither this
+ * graph nor its counts. It is in both now, and it asks the question the gate asks.
  */
 function moduleMap(modules: Module[]): string {
   const byWorkspace = new Map<string, Module[]>();
@@ -67,12 +172,8 @@ function moduleMap(modules: Module[]): string {
     for (const m of mods) lines.push(`    ${id(m.path)}["${esc(moduleName(m.path))}"]`);
     lines.push("  end");
   }
-  const paths = new Set(modules.map((m) => m.path));
-  for (const m of modules) {
-    for (const dep of m.imports) {
-      if (!paths.has(dep.specifier)) continue;
-      lines.push(`  ${id(m.path)} ${dep.erasable ? "-.->" : "-->"} ${id(dep.specifier)}`);
-    }
+  for (const edge of drawnEdges(modules)) {
+    lines.push(`  ${id(edge.from)} ${edge.kind.erasable ? "-.->" : "-->"} ${id(edge.to)}`);
   }
   return lines.join("\n");
 }
@@ -153,20 +254,31 @@ export function render(report: Report): string {
   if (unmeasured.length) out.push(`| Modules with no coverage at all | ${unmeasured.length} |`);
   out.push("");
 
-  const paths = new Set(modules.map((m) => m.path));
-  const drawn = modules.flatMap((m) => m.imports.filter((d) => paths.has(d.specifier)));
-  const erased = drawn.filter((d) => d.erasable).length;
+  const drawn = drawnEdges(modules);
+  const erased = drawn.filter((d) => d.kind.erasable).length;
   // Counted apart from the erased ones, never folded in with them: an import written
   // `import { type X }` carries only types and still leaves `import {} from "…"` in the
   // output, which is the difference `tools/pr-review/layering.ts` fails a narrowed edge
   // over. A summary that added the two together would make the same claim the arrow used
   // to make, one level up and read even sooner.
-  const kept = drawn.filter((d) => d.typeOnly && !d.erasable).length;
+  const kept = drawn.filter((d) => d.kind.typeOnly && !d.kind.erasable).length;
   // Both counts are named in the summary rather than left inside, so a reviewer deciding
   // whether to open the fold already knows whether any edge is only a shape — and whether
   // any edge only looks like one.
+  //
+  // The arrows that leave their workspace get a count of their own beside them, because
+  // those few are the architecture: `web → server → app → core`, the chain
+  // `docs/design.md` draws and `tools/pr-review/layering.ts` enforces. It is the one number
+  // here that answers a question about the shape of the project rather than about one
+  // file's imports, and naming it outside the fold is what a separate workspace-level
+  // diagram would otherwise have been for. Counted by where an arrow **lands**, not by how
+  // it was written, so a relative import that reaches into another workspace counts too —
+  // there is none today and the label should not quietly stop being true if one appears.
+  const crossing = drawn.filter((d) => d.fromWorkspace !== d.toWorkspace).length;
+  const boxed = drawn.some((d) => d.box);
   const size =
     `${modules.length} modules, ${drawn.length} imports` +
+    (crossing ? `, ${crossing} into another workspace` : "") +
     (erased ? `, ${erased} erased` : "") +
     (kept ? `, ${kept} type-only but not erased` : "");
   out.push(
@@ -174,6 +286,17 @@ export function render(report: Report): string {
       // Each line is worth saying only when the graph contains the thing it explains. A
       // graph of solid arrows explains itself, and a graph with no arrows at all has
       // nothing to explain.
+      ...(boxed
+        ? [
+            "An arrow that ends at a **workspace box** is an import written as a package " +
+              "name — `@biu-cs-planner/core` — which names a package and not a file, so there " +
+              "is no module for it to point at. `tools/pr-review/layering.ts` judges these " +
+              "edges, and others this graph does not hold: a cross-workspace import written " +
+              "as a relative path lands on a module rather than a box, and a test file's " +
+              "relative imports are judged without being drawn here at all.",
+            "",
+          ]
+        : []),
       ...(erased
         ? ["A dashed arrow is erased at compile time; a solid one leaves a statement in the output.", ""]
         : []),

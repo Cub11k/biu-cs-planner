@@ -3,7 +3,13 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
-import { mergeImports, readModule, type ImportKind, type ImportRef } from "./surface.ts";
+import {
+  mergeImports,
+  packageWorkspace,
+  readModule,
+  type ImportKind,
+  type ImportRef,
+} from "./surface.ts";
 
 /**
  * How an import is written decides what the layering rule may allow, so the forms are
@@ -317,5 +323,36 @@ describe("mergeImports", () => {
 
   it("says nothing about an empty list", () => {
     expect(mergeImports([])).toEqual([]);
+  });
+});
+
+/**
+ * A cross-workspace import is written as a package name, so anything that wants to place
+ * such an edge back in the tree — the module graph does — has to get the workspace name
+ * back out of it. Only this repo's own workspaces count; everything else is a library.
+ */
+describe("packageWorkspace", () => {
+  it("reads the workspace out of one of this project's own package names", () => {
+    expect(packageWorkspace("@biu-cs-planner/core")).toBe("core");
+    expect(packageWorkspace("@biu-cs-planner/server")).toBe("server");
+  });
+
+  it("lands a deep import in the workspace it came from", () => {
+    // `@biu-cs-planner/core/thing` is still `core`, and the module graph draws it as one
+    // arrow at that box rather than inventing a second.
+    expect(packageWorkspace("@biu-cs-planner/core/thing")).toBe("core");
+  });
+
+  it("says nothing about a package outside this repo", () => {
+    for (const pkg of ["zod", "hono", "react", "@types/node", "@hono/node-server", "typescript"]) {
+      expect(packageWorkspace(pkg)).toBeUndefined();
+    }
+  });
+
+  it("says nothing for the scope on its own", () => {
+    // `@biu-cs-planner/` names no workspace, and an empty name would match no box while
+    // still reading as a workspace to a caller checking only for `undefined`.
+    expect(packageWorkspace("@biu-cs-planner/")).toBeUndefined();
+    expect(packageWorkspace("@biu-cs-planner")).toBeUndefined();
   });
 });
