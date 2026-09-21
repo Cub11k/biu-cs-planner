@@ -44,8 +44,15 @@ export type StateEditing = {
 
 export type EditOptions = { history?: EditHistory };
 
-/** Why an edit did not happen. Never a domain check: both are about the file itself. */
-export type EditRefusal = "state-file-unreadable" | "workspace-refused";
+/**
+ * Why an edit did not happen. Never a domain check on what the student chose: each is
+ * about the folder or the file, and each is something they can act on.
+ */
+export type EditRefusal =
+  /** The folder is not a Workspace yet, and nothing is made into one behind their back. */
+  | "workspace-not-ready"
+  | "state-file-unreadable"
+  | "workspace-refused";
 
 export type EditOutcome =
   | { kind: "saved"; state: State; edit: StateEdit; warnings: StateFileWarning[] }
@@ -64,6 +71,14 @@ const newState = (): State => stateSchema.parse({ schemaVersion: CURRENT_STATE_S
 export type StateFileLoad =
   | { state: State; warnings: StateFileWarning[] }
   | { refused: EditRefusal; warnings: StateFileWarning[] };
+
+/**
+ * Reading is not guarded on the layout and writing is: a folder that is not a Workspace
+ * holds no State File, which is an empty week rather than a failure, and a student who has
+ * not accepted the layout yet should still see the screen. Writing into one is refused, as
+ * `importCrawl` refuses it — nothing is written until they accept (docs/design.md,
+ * "Storage").
+ */
 
 /**
  * Reads the State File, or hands back a new one when there is none.
@@ -116,6 +131,11 @@ export async function editStateFile(
   editing: StateEditing,
   options: EditOptions = {},
 ): Promise<EditOutcome> {
+  const status = await workspace.status();
+  if (!status.ready) {
+    return { kind: "refused", reason: "workspace-not-ready", warnings: [] };
+  }
+
   const loaded = await readStateFile(workspace, name);
   if ("refused" in loaded) {
     return { kind: "refused", reason: loaded.refused, warnings: loaded.warnings };

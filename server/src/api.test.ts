@@ -520,6 +520,23 @@ it("will not overwrite a State File it could not read", async () => {
   expect(await readFile(join(root, "me.state.json"), "utf8")).toBe('{"schemaVersion":99}');
 });
 
+it("will not overwrite a State File that is not even JSON", async () => {
+  await post("/api/workspace", {});
+  // a half-written file, or a sync that stopped mid-copy. The adapter hands back what it
+  // found rather than inventing a stand-in, so the reader says "file-unreadable" and the
+  // edit is refused — the one shape that could otherwise lose a whole Plan silently
+  await writeFile(join(root, "me.state.json"), "{ not json at all", "utf8");
+
+  const response = await post(PICKS, LECTURE);
+
+  expect(response.status).toBe(409);
+  await expect(response.json()).resolves.toMatchObject({
+    reason: "state-file-unreadable",
+    warnings: [{ kind: "file-unreadable" }],
+  });
+  expect(await readFile(join(root, "me.state.json"), "utf8")).toBe("{ not json at all");
+});
+
 it("refuses a Pick to a request with no launch token", async () => {
   await post("/api/workspace", {});
 
@@ -530,4 +547,15 @@ it("refuses a Pick to a request with no launch token", async () => {
   });
 
   expect(answer.status).toBe(401);
+});
+
+it("refuses to record a Pick into a folder that is not a Workspace yet", async () => {
+  const response = await post(PICKS, LECTURE);
+
+  // a named 409, the way the import route answers it — never an unnamed 500
+  expect(response.status).toBe(409);
+  await expect(response.json()).resolves.toEqual({
+    reason: "workspace-not-ready",
+    warnings: [],
+  });
 });

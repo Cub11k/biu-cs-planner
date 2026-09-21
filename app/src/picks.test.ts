@@ -195,3 +195,19 @@ it("reports a Workspace that would not touch the file, rather than crashing", as
     reason: "workspace-refused",
   });
 });
+
+it("refuses to pick into a folder that is not a Workspace yet", async () => {
+  // nothing is written until the student accepts the layout (docs/design.md, "Storage"),
+  // which is the same refusal `importCrawl` makes
+  const workspace = memoryWorkspace();
+
+  const picked = await pickGroup(workspace, FALL_2027, LECTURE);
+
+  expect(picked).toMatchObject({ kind: "refused", reason: "workspace-not-ready" });
+  expect(workspace.written()).toEqual([]);
+  // reading is not refused: a folder with no State File is an empty week, not a failure
+  await expect(readTimetable(workspace, FALL_2027)).resolves.toMatchObject({
+    kind: "served",
+    view: { picks: [] },
+  });
+});
