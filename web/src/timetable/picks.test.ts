@@ -97,7 +97,20 @@ it("says the State File was refused, and carries the Warnings that say why", asy
 
   const result = await recordPick(api, FALL_2027, LECTURE);
 
-  expect(result).toEqual({ kind: "refused", warnings });
+  expect(result).toEqual({ kind: "refused", reason: "state-file-unreadable", warnings });
+});
+
+it("keeps a folder that is not a Workspace apart from a file it could not read", async () => {
+  const { api } = client(() =>
+    Response.json({ reason: "workspace-not-ready", warnings: [] }, { status: 409 }),
+  );
+
+  // the two ask the student for different things: accept the layout, or fix the file
+  await expect(recordPick(api, FALL_2027, LECTURE)).resolves.toEqual({
+    kind: "refused",
+    reason: "workspace-not-ready",
+    warnings: [],
+  });
 });
 
 it("knows a page with no launch token from a server that would not serve it", async () => {

@@ -210,7 +210,16 @@ export function TimetableScreen({
               : t(language, "hintShowing", { course: courseName(chosen, language) })}
             <span>{picksSaid(language, picks.length)}</span>
             {clashes.length > 0 && <span>{clashesSaid(language, clashes.length)}</span>}
-            {timetable.kind === "refused" && <span>{t(language, "picksUnreadable")}</span>}
+            {timetable.kind === "refused" && (
+              <span>
+                {t(
+                  language,
+                  timetable.reason === "workspace-not-ready"
+                    ? "picksNotSaved"
+                    : "picksUnreadable",
+                )}
+              </span>
+            )}
             <span className="ms-auto flex items-center gap-2 text-xs text-pencil">
               <span className="inline-block h-3 w-4 rounded-xs border-2 border-dashed border-pencil" />
               {t(language, "legendPencil")}

@@ -34,6 +34,9 @@ export type Clash = ServedTimetable["clashes"][number];
 /** What one Pick occupies: one Lesson Type of one Offering. */
 export type PickSlot = { courseNumber: string; lessonType: string };
 
+/** What the API would not do, in one word: the reason it sends with a refusal. */
+export type StateRefusal = Extract<Answer, { reason: unknown }>["reason"];
+
 /** Why the API would not serve or edit the State File. */
 export type StateWarning = Extract<Answer, { reason: unknown }>["warnings"][number];
 
@@ -43,11 +46,12 @@ const UNAUTHORIZED = 401;
 export type TimetableResult =
   | { kind: "served"; variantName: string; picks: GroupPick[]; clashes: Clash[] }
   /**
-   * The API would not touch the State File and said why — it could not read it, or the
-   * Workspace refused the name. The Warnings travel with it: a refusal nobody can act on
-   * is not a refusal.
+   * The API would not touch the State File and said why — the folder is not a Workspace
+   * yet, the file could not be read, or the Workspace refused the name. The reason and
+   * the Warnings both travel with it: a refusal nobody can act on is not a refusal, and
+   * the three ask the student for three different things.
    */
-  | { kind: "refused"; warnings: StateWarning[] }
+  | { kind: "refused"; reason: StateRefusal | undefined; warnings: StateWarning[] }
   /** This page has no launch token, so the server will not talk to it (ADR-0004). */
   | { kind: "unauthorized" }
   /** The request never arrived: the server is not running, or not running here. */
@@ -76,8 +80,11 @@ async function read(
     const status: number = answer.status;
     if (status === UNAUTHORIZED) return { kind: "unauthorized" };
 
-    const refused = (await answer.json()) as { warnings?: StateWarning[] };
-    return { kind: "refused", warnings: refused.warnings ?? [] };
+    const refused = (await answer.json()) as {
+      reason?: StateRefusal;
+      warnings?: StateWarning[];
+    };
+    return { kind: "refused", reason: refused.reason, warnings: refused.warnings ?? [] };
   }
 
   const body = (await answer.json()) as ServedTimetable;

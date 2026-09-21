@@ -54,6 +54,7 @@ const english = {
   clashesCount: "{count} clashes.",
   clashesCountOne: "1 clash.",
   picksUnreadable: "Your saved picks could not be read, so the week shows none of them.",
+  picksNotSaved: "This folder is not a workspace yet, so nothing can be saved in it.",
 
   noFixedTime: "No fixed time",
   groupsCount: "{count} groups",
@@ -125,6 +126,7 @@ const hebrew: Record<StringKey, string> = {
   clashesCount: "{count} התנגשויות.",
   clashesCountOne: "התנגשות אחת.",
   picksUnreadable: "לא ניתן לקרוא את הבחירות השמורות, ולכן הן אינן מוצגות בשבוע.",
+  picksNotSaved: "התיקייה הזו אינה עדיין סביבת עבודה, ולכן לא ניתן לשמור בה דבר.",
 
   noFixedTime: "ללא שעה קבועה",
   groupsCount: "{count} קבוצות",
