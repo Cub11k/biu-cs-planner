@@ -452,14 +452,23 @@ describe("this repository", () => {
   });
 
   it("resolves core's `groupKey` to core's, and web's to web's", () => {
-    // The two functions #86 named. `core/src/shoham/import.ts` calls `core`'s at two sites;
-    // `web`'s is called only inside the module that declares it, so it is the far end of no
-    // edge — and the far end of three, all of them from `core`, is what it used to be.
+    // The two functions #86 named, and the same name declared in two workspaces is exactly
+    // the case it was got wrong for: before #86 three edges landed on `web`'s, whichever
+    // workspace was read last. Every call now lands in the workspace that made it, which is
+    // asserted as the pair rather than as the far end alone.
     const groupKey = edges.filter((e) => e.to.endsWith("#groupKey"));
-    expect([...new Set(groupKey.map((e) => e.to))]).toEqual([
-      "core/src/shoham/changes.ts#groupKey",
-    ]);
-    expect(groupKey.map((e) => e.from).sort()).toEqual([
+    expect([...new Set(groupKey.map((e) => `${workspaceOf(e.from)} -> ${e.to}`))].sort()).toEqual(
+      [
+        "core -> core/src/shoham/changes.ts#groupKey",
+        "web -> web/src/timetable/week.ts#groupKey",
+      ],
+    );
+    expect(
+      groupKey
+        .filter((e) => e.to.startsWith("core/"))
+        .map((e) => e.from)
+        .sort(),
+    ).toEqual([
       "core/src/shoham/import.ts#groupIndexOf",
       "core/src/shoham/import.ts#importRawCrawl",
     ]);

@@ -41,9 +41,19 @@ const english = {
   warningSchemaUnsupported: "The catalog's schema version is not one this app reads.",
   warningWorkspaceRefused: "The workspace would not read the catalog file.",
 
-  hintChoose: "Choose a course to see when its groups meet.",
-  hintShowing: "Every group of {course} is on the week. Nothing is picked yet.",
+  hintChoose: "Choose a course to see when its groups meet, and click one to pick it.",
+  hintShowing: "Every group of {course} is on the week. Click one to pick it.",
   legendPencil: "option",
+  legendInk: "picked",
+  legendClash: "clash",
+
+  pickedLabel: "Picked:",
+  picksNone: "Nothing picked yet.",
+  picksCount: "{count} groups picked.",
+  picksCountOne: "1 group picked.",
+  clashesCount: "{count} clashes.",
+  clashesCountOne: "1 clash.",
+  picksUnreadable: "Your saved picks could not be read, so the week shows none of them.",
 
   noFixedTime: "No fixed time",
   groupsCount: "{count} groups",
@@ -102,9 +112,19 @@ const hebrew: Record<StringKey, string> = {
   warningSchemaUnsupported: "גרסת הסכימה של הקטלוג אינה נתמכת ביישום הזה.",
   warningWorkspaceRefused: "סביבת העבודה סירבה לקרוא את קובץ הקטלוג.",
 
-  hintChoose: "בחרו קורס כדי לראות מתי הקבוצות שלו נפגשות.",
-  hintShowing: "כל הקבוצות של {course} מוצגות בשבוע. עדיין לא נבחרה אף אחת.",
+  hintChoose: "בחרו קורס כדי לראות מתי הקבוצות שלו נפגשות, ולחצו על קבוצה כדי לבחור אותה.",
+  hintShowing: "כל הקבוצות של {course} מוצגות בשבוע. לחצו על קבוצה כדי לבחור אותה.",
   legendPencil: "אפשרות",
+  legendInk: "נבחרה",
+  legendClash: "התנגשות",
+
+  pickedLabel: "נבחרו:",
+  picksNone: "עדיין לא נבחרה אף קבוצה.",
+  picksCount: "{count} קבוצות נבחרו.",
+  picksCountOne: "קבוצה אחת נבחרה.",
+  clashesCount: "{count} התנגשויות.",
+  clashesCountOne: "התנגשות אחת.",
+  picksUnreadable: "לא ניתן לקרוא את הבחירות השמורות, ולכן הן אינן מוצגות בשבוע.",
 
   noFixedTime: "ללא שעה קבועה",
   groupsCount: "{count} קבוצות",

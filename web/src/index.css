@@ -25,6 +25,9 @@
   --lesson-lab: #8a5a00;
   --lesson-other: #53478f;
 
+  /* Red pen: a Clash, and the one hue that means the same thing wherever it appears. */
+  --red-pen: #b3261e;
+
   color-scheme: light dark;
 }
 
@@ -43,6 +46,8 @@
     --lesson-tirgul: #46b3a2;
     --lesson-lab: #d3a45c;
     --lesson-other: #a093e0;
+
+    --red-pen: #f2857c;
   }
 }
 
@@ -56,6 +61,7 @@
   --color-rule: var(--rule);
   --color-rule-soft: var(--rule-soft);
   --color-hint: var(--hint);
+  --color-red-pen: var(--red-pen);
 }
 
 @layer base {
@@ -135,9 +141,14 @@
   }
 
   /**
-   * Pencil, and only pencil: a dashed outline on the surface colour, an option nobody has
-   * taken. There is no Variant and no Pick yet, so there is no ink, no red pen and no
-   * hatching in this stylesheet at all (docs/design.md, "Visual language").
+   * A block on the week, in one of the three states docs/design.md, "Visual language"
+   * names: **pencil** by default — a dashed outline on the surface colour, an option
+   * nobody has taken — **ink** once it is a Pick, and **red pen** when that Pick Clashes.
+   * The three differ in more than one property at once, because border style alone was
+   * too quiet to read across a full week. Hatching waits for Blocked Times.
+   *
+   * A `<button>`, because clicking one Picks the Group and clicking a Pick removes it, so
+   * the font and the pointer are taken back from the user agent here.
    */
   .tile {
     position: absolute;
@@ -146,11 +157,15 @@
     background: var(--paper);
     color: var(--ink-soft);
     padding: 0.25rem 0.4375rem;
+    font-family: inherit;
     font-size: 0.8125rem;
     line-height: 1.25;
     overflow: hidden;
     text-align: start;
-    transition: border-color 0.12s ease;
+    cursor: pointer;
+    transition:
+      border-color 0.12s ease,
+      background-color 0.12s ease;
   }
 
   .tile[data-lesson-slot="lecture"] { --lesson: var(--lesson-lecture); }
@@ -158,10 +173,64 @@
   .tile[data-lesson-slot="lab"] { --lesson: var(--lesson-lab); }
   .tile[data-lesson-slot="other"] { --lesson: var(--lesson-other); }
 
+  /**
+   * Ink: a Pick. Solid rather than dashed, a thick edge on the start side — `border-inline`
+   * so it is the right edge in Hebrew — and a tint of the Lesson Type's own colour.
+   */
+  .tile.is-picked {
+    border-style: solid;
+    border-color: var(--lesson);
+    border-inline-start-width: 5px;
+    background: color-mix(in srgb, var(--lesson) 14%, var(--paper));
+    color: var(--ink);
+  }
+
+  /**
+   * Red pen: this Group Clashes. A Warning and nothing else — the Pick was recorded, and
+   * nothing here refuses or moves it (docs/design.md, "Grid and Picks").
+   */
+  .tile.is-clashing {
+    border-style: solid;
+    border-color: var(--red-pen);
+    background-image: repeating-linear-gradient(
+      45deg,
+      color-mix(in srgb, var(--red-pen) 22%, transparent) 0 5px,
+      transparent 5px 11px
+    );
+  }
+
   /* Every Meeting of one Group lights up together, however many it has. */
   .tile.is-highlighted {
     border-color: var(--lesson);
     color: var(--ink);
+  }
+
+  .tile.is-clashing.is-highlighted {
+    border-color: var(--red-pen);
+  }
+
+  /**
+   * The legend above the grid. It shows the states rather than naming a Lesson Type, so
+   * it borrows the ink colour and not a hue any one tile would use.
+   */
+  .legend-swatch {
+    border: 2px solid var(--pencil);
+    background: var(--paper);
+  }
+
+  .legend-swatch.is-picked {
+    border-color: var(--ink-soft);
+    border-inline-start-width: 5px;
+    background: color-mix(in srgb, var(--ink-soft) 14%, var(--paper));
+  }
+
+  .legend-swatch.is-clashing {
+    border-color: var(--red-pen);
+    background-image: repeating-linear-gradient(
+      45deg,
+      color-mix(in srgb, var(--red-pen) 22%, transparent) 0 5px,
+      transparent 5px 11px
+    );
   }
 
   .tile-name {

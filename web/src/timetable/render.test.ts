@@ -10,7 +10,9 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it } from "vitest";
-import type { Group, Offering } from "./catalog.ts";
+import { courseName, type Group, type Offering } from "./catalog.ts";
+import type { GroupPick } from "./picks.ts";
+import { weekGroups } from "./week.ts";
 import { CoursePicker } from "./CoursePicker.tsx";
 import { CatalogNotice, TimetableScreen } from "./TimetableScreen.tsx";
 import { WeekGrid } from "./WeekGrid.tsx";
@@ -36,10 +38,46 @@ const offering = (groups: Group[]): Offering => ({
   exams: { known: false, sittings: [] },
 });
 
-const week = (offer: Offering | undefined, language: "en" | "he" = "en"): string =>
-  renderToStaticMarkup(
-    createElement(WeekGrid, { language, semester: "fall", offering: offer }),
+/** A Pick of one of `offering`'s Groups, with the snapshot the student's file would hold. */
+const pick = (
+  lessonType: string,
+  groupNumber: string,
+  meetings: ReadonlyArray<[Group["meetings"][number]["day"], string, string]>,
+): GroupPick => ({
+  courseNumber: "89-110",
+  lessonType,
+  groupNumber,
+  meetings: meetings.map(([day, start, end]) => ({ semester: "fall", day, start, end })),
+});
+
+const week = (
+  offer: Offering | undefined,
+  options: {
+    language?: "en" | "he";
+    picks?: readonly GroupPick[];
+    clashing?: ReadonlySet<string>;
+  } = {},
+): string => {
+  const language = options.language ?? "en";
+  const picks = options.picks ?? [];
+
+  return renderToStaticMarkup(
+    createElement(WeekGrid, {
+      language,
+      semester: "fall",
+      groups: weekGroups({
+        offering: offer,
+        picks,
+        nameOf: (courseNumber) =>
+          offer !== undefined && offer.courseNumber === courseNumber
+            ? courseName(offer, language)
+            : courseNumber,
+      }),
+      ...(options.clashing === undefined ? {} : { clashing: options.clashing }),
+      onPick: () => {},
+    }),
   );
+};
 
 it("runs Sunday to Thursday, and shows Friday only when a Group meets on it", () => {
   const weekday = week(offering([group("01", "הרצאה", [["tuesday", "15:00", "18:00"]])]));
@@ -64,19 +102,64 @@ it("puts a Meeting at its own minutes, and says what it is", () => {
   expect(markup).toContain('<bdi dir="ltr">15:00–18:00</bdi>');
 });
 
-it("draws every block in pencil, with no ink, red pen or hatching anywhere", () => {
-  const markup = week(
-    offering([
-      group("01", "הרצאה", [["tuesday", "15:00", "18:00"]]),
-      group("03", "תרגיל", [["tuesday", "18:00", "20:00"]]),
-      group("04", "תרגיל", [["tuesday", "18:00", "20:00"]]),
-    ]),
-  );
+const LECTURE_MEETINGS: Array<[Group["meetings"][number]["day"], string, string]> = [
+  ["tuesday", "15:00", "18:00"],
+];
+
+const THREE_GROUPS = [
+  group("01", "הרצאה", LECTURE_MEETINGS),
+  group("03", "תרגיל", [["tuesday", "18:00", "20:00"]]),
+  group("04", "תרגיל", [["tuesday", "18:00", "20:00"]]),
+];
+
+it("draws a Group nobody picked in pencil, with no ink and no red pen", () => {
+  const markup = week(offering(THREE_GROUPS));
 
   expect(markup).toContain('class="tile"');
-  for (const forbidden of ["pick", "ink", "clash", "hatch", "busy", "blocked"]) {
+  expect(markup).toContain('aria-pressed="false"');
+  for (const forbidden of ["is-picked", "is-clashing", "hatch", "blocked"]) {
     expect(markup).not.toContain(forbidden);
   }
+});
+
+it("draws a Pick in ink, once, rather than over the option it replaced", () => {
+  const markup = week(offering(THREE_GROUPS), {
+    picks: [pick("הרצאה", "01", LECTURE_MEETINGS)],
+  });
+
+  expect(markup).toContain("tile is-picked");
+  expect(markup).toContain('aria-pressed="true"');
+  // the Group is on the week once: as the Pick, and not also as the pencil option it is,
+  // which would stack a dashed block exactly over its own ink and halve the width of both
+  expect(markup.match(/89-110 · Lecture · 01/g)).toHaveLength(1);
+});
+
+it("draws a Pick that Clashes in red pen, and still draws it", () => {
+  const markup = week(offering(THREE_GROUPS), {
+    picks: [pick("הרצאה", "01", LECTURE_MEETINGS)],
+    // the key `week.ts` builds: the Course, the Lesson Type and the Group number
+    clashing: new Set(["89-110|הרצאה|01"]),
+  });
+
+  expect(markup).toContain("is-clashing");
+  expect(markup).toContain("is-picked");
+  expect(markup).toContain("89-110 · Lecture · 01");
+});
+
+it("shows a Pick whose Course is not the one being browsed, and can name it", () => {
+  // the Pick carries its own snapshot, so a week can draw it with no Catalog entry at all
+  const markup = week(offering(THREE_GROUPS), {
+    picks: [
+      {
+        courseNumber: "89-210",
+        lessonType: "הרצאה",
+        groupNumber: "02",
+        meetings: [{ semester: "fall", day: "monday", start: "09:00", end: "11:00" }],
+      },
+    ],
+  });
+
+  expect(markup).toContain("89-210 · Lecture · 02");
 });
 
 it("keeps an Untimed Group in the No fixed time strip and off the grid", () => {
@@ -165,6 +248,7 @@ it("counts one Group as one, in both languages", () => {
       createElement(CoursePicker, {
         language,
         offerings: [one],
+        picks: [],
         selected: undefined,
         onSelect: () => {},
       }),
@@ -172,4 +256,26 @@ it("counts one Group as one, in both languages", () => {
 
   expect(picker("en")).toContain("1 group<");
   expect(picker("he")).toContain("קבוצה אחת");
+});
+
+it("says which Group is picked for a Course, beside the Course", () => {
+  const one = offering([
+    group("01", "הרצאה", [["sunday", "10:00", "12:00"]]),
+    group("03", "תרגיל", [["monday", "10:00", "12:00"]]),
+  ]);
+
+  const markup = renderToStaticMarkup(
+    createElement(CoursePicker, {
+      language: "en",
+      offerings: [one],
+      picks: [pick("הרצאה", "01", [["sunday", "10:00", "12:00"]])],
+      selected: undefined,
+      onSelect: () => {},
+    }),
+  );
+
+  expect(markup).toContain("Picked:");
+  expect(markup).toContain("Lecture 01");
+  // one Pick per Lesson Type, so the Tirgul it has not chosen is simply absent
+  expect(markup).not.toContain("Tirgul 03");
 });
