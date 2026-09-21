@@ -76,7 +76,6 @@ export type {
   BlockedTime,
   Grade,
   GroupPick,
-  PickedMeeting,
   Pin,
   Settings,
   State,

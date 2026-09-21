@@ -57,23 +57,40 @@ function useReloading<T>(
 ): [{ kind: "loading" } | T, (answer: T) => void] {
   const [answer, setAnswer] = useState<{ kind: "loading" } | T>({ kind: "loading" });
   const shownFor = useRef<typeof load | undefined>(undefined);
+  /**
+   * Which answer the screen is showing. It has to be counted rather than flagged, because
+   * a save is itself what moves the change count: the re-read it triggers can be sent
+   * before the file is written and answer after the edit's own answer has already been
+   * shown, and a bare "is this effect still current" flag would let that stale Variant
+   * overwrite the new one. An answer older than what is on screen is dropped.
+   */
+  const shown = useRef(0);
+
+  /** An answer from outside the effect — an edit's own — is the newest by definition. */
+  const showAnswer = useCallback((fresh: T): void => {
+    shown.current += 1;
+    setAnswer(fresh);
+  }, []);
 
   useEffect(() => {
-    let current = true;
+    const mine = (shown.current += 1);
     if (shownFor.current !== load) setAnswer({ kind: "loading" });
 
+    // `load` resolves rather than rejects for every answer the API can give, which is why
+    // there is no `catch` here: a rejection would be a bug in the client, not an answer.
     void load().then((fresh) => {
-      if (!current) return;
+      if (shown.current !== mine) return;
       shownFor.current = load;
       setAnswer(fresh);
     });
 
     return () => {
-      current = false;
+      // whatever this run asked for is no longer what the screen is waiting on
+      shown.current += 1;
     };
   }, [load, workspaceChanges]);
 
-  return [answer, setAnswer];
+  return [answer, showAnswer];
 }
 
 export type TimetableScreenProps = {
@@ -129,13 +146,10 @@ export function TimetableScreen({
   const chosen = offerings.find((offering) => offering.courseNumber === selected);
 
   /** A picked Course the Catalog no longer names shows its number, which it always has. */
-  const nameOf = useCallback(
-    (courseNumber: string): string => {
-      const known = offerings.find((offering) => offering.courseNumber === courseNumber);
-      return known === undefined ? courseNumber : courseName(known, language);
-    },
-    [offerings, language],
-  );
+  const nameOf = (courseNumber: string): string => {
+    const known = offerings.find((offering) => offering.courseNumber === courseNumber);
+    return known === undefined ? courseNumber : courseName(known, language);
+  };
 
   /**
    * Picking, and un-picking. One call per click, which is what ADR-0013 makes one undo
@@ -208,24 +222,17 @@ export function TimetableScreen({
             {chosen === undefined
               ? t(language, "hintChoose")
               : t(language, "hintShowing", { course: courseName(chosen, language) })}
-            <span>{picksSaid(language, picks.length)}</span>
-            {clashes.length > 0 && <span>{clashesSaid(language, clashes.length)}</span>}
-            {timetable.kind === "refused" && (
-              <span>
-                {t(
-                  language,
-                  timetable.reason === "workspace-not-ready"
-                    ? "picksNotSaved"
-                    : "picksUnreadable",
-                )}
-              </span>
+            {picksNotice(language, timetable) === undefined ? null : (
+              <span>{picksNotice(language, timetable)}</span>
             )}
+            {clashes.length > 0 && <span>{clashesSaid(language, clashes.length)}</span>}
             <span className="ms-auto flex items-center gap-2 text-xs text-pencil">
-              <span className="inline-block h-3 w-4 rounded-xs border-2 border-dashed border-pencil" />
+              <span className="legend-swatch inline-block h-3 w-4 rounded-xs" />
               {t(language, "legendPencil")}
               <span className="legend-swatch is-picked inline-block h-3 w-4 rounded-xs" />
               {t(language, "legendInk")}
-              <span className="legend-swatch is-clashing inline-block h-3 w-4 rounded-xs" />
+              {/* also `is-picked`: on the week a Clash is always a Pick */}
+              <span className="legend-swatch is-picked is-clashing inline-block h-3 w-4 rounded-xs" />
               {t(language, "legendClash")}
             </span>
           </p>
@@ -243,6 +250,34 @@ export function TimetableScreen({
       </div>
     </div>
   );
+}
+
+/**
+ * What the hint line says about the Picks — and what it does **not** say.
+ *
+ * Only a served answer knows how many Picks there are. Falling back to an empty list and
+ * counting that would put "Nothing picked yet" on screen for a server that is not
+ * answering, which is an affirmative false statement about a student's own data: their
+ * Picks are on disk and this page simply cannot see them. Each of the other four answers
+ * says what it actually is, as the Catalog half of this screen already does.
+ */
+function picksNotice(language: Language, timetable: TimetableState): string | undefined {
+  switch (timetable.kind) {
+    // the first read is in flight and there is nothing honest to say yet
+    case "loading":
+      return undefined;
+    case "unreachable":
+      return t(language, "apiUnreachable");
+    case "unauthorized":
+      return t(language, "catalogUnauthorized");
+    case "refused":
+      return t(
+        language,
+        timetable.reason === "workspace-not-ready" ? "picksNotSaved" : "picksUnreadable",
+      );
+    case "served":
+      return picksSaid(language, timetable.picks.length);
+  }
 }
 
 /** One Pick is not "1 groups picked", and Hebrew's singular is a different word again. */

@@ -96,16 +96,30 @@ async function read(
   };
 }
 
+/**
+ * Sends one request, and reads the answer **outside** the catch: only the request failing
+ * is the server not being there. An answer this module then cannot make sense of is a
+ * contract problem, and calling it "unreachable" would send the student to look at a
+ * server that answered them.
+ */
+async function ask(
+  send: () => Promise<Response & { ok: boolean; status: number }>,
+): Promise<TimetableResult> {
+  let answer: Response & { ok: boolean; status: number };
+  try {
+    answer = await send();
+  } catch {
+    return { kind: "unreachable" };
+  }
+  return read(answer);
+}
+
 /** What the student has picked in this Semester, and the Clashes among those Picks. */
 export async function fetchTimetable(
   client: ApiClient,
   query: TimetableQuery,
 ): Promise<TimetableResult> {
-  try {
-    return await read(await client.api.timetable[":year"][":semester"].$get(asRead(query)));
-  } catch {
-    return { kind: "unreachable" };
-  }
+  return ask(() => client.api.timetable[":year"][":semester"].$get(asRead(query)));
 }
 
 /**
@@ -118,11 +132,7 @@ export async function recordPick(
   pick: GroupPick,
 ): Promise<TimetableResult> {
   const request = { ...asRead(query), json: pick } as InferRequestType<PickRoute>;
-  try {
-    return await read(await client.api.timetable[":year"][":semester"].picks.$post(request));
-  } catch {
-    return { kind: "unreachable" };
-  }
+  return ask(() => client.api.timetable[":year"][":semester"].picks.$post(request));
 }
 
 /** Removes the Pick filling one Lesson Type of one Offering. */
@@ -132,9 +142,5 @@ export async function removePick(
   slot: PickSlot,
 ): Promise<TimetableResult> {
   const request = { ...asRead(query), json: slot } as InferRequestType<UnpickRoute>;
-  try {
-    return await read(await client.api.timetable[":year"][":semester"].picks.$delete(request));
-  } catch {
-    return { kind: "unreachable" };
-  }
+  return ask(() => client.api.timetable[":year"][":semester"].picks.$delete(request));
 }

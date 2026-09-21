@@ -121,16 +121,19 @@ export function WeekGrid({
               aria-pressed={group.picked}
               onClick={() => onPick(group)}
             >
-              <div className="tile-name" style={{ "--name-lines": 1 } as React.CSSProperties}>
+              <span
+                className="tile-name"
+                style={{ "--name-lines": 1 } as React.CSSProperties}
+              >
                 {group.courseName}
-              </div>
-              <div className="tile-detail">
+              </span>
+              <span className="tile-detail">
                 {[
                   group.courseNumber,
                   lessonTypeName(group.lessonType, language),
                   group.number,
                 ].join(" · ")}
-              </div>
+              </span>
             </button>
           ))}
         </div>
@@ -205,8 +208,8 @@ function GroupTile({
       onFocus={() => onHighlight(tile.groupKey)}
       onBlur={() => onHighlight(undefined)}
     >
-      <div className="tile-name">{text.name}</div>
-      <div className="tile-detail">
+      <span className="tile-name">{text.name}</span>
+      <span className="tile-detail">
         {text.detail}
         {text.times === undefined ? null : (
           <>
@@ -216,7 +219,7 @@ function GroupTile({
             <bdi dir="ltr">{text.times}</bdi>
           </>
         )}
-      </div>
+      </span>
     </button>
   );
 }

@@ -54,7 +54,9 @@ export function CoursePicker({
         <p className="text-sm text-pencil">{t(language, "catalogEmpty")}</p>
       ) : (
         <ul className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-auto">
-          {matches.map((offering) => (
+          {matches.map((offering) => {
+            const chosen = picked(picks, offering.courseNumber, language);
+            return (
             <li key={offering.courseNumber}>
               <button
                 type="button"
@@ -70,15 +72,15 @@ export function CoursePicker({
                 <span className="block text-xs text-pencil">
                   {offering.courseNumber} · {groupCount(language, offering.groups.length)}
                 </span>
-                {picked(picks, offering.courseNumber, language) === undefined ? null : (
+                {chosen === undefined ? null : (
                   <span className="mt-0.5 block text-xs font-medium text-ink-soft">
-                    {t(language, "pickedLabel")}{" "}
-                    {picked(picks, offering.courseNumber, language)}
+                    {t(language, "pickedLabel")} {chosen}
                   </span>
                 )}
               </button>
             </li>
-          ))}
+            );
+          })}
         </ul>
       )}
     </div>
@@ -87,8 +89,9 @@ export function CoursePicker({
 
 /**
  * What is picked for one Course, as "Lecture 01 · Tirgul 03", or nothing when it has no
- * Pick. One Pick per Lesson Type, so this line has one entry per Lesson Type chosen and
- * shows at a glance which of a Course's Lesson Types are still missing.
+ * Pick. One Pick per Lesson Type, so there is one entry per Lesson Type chosen — a Lesson
+ * Type with no Pick is simply absent, and naming the ones still missing is the Tray's chip
+ * per Lesson Type (docs/design.md, "Grid and Picks") rather than this line.
  */
 function picked(
   picks: readonly GroupPick[],

@@ -406,13 +406,23 @@ describe("what the week shows", () => {
   it("marks both Groups of a Clash, and the one Group of a Blocked Time Clash", () => {
     const first = { courseNumber: "89-110", lessonType: "הרצאה", number: "01" };
     const second = { courseNumber: "89-210", lessonType: "הרצאה", number: "01" };
+    // a third Group, so the Blocked Time half of the answer is a key the Meeting half
+    // could not have contributed — otherwise deleting that half changes nothing
+    const third = { courseNumber: "89-230", lessonType: "תרגיל", number: "04" };
     const span = { semester: FALL, day: "tuesday" as const, start: "16:00", end: "17:00" };
 
     const keys = clashingGroups([
-      { kind: "meeting-meeting", overlap: span, first: { group: first, meeting: span }, second: { group: second, meeting: span } },
-      { kind: "meeting-blocked-time", overlap: span, group: first, meeting: span, blockedTime: span },
+      {
+        kind: "meeting-meeting",
+        overlap: span,
+        first: { group: first, meeting: span },
+        second: { group: second, meeting: span },
+      },
+      { kind: "meeting-blocked-time", overlap: span, group: third, meeting: span, blockedTime: span },
     ]);
 
-    expect([...keys].sort()).toEqual([groupKey(first), groupKey(second)].sort());
+    expect([...keys].sort()).toEqual(
+      [groupKey(first), groupKey(second), groupKey(third)].sort(),
+    );
   });
 });

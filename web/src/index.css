@@ -61,7 +61,6 @@
   --color-rule: var(--rule);
   --color-rule-soft: var(--rule-soft);
   --color-hint: var(--hint);
-  --color-red-pen: var(--red-pen);
 }
 
 @layer base {
@@ -210,21 +209,28 @@
   }
 
   /**
-   * The legend above the grid. It shows the states rather than naming a Lesson Type, so
-   * it borrows the ink colour and not a hue any one tile would use.
+   * The legend above the grid: the same three states, side by side, so a student can tell
+   * which is which before reading a week of them. All three are defined here rather than
+   * one of them inline, because they are only worth anything compared with each other.
+   *
+   * It shows the states and not a Lesson Type, so it borrows the ink colour rather than a
+   * hue any one tile would use — and the clashing swatch is also picked, because on the
+   * week a Clash is always a Pick.
    */
   .legend-swatch {
-    border: 2px solid var(--pencil);
+    border: 2px dashed var(--pencil);
     background: var(--paper);
   }
 
   .legend-swatch.is-picked {
+    border-style: solid;
     border-color: var(--ink-soft);
     border-inline-start-width: 5px;
     background: color-mix(in srgb, var(--ink-soft) 14%, var(--paper));
   }
 
   .legend-swatch.is-clashing {
+    border-style: solid;
     border-color: var(--red-pen);
     background-image: repeating-linear-gradient(
       45deg,
@@ -245,6 +251,7 @@
   }
 
   .tile-detail {
+    display: block;
     font-size: 0.6875rem;
     color: var(--ink-soft);
   }

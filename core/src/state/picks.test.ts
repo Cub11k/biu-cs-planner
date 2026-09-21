@@ -172,3 +172,55 @@ it("hands back the same State when there is nothing to remove", () => {
   expect(removePick(state, { ...FALL_2027, semester: "summer" }, slot)).toBe(state);
   expect(removePick(blank, FALL_2027, slot)).toBe(blank);
 });
+
+it("ignores a Year-long Group's other Semester when looking for Clashes", () => {
+  // A Year-long Course is picked once for the year and the same Group covers both
+  // Semesters, so its snapshot carries both (CONTEXT.md, "Year-long Course"). Two such
+  // Groups whose *Spring* Meetings overlap are not a Clash in the Fall Variant, and
+  // reporting one would put red pen on a Meeting no Fall week draws.
+  const yearLong = (
+    courseNumber: string,
+    fallDay: Day,
+    spring: [string, string],
+  ): GroupPick => ({
+    courseNumber,
+    lessonType: "הרצאה",
+    groupNumber: "01",
+    meetings: [
+      { semester: "fall", day: fallDay, start: "10:00", end: "12:00" },
+      { semester: "spring", day: "monday", start: spring[0], end: spring[1] },
+    ],
+  });
+
+  // their Fall Meetings fall on different days; their Spring Meetings overlap
+  const first = yearLong("89-110", "sunday", ["09:00", "11:00"]);
+  const second = yearLong("89-210", "tuesday", ["10:00", "12:00"]);
+  const spring = { ...FALL_2027, semester: "spring" } as const;
+
+  let state = empty();
+  for (const at of [FALL_2027, spring]) {
+    state = recordPick(recordPick(state, at, first), at, second);
+  }
+
+  expect(clashesIn(state, FALL_2027)).toEqual([]);
+  // and the same two Picks in the Spring Variant are the Clash they really are there,
+  // which is what says this filters rather than simply finding nothing
+  expect(clashesIn(state, spring)).toHaveLength(1);
+  expect(clashesIn(state, spring)[0]).toMatchObject({
+    overlap: { semester: "spring", day: "monday", start: "10:00", end: "11:00" },
+  });
+});
+
+it("records the same Pick over itself as no change at all", () => {
+  const once = recordPick(empty(), FALL_2027, LECTURE);
+
+  // identity: nothing to write, nothing to reload, nothing to undo
+  expect(recordPick(once, FALL_2027, LECTURE)).toBe(once);
+  // a snapshot that moved is a different Pick, and is written
+  const moved: GroupPick = {
+    ...LECTURE,
+    meetings: [{ semester: "fall", day: "tuesday", start: "16:00", end: "19:00" }],
+  };
+  expect(recordPick(once, FALL_2027, moved)).not.toBe(once);
+  expect(variantAt(recordPick(once, FALL_2027, moved), FALL_2027)?.picks).toEqual([moved]);
+});

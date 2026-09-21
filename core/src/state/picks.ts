@@ -4,7 +4,7 @@ import {
   type MeetingClash,
   type PickedGroup,
 } from "../timetable/clashes.ts";
-import type { GroupPick, State, Timetable, Variant } from "./schema.ts";
+import type { GroupPick, PickedMeeting, State, Timetable, Variant } from "./schema.ts";
 
 /**
  * The first edits the app can make: recording a Pick and removing one.
@@ -51,6 +51,29 @@ const isTimetableFor = (timetable: Timetable, at: VariantRef): boolean =>
 
 const fills = (pick: GroupPick, slot: PickSlot): boolean =>
   pick.courseNumber === slot.courseNumber && pick.lessonType === slot.lessonType;
+
+const sameMeetings = (a: readonly PickedMeeting[], b: readonly PickedMeeting[]): boolean =>
+  a.length === b.length &&
+  a.every((meeting, index) => {
+    const other = b[index]!;
+    return (
+      meeting.semester === other.semester &&
+      meeting.day === other.day &&
+      meeting.start === other.start &&
+      meeting.end === other.end
+    );
+  });
+
+/**
+ * Whether two Picks say the same thing, **snapshot included**. The snapshot is part of the
+ * comparison rather than ignored as detail: re-picking the same Group after a re-import is
+ * how a stale snapshot gets refreshed, so a Pick whose Meetings have moved is a different
+ * Pick and has to be written.
+ */
+const isSamePick = (held: GroupPick, pick: GroupPick): boolean =>
+  fills(held, pick) &&
+  held.groupNumber === pick.groupNumber &&
+  sameMeetings(held.meetings, pick.meetings);
 
 /** The Timetable of one Semester, or nothing when the State File holds none for it. */
 function timetableAt(state: State, at: VariantRef): Timetable | undefined {
@@ -112,6 +135,13 @@ function inVariant(
  * edited, and reported by `parseStateFile` as `pick-not-unique` — comes back with one.
  */
 export function recordPick(state: State, at: VariantRef, pick: GroupPick): State {
+  // Already exactly there, and once: nothing to record. The same State comes back, so a
+  // caller that saves what changed writes nothing — a save moves the Workspace change
+  // count, reloads every open page and would leave an undo entry that undoes nothing.
+  // A slot holding two Picks is not "already there": recording is what collapses them.
+  const held = variantAt(state, at)?.picks.filter((existing) => fills(existing, pick)) ?? [];
+  if (held.length === 1 && isSamePick(held[0]!, pick)) return state;
+
   return inVariant(state, at, (picks) => {
     const held = picks.findIndex((existing) => fills(existing, pick));
     if (held === -1) return [...picks, pick];
@@ -136,15 +166,21 @@ export function removePick(state: State, at: VariantRef, slot: PickSlot): State 
 }
 
 /**
- * A Pick as the Clashes module reads a Group: its snapshot is already the shape of a
- * weekly span, so this is the whole of the translation and neither module imports the
- * other (core/src/timetable/clashes.ts).
+ * A Pick as the Clashes module reads a Group, in one Semester: its snapshot is already the
+ * shape of a weekly span, so this is the whole of the translation and neither module
+ * imports the other (core/src/timetable/clashes.ts).
+ *
+ * **The snapshot is filtered to the Semester the Variant belongs to.** A Year-long Group is
+ * given in both Fall and Spring and is picked once for the year, so its snapshot carries
+ * both Semesters' Meetings — and two such Groups whose *Spring* Meetings overlap are not a
+ * Clash in a Fall Variant. `findMeetingClashes` compares Semesters and so would report that
+ * overlap under the Fall Timetable, against a Meeting no Fall week draws.
  */
-const asPickedGroup = (pick: GroupPick): PickedGroup => ({
+const asPickedGroup = (pick: GroupPick, semester: Semester): PickedGroup => ({
   courseNumber: pick.courseNumber,
   lessonType: pick.lessonType,
   number: pick.groupNumber,
-  meetings: pick.meetings,
+  meetings: pick.meetings.filter((meeting) => meeting.semester === semester),
 });
 
 /**
@@ -157,7 +193,7 @@ export function clashesIn(state: State, at: VariantRef): MeetingClash[] {
   if (variant === undefined) return [];
 
   return findMeetingClashes(
-    variant.picks.map(asPickedGroup),
+    variant.picks.map((pick) => asPickedGroup(pick, at.semester)),
     timetableAt(state, at)?.blockedTimes ?? [],
   );
 }
