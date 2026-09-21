@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { onlyTheLauncher } from "./guard.ts";
 import {
@@ -6,13 +6,18 @@ import {
   getOffering,
   importCrawl,
   listOfferings,
+  pickGroup,
+  readTimetable,
+  removeGroupPick,
   workspaceStatus,
   type QueryWarning,
+  type TimetableRef,
   type Workspace,
   type WorkspaceChanges,
 } from "@biu-cs-planner/app";
 import {
   CURRENT_CATALOG_SCHEMA_VERSION,
+  groupPickSchema,
   rawCrawlSchema,
   semesterSchema,
 } from "@biu-cs-planner/core";
@@ -77,6 +82,61 @@ function hasDangerousKey(value: unknown, depth = 0): boolean {
     if (hasDangerousKey((value as Record<string, unknown>)[key], depth + 1)) return true;
   }
   return false;
+}
+
+/**
+ * A Pick request names the slot it fills: one Lesson Type of one Offering. Narrower than
+ * `groupPickSchema` because removing a Pick says which one without repeating the Group or
+ * the snapshot — and a body is parsed by the shape the route actually takes, never by a
+ * wider one it would then have to ignore.
+ */
+const pickSlotSchema = z.object({ courseNumber: z.string(), lessonType: z.string() });
+
+/**
+ * A request body, read the way the import route reads one: JSON, no dangerous key, then
+ * the schema for the shape the route actually takes. It hands back the **name** of what
+ * was wrong rather than a response, so the route says `c.json(...)` itself and the
+ * contract `web` is typed from still knows what every answer looks like.
+ *
+ * This is the boundary that keeps `writeStateFile`'s `StateFileUnwritableError`
+ * unreachable: a body that is not a Pick never reaches the domain, so no `State` is ever
+ * built from one and there is no throw to catch (#80).
+ */
+async function bodyAs<T>(
+  c: Context,
+  schema: z.ZodType<T>,
+  notTheShape: string,
+): Promise<{ ok: true; value: T } | { ok: false; error: string }> {
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return { ok: false, error: "body-not-json" };
+  }
+  if (hasDangerousKey(body)) return { ok: false, error: "unsafe-keys" };
+
+  const parsed = schema.safeParse(body);
+  if (!parsed.success) return { ok: false, error: notTheShape };
+
+  return { ok: true, value: parsed.data };
+}
+
+/**
+ * Which Semester of which Academic Year, off the path. A Timetable covers one Semester of
+ * one Academic Year (CONTEXT.md), so both name it — and both are parsed before anything
+ * downstream sees them, as the Catalog routes parse a year. The name of what was wrong
+ * comes back, for the same reason `bodyAs` hands one back.
+ */
+function timetableRef(
+  c: Context,
+): { ok: true; at: TimetableRef } | { ok: false; error: "bad-year" | "bad-semester" } {
+  const year = yearSchema.safeParse(c.req.param("year"));
+  if (!year.success) return { ok: false, error: "bad-year" };
+
+  const semester = semesterSchema.safeParse(c.req.param("semester"));
+  if (!semester.success) return { ok: false, error: "bad-semester" };
+
+  return { ok: true, at: { academicYear: year.data, semester: semester.data } };
 }
 
 export function createApi({ workspace, token, changes }: ApiDependencies) {
@@ -191,6 +251,65 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
       if (!result.offering) return c.json({ warnings: result.warnings }, notServed(result.warnings));
 
       return c.json({ offering: result.offering, warnings: result.warnings });
+    })
+
+    /**
+     * The Picks a student has made in one Semester, and the Clashes among them.
+     *
+     * Domain operations, never file paths: a year, a Semester and a course number name
+     * everything here, and which State File holds them is the app's business and the
+     * Workspace adapter's (ADR-0002). The Variant is the current State File's default one
+     * until there is a screen for naming Variants.
+     */
+    .get("/api/timetable/:year/:semester", async (c) => {
+      const ref = timetableRef(c);
+      if (!ref.ok) return c.json({ error: ref.error }, 400);
+
+      const result = await readTimetable(workspace, ref.at);
+      if (result.kind === "refused") {
+        return c.json({ reason: result.reason, warnings: result.warnings }, 409);
+      }
+
+      return c.json({ ...result.view, warnings: result.warnings });
+    })
+
+    /**
+     * Records a Pick: one Group for one Lesson Type of an Offering, with the snapshot of
+     * that Group's Meetings as the page saw them. Picking a second Group for a Lesson Type
+     * already picked replaces the first, so this is one route and not two.
+     *
+     * A Pick that Clashes is recorded and the Clash comes back in the answer. Nothing is
+     * refused: every domain check is a Warning and an edit always goes through.
+     */
+    .post("/api/timetable/:year/:semester/picks", capped, async (c) => {
+      const ref = timetableRef(c);
+      if (!ref.ok) return c.json({ error: ref.error }, 400);
+
+      const body = await bodyAs(c, groupPickSchema, "not-a-pick");
+      if (!body.ok) return c.json({ error: body.error }, 400);
+
+      const result = await pickGroup(workspace, ref.at, body.value);
+      if (result.kind === "refused") {
+        return c.json({ reason: result.reason, warnings: result.warnings }, 409);
+      }
+
+      return c.json({ ...result.view, warnings: result.warnings });
+    })
+
+    /** Removes the Pick filling one Lesson Type of one Offering. */
+    .delete("/api/timetable/:year/:semester/picks", capped, async (c) => {
+      const ref = timetableRef(c);
+      if (!ref.ok) return c.json({ error: ref.error }, 400);
+
+      const body = await bodyAs(c, pickSlotSchema, "not-a-pick-slot");
+      if (!body.ok) return c.json({ error: body.error }, 400);
+
+      const result = await removeGroupPick(workspace, ref.at, body.value);
+      if (result.kind === "refused") {
+        return c.json({ reason: result.reason, warnings: result.warnings }, 409);
+      }
+
+      return c.json({ ...result.view, warnings: result.warnings });
     });
 
   return api;
