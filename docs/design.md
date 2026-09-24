@@ -111,6 +111,7 @@ Decided in the prototype, because Pick state has to be readable at a glance acro
 - **Ink** (solid border, a thick edge and a tint in the Lesson Type's color) is a Pick.
 - **Red pen** (red border plus a diagonal wash) is a Clash.
 - **Hatching** is time already taken: Blocked Time, or a pencil option that would Clash.
+- **Not read yet** (dotted and held back) is a Group whose Pick state nobody has read: the Catalog and the State File are asked for in parallel, so the week is drawn before the Picks are known, and drawing that as pencil would be a week affirming that nothing is picked. It is transient and has no legend entry. A click made on it is held and sent once the Picks arrive (#111).
 
 The three states need to differ in more than one property at once. Border style alone was too quiet to read. A previewed Group keeps its Clash styling, so hovering an option never makes it look safe.
 

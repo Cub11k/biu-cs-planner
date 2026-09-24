@@ -172,7 +172,15 @@ beforeEach(() => {
         });
       }
       if (basedOn !== `v${version}`) {
-        throw new Error(`a save based on ${String(basedOn)} when the file is v${version}`);
+        // Refused the way the real server refuses it rather than thrown: `basedOn: undefined`
+        // is the claim that there is no State File, and a 409 `state-file-changed` is the
+        // answer #90's guard gives it. Throwing here would come back as "unreachable" and
+        // hide the very notice #111 is about — so what the screen must never say is a
+        // sentence this fake can actually produce.
+        return new Response(JSON.stringify({ reason: "state-file-changed", warnings: [] }), {
+          status: 409,
+          headers: { "content-type": "application/json" },
+        });
       }
       version += 1;
     }
@@ -408,20 +416,36 @@ async function waitForText(mounted: HTMLElement, wanted: string): Promise<void> 
   });
 }
 
+/** How a tile is actually drawn, so a class nothing styles cannot pass for a state. */
+const drawnAs = (tile: HTMLElement): { border: string; opacity: number } => {
+  const style = getComputedStyle(tile);
+  return { border: style.borderTopStyle, opacity: Number(style.opacity) };
+};
+
 it("draws a Group as neither picked nor unpicked while the Picks are still loading", async () => {
   const release = holdTheRead();
-  try {
-    const mounted = await openWeek();
-    const tile = tileFor(mounted, "01");
+  const mounted = await openWeek();
+  const unread = tileFor(mounted, "01");
 
-    // unknowable rather than false: no ink, no pencil, and `mixed` rather than `false` —
-    // the page has not read the file and says so instead of guessing
-    expect(tile.classList.contains("is-unknown")).toBe(true);
-    expect(tile.classList.contains("is-picked")).toBe(false);
-    expect(tile.getAttribute("aria-pressed")).toBe("mixed");
-  } finally {
-    release();
-  }
+  // unknowable rather than false: no ink, no pencil, and `mixed` rather than `false` —
+  // the page has not read the file and says so instead of guessing
+  expect(unread.classList.contains("is-unknown")).toBe(true);
+  expect(unread.classList.contains("is-picked")).toBe(false);
+  expect(unread.getAttribute("aria-pressed")).toBe("mixed");
+  // and it is *drawn* as neither, not merely classed as neither: dotted and held back
+  expect(drawnAs(unread)).toEqual({ border: "dotted", opacity: 0.55 });
+
+  release();
+
+  // once the Picks are read, the same Group is the pencil option it turns out to be
+  await vi.waitFor(() => {
+    if (tileFor(mounted, "01").classList.contains("is-unknown")) {
+      throw new Error("the Picks arrived and the week is still unread");
+    }
+  });
+  const pencil = tileFor(mounted, "01");
+  expect(pencil.getAttribute("aria-pressed")).toBe("false");
+  expect(drawnAs(pencil)).toEqual({ border: "dashed", opacity: 1 });
 });
 
 it("holds a click made before the Picks arrived, says so, and saves it on the revision they bring", async () => {
