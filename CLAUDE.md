@@ -54,3 +54,9 @@ Any skill that implements something runs in a worktree made for it and removed w
 lands — never in the main checkout, which stays on `dev`. Check `git worktree list` and
 `git status` before starting: changes you did not make belong to another session. See
 `docs/agents/worktrees.md`.
+
+### Orchestration
+
+What changes when several implementation agents run at once: one ticket and one lane of files
+each, reviewers told they are read-only, and the verification habits that earlier runs learned
+the hard way. See `docs/agents/orchestration.md`.
