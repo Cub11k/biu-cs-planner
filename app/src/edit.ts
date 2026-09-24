@@ -204,7 +204,12 @@ export async function editStateFile(
   // an edit that changed nothing writes nothing: a save moves the Workspace's change
   // count, and a page reloading over an edit that did not happen is noise
   if (next === previous) {
-    return { kind: "unchanged", state: previous, version: loaded.version, warnings: loaded.warnings };
+    return {
+      kind: "unchanged",
+      state: previous,
+      version: loaded.version,
+      warnings: loaded.warnings,
+    };
   }
 
   const save = writeStateFile(next, { basedOn: loaded.version });
