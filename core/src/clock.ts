@@ -17,7 +17,9 @@
  * a span carry — `pickedMeetingSchema` and `blockedTimeSchema` in `core/src/state/schema.ts`,
  * `meetingSchema` in `core/src/catalog/schema.ts`, `isClockTime` in `core/src/shoham/dialect.ts`
  * — and the same one `web/src/timetable/week.ts` reads with. Keeping the five spellings equal is
- * a matter of review: no test compares them (ADR-0012).
+ * guarded rather than left to review: `tools/ci/clock-pattern.test.ts` fails when a clock
+ * pattern anywhere in the repository reads an hour and a minute without this body (ADR-0012,
+ * issue #89).
  */
 const CLOCK_TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
 

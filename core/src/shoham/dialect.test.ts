@@ -203,10 +203,11 @@ it("reads a cell mixing a run-together line with a line of its own", () => {
 });
 
 it("finds a range for every time the clock accepts, and no range in one it refuses", () => {
-  // ADR-0012: the clock spelling is written once per file that reads a clock, keeping the five
-  // spellings equal is "a judgement made in review, not a guarded invariant", and a test closing
-  // that "is worth its own ticket". CLOCK_RANGE writes the same body twice more, inside a file the
-  // ADR already lists, so the drift that can go quiet is pinned here: narrow the scan, or widen
+  // ADR-0012: the clock spelling is written once per file that reads a clock, and keeping those
+  // spellings equal is guarded by `tools/ci/clock-pattern.test.ts`, which fails when any of them
+  // reads an hour and a minute without the shared body (issue #89). CLOCK_RANGE writes that body
+  // twice more, inside a file the ADR already lists; what that guard cannot see, and what is
+  // pinned here, is the drift in what the scan *finds*: narrow the scan, or widen
   // the clock, and a run-together cell stops importing the Meetings it holds -- silently, as an
   // unreadable time. Widening the scan alone needs no guard and gets none, because isClockTime is
   // asked again of every range it finds, so the clock refuses what the scan should not have taken.
