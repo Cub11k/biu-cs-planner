@@ -462,3 +462,126 @@ describe("where an exported name comes from", () => {
     ).toEqual(["groupKey:(declared here)"]);
   });
 });
+
+/**
+ * What a re-exported name *is*, which the report reads to decide whether to show it among
+ * the shapes the data takes.
+ *
+ * Every name in a re-export clause used to be recorded as a `const`, whatever the `type`
+ * keyword sitting in the same line said (#92). A workspace's `index.ts` is one long re-export
+ * clause, so that was 83 of this repository's types described to a reviewer as values — 46 in
+ * `core/src/index.ts` alone — in the report `CLAUDE.md` sends them to before the diff.
+ *
+ * The spellings below are the ones this repository writes, and two of the cases quote a line
+ * of it verbatim: the mixed clause is `app/src/index.ts:2` and the clause with no `from` is
+ * `core/src/shoham/meta.ts:4`. The rename is not written anywhere here, and is included
+ * because #86 made the *export* side of a rename carry a name and nothing yet asked whether it
+ * also carries a kind.
+ */
+describe("what kind a re-exported name is", () => {
+  const kindsOf = (lines: readonly string[]) =>
+    moduleFromSource("core/src/index.ts", lines).exports.map((e) => `${e.name}:${e.kind}`);
+
+  it("records `export type { X } from` as a type", () => {
+    expect(kindsOf(['export type { Variant } from "./state/schema.ts";'])).toEqual([
+      "Variant:type",
+    ]);
+  });
+
+  it("records the inline `export { type X } from` as a type too", () => {
+    // The spelling `web`'s edge into `server` is forbidden to use — it leaves a specifier in
+    // the emit (#59) — and it names exactly what the other spelling names.
+    expect(kindsOf(['export { type ApiType } from "./api.ts";'])).toEqual(["ApiType:type"]);
+  });
+
+  it("still records a re-exported value as a value", () => {
+    expect(kindsOf(['export { importRawCrawl } from "./shoham/import.ts";'])).toEqual([
+      "importRawCrawl:const",
+    ]);
+  });
+
+  it("splits a mixed clause into one value and one type", () => {
+    // `app/src/index.ts:2`, verbatim. One statement, two answers, which is why the keyword is
+    // read per binding rather than per clause.
+    expect(kindsOf(['export { importCrawl, type ImportResult } from "./catalog.ts";'])).toEqual([
+      "importCrawl:const",
+      "ImportResult:type",
+    ]);
+  });
+
+  it("reads the keyword before the clause as covering every binding in it", () => {
+    expect(
+      kindsOf(["export type {", "  GroupChange,", "  RawCrawl,", '} from "./shoham/import.ts";']),
+    ).toEqual(["GroupChange:type", "RawCrawl:type"]);
+  });
+
+  it("keeps a type a type when the export renames it", () => {
+    expect(kindsOf(['export { type RawCrawl as Crawl } from "./shoham/raw-crawl.ts";'])).toEqual([
+      "Crawl:type",
+    ]);
+  });
+
+  it("reads a clause with no `from` the same way, in both spellings", () => {
+    // `core/src/shoham/meta.ts:4` is the first form: a type imported above and exported again,
+    // with no specifier on the export statement to read. Written at that module's own path, so
+    // the relative imports resolve where the real ones do rather than one folder up.
+    expect(
+      moduleFromSource("core/src/shoham/meta.ts", [
+        'import type { RawCrawlMeta } from "./raw-crawl.ts";',
+        'import type { Provenance } from "../catalog/schema.ts";',
+        "export type { RawCrawlMeta };",
+        "export { type Provenance };",
+      ]).exports.map((e) => `${e.name}:${e.kind}`),
+    ).toEqual(["RawCrawlMeta:type", "Provenance:type"]);
+  });
+
+  it("reads the pair the grammar allows and the checker does not", () => {
+    // `export type { type X }` is **not** a syntax error, which is why the `||` and not an
+    // assertion: a parse-only pass raises nothing on it, and `readModule` is parse-only.
+    // TypeScript rejects it at TS2207, from the checker, so `npm run typecheck` is what keeps
+    // it out of this repository — and if one ever got in, the answer is still `type`.
+    const line = 'export type { type Variant } from "./state/schema.ts";';
+    expect(
+      ts.transpileModule(line, {
+        compilerOptions: { verbatimModuleSyntax: true, allowImportingTsExtensions: true },
+        reportDiagnostics: true,
+      }).diagnostics,
+    ).toEqual([]);
+    expect(kindsOf([line])).toEqual(["Variant:type"]);
+  });
+
+  it("leaves the signature a placeholder, because the shape is in another module", () => {
+    // Deliberate, and #92 says so out loud rather than silently: following `from` to the
+    // declaration needs every module already read and the package-entry map, which live in
+    // `collect.ts`. `ExportedSymbol.signature` carries the reasoning.
+    expect(
+      moduleFromSource("core/src/index.ts", [
+        'export type { Variant } from "./state/schema.ts";',
+        'export { importRawCrawl } from "./shoham/import.ts";',
+      ]).exports.map((e) => `${e.name}:${e.signature}`),
+    ).toEqual(["Variant:(re-exported)", "importRawCrawl:(re-exported)"]);
+  });
+
+  it("reads a declared alias, interface, class, function and const as itself", () => {
+    // The declaration branch, which this change does not touch, and which always answered
+    // correctly. Here so that the word the two branches now agree on is asserted on both
+    // sides: nothing in this file asserted a declaration's `kind` before.
+    expect(
+      kindsOf([
+        "export type Variant = { name: string };",
+        "export interface Shape { side: number }",
+        "export class Refused extends Error {}",
+        "export function pick(of: string): string {",
+        "  return of;",
+        "}",
+        "export const DEFAULT = 1;",
+      ]),
+    ).toEqual([
+      "Variant:type",
+      "Shape:type",
+      "Refused:class",
+      "pick:function",
+      "DEFAULT:const",
+    ]);
+  });
+});
