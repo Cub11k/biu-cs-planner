@@ -63,8 +63,12 @@ const english = {
    * guess about a file the page has not read, so this says where it went (#111).
    */
   picksHeld: "Your saved picks are still loading. Your click is waiting for them.",
-  /** …and the same click when the Picks never arrived, so there was nothing to send it on. */
-  picksHeldLost: "Your saved picks could not be read, so your click was not saved.",
+  /**
+   * …and the same click when the answer it was waiting for never came: the file could not be
+   * read, or the screen is showing another week now. Both are that answer never arriving,
+   * which is what the student needs to know; neither is anything they did.
+   */
+  picksHeldLost: "Your click was not saved: the saved picks it was waiting for never arrived.",
 
   noFixedTime: "No fixed time",
   groupsCount: "{count} groups",
@@ -141,7 +145,7 @@ const hebrew: Record<StringKey, string> = {
     "הקובץ השתנה מאז שהדף קרא אותו, ולכן הלחיצה לא נשמרה. " +
     "השבוע מוצג כפי שהקובץ נראה עכשיו — לחצו שוב אם עדיין תרצו את הבחירה.",
   picksHeld: "הבחירות השמורות עדיין נטענות. הלחיצה שלכם ממתינה להן.",
-  picksHeldLost: "לא ניתן היה לקרוא את הבחירות השמורות, ולכן הלחיצה שלכם לא נשמרה.",
+  picksHeldLost: "הלחיצה שלכם לא נשמרה: הבחירות השמורות שהיא חיכתה להן לא הגיעו.",
 
   noFixedTime: "ללא שעה קבועה",
   groupsCount: "{count} קבוצות",

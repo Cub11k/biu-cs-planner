@@ -11,6 +11,7 @@ import {
   type GroupPick,
   type StateFileVersion,
   type StateRefusal,
+  type TimetableQuery,
   type TimetableResult,
 } from "./picks.ts";
 import { clashingGroups, isPicked, weekGroups, type WeekGroup } from "./week.ts";
@@ -25,6 +26,16 @@ const SEMESTER_STRING = {
 
 type CatalogState = { kind: "loading" } | OfferingsResult;
 type TimetableState = { kind: "loading" } | TimetableResult;
+
+/**
+ * A click waiting for the first Timetable answer, and the week it was made on.
+ *
+ * The query travels with it because the screen can be asked a different question while the
+ * click waits — another Semester is what `useReloading` shows `loading` for — and one State
+ * File holds every Semester, so its revision would happily accept a Pick saved into the
+ * wrong one. A click is answered by the week it was made on or not at all.
+ */
+type HeldClick = { group: WeekGroup; query: TimetableQuery };
 
 /**
  * Why the API served no Catalog, said in words the student can act on. A Warning nobody
@@ -162,7 +173,7 @@ export function TimetableScreen({
    * the alternatives either drop it silently or spend a sentence saying it was dropped, and
    * a click on a Group is a small thing to have to make twice.
    */
-  const [held, setHeld] = useState<readonly WeekGroup[]>([]);
+  const [held, setHeld] = useState<readonly HeldClick[]>([]);
   /** That held clicks had to be dropped, because the file could not be read at all. */
   const [heldLost, setHeldLost] = useState(false);
   /** That a held click is in flight, so the drain below sends one at a time. */
@@ -210,8 +221,12 @@ export function TimetableScreen({
    * screen at the moment of the click.
    */
   const save = useCallback(
-    (group: WeekGroup, remove: boolean, basedOn: StateFileVersion): Promise<void> => {
-      const query = { academicYear, semester };
+    (
+      group: WeekGroup,
+      remove: boolean,
+      basedOn: StateFileVersion,
+      query: TimetableQuery,
+    ): Promise<void> => {
       const slot = { courseNumber: group.courseNumber, lessonType: group.lessonType };
       const done = remove
         ? removePick(api, query, slot, basedOn)
@@ -242,20 +257,21 @@ export function TimetableScreen({
         setTimetable(answer);
       });
     },
-    [academicYear, semester, setTimetable],
+    [setTimetable],
   );
 
   const onPick = (group: WeekGroup): void => {
     // whatever became of the last click, this one is the account the student is owed now
     setHeldLost(false);
+    const query = { academicYear, semester };
 
     if (timetable.kind !== "served") {
-      setHeld((waiting) => [...waiting, group]);
+      setHeld((waiting) => [...waiting, { group, query }]);
       return;
     }
     // Only a served answer knows this, and `picked` is a `boolean` once it does. A click on
     // ink removes the Pick; a click on pencil records one.
-    void save(group, group.picked === true, timetable.version);
+    void save(group, group.picked === true, timetable.version, query);
   };
 
   /**
@@ -268,6 +284,15 @@ export function TimetableScreen({
   useEffect(() => {
     const next = held[0];
     if (next === undefined || sending.current) return;
+
+    // The screen is being asked about another week now, so the answer this click is waiting
+    // for is never coming. It is dropped rather than sent on this week's revision, which one
+    // State File would accept for a Pick in a Semester the student has left.
+    if (next.query.academicYear !== academicYear || next.query.semester !== semester) {
+      setHeld([]);
+      setHeldLost(true);
+      return;
+    }
 
     // the first read is still in flight, which is what the click is waiting for
     if (timetable.kind === "loading") return;
@@ -291,17 +316,17 @@ export function TimetableScreen({
     // This is where reconciling stops and #104 begins: nothing here re-applies an edit the
     // server answered. A held click was never sent, and it goes out on the revision the
     // first answer carries, so the guard has nothing to refuse it for.
-    if (isPicked(timetable.picks, next)) {
+    if (isPicked(timetable.picks, next.group)) {
       setHeld((waiting) => waiting.slice(1));
       return;
     }
 
     sending.current = true;
-    void save(next, false, timetable.version).finally(() => {
+    void save(next.group, false, timetable.version, next.query).finally(() => {
       sending.current = false;
       setHeld((waiting) => waiting.slice(1));
     });
-  }, [held, timetable, save]);
+  }, [held, timetable, save, academicYear, semester]);
 
   // one spelling of the year on the whole screen: the header and the sidebar disagreeing
   // about 2026-27 and 2027 reads as if a different year were the one missing

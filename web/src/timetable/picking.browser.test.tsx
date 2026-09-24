@@ -404,8 +404,11 @@ it("says the folder is not a workspace rather than that nothing is picked", asyn
  * a mounted screen with two answers arriving at different times has both halves.
  */
 const STILL_LOADING = "Your saved picks are still loading";
-const NOT_SAVED = "Your saved picks could not be read, so your click was not saved";
+const NOT_SAVED = "Your click was not saved";
 const FILE_CHANGED = "The file changed since this page read it";
+
+/** March 2027: the Spring Semester of the same Academic Year, which is another week. */
+const ANOTHER_SEMESTER = new Date(2027, 2, 15);
 
 /** Waits for a sentence to reach the screen, and says which one was missing when it does not. */
 async function waitForText(mounted: HTMLElement, wanted: string): Promise<void> {
@@ -557,4 +560,30 @@ it("says a held click was not saved when the Picks could not be read at all", as
   expect(sent.filter((request) => request.method !== "GET")).toEqual([]);
   // the refusal it is, and not the one about a file that changed
   expect(mounted.textContent).not.toContain(FILE_CHANGED);
+});
+
+/**
+ * A held click belongs to the week it was made on. One State File holds every Semester, so
+ * its revision would accept a Pick saved into a Semester the student has left — and the Picks
+ * of the week now on screen are not the ones this click has to be reconciled against either.
+ * So the answer it was waiting for never comes, and it is dropped and said rather than
+ * applied somewhere it was never aimed.
+ */
+it("drops a held click when the screen is asked about another week, and says so", async () => {
+  const release = holdTheRead();
+  const mounted = await openWeek();
+
+  tileFor(mounted, "01").click();
+  await waitForText(mounted, STILL_LOADING);
+
+  // the same mounted screen, now asked about the Spring Semester
+  root?.render(
+    <TimetableScreen language="en" onLanguage={() => {}} today={ANOTHER_SEMESTER} />,
+  );
+  release();
+
+  await waitForText(mounted, NOT_SAVED);
+  expect(sent.filter((request) => request.method !== "GET")).toEqual([]);
+  expect(mounted.textContent).not.toContain(FILE_CHANGED);
+  expect(mounted.textContent).not.toContain(STILL_LOADING);
 });
