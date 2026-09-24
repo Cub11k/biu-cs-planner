@@ -2,6 +2,7 @@ import { recordPick, type GroupPick, type State } from "@biu-cs-planner/core";
 import { expect, it } from "vitest";
 import { editStateFile, readStateFile, type StateEdit, type StateEditing } from "./edit.ts";
 import { memoryWorkspace, type MemoryWorkspace } from "./workspace.memory.ts";
+import { WorkspaceRefusedError, type Workspace } from "./workspace.ts";
 
 /**
  * The external-edit guard where a use case meets it (#90).
@@ -218,4 +219,36 @@ it("reports the adapter's refusal when the file changes between the read and the
   );
 
   expect(outcome).toMatchObject({ kind: "refused", reason: "state-file-changed" });
+});
+
+/**
+ * #109 where it reaches a use case. A State File that is there and cannot be read — a mode bit,
+ * a directory in its place, failing hardware — is the port's refusal and not absence, and this
+ * function must not answer it with a new empty State: it would then save over the file with
+ * `basedOn: undefined`, which is what destroyed a Pin on `dev`.
+ *
+ * The refusal is injected rather than produced, because the double has no unreadable files and
+ * should not grow a knob for one: what is under test here is the mapping, and the adapter that
+ * raises it for real is tested against a real folder (`server/src/workspace.fs.test.ts`).
+ */
+const cannotBeRead = (workspace: MemoryWorkspace): Workspace => ({
+  ...workspace,
+  readStateFile: () =>
+    Promise.reject(new WorkspaceRefusedError("refusing ./alice.state.json: it is there and cannot be read (EACCES)")),
+});
+
+it("refuses an edit to a State File the port cannot read, rather than starting an empty one", async () => {
+  const workspace = ready();
+  await editStateFile(workspace, ALICE, picking(LECTURE), { basedOn: undefined });
+  const before = workspace.written().length;
+
+  const loaded = await readStateFile(cannotBeRead(workspace), ALICE);
+  const outcome = await editStateFile(cannotBeRead(workspace), ALICE, picking(LECTURE), {
+    basedOn: undefined,
+  });
+
+  expect(loaded).toEqual({ refused: "workspace-refused", warnings: [] });
+  expect(outcome).toMatchObject({ kind: "refused", reason: "workspace-refused" });
+  // and nothing was written over it
+  expect(workspace.written().length).toBe(before);
 });

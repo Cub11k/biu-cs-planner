@@ -68,10 +68,17 @@ export type WorkspaceStatus = {
 export const WORKSPACE_LAYOUT: WorkspaceFolder[] = ["catalogs", "requirements", "backups"];
 
 /**
- * A Workspace refused an operation: the target resolves outside it, or is not a kind of
- * file a Workspace holds. Distinct from absence, which is not an error — the port's
- * `read` returns undefined for that. A refusal is a Warning the student can act on, and
- * never a crashed server (docs/design.md, "API and data rules").
+ * A Workspace refused an operation: the target resolves outside it, is not a kind of file a
+ * Workspace holds, or is a file that is there and whose contents cannot be read.
+ *
+ * Distinct from absence, which is not an error — the port's `read` returns undefined for
+ * that. **A file that cannot be read is not absence**, and reporting it as such is what let a
+ * save based on there being no file overwrite one that was there all along (#109): only
+ * nothing at that name may come back as undefined.
+ *
+ * A refusal is a Warning the student can act on, and never a crashed server
+ * (docs/design.md, "API and data rules"), which is why an adapter raises this rather than
+ * letting a filesystem error out of the port.
  */
 export class WorkspaceRefusedError extends Error {
   override readonly name = "WorkspaceRefusedError";
@@ -85,6 +92,57 @@ export function requireStateFileName(name: string): void {
   if (isStateFileName(name)) return;
   throw new WorkspaceRefusedError(
     `refusing a State File named ${JSON.stringify(name)}: a name, never a path`,
+  );
+}
+
+/**
+ * The other half of narrowing `read` and `write` to a `CatalogRef`, and the half a compiler
+ * cannot make: one refusal, shared by both adapters and in the same words, for anything handed
+ * to a whole-file read or write that is not really a Catalog's reference (#113).
+ *
+ * **Two ways it is not one**, and a cast is what produces either. The ref is a State File's,
+ * the case the ticket was filed for. Or it claims to be a Catalog's and its year is not a
+ * number — and that one is the same hole with a different key, because an adapter turns the
+ * year straight into a file name: a year of `"../alice.state"` builds a path back out of
+ * `catalogs/` and onto a State File at the Workspace root, which then gets overwritten whole
+ * with no revision guard, no name rule and no layout check. Measured, not reasoned: it
+ * destroyed a Pin and wrote into a folder that was not a Workspace. A year is the reason a
+ * `CatalogRef` needed no name rule, so the rule for it is that it really is a year.
+ *
+ * **The narrowing is type-only.** Both adapters still know how to name a State File, because
+ * `readStateFile` and `saveStateFile` need them to, so a cast reaches a read that comes back
+ * with no revision and a write with no guard at all — and, until this, no layout check
+ * either: the `ref.kind === "state"` layout check `write` used to carry could not survive the
+ * narrowing, because the compiler rejects that comparison on a `CatalogRef`, so it moved into
+ * `saveStateFile` and left `write` covering nothing. `requireJsonName` in
+ * `server/src/workspace.fs.ts` already states the principle: every caller in the repo
+ * satisfies the rule, so this guards a future one, and the rule should not depend on being
+ * remembered. With a student's only copy of their own data behind it, more so.
+ *
+ * **The read is refused in the same words as the write**, although it costs less — an
+ * unversioned read rather than a lost file. Content without its revision is content nothing
+ * can safely save afterwards, which is the trap the narrowing exists to set a compiler
+ * against; and one rule is one thing to remember about this port rather than two.
+ */
+export function requireCatalogRef(ref: WorkspaceRef): void {
+  // Spelled as what it *requires* rather than what it refuses, so a third kind of file in a
+  // Workspace — a Requirements File ref — reaches the last line and fails to compile there,
+  // rather than passing a check named for Catalogs and being written whole without a guard.
+  if (ref.kind === "catalog") {
+    // A safe integer and nothing else: every one of those is digits with at most a leading
+    // minus, so there is no separator and no `..` for an adapter to resolve. The range a year
+    // may sensibly fall in is the API's business; a path is this rule's.
+    if (!Number.isSafeInteger(ref.academicYear)) {
+      throw new WorkspaceRefusedError(
+        `refusing a Catalog for the Academic Year ${JSON.stringify(ref.academicYear)}: ` +
+          "a year is a whole number, never a path",
+      );
+    }
+    return;
+  }
+  throw new WorkspaceRefusedError(
+    `refusing the State File ${JSON.stringify(ref.name)} here: a State File is read through ` +
+      "readStateFile and saved through saveStateFile, which carry the revision a guarded save needs",
   );
 }
 
@@ -181,13 +239,17 @@ export type Workspace = {
    * handed back content without its revision would be a read nothing can safely save
    * after, and the compiler is what keeps that from being written by accident. A Catalog
    * needs none — it is re-importable from its Raw Crawl and nothing edits one in place.
+   * `requireCatalogRef` refuses a State File here at runtime as well, because a cast gets
+   * past the compiler (#113).
    */
   read(ref: CatalogRef): Promise<unknown>;
   /**
    * Atomic: an interrupted write leaves the previous file intact. Throws
    * `WorkspaceRefusedError` on a target a Workspace will not touch.
    *
-   * For the files nothing edits in place. A State File is saved through `saveStateFile`.
+   * For the files nothing edits in place. A State File is saved through `saveStateFile`,
+   * and `requireCatalogRef` refuses one here at runtime rather than trusting the narrowing
+   * above, which a cast defeats (#113).
    */
   write(ref: CatalogRef, data: unknown): Promise<void>;
   /**

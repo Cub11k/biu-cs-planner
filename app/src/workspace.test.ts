@@ -1,5 +1,10 @@
 import { expect, it } from "vitest";
-import { isStateFileName, requireStateFileName, WorkspaceRefusedError } from "./workspace.ts";
+import {
+  isStateFileName,
+  requireCatalogRef,
+  requireStateFileName,
+  WorkspaceRefusedError,
+} from "./workspace.ts";
 
 /**
  * The name rule stands between free text and a filesystem: a State File is the first
@@ -64,4 +69,35 @@ it.each(REFUSED)("refuses %s", (_what, name) => {
 /** A refusal a student can act on names what was refused, so the message carries the name. */
 it("says which name it refused", () => {
   expect(() => requireStateFileName("../escaped")).toThrow(/\.\.\/escaped/);
+});
+
+/**
+ * The other refusal both adapters share, and the runtime half of narrowing `read` and `write`
+ * to a `CatalogRef` (#113). Tested here for the same reason the name rule is: it is one
+ * function, and an adapter test that happened to stop exercising it would leave it free to be
+ * relaxed with nothing failing.
+ */
+it("lets a Catalog through a whole-file read or write", () => {
+  expect(() => requireCatalogRef({ kind: "catalog", academicYear: 2027 })).not.toThrow();
+});
+
+it("refuses a Catalog whose year is not a whole number, which an adapter turns into a path", () => {
+  for (const academicYear of ["../alice.state", "2027/../..", 2027.5, NaN, Infinity]) {
+    expect(() => requireCatalogRef({ kind: "catalog", academicYear } as never)).toThrow(
+      WorkspaceRefusedError,
+    );
+  }
+  // and the ordinary ones still pass, including a year no Catalog would sensibly carry: the
+  // range is the API's rule, and this one is only about what can become a path
+  for (const academicYear of [2027, 0, -1, 9999]) {
+    expect(() => requireCatalogRef({ kind: "catalog", academicYear })).not.toThrow();
+  }
+});
+
+it("refuses a State File handed to a whole-file read or write", () => {
+  expect(() => requireCatalogRef({ kind: "state", name: "alice" })).toThrow(WorkspaceRefusedError);
+  // it names the file, and says where a State File is read and saved instead
+  expect(() => requireCatalogRef({ kind: "state", name: "alice" })).toThrow(
+    /State File "alice".*readStateFile.*saveStateFile/s,
+  );
 });

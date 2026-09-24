@@ -13,7 +13,32 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { StateFileChangedError, WorkspaceRefusedError } from "@biu-cs-planner/app";
+import type { Workspace, WorkspaceRef } from "@biu-cs-planner/app";
 import { fileSystemWorkspace } from "./workspace.fs.ts";
+
+/**
+ * Root reads a file whatever its mode says, and Windows does not honour mode bits, so a test
+ * that chmods a file to `0o000` there proves nothing while still passing — the silent vacuous
+ * pass #109 names. Skipped rather than trusted, the way `server/src/token.test.ts` skips the
+ * same trick for the token file. **The behaviour itself is never left to this flag**: every
+ * refusal these tests assert is also asserted through a directory where a file belongs, which
+ * needs no permissions at all and runs everywhere.
+ */
+const unreadableFilesArePossible = process.platform !== "win32" && process.getuid?.() !== 0;
+
+/**
+ * `read` and `write` take a `CatalogRef`, and #90's narrowing is type-only: the adapter can
+ * still name a State File, because `readStateFile` and `saveStateFile` need it to. This is the
+ * cast a future caller would reach the whole-file routes through, written out so the tests
+ * below say what they are doing (#113).
+ */
+const asAnyRef = <T>(
+  operation: (ref: never, ...rest: never[]) => T,
+): ((ref: WorkspaceRef, ...rest: never[]) => T) =>
+  operation as unknown as (ref: WorkspaceRef, ...rest: never[]) => T;
+
+const wholeFileRead = (workspace: Workspace) => asAnyRef(workspace.read);
+const wholeFileWrite = (workspace: Workspace) => asAnyRef(workspace.write);
 
 let root: string;
 beforeEach(async () => {
@@ -121,6 +146,42 @@ it("hands back what a corrupt file actually contains, rather than inventing a va
   const value = await workspace.read({ kind: "catalog", academicYear: 2027 });
 
   expect(value).toBe("{ this is not json");
+});
+
+/**
+ * `ENOTDIR` is absence as much as `ENOENT` is, and it is the second entry in the list that says
+ * so — a `catalogs` that is a plain file rather than a folder, so nothing can exist below it.
+ * Without this the list's other entry could be dropped with nothing failing, and a Workspace in
+ * that state would start refusing reads instead of reporting a year with no Catalog.
+ */
+it("reads a Catalog as absent when its folder is a plain file rather than a folder", async () => {
+  await writeFile(join(root, "catalogs"), "not a folder");
+  const workspace = fileSystemWorkspace(root);
+
+  await expect(workspace.read({ kind: "catalog", academicYear: 2027 })).resolves.toBeUndefined();
+});
+
+/**
+ * The Catalog half of #109, and the smaller one: a Catalog is re-importable from its Raw
+ * Crawl, so what was at risk is `importCrawl` overwriting a stored Catalog it never managed to
+ * read. It already refuses to overwrite one it can read and cannot parse (`app/src/catalog.ts`)
+ * — but absent and unreadable were the same answer here, so that refusal depended on the file
+ * being readable enough to fail the schema. One fix covers both halves, because both go through
+ * the one function that turns a failed read into an answer.
+ *
+ * A directory where the file belongs needs no permissions trick, so this runs everywhere; the
+ * State File test below proves the same refusal behind a mode bit where one is possible.
+ */
+it("refuses a Catalog it cannot read, rather than reporting the year as having none", async () => {
+  const workspace = fileSystemWorkspace(root);
+  await workspace.create();
+  await mkdir(join(root, "catalogs", "2027.json"));
+
+  await expect(workspace.read({ kind: "catalog", academicYear: 2027 })).rejects.toThrow(
+    WorkspaceRefusedError,
+  );
+  // absence is still not an error: only a file that is there answers this way
+  await expect(workspace.read({ kind: "catalog", academicYear: 2030 })).resolves.toBeUndefined();
 });
 
 it("refuses to read a Catalog file symlinked out of the Workspace", async () => {
@@ -582,6 +643,112 @@ it("gives content that is not JSON a revision, as it gives one to a file it can 
   expect(held?.version).toMatch(/^[0-9a-f]{64}$/);
 });
 
+/**
+ * #109, and the direction the external-edit guard may not fail in. A State File that is there
+ * and cannot be read reported **no revision**, so `basedOn: undefined` — the claim that there
+ * is no file — matched, the guard passed, and the atomic rename destroyed a file the app could
+ * not read. A file whose contents cannot be seen is exactly the file the guard exists for.
+ *
+ * A directory where the file belongs is `EISDIR`: a file that is there, needing no permissions
+ * trick, so this half of the proof runs everywhere including as root.
+ */
+it("refuses a State File it cannot read, rather than reporting it absent", async () => {
+  const workspace = fileSystemWorkspace(root);
+  await workspace.create();
+  await mkdir(join(root, "alice.state.json"));
+
+  await expect(workspace.readStateFile(ALICE)).rejects.toThrow(WorkspaceRefusedError);
+  // The refusal names the file the way this adapter's other one does: relative to the Workspace
+  // root, never absolutely. `app/src/queries.ts` puts this message into a Warning the API
+  // serves, so what is in it is what a student is shown (docs/design.md, "API and data rules").
+  const refusal = await workspace
+    .readStateFile(ALICE)
+    .then(() => undefined)
+    .catch((thrown: unknown) => thrown as Error);
+  expect(refusal?.message).toContain("./alice.state.json");
+  expect(refusal?.message).not.toContain(root);
+  // the save a report of absence would have let through, based on there being no file
+  await expect(workspace.saveStateFile(ALICE, firstSave(STATE))).rejects.toThrow(
+    WorkspaceRefusedError,
+  );
+  // refused before anything was written, so not even a temporary is left at the root
+  expect((await readdir(root)).sort()).toEqual([
+    ".backups",
+    "alice.state.json",
+    "catalogs",
+    "requirements",
+  ]);
+});
+
+/**
+ * The same refusal behind a mode bit, which is the shape #109 was reported as and the one a
+ * student meets: their own `chmod`, a sync client, a backup tool. `EACCES` and `EISDIR` are the
+ * same answer — a file that is there and cannot be read — and this is the one that proves the
+ * **bytes survive the refused save**, because an inaccessible directory has no content to lose.
+ *
+ * Skipped where every file is readable regardless (root, Windows): there it would pass without
+ * proving anything, which is worse than not running. The test above covers the refusal there.
+ */
+it.skipIf(!unreadableFilesArePossible)(
+  "leaves a State File it may not read exactly as it found it when a save is refused",
+  async () => {
+    const workspace = fileSystemWorkspace(root);
+    await workspace.create();
+    const path = join(root, "alice.state.json");
+    const held = '{"schemaVersion":1,"pins":[{"courseNumber":"89-110"}]}\n';
+    await writeFile(path, held, "utf8");
+    await chmod(path, 0o000);
+
+    try {
+      await expect(workspace.readStateFile(ALICE)).rejects.toThrow(WorkspaceRefusedError);
+      await expect(workspace.saveStateFile(ALICE, firstSave({ schemaVersion: 1 }))).rejects.toThrow(
+        WorkspaceRefusedError,
+      );
+    } finally {
+      await chmod(path, 0o600);
+    }
+
+    // byte for byte, Pin included: the whole point of the refusal
+    expect(await aliceOnDisk()).toBe(held);
+  },
+);
+
+/**
+ * A leading UTF-8 BOM is part of the encoding and not content. #103 changed this without
+ * meaning to — `read` used to decode and parse in one step and now reads bytes, because the
+ * revision has to be taken from them, and `TextDecoder` drops a BOM where a Node `utf8` read
+ * keeps it. So a file an editor wrote with a BOM used to come back as raw text, `JSON.parse`
+ * throwing on it, and now parses. **That is the behaviour this project wants**: several Windows
+ * editors add a BOM, and a hand-dropped Catalog is the case docs/design.md, "Storage" cares
+ * about. Nothing would have noticed it going away again (#109).
+ */
+it("reads a file whose bytes begin with a UTF-8 BOM as the JSON it holds", async () => {
+  const workspace = fileSystemWorkspace(root);
+  await workspace.create();
+  const BOM = "\uFEFF";
+  await writeFile(join(root, "catalogs", "2027.json"), BOM + JSON.stringify(CATALOG), "utf8");
+  await writeFile(join(root, "alice.state.json"), BOM + JSON.stringify(STATE), "utf8");
+
+  expect(await workspace.read({ kind: "catalog", academicYear: 2027 })).toEqual(CATALOG);
+  expect((await workspace.readStateFile(ALICE))?.data).toEqual(STATE);
+});
+
+/** And the revision stays a hash of the bytes as read, BOM included. */
+it("gives a State File that carries a BOM a revision of its own", async () => {
+  const workspace = fileSystemWorkspace(root);
+  await workspace.create();
+  await writeFile(join(root, "alice.state.json"), JSON.stringify(STATE), "utf8");
+  const plain = (await workspace.readStateFile(ALICE))?.version;
+
+  await writeFile(join(root, "alice.state.json"), "\uFEFF" + JSON.stringify(STATE), "utf8");
+  const carried = await workspace.readStateFile(ALICE);
+
+  // the same document, two files on disk: a guard that called them one revision would be blind
+  // to whichever tool added or removed the BOM
+  expect(carried?.data).toEqual(STATE);
+  expect(carried?.version).not.toBe(plain);
+});
+
 it("lists the State Files the Workspace holds, and nothing else at its root", async () => {
   const workspace = fileSystemWorkspace(root);
   await workspace.create();
@@ -620,26 +787,33 @@ it("refuses a State File whose name is a path rather than a name", async () => {
 });
 
 /**
- * A State File's temporary is written at the Workspace root rather than in a folder of the
- * layout, so the cleanup that keeps a failed save from littering the Workspace has a path of
- * its own. The failure has to come from the *rename* for that path to run at all: a value
- * `JSON.stringify` rejects never reaches the filesystem, and a root a write cannot open never
- * gets a temporary to clean up. A directory where the file belongs is a rename that cannot be
- * made with the temporary already written — which is the only shape that proves the `rm`.
+ * The cleanup that keeps a failed write from littering the Workspace. The failure has to come
+ * from the *rename* for that path to run at all: a value `JSON.stringify` rejects never reaches
+ * the filesystem, and a folder a write cannot open never gets a temporary to clean up. A
+ * directory where the file belongs is a rename that cannot be made with the temporary already
+ * written — which is the only shape that proves the `rm`.
+ *
+ * **Asked of a Catalog, which is where that shape is still reachable.** It used to be asked of
+ * a State File, and #109 closed that route on purpose: a directory where a State File belongs
+ * is now a file that is there and cannot be read, so the save is refused before a temporary
+ * exists — which is what the refusal test above asserts, by finding no temporary at the root.
+ *
+ * So one thing is deliberately no longer covered, said plainly rather than implied: **no test
+ * now makes a State File's own temporary fail its rename**, because no shape reaches that
+ * rename any more — the read the guard needs fails first, whatever is in the file's place.
+ * What is still covered is the `rm` itself, which both writes share through the one
+ * `writeAtomically`, and the fact that a refused save leaves the Workspace root clean.
  */
 it("cleans up its temporary when the rename it needs cannot be made", async () => {
   const workspace = fileSystemWorkspace(root);
   await workspace.create();
-  await mkdir(join(root, "alice.state.json"));
+  await mkdir(join(root, "catalogs", "2027.json"));
 
-  await expect(workspace.saveStateFile(ALICE, firstSave(STATE))).rejects.toThrow();
+  await expect(
+    workspace.write({ kind: "catalog", academicYear: 2027 }, CATALOG),
+  ).rejects.toThrow();
 
-  expect((await readdir(root)).sort()).toEqual([
-    ".backups",
-    "alice.state.json",
-    "catalogs",
-    "requirements",
-  ]);
+  expect(await readdir(join(root, "catalogs"))).toEqual(["2027.json"]);
 });
 
 /**
@@ -654,4 +828,103 @@ it("refuses to write a State File into a folder that is not a Workspace yet", as
     /layout does not exist/,
   );
   expect(await readdir(root)).toEqual([]);
+});
+
+/**
+ * #113. `write` takes a `CatalogRef` so that a State File can only be saved through the guarded
+ * `saveStateFile`, and that narrowing is type-only: this adapter still builds a path for a
+ * `StateFileRef`, so a cast reached an unguarded whole-file write of a student's only copy. No
+ * caller in the repo does this and the compiler stops an honest one — which is the same standing
+ * `requireJsonName` has, and it says why it exists anyway: the rule should not depend on being
+ * remembered.
+ */
+it("refuses a whole-file write of a State File, cast past the narrowing", async () => {
+  const workspace = fileSystemWorkspace(root);
+  await workspace.create();
+  await workspace.saveStateFile(ALICE, firstSave(STATE));
+
+  await expect(wholeFileWrite(workspace)(ALICE, { schemaVersion: 1 } as never)).rejects.toThrow(
+    WorkspaceRefusedError,
+  );
+
+  // the guarded save is the only way in, and what it wrote is still there
+  expect((await workspace.readStateFile(ALICE))?.data).toEqual(STATE);
+});
+
+/**
+ * The half of #113 that is a regression rather than a pre-existing gap. `write` used to carry
+ * `if (ref.kind === "state" && (await missingFolders()).length > 0)`, and narrowing the
+ * parameter made that comparison a compile error, so the check *moved* into `saveStateFile` and
+ * `write` was left with no layout check covering a State File at all. "Nothing is written into a
+ * folder the student has not agreed to" (docs/design.md, "Storage") was then enforced in exactly
+ * one place, and this route went around it.
+ */
+it("refuses a cast whole-file write of a State File into a folder that is not a Workspace", async () => {
+  const workspace = fileSystemWorkspace(root);
+
+  await expect(wholeFileWrite(workspace)(ALICE, { schemaVersion: 1 } as never)).rejects.toThrow(
+    WorkspaceRefusedError,
+  );
+  expect(await readdir(root)).toEqual([]);
+});
+
+/**
+ * The same hole with a different key, found by a reviewer of this change and measured: a
+ * `CatalogRef` is narrowed by *kind* only, and its year becomes a file name directly, so a cast
+ * that makes the year `"../alice.state"` builds a path back out of `catalogs/` and onto a State
+ * File at the Workspace root — overwritten whole, with no revision guard, no name rule and no
+ * layout check. #113's second criterion says a State File may not reach such a write by **any**
+ * route, so the shared refusal checks that a Catalog's year really is one.
+ */
+it("refuses a Catalog whose year is a path rather than a year, cast past the type", async () => {
+  const workspace = fileSystemWorkspace(root);
+  await workspace.create();
+  await workspace.saveStateFile(ALICE, firstSave(STATE));
+  const pathAsYear = { kind: "catalog", academicYear: "../alice.state" } as unknown as WorkspaceRef;
+
+  await expect(wholeFileWrite(workspace)(pathAsYear, { schemaVersion: 1 } as never)).rejects.toThrow(
+    WorkspaceRefusedError,
+  );
+  await expect(wholeFileRead(workspace)(pathAsYear)).rejects.toThrow(WorkspaceRefusedError);
+
+  // the State File the crafted year resolved to is untouched
+  expect((await workspace.readStateFile(ALICE))?.data).toEqual(STATE);
+  expect((await readdir(root)).sort()).toEqual([
+    ".backups",
+    "alice.state.json",
+    "catalogs",
+    "requirements",
+  ]);
+});
+
+/**
+ * And into a folder that is not a Workspace by that route either, which is the sentence #113
+ * quotes from docs/design.md, "Storage".
+ */
+it("refuses a cast year that would write a State File into a folder that is not a Workspace", async () => {
+  await mkdir(join(root, "catalogs"));
+  const workspace = fileSystemWorkspace(root);
+  const pathAsYear = { kind: "catalog", academicYear: "../alice.state" } as unknown as WorkspaceRef;
+
+  await expect(wholeFileWrite(workspace)(pathAsYear, { schemaVersion: 1 } as never)).rejects.toThrow(
+    WorkspaceRefusedError,
+  );
+  expect(await readdir(root)).toEqual(["catalogs"]);
+});
+
+/**
+ * And the read, in the same words, although the cost is smaller: content rather than a lost
+ * file. A State File read this way comes back with no revision, which is content nothing can
+ * safely save afterwards — the trap the narrowing exists to set a compiler against.
+ */
+it("refuses a whole-file read of a State File, which would come back with no revision", async () => {
+  const workspace = fileSystemWorkspace(root);
+  await workspace.create();
+  await workspace.saveStateFile(ALICE, firstSave(STATE));
+
+  await expect(wholeFileRead(workspace)(ALICE)).rejects.toThrow(WorkspaceRefusedError);
+  // the same refusal the in-memory double makes, in the same words (app/src/workspace.memory.test.ts)
+  await expect(wholeFileRead(workspace)(ALICE)).rejects.toThrow(
+    /refusing the State File "alice" here/,
+  );
 });
