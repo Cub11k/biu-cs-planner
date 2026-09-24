@@ -57,9 +57,16 @@ running** — it read the old token when it started and goes on accepting it unt
 the rotation only takes effect when you restart.
 
 After that the old token is refused, and so is everything holding it: every bookmark you
-saved, and every tab still open on the planner — a tab like that will say it has no launch
-token. Start the app again and open the address it prints, and that tab is replaced by a
-working one.
+saved, and every tab still open on the planner. A tab that was already loaded goes on showing
+what it last read until you reload it or click something, and then says it has no launch
+token — and your picks vanish from the week, because the page cannot read them any more. They
+are safe on disk; the page simply cannot see them.
+
+Start the app again and open the address it prints. If it lands on port 8900 again, the tab you
+left open starts working on its own, because both tabs share the one stored token — you may
+need to click something for its screen to catch up. If port 8900 was taken and the app moved,
+the old tab is on a different address, will only ever say the app is unreachable, and is worth
+closing.
 
 The token is one file, in your user config directory and never in your Workspace, because a
 Workspace gets synced and committed:

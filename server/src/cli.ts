@@ -246,13 +246,12 @@ export function rotatedNotice({
 
   const consequence = replaced
     ? [
-        "Stop the app with Ctrl-C if it is still running. It read the old token when it",
-        "started and goes on accepting it until it exits, so the rotation is only as good",
-        "as the restart.",
+        "Stop the app with Ctrl-C if it is still running: it read the old token at startup",
+        "and goes on accepting it until it exits.",
         "",
-        "After that the old token is refused. Every bookmark holding it stops working, and",
-        'so does every tab still open on the planner: a tab like that says it "has no launch',
-        'token" until you open the new address.',
+        "The old token is then refused, and so is everything holding it — every bookmark you",
+        'saved, and every tab still open on the planner, which will say it "has no launch',
+        'token" and show none of your picks until you open the new address.',
       ].join("\n")
     : "There was none here before, so nothing that used to work has stopped.";
 
