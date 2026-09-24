@@ -9,8 +9,35 @@ import ts from "typescript";
  */
 export type ExportedSymbol = {
   name: string;
+  /**
+   * What the name is, read from the syntax that declares or re-exports it.
+   *
+   * **A re-export answers this from the `type` keyword**, both spellings of it, so
+   * `export type { Variant } from "./state/schema.ts"` and
+   * `export { type ApiType } from "./api.ts"` are `type` exactly as a `type` alias and an
+   * `interface` are. They were `const`, unconditionally, and since a barrel is where a
+   * workspace says what it offers, that made 83 of this repository's types read as values in
+   * the one artefact `CLAUDE.md` sends a reviewer to *before* the diff — 46 of them in
+   * `core/src/index.ts` alone (#92).
+   *
+   * `const` is still the answer for every re-exported value, a function and a class
+   * included: telling those apart means reading the declaration in another module, which is
+   * the same second pass `signature` would need and is not done here. See `from`.
+   */
   kind: "function" | "const" | "type" | "class";
-  /** Rendered as written, e.g. "(crawl: RawCrawl, options: {...}) => {...}". */
+  /**
+   * Rendered as written, e.g. "(crawl: RawCrawl, options: {...}) => {...}".
+   *
+   * **A re-export has no declaration to read, and this says `"(re-exported)"` rather than
+   * guessing.** The shape lives in the module the name comes from, so a real signature means
+   * finding that module and reading it — which needs every module already read and the
+   * package-entry map that turns `@biu-cs-planner/core` into a path, neither of which
+   * `readModule` has while it is looking at one file. `tools/pr-report/calls.ts` already walks
+   * exactly that chain (`declaringModule`, `seen` set and all) from the collected graph, so
+   * the place for it is a second pass in `tools/pr-report/collect.ts` reusing that walk, not
+   * a second barrel-follower with its own disk reads in here. #92 chose to leave the
+   * placeholder and say so rather than duplicate the walk.
+   */
   signature: string;
   /**
    * Where the name comes from, when this module is not where it is declared:
@@ -248,6 +275,39 @@ function reExportKind(node: ts.ExportDeclaration): ImportKind {
   return everyBindingIsType(node.exportClause.elements) ? KEPT : CODE;
 }
 
+/**
+ * Whether one binding of an export clause names a type — the question `ExportedSymbol.kind`
+ * asks of a re-export, and the one thing it needs that the clause alone does not answer.
+ *
+ * Two places the keyword can sit and one meaning between them. `export type { X }` puts it
+ * before the clause, where it covers every binding that follows; `export { type X }` puts it
+ * on the binding, where it covers that one. #59 is about how sharply those two differ in what
+ * they *emit* — `ImportKind` has the table — and they do not differ at all in what they
+ * **name**, which is what `kind` is about. So this reads either spelling as a type, and the
+ * mixed clause `export { importCrawl, type ImportResult } from "./catalog.ts"` (real, at
+ * `app/src/index.ts:2`) records one value and one type.
+ *
+ * **Reading the keyword is enough only because a type re-export has to carry one.**
+ * `tsconfig.base.json` sets `verbatimModuleSyntax` and `isolatedModules`, and either one alone
+ * makes `export { SomeType } from "./m.ts"` an error — TS1205, "requires using `export type`".
+ * Drop both and that line compiles again and lands here as a `const`, with nothing to warn
+ * anybody. So what makes reading the keyword exhaustive is a compiler option, not the syntax.
+ *
+ * The two keywords cannot contradict each other in a repository that typechecks — but not
+ * because the grammar forbids the pair. `export type { type X } from "./m.ts"` **parses
+ * cleanly**; TypeScript rejects it from the checker, at TS2207, and `readModule` runs no
+ * checker (`ts.createSourceFile` and nothing else). So it is `npm run typecheck` that keeps
+ * such a line out of this repository, and the `||` below that answers `type` if one ever gets
+ * in. `surface.test.ts` pins both halves, because the file this sits in made a point of not
+ * asking a reader to take a compiler claim on trust.
+ *
+ * Deliberately per-binding rather than per-clause, unlike `reExportKind`: an edge in the
+ * module graph is one answer for the whole statement, and an exported symbol is one answer
+ * per name.
+ */
+const isTypeExport = (node: ts.ExportDeclaration, el: ts.ExportSpecifier): boolean =>
+  node.isTypeOnly || el.isTypeOnly;
+
 /** What a specifier names: a module in this repo, a package, or a Node builtin. */
 export type SpecifierTarget =
   /** A file in this repo, by repo-relative path. */
@@ -373,7 +433,7 @@ export function readModule(absPath: string, root: string): Module {
                 : undefined;
           exports.push({
             name: el.name.text,
-            kind: "const",
+            kind: isTypeExport(node, el) ? "type" : "const",
             signature: "(re-exported)",
             ...(from === undefined ? {} : { from }),
           });
