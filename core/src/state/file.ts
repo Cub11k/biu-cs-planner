@@ -218,9 +218,27 @@ function checkBlockedSemesters(
  * A period crossing midnight is therefore still two Blocked Times, one either side of it, as
  * `CONTEXT.md` has it: `23:00`–`00:00` on one Day and `00:00`–`01:00` on the next.
  *
- * A time neither reading can place cannot reach here — `blockedTimeSchema` has already
- * refused the entry — and if one ever did, a range nothing can place keeps no time free and
- * gets the Warning that says so.
+ * A time neither reading can place cannot reach here: `blockedTimeSchema` carries the same
+ * pattern `core/src/clock.ts` reads with, so `readEach` has already refused the entry and
+ * reported `entry-dropped` naming the field. That Warning is where the cause is named — where it
+ * is, rather than what it was — and it is named once: an unreadable clock is reported where it is
+ * refused and never downstream of that refusal. It is also the one Blocked Time a student does
+ * lose, dropped by the schema rather than kept the way the rest of this check keeps them.
+ *
+ * The Clashes module gives the same account from the other side: it refuses nothing, so it says
+ * nothing, and a span arriving there unreadable is a schema bug to fix at the schema (`overlapOf`
+ * in `core/src/timetable/clashes.ts`, `meetingsOccupyingNoTime` in `core/src/shoham/overlaps.ts`,
+ * issues #71 and #78). The second withholds even a does-not-advance report for such a span, and
+ * what differs there is the Warning rather than the rule: its `EmptyRangeShape` would have to say
+ * *which* empty shape the span has, and #52 has the two shapes pointing at different causes, so
+ * naming one would be a guess. This Warning carries no shape, only the two strings as written.
+ *
+ * So the guard below is defence against this file and the schema ever reading a clock
+ * differently, not the report of an unreadable clock — and `blocked-time-does-not-advance` is
+ * not the wrong Warning for one either. It names what happened to the student's week — this
+ * Blocked Time frees no time — which is as true of a range nothing can place as it is of
+ * `10:00`–`10:00`, and more use to them than naming which of two internal readings failed.
+ * ADR-0012 called it the wrong Warning until issue #82 reconciled the two records.
  */
 function checkBlockedRanges(
   blockedTimes: BlockedTime[],
