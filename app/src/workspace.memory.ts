@@ -85,16 +85,24 @@ export function memoryWorkspace(
   const watchers = new Set<WorkspaceChanged>();
 
   /**
+   * Nothing is written into a folder the student has not agreed to make a Workspace, which is
+   * the refusal the real adapter makes and in the order it makes it: before it looks at what
+   * the file holds. A double that asked in the other order would answer a save into a folder
+   * that is not a Workspace with a conflict.
+   */
+  const requireLayout = (): void => {
+    if (folders.length < WORKSPACE_LAYOUT.length) {
+      throw new Error("refusing to write: the Workspace layout does not exist yet");
+    }
+  };
+
+  /**
    * Storing a file, which both writes go through so that the layout check and the copy are
    * made in one place and cannot drift apart between them.
    */
   const writeFile = (ref: WorkspaceRef, data: unknown): void => {
     const at = key(ref);
-    // Refused before the layout exists, as the real adapter refuses it: nothing is written
-    // into a folder the student has not agreed to make a Workspace.
-    if (folders.length < WORKSPACE_LAYOUT.length) {
-      throw new Error("refusing to write: the Workspace layout does not exist yet");
-    }
+    requireLayout();
     files.set(at, { ref, data: stored(data) });
     writes.push(ref);
     changed();
@@ -138,8 +146,10 @@ export function memoryWorkspace(
     },
     async saveStateFile(ref: StateFileRef, save: StateFileSave): Promise<StateFileVersion> {
       // The name is refused before anything else looks at the file, as the real adapter
-      // refuses it before it builds a path.
+      // refuses it before it builds a path, and the layout before the revision, as the real
+      // adapter asks in that order too.
       const at = key(ref);
+      requireLayout();
       const found = files.get(at);
       const version = found === undefined ? undefined : revisionOf(found.data);
       if (version !== save.basedOn) {
