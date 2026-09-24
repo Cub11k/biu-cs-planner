@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { ClockPattern } from "./clock-pattern.ts";
 import { CLOCK_BODY, bodyCount, clockPatterns, regexLiterals } from "./clock-pattern.ts";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
@@ -42,7 +43,7 @@ const named = (path: string): string => relative(ROOT, path);
 
 const read = (path: string): string => readFileSync(path, "utf8");
 
-const everyClockPattern = (): ReturnType<typeof clockPatterns> =>
+const everyClockPattern = (): ClockPattern[] =>
   sourceFiles().flatMap((path) => clockPatterns(named(path), read(path)));
 
 describe("the clock patterns in this repository", () => {
@@ -66,7 +67,7 @@ describe("the clock patterns in this repository", () => {
   // The invariant, and the whole point of the file. Not "these five patterns are
   // identical" -- `CLOCK_RANGE` is deliberately none of anchored, single or unflagged --
   // but "every clock any of them reads, it reads through the one shared body".
-  it("builds every one of them from the one shared body", () => {
+  it("are each built from the one shared body", () => {
     const divergent = everyClockPattern()
       .filter((pattern) => pattern.strays.length > 0)
       .map(

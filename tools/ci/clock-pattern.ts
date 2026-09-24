@@ -15,6 +15,13 @@
  * than against a list of files: a sixth file that starts carrying a clock pattern is judged
  * exactly like the five that carry one today, without being named anywhere.
  *
+ * What it does not see is a clock pattern that is not a regex literal: one handed to
+ * `new RegExp` as a string, or concatenated from pieces. Every clock pattern in this
+ * repository is a literal, and extending the scan to string literals was measured -- it
+ * finds nothing more here and costs a false positive on `"[::1]:8900"`, a loopback address
+ * with a port, where a class holding a digit sits against digits. So the line is drawn at
+ * literals, and drawn here rather than left to be discovered.
+ *
  * Nothing here is executed, compiled or built from what it reads
  * ([ADR-0007](../../docs/adr/0007-requirements-are-interpreted-data.md)). Every pattern
  * below is a literal written out in this file, and source text is only ever searched and
@@ -33,7 +40,8 @@ export const CLOCK_BODY = String.raw`([01]\d|2[0-3]):[0-5]\d`;
 /**
  * A regex literal as it is written in source: a slash, a body that does not cross a line,
  * a closing slash, flags. The prefix is the set of characters a regex literal can legally
- * follow, which is what keeps `a / b / c` and a `//` comment from reading as one.
+ * follow, which keeps most divisions, and the two slashes that open a comment, from being
+ * read as one.
  *
  * Literal, and approximate on purpose. It is a text scan and not a parser, so it will
  * occasionally offer up something that is not a regex literal at all -- a pair of slashes
@@ -71,7 +79,10 @@ const DIGIT_AT_END = /\d$/;
 const CONSTRUCT_AT_START = /^(?:\\d|\[(?!\^)[^\]]*\d[^\]]*\])/;
 const DIGIT_AT_START = /^\d/;
 
-/** Everything grouping either side of a colon, taken off, so the matchers see the matching. */
+/**
+ * Everything grouping taken off one side of a colon, so the digit matchers are asked about
+ * what does the matching rather than about the bracket around it.
+ */
 const withoutGrouping = (side: string, grouping: RegExp): string => {
   let bare = side;
 
