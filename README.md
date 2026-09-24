@@ -38,13 +38,55 @@ and opens a browser.
 | `--workspace <path>` | the Workspace folder to use (default: the current directory) |
 | `--no-open` | print the URL but open no browser |
 | `--host <address>` | the address to bind; loopback only, because serving further out needs a password and there is none yet ([ADR-0004](docs/adr/0004-localhost-auth-bearer-token.md)) |
-| `--help` | the same list |
+| `--help` | the same list, and the `rotate-token` command below |
 
 If port 8900 is taken it uses the next free one and says so. Stop it with Ctrl-C.
 
+## If somebody else has seen your launch token
+
+The launch token is what stops anything else on your machine from reading your plan, and the
+URL printed above carries it — so it is in your terminal scrollback, in your browser history,
+and in any screenshot or pasted bug report that included either. If that has happened:
+
+```sh
+biu-cs-planner rotate-token
+```
+
+That writes a new token and prints where it went. **Stop the app with Ctrl-C if it is still
+running** — it read the old token when it started and goes on accepting it until it exits, so
+the rotation only takes effect when you restart.
+
+After that the old token is refused, and so is everything holding it: every bookmark you
+saved, and every tab still open on the planner. A tab that was already loaded goes on showing
+what it last read until you reload it or click something. Then it tells you to start the app
+from a terminal, and your picks vanish from the week, because the page cannot read them any
+more. They are safe on disk; the page simply cannot see them.
+
+Start the app again and open the address it prints. If it lands on port 8900 again, the tab you
+left open starts working on its own, because both tabs share the one stored token — you may
+need to click something for its screen to catch up. If port 8900 was taken and the app moved,
+the old tab is on a different address, will only ever say the app is unreachable, and is worth
+closing.
+
+The token is one file, in your user config directory and never in your Workspace, because a
+Workspace gets synced and committed:
+
+| Where | Path |
+| --- | --- |
+| Linux, and anywhere but Windows where `XDG_CONFIG_HOME` is set | `$XDG_CONFIG_HOME/biu-cs-planner/token`, or `~/.config/biu-cs-planner/token` |
+| macOS | `~/.config/biu-cs-planner/token` |
+| Windows | `%APPDATA%\biu-cs-planner\token` — `XDG_CONFIG_HOME` is not consulted here |
+
+Deleting that file does the same thing as the command: the next launch finds no token and
+writes a fresh one. The command is only the way to do it without going near a dotfile.
+
+Rotating is a terminal command and not a button in the page on purpose. A page that had your
+leaked token could otherwise use it to replace itself, and lock you out of your own planner.
+
 ## Your files, and removing it
 
-Everything it keeps is in the folder you started it in, in plain JSON:
+Everything it keeps for *you* is in the folder you started it in, in plain JSON — the launch
+token above is the app's own and lives elsewhere:
 
 | Path | Holds |
 | --- | --- |

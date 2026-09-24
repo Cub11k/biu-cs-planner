@@ -1,8 +1,16 @@
-import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Hono } from "hono";
 import { afterEach, beforeEach, expect, it } from "vitest";
-import { launchToken, launchUrl, userConfigDirectory } from "./token.ts";
+import { rotatedNotice } from "./cli.ts";
+import { onlyTheLauncher } from "./guard.ts";
+import {
+  launchToken,
+  launchUrl,
+  rotateLaunchToken,
+  userConfigDirectory,
+} from "./token.ts";
 
 /**
  * A copy of `TOKEN_PATTERN` in web/src/token.ts, which is what the page applies to the
@@ -132,4 +140,234 @@ it("prints a launch URL that carries the token in its fragment", async () => {
 
 it("prints the port the server actually ended up on", () => {
   expect(launchUrl(8901, "x")).toContain(":8901/");
+});
+
+/*
+ * Rotation — the escape hatch for a token somebody else has seen (issue #99). The token
+ * is stable for the life of the installation on purpose, so nothing expires it and the
+ * file being replaced is the whole of the revocation.
+ */
+
+it("gives a token that is not the old one, and the next launch uses the new one", async () => {
+  const before = await launchToken(config);
+
+  const rotation = await rotateLaunchToken(config);
+
+  expect(rotation.token).not.toBe(before);
+  expect(rotation.token).toMatch(WHAT_THE_PAGE_ACCEPTS);
+  expect(rotation.path).toBe(join(config, "token"));
+  // the point of the whole thing: the server started next picks up the new one
+  expect(await launchToken(config)).toBe(rotation.token);
+});
+
+it("rotates to something new every time, not to one second token", async () => {
+  await launchToken(config);
+
+  const first = await rotateLaunchToken(config);
+  const second = await rotateLaunchToken(config);
+
+  expect(second.token).not.toBe(first.token);
+});
+
+/**
+ * The acceptance criterion this ticket turns on, and the reason it is here rather than in
+ * guard.test.ts: the guard is built from whatever `launchToken` hands the launcher, so
+ * "the old token is refused" is a claim about the two files together, not about either.
+ *
+ * `guard.ts` is untouched by this change — its `timingSafeEqual` comparison was already
+ * right — and this test is what shows the rotation reaches it.
+ */
+it("is accepted by the guard the next launch builds, and the old token is refused", async () => {
+  const old = await launchToken(config);
+
+  const { token: rotated } = await rotateLaunchToken(config);
+
+  // exactly what bin.ts does at startup: read the stored token, guard with it
+  const app = new Hono();
+  app.use("/api/*", onlyTheLauncher({ token: await launchToken(config) }));
+  app.get("/api/thing", (c) => c.json({ read: true }));
+
+  const ask = (token: string) =>
+    app.request("http://localhost:8900/api/thing", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+  expect((await ask(rotated)).status).toBe(200);
+  // the bookmark, the screenshot and the pasted bug report all stop here
+  expect((await ask(old)).status).toBe(401);
+});
+
+it("says whether anything was invalidated, so the output can stop short of claiming it", async () => {
+  expect((await rotateLaunchToken(config)).replaced).toBe(false);
+  expect((await rotateLaunchToken(config)).replaced).toBe(true);
+});
+
+it("writes the rotated token as its owner's alone, inside a directory that is too", async () => {
+  const nested = join(config, "made", "by", "rotating");
+
+  await rotateLaunchToken(nested);
+
+  const file = (await stat(join(nested, "token"))).mode;
+  const folder = (await stat(nested)).mode;
+
+  // 0600 in a 0700 directory, asserted from both ends: nobody else has a bit, and the
+  // owner has the bits they need. Read as a mask rather than as an exact mode because an
+  // unusual umask may take an owner bit off, and 0600 is the ceiling here, not the floor
+  expect(file & 0o077).toBe(0);
+  expect(file & 0o600).toBe(0o600);
+  expect(folder & 0o077).toBe(0);
+  expect(folder & 0o700).toBe(0o700);
+});
+
+it("leaves the file holding a token and nothing else, and no temporary beside it", async () => {
+  const { token } = await rotateLaunchToken(config);
+
+  // read back through the same door the next launch uses: a file the pattern rejected
+  // would come back as `undefined` and be silently replaced, hiding the failure
+  expect(await readFile(join(config, "token"), "utf8")).toBe(`${token}\n`);
+  expect(await readdir(config)).toEqual(["token"]);
+});
+
+it("replaces a token file that no longer holds a usable token, rather than refusing to", async () => {
+  await writeFile(join(config, "token"), "this is not a token\n");
+
+  const { token, replaced } = await rotateLaunchToken(config);
+
+  expect(replaced).toBe(true);
+  expect(await launchToken(config)).toBe(token);
+});
+
+it.skipIf(!unreadableFilesArePossible)(
+  "rotates a token file nobody may read, which is the state it is the cure for",
+  async () => {
+    const path = join(config, "token");
+    await launchToken(config);
+    await chmod(path, 0o000);
+
+    // `launchToken` will not launch from this, and a student with no rotate command would
+    // be left editing the dotfile by hand — the gap issue #99 is about
+    await expect(launchToken(config)).rejects.toThrow();
+
+    const { token, replaced } = await rotateLaunchToken(config);
+
+    expect(replaced).toBe(true);
+    expect(await launchToken(config)).toBe(token);
+  },
+);
+
+/**
+ * The "no half-written file" criterion, asked the only way a test can ask it: break the
+ * write and look at what survived.
+ *
+ * A rotation that wrote over the token file directly would truncate it first, so a write
+ * that failed part way could leave 40 of a token's 43 characters — a string
+ * `TOKEN_PATTERN` still accepts, since its floor is 40 and it cannot tell a prefix from a
+ * token, and which the next launch would therefore trust for the life of the installation.
+ * The temporary-and-rename means a failure leaves the old token whole instead.
+ */
+it.skipIf(!unreadableFilesArePossible)(
+  "leaves the old token whole when the write fails, rather than half a token",
+  async () => {
+    const before = await launchToken(config);
+    await chmod(config, 0o500); // readable and searchable, not writable
+
+    try {
+      await expect(rotateLaunchToken(config)).rejects.toThrow();
+    } finally {
+      await chmod(config, 0o700);
+    }
+
+    expect(await launchToken(config)).toBe(before);
+    expect(await readdir(config)).toEqual(["token"]);
+  },
+);
+
+it("never lets the new token into what gets printed", async () => {
+  const rotation = await rotateLaunchToken(config);
+
+  // the notice takes the path and the fact, so the secret has no route to the terminal
+  // that the leaked URL already is
+  expect(rotatedNotice(rotation)).not.toContain(rotation.token);
+  expect(rotatedNotice(rotation)).toContain(rotation.path);
+});
+
+/**
+ * The other half of the temporary-and-rename: a rotation that fails *after* the temporary
+ * is written must take it away again, or the config directory accumulates a file holding a
+ * token that is not the token — readable by nobody else, but still a secret lying around
+ * for no reason.
+ *
+ * A directory where the token file belongs is the state that reaches it: the write
+ * succeeds and the rename cannot.
+ */
+it("takes its temporary file away again when the rename cannot happen", async () => {
+  await mkdir(join(config, "token"));
+
+  await expect(rotateLaunchToken(config)).rejects.toThrow();
+
+  expect(await readdir(config)).toEqual(["token"]);
+});
+
+/**
+ * A config directory nobody may even look inside. Reported rather than swallowed: reading
+ * "there is no token file" out of a permission error would make `replaced` say nothing was
+ * invalidated, in the one case where the truth is that nothing could be seen.
+ */
+it.skipIf(!unreadableFilesArePossible)(
+  "reports a config directory it cannot look inside, rather than guessing at it",
+  async () => {
+    await launchToken(config);
+    await chmod(config, 0o000);
+
+    try {
+      await expect(rotateLaunchToken(config)).rejects.toThrow();
+    } finally {
+      await chmod(config, 0o700);
+    }
+  },
+);
+
+// inode numbers mean nothing useful on Windows, where `ino` is often 0
+const inodesAreMeaningful = process.platform !== "win32";
+
+/**
+ * The atomicity claim, pinned by the one thing a test can observe about it after the fact:
+ * a rename replaces the directory entry, so the token file is a **different file** than it
+ * was. Any implementation that opens the existing file and writes through it — `writeFile`
+ * over the target, or a copy onto it — keeps the inode, and keeps the window in which the
+ * file on disk holds a prefix of a token rather than a token.
+ *
+ * Asserting "no half-written file was left" directly would need a crash between two
+ * syscalls. This asserts the property that makes the half-written file impossible instead,
+ * and it is the assertion that fails for a rotation which is merely careful rather than
+ * atomic.
+ */
+it.skipIf(!inodesAreMeaningful)(
+  "replaces the token file rather than writing through the one that is there",
+  async () => {
+    await launchToken(config);
+    const before = await stat(join(config, "token"));
+
+    await rotateLaunchToken(config);
+
+    const after = await stat(join(config, "token"));
+    expect(after.ino).not.toBe(before.ino);
+  },
+);
+
+/**
+ * A rotation killed between the write and the rename leaves a temporary behind holding a
+ * token that never became the token. `launchToken` reads `token` and no other name, so
+ * nothing else would ever remove it: a secret would sit in the config directory for good.
+ */
+it("sweeps a temporary left behind by a rotation that never finished", async () => {
+  await launchToken(config);
+  // what a killed run leaves: the name rotation writes through, from some other pid
+  await writeFile(join(config, ".tmp-999999-token"), "left-behind-by-a-killed-run\n", {
+    mode: 0o600,
+  });
+
+  await rotateLaunchToken(config);
+
+  expect(await readdir(config)).toEqual(["token"]);
 });

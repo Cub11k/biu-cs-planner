@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { DEFAULT_PORT, LOOPBACK_HOST } from "./config.ts";
+import type { Rotation } from "./token.ts";
 
 /**
  * What `npx biu-cs-planner` was asked to do.
@@ -17,17 +18,33 @@ export type Launch = {
   open: boolean;
 };
 
+/**
+ * `rotate-token`: replace the launch token and stop, without starting a server.
+ *
+ * A command rather than a flag on the launch, because it is a different job and not a
+ * variation on one: it starts nothing, opens nothing, and touches no Workspace, so every
+ * launch option is meaningless beside it. A `--rotate-token` flag would have to answer
+ * what `--rotate-token --workspace ~/degree` means, and any answer to that is a surprise.
+ * A command is also the shape the next one already has — `docs/design.md` has
+ * `biu-cs-planner url` waiting, and two commands in a flat namespace need no nesting.
+ */
+export type RotateToken = { kind: "rotate-token" };
+
 /** `--help`: print and exit 0. */
 export type Help = { kind: "help"; text: string };
 
 /** Something the CLI will not do. Printed to stderr, exit 1. */
 export type Refusal = { kind: "refusal"; message: string };
 
-export type Invocation = Launch | Help | Refusal;
+export type Invocation = Launch | RotateToken | Help | Refusal;
+
+/** The commands, as opposed to the options. Recognised as the first argument only. */
+const COMMANDS = new Set(["rotate-token"]);
 
 export const USAGE = `biu-cs-planner — a local course planner for Bar-Ilan CS students
 
 Usage: biu-cs-planner [options]
+       biu-cs-planner rotate-token
 
 Options:
   --workspace <path>  the folder holding your Catalogs, Requirements Files and
@@ -35,6 +52,20 @@ Options:
   --no-open           print the URL but do not open a browser
   --host <address>    the address to bind (default: ${LOOPBACK_HOST})
   --help              show this
+
+Commands:
+  rotate-token        replace the launch token, for when somebody else has seen it — it
+                      is printed in the URL, so a pasted bug report or a screenshot is
+                      enough. Stop the app first: a server that is up read the old token
+                      when it started and goes on accepting it until it exits. After the
+                      restart every bookmark and every open tab stops working, which is
+                      the point of it and not a side effect.
+
+                      The token is a file in your user config directory, never in your
+                      Workspace: $XDG_CONFIG_HOME or ~/.config/biu-cs-planner/token, and
+                      %APPDATA%\\biu-cs-planner\\token on Windows (where $XDG_CONFIG_HOME
+                      is not consulted). rotate-token prints the exact path; deleting that
+                      file by hand does the same thing.
 
 The server runs in the foreground on port ${DEFAULT_PORT}; if that port is taken it uses
 the next free one and says so. Stop it with Ctrl-C.`;
@@ -87,6 +118,9 @@ export function parseArguments(
   argv: readonly string[],
   cwd: string = process.cwd(),
 ): Invocation {
+  const [first, ...rest] = argv;
+  if (first !== undefined && COMMANDS.has(first)) return command(first, rest);
+
   let workspace: string | undefined;
   let host: string = LOOPBACK_HOST;
   let open = true;
@@ -120,6 +154,16 @@ export function parseArguments(
       }
 
       default:
+        // a command that arrived somewhere other than first is a word the parser knows,
+        // so saying "unknown option" about it would be the one wrong thing to say
+        if (COMMANDS.has(argument)) {
+          return {
+            kind: "refusal",
+            message:
+              `biu-cs-planner: ${argument} is a command, not an option.\n` +
+              `Put it first and on its own: biu-cs-planner ${argument}`,
+          };
+        }
         return {
           kind: "refusal",
           message: `biu-cs-planner: unknown option ${argument}.\n\n${USAGE}`,
@@ -138,4 +182,89 @@ export function parseArguments(
 
 function missingValue(flag: string, placeholder: string): Refusal {
   return { kind: "refusal", message: `biu-cs-planner: ${flag} needs ${placeholder}.` };
+}
+
+/**
+ * A command takes no options. `--help` after one is still help, because that is where
+ * somebody who has just read the word `rotate-token` in the usage text will look next.
+ *
+ * Every other argument is refused rather than ignored, and the refusal says why the
+ * launch options in particular do not apply: the token is not in the Workspace and
+ * rotating starts no server, so `--workspace` and `--host` would each be a silent lie
+ * about what the command had just done.
+ */
+function command(name: string, rest: readonly string[]): Invocation {
+  if (rest.some((argument) => argument === "--help" || argument === "-h")) {
+    return { kind: "help", text: USAGE };
+  }
+
+  const extra = rest[0];
+  if (extra !== undefined) {
+    return {
+      kind: "refusal",
+      message:
+        `biu-cs-planner: ${name} takes no options, and got ${extra}.\n` +
+        "The launch token is in your user config directory, not in a Workspace, and " +
+        "rotating it starts no server.",
+    };
+  }
+
+  return { kind: "rotate-token" };
+}
+
+/**
+ * What the terminal says after a rotation.
+ *
+ * It does not print the new token, and it prints no URL. Two reasons, and the second is
+ * the load-bearing one:
+ *
+ *   - there is no port yet. Nothing is listening, and the next launch takes the default
+ *     port or the next free one, so any URL printed here would be a guess.
+ *   - the printed URL is how the old token got out in the first place. Reprinting a fresh
+ *     secret into the same scrollback, right after the student came here because that
+ *     scrollback was shared, would undo the rotation it is reporting.
+ *
+ * The next launch prints the URL, as it always has. This says where the token is and what
+ * has just stopped working. It describes what the page will show rather than quoting it:
+ * that string is a translation (`web/src/i18n/strings.ts`), so a Hebrew screen would not
+ * match an English quotation here, and nothing would fail if it were reworded.
+ *
+ * **It also says to stop a server that is still running**, and that is not politeness. A
+ * running server read the token once at startup and holds it in memory; `bin.ts` builds the
+ * guard from that string and never looks at the file again. So the old token keeps working
+ * against that process until it exits, and a notice that said the old token was refused
+ * "from now on" would be telling a student they were safe while the leak was still open.
+ * The rotation is only as good as the restart, and the output has to say so.
+ *
+ * `Omit<Rotation, "token">` rather than `Rotation`, so the omission is in the type and not
+ * merely in the destructuring. A caller may still hand over a whole `Rotation` — TypeScript
+ * does not check excess properties on a variable, and `bin.ts` relies on nothing else — but
+ * no edit to this function can reach the token, because the parameter it is declared with
+ * does not have one.
+ */
+export function rotatedNotice({ path, replaced }: Omit<Rotation, "token">): string {
+  const first = replaced
+    ? "biu-cs-planner: the launch token has been replaced."
+    : "biu-cs-planner: a launch token has been written.";
+
+  const consequence = replaced
+    ? [
+        "Stop the app with Ctrl-C if it is still running: it read the old token at startup",
+        "and goes on accepting it until it exits.",
+        "",
+        "The old token is then refused, and so is everything holding it — every bookmark you",
+        "saved, and every tab still open on the planner, which will show none of your picks",
+        "and send you back here until you open the new address.",
+      ].join("\n")
+    : "There was none here before, so nothing that used to work has stopped.";
+
+  return [
+    first,
+    `  ${path}`,
+    "",
+    consequence,
+    "",
+    "Start it again to get the new address:",
+    "  biu-cs-planner",
+  ].join("\n");
 }
