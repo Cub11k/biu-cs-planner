@@ -93,6 +93,31 @@ function hasDangerousKey(value: unknown, depth = 0): boolean {
 const pickSlotSchema = z.object({ courseNumber: z.string(), lessonType: z.string() });
 
 /**
+ * Which revision of the State File a save was based on: the one the page was showing when
+ * the student clicked (docs/design.md, "External edits"). The page holds it because two
+ * views of one plan open side by side is a real way of working — and a guard that lived only
+ * on the server could not tell the second tab's stale save from the first tab's fresh one.
+ *
+ * **Absent means the save was based on there being no file**, which is the faithful spelling
+ * of the `StateFileVersion | undefined` the domain takes: JSON has no `undefined`, and a
+ * `null` synonym for the same claim would be a second way to say one thing. It is therefore
+ * optional in the schema and not optional in effect — a client that leaves it out claims
+ * there is no file, so it can create one and can never overwrite one. A forgotten revision
+ * fails closed, which is the only direction this may fail in.
+ *
+ * Opaque here, as everywhere: it is compared and handed back, never parsed. No length or
+ * shape is asserted beyond its being a string, because what a revision *is* belongs to the
+ * Workspace adapter and the API must not grow a second opinion about it.
+ */
+const basedOnSchema = z.string().optional();
+
+/** A Pick, and the revision the page that sends it was based on. */
+const savedPickSchema = z.object({ ...groupPickSchema.shape, basedOn: basedOnSchema });
+
+/** The slot to clear, and the revision the page that sends it was based on. */
+const savedSlotSchema = z.object({ ...pickSlotSchema.shape, basedOn: basedOnSchema });
+
+/**
  * A request body, read the way the import route reads one: JSON, no dangerous key, then
  * the schema for the shape the route actually takes. It hands back the **name** of what
  * was wrong rather than a response, so the route says `c.json(...)` itself and the
@@ -270,7 +295,11 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
         return c.json({ reason: result.reason, warnings: result.warnings }, 409);
       }
 
-      return c.json({ ...result.view, warnings: result.warnings });
+      // `version` is which revision of the State File these Picks are, and what a save of an
+      // edit made on them has to be based on. Absent when there is no file yet, which is the
+      // claim a first save carries. It says nothing about where the file is (ADR-0002): it is
+      // a hash of its content, and a caller can do nothing with it but hand it back.
+      return c.json({ ...result.view, version: result.version, warnings: result.warnings });
     })
 
     /**
@@ -285,15 +314,19 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
       const ref = timetableRef(c);
       if (!ref.ok) return c.json({ error: ref.error }, 400);
 
-      const body = await bodyAs(c, groupPickSchema, "not-a-pick");
+      const body = await bodyAs(c, savedPickSchema, "not-a-pick");
       if (!body.ok) return c.json({ error: body.error }, 400);
 
-      const result = await pickGroup(workspace, ref.at, body.value);
+      const { basedOn, ...pick } = body.value;
+      const result = await pickGroup(workspace, ref.at, pick, { basedOn });
       if (result.kind === "refused") {
+        // `state-file-changed` among the reasons, and a 409 is what it always was: the
+        // student's request is well formed and conflicts with the state of the file, which
+        // is what this status is for. The page reloads and says so (#90).
         return c.json({ reason: result.reason, warnings: result.warnings }, 409);
       }
 
-      return c.json({ ...result.view, warnings: result.warnings });
+      return c.json({ ...result.view, version: result.version, warnings: result.warnings });
     })
 
     /** Removes the Pick filling one Lesson Type of one Offering. */
@@ -301,15 +334,16 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
       const ref = timetableRef(c);
       if (!ref.ok) return c.json({ error: ref.error }, 400);
 
-      const body = await bodyAs(c, pickSlotSchema, "not-a-pick-slot");
+      const body = await bodyAs(c, savedSlotSchema, "not-a-pick-slot");
       if (!body.ok) return c.json({ error: body.error }, 400);
 
-      const result = await removeGroupPick(workspace, ref.at, body.value);
+      const { basedOn, ...slot } = body.value;
+      const result = await removeGroupPick(workspace, ref.at, slot, { basedOn });
       if (result.kind === "refused") {
         return c.json({ reason: result.reason, warnings: result.warnings }, 409);
       }
 
-      return c.json({ ...result.view, warnings: result.warnings });
+      return c.json({ ...result.view, version: result.version, warnings: result.warnings });
     });
 
   return api;

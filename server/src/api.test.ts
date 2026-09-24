@@ -391,6 +391,21 @@ const remove = (path: string, body: unknown) =>
     body: JSON.stringify(body),
   });
 
+/**
+ * Which revision of the State File the page is showing, read off the route that serves the
+ * week. Every save carries one (docs/design.md, "External edits"), so every save below asks
+ * for it the way the page does rather than assuming what it is.
+ */
+const currentVersion = async (): Promise<string | undefined> =>
+  ((await (await get(TIMETABLE)).json()) as { version?: string }).version;
+
+/** A save made the way the page makes one: on the revision the last answer carried. */
+const save = async (path: string, body: object) =>
+  post(path, { ...body, basedOn: await currentVersion() });
+
+const unsave = async (path: string, body: object) =>
+  remove(path, { ...body, basedOn: await currentVersion() });
+
 /** A new server over the same folder: nothing of the old one's memory survives it. */
 const restart = (): void => {
   api = createApi({
@@ -431,7 +446,7 @@ it("replaces the Pick for a Lesson Type already picked", async () => {
   await post("/api/workspace", {});
   await post(PICKS, LECTURE);
 
-  const again = await post(PICKS, OTHER_LECTURE);
+  const again = await save(PICKS, OTHER_LECTURE);
 
   await expect(again.json()).resolves.toMatchObject({ picks: [OTHER_LECTURE] });
 });
@@ -440,7 +455,7 @@ it("records a Pick that Clashes and reports the Clash, refusing nothing", async 
   await post("/api/workspace", {});
   await post(PICKS, LECTURE);
 
-  const clashing = await post(PICKS, CLASHING);
+  const clashing = await save(PICKS, CLASHING);
 
   expect(clashing.status).toBe(200);
   const body = (await clashing.json()) as { picks: unknown[]; clashes: Array<{ kind: string }> };
@@ -454,13 +469,87 @@ it("removes a Pick, and says so again when there is none left to remove", async 
   await post(PICKS, LECTURE);
 
   const slot = { courseNumber: LECTURE.courseNumber, lessonType: LECTURE.lessonType };
-  const removed = await remove(PICKS, slot);
+  const removed = await unsave(PICKS, slot);
   expect(removed.status).toBe(200);
   await expect(removed.json()).resolves.toMatchObject({ picks: [] });
 
-  const again = await remove(PICKS, slot);
+  const again = await unsave(PICKS, slot);
   expect(again.status).toBe(200);
   await expect(again.json()).resolves.toMatchObject({ picks: [] });
+});
+
+/**
+ * The external-edit guard, over HTTP (#90). `docs/design.md`, "External edits": each save
+ * carries the file version it was based on, and the server refuses the overwrite when the
+ * file changed on disk meanwhile.
+ */
+it("serves the revision a page has to hand back, and takes it on the save", async () => {
+  await post("/api/workspace", {});
+
+  const empty = (await (await get(TIMETABLE)).json()) as { version?: string };
+  // there is no file yet, so there is no revision: a first save is based on its absence
+  expect(empty.version).toBeUndefined();
+
+  const picked = await post(PICKS, { ...LECTURE, basedOn: undefined });
+  expect(picked.status).toBe(200);
+  const saved = (await picked.json()) as { version?: string };
+  // the answer carries the revision it wrote, so the next click needs no re-read
+  expect(saved.version).toMatch(/^[0-9a-f]{64}$/);
+  expect(saved.version).toBe(await currentVersion());
+
+  const second = await post(PICKS, { ...OTHER_LECTURE, basedOn: saved.version });
+  expect(second.status).toBe(200);
+});
+
+it("refuses a save based on a revision the file no longer holds", async () => {
+  await post("/api/workspace", {});
+  await post(PICKS, LECTURE);
+  const stale = await currentVersion();
+  // Dropbox, git, an editor, or the other tab
+  const file = join(root, "me.state.json");
+  const fromOutside = await readFile(file, "utf8");
+  await writeFile(file, fromOutside.replace('"01"', '"09"'), "utf8");
+
+  const refused = await post(PICKS, { ...CLASHING, basedOn: stale });
+
+  expect(refused.status).toBe(409);
+  await expect(refused.json()).resolves.toEqual({ reason: "state-file-changed", warnings: [] });
+  // the other writer's Pick is the one in the file: nothing of theirs was overwritten
+  await expect((await get(TIMETABLE)).json()).resolves.toMatchObject({
+    picks: [{ ...LECTURE, groupNumber: "09" }],
+  });
+});
+
+/**
+ * A save that names no revision is the claim that there is no file, so it can create one and
+ * can never overwrite one. That is what makes a client which forgets to send the revision
+ * fail closed, which is the only direction this may fail in.
+ */
+it("refuses a save that names no revision when a State File is already there", async () => {
+  await post("/api/workspace", {});
+  await post(PICKS, LECTURE);
+
+  const forgetful = await post(PICKS, CLASHING);
+
+  expect(forgetful.status).toBe(409);
+  await expect(forgetful.json()).resolves.toMatchObject({ reason: "state-file-changed" });
+  await expect((await get(TIMETABLE)).json()).resolves.toMatchObject({ picks: [LECTURE] });
+});
+
+/** Removing a Pick is a save, so it is guarded identically rather than nearly so. */
+it("guards removing a Pick exactly as it guards recording one", async () => {
+  await post("/api/workspace", {});
+  await post(PICKS, LECTURE);
+
+  const refused = await remove(PICKS, {
+    courseNumber: LECTURE.courseNumber,
+    lessonType: LECTURE.lessonType,
+    basedOn: "a revision this file never held",
+  });
+
+  expect(refused.status).toBe(409);
+  await expect(refused.json()).resolves.toMatchObject({ reason: "state-file-changed" });
+  await expect((await get(TIMETABLE)).json()).resolves.toMatchObject({ picks: [LECTURE] });
 });
 
 /**

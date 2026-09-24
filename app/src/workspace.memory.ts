@@ -1,6 +1,10 @@
+import type { StateFileSave, StateFileVersion } from "@biu-cs-planner/core";
 import {
   requireStateFileName,
+  StateFileChangedError,
   WORKSPACE_LAYOUT,
+  type StateFileContents,
+  type StateFileRef,
   type Workspace,
   type WorkspaceChanged,
   type WorkspaceFolder,
@@ -58,6 +62,20 @@ const key = (ref: WorkspaceRef): string => {
  */
 const stored = (data: unknown): unknown => JSON.parse(JSON.stringify(data)) as unknown;
 
+/**
+ * The double's stand-in for a revision, and it is the stored text itself.
+ *
+ * The real adapter hashes the bytes it read (`server/src/workspace.fs.ts`), and it hashes
+ * rather than remembers because the version has to be small enough for a browser to hold
+ * and hand back on the next save. This one has no browser and no bytes, so it can afford
+ * the limit case of the same idea: a revision that *is* the content answers "is the file
+ * still what I read?" with no collisions at all, which is the property every test here
+ * turns on. Nothing may read the string — it is opaque to everything but a comparison, as
+ * `StateFileVersion` says — and a double whose versions were a counter would have hidden
+ * the two-tab lost update this guard exists for.
+ */
+const revisionOf = (data: unknown): StateFileVersion => JSON.stringify(data) ?? "";
+
 export function memoryWorkspace(
   options: { created?: boolean } = {},
 ): MemoryWorkspace {
@@ -65,6 +83,30 @@ export function memoryWorkspace(
   const writes: WorkspaceRef[] = [];
   let folders: WorkspaceFolder[] = options.created ? [...WORKSPACE_LAYOUT] : [];
   const watchers = new Set<WorkspaceChanged>();
+
+  /**
+   * Nothing is written into a folder the student has not agreed to make a Workspace, which is
+   * the refusal the real adapter makes and in the order it makes it: before it looks at what
+   * the file holds. A double that asked in the other order would answer a save into a folder
+   * that is not a Workspace with a conflict.
+   */
+  const requireLayout = (): void => {
+    if (folders.length < WORKSPACE_LAYOUT.length) {
+      throw new Error("refusing to write: the Workspace layout does not exist yet");
+    }
+  };
+
+  /**
+   * Storing a file, which both writes go through so that the layout check and the copy are
+   * made in one place and cannot drift apart between them.
+   */
+  const writeFile = (ref: WorkspaceRef, data: unknown): void => {
+    const at = key(ref);
+    requireLayout();
+    files.set(at, { ref, data: stored(data) });
+    writes.push(ref);
+    changed();
+  };
 
   /**
    * Every change to the folder, whoever made it. A real watcher cannot tell the app's own
@@ -96,15 +138,25 @@ export function memoryWorkspace(
       return files.get(key(ref))?.data;
     },
     async write(ref, data): Promise<void> {
+      writeFile(ref, data);
+    },
+    async readStateFile(ref: StateFileRef): Promise<StateFileContents | undefined> {
+      const held = files.get(key(ref));
+      return held === undefined ? undefined : { data: held.data, version: revisionOf(held.data) };
+    },
+    async saveStateFile(ref: StateFileRef, save: StateFileSave): Promise<StateFileVersion> {
+      // The name is refused before anything else looks at the file, as the real adapter
+      // refuses it before it builds a path, and the layout before the revision, as the real
+      // adapter asks in that order too.
       const at = key(ref);
-      // Refused before the layout exists, as the real adapter refuses it: nothing is written
-      // into a folder the student has not agreed to make a Workspace.
-      if (folders.length < WORKSPACE_LAYOUT.length) {
-        throw new Error("refusing to write: the Workspace layout does not exist yet");
+      requireLayout();
+      const found = files.get(at);
+      const version = found === undefined ? undefined : revisionOf(found.data);
+      if (version !== save.basedOn) {
+        throw new StateFileChangedError(ref.name, { basedOn: save.basedOn, found: version });
       }
-      files.set(at, { ref, data: stored(data) });
-      writes.push(ref);
-      changed();
+      writeFile(ref, save.json);
+      return revisionOf(stored(save.json));
     },
     async watch(onChange): Promise<WorkspaceWatcher> {
       watchers.add(onChange);

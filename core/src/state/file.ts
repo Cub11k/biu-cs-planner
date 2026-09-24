@@ -405,6 +405,13 @@ export class StateFileUnwritableError extends Error {
  * performs no I/O. It is neither the `schemaVersion` a file records nor the burst count
  * `watchWorkspace` serves, both of which are versions of something else (`app/src/changes.ts`
  * says the same thing from the other side).
+ *
+ * What fills it, decided by #90 and stated here only so nothing has to guess: the Workspace
+ * adapter hashes the file's bytes as it reads them (`server/src/workspace.fs.ts`). That is
+ * outside this module on purpose, and it is also why hashing could not have been done here —
+ * `readStateFile` receives already-parsed JSON, so a hash taken in `core` would be a hash of
+ * the document this reader *repaired*, and blind to an external edit that only damaged an
+ * entry it drops.
  */
 export type StateFileVersion = string;
 
@@ -412,9 +419,9 @@ export type StateFileVersion = string;
  * A save: the JSON to write, and the version of the file it was based on. They are produced
  * together so that no caller has to remember to ask for the version — `write` the JSON alone
  * and the external-edit guard has nothing to check, which is the overwrite it exists to refuse
- * (ADR-0013). Produced together and not yet *enforced* together: `Workspace.write(ref, data)`
- * takes no version, so until the guard ticket gives the port one, a caller can still drop
- * `basedOn` on the floor and the compiler will not mind.
+ * (ADR-0013). And they are *consumed* together too, since #90: the Workspace port takes this
+ * whole value (`Workspace.saveStateFile` in `app/src/workspace.ts`), so there is no way to
+ * hand a State File's content to a Workspace without the revision it was based on.
  */
 export type StateFileSave = {
   /** What a `Workspace` writes. Plain JSON values, detached from the State it came from. */
@@ -430,8 +437,11 @@ export type StateFileSave = {
  *
  * **It takes the version the save is based on** (ADR-0013: the save path is the undo path, so
  * an undo is an ordinary guarded save and needs to carry a version exactly as a first-hand
- * edit does). Enforcing the refusal is a later ticket; this signature is what lets it happen
- * at all, and there is deliberately no second way to produce a State File's JSON.
+ * edit does), and there is deliberately no second way to produce a State File's JSON. The
+ * refusal itself is made where the file is — `saveStateFile` in the Workspace port, and both
+ * of its adapters — because deciding whether the file is still the revision this was based on
+ * means reading the file, which this module cannot do. `undefined` is the claim that the file
+ * does not exist, and is refused when it does rather than being a way past the guard.
  *
  * The version *in* the file is the one this build reads, never the one the value arrived
  * carrying: a file that migrated forward on the way in is written back at the current

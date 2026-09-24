@@ -1,7 +1,13 @@
 import { parseStateFile, type GroupPick, type State } from "@biu-cs-planner/core";
 import { expect, it } from "vitest";
-import type { StateEdit } from "./edit.ts";
-import { DEFAULT_STATE_FILE, pickGroup, readTimetable, removeGroupPick } from "./picks.ts";
+import type { EditHistory, StateEdit } from "./edit.ts";
+import {
+  DEFAULT_STATE_FILE,
+  pickGroup,
+  readTimetable,
+  removeGroupPick,
+  type TimetableRef,
+} from "./picks.ts";
 import { memoryWorkspace, type MemoryWorkspace } from "./workspace.memory.ts";
 
 /**
@@ -33,13 +39,41 @@ const ready = (): MemoryWorkspace => memoryWorkspace({ created: true });
 
 /** The State File as it actually sits in the Workspace, read the way the app reads it. */
 async function stored(workspace: MemoryWorkspace): Promise<State | undefined> {
-  return parseStateFile(await workspace.read(REF)).state;
+  return parseStateFile((await workspace.readStateFile(REF))?.data).state;
 }
+
+/**
+ * Picking the way a page picks: on the revision the last read served (docs/design.md,
+ * "External edits"). Spelled once here so that each test below reads as what it is about
+ * rather than about revisions — that the revision is *enforced* is `edit.test.ts`, and that
+ * a real file's revision is its content is `server/src/workspace.fs.test.ts`.
+ */
+async function basedOnNow(
+  workspace: MemoryWorkspace,
+  at: TimetableRef,
+): Promise<{ basedOn: string | undefined }> {
+  const read = await readTimetable(workspace, at);
+  return { basedOn: read.kind === "served" ? read.version : undefined };
+}
+
+const pick = async (
+  workspace: MemoryWorkspace,
+  at: TimetableRef,
+  group: GroupPick,
+  options: { history?: EditHistory } = {},
+) => pickGroup(workspace, at, group, { ...(await basedOnNow(workspace, at)), ...options });
+
+const unpick = async (
+  workspace: MemoryWorkspace,
+  at: TimetableRef,
+  slot: { courseNumber: string; lessonType: string },
+  options: { history?: EditHistory } = {},
+) => removeGroupPick(workspace, at, slot, { ...(await basedOnNow(workspace, at)), ...options });
 
 it("records a Pick in a State File that does not exist yet", async () => {
   const workspace = ready();
 
-  const result = await pickGroup(workspace, FALL_2027, LECTURE);
+  const result = await pick(workspace, FALL_2027, LECTURE);
 
   expect(result).toMatchObject({ kind: "served", view: { picks: [LECTURE], clashes: [] } });
   expect(workspace.written()).toEqual([REF]);
@@ -50,7 +84,7 @@ it("records a Pick in a State File that does not exist yet", async () => {
 
 it("keeps the Pick on disk, so a reader that never saw the edit still finds it", async () => {
   const workspace = ready();
-  await pickGroup(workspace, FALL_2027, LECTURE);
+  await pick(workspace, FALL_2027, LECTURE);
 
   // a second, ignorant read: nothing of the first call is in memory here
   const read = await readTimetable(workspace, FALL_2027);
@@ -60,18 +94,18 @@ it("keeps the Pick on disk, so a reader that never saw the edit still finds it",
 
 it("replaces the Pick for a Lesson Type already picked", async () => {
   const workspace = ready();
-  await pickGroup(workspace, FALL_2027, LECTURE);
+  await pick(workspace, FALL_2027, LECTURE);
 
-  const result = await pickGroup(workspace, FALL_2027, OTHER_LECTURE);
+  const result = await pick(workspace, FALL_2027, OTHER_LECTURE);
 
   expect(result).toMatchObject({ kind: "served", view: { picks: [OTHER_LECTURE] } });
 });
 
 it("records a Pick that Clashes and reports the Clash", async () => {
   const workspace = ready();
-  await pickGroup(workspace, FALL_2027, LECTURE);
+  await pick(workspace, FALL_2027, LECTURE);
 
-  const result = await pickGroup(workspace, FALL_2027, CLASHING);
+  const result = await pick(workspace, FALL_2027, CLASHING);
 
   // nothing is refused: both Picks are in the file and the Clash is a Warning on top
   expect(result.kind).toBe("served");
@@ -83,17 +117,17 @@ it("records a Pick that Clashes and reports the Clash", async () => {
 
 it("removes a Pick, and writes nothing when there is none to remove", async () => {
   const workspace = ready();
-  await pickGroup(workspace, FALL_2027, LECTURE);
+  await pick(workspace, FALL_2027, LECTURE);
   const writesAfterPicking = workspace.written().length;
 
-  const removed = await removeGroupPick(workspace, FALL_2027, {
+  const removed = await unpick(workspace, FALL_2027, {
     courseNumber: "89-110",
     lessonType: "הרצאה",
   });
   expect(removed).toMatchObject({ kind: "served", view: { picks: [] } });
   expect(workspace.written().length).toBe(writesAfterPicking + 1);
 
-  const again = await removeGroupPick(workspace, FALL_2027, {
+  const again = await unpick(workspace, FALL_2027, {
     courseNumber: "89-110",
     lessonType: "הרצאה",
   });
@@ -118,7 +152,7 @@ it("refuses to write over a State File it could not read, rather than losing it"
   // this build's to overwrite (docs/design.md, "Storage")
   workspace.seed(REF, { schemaVersion: 99 });
 
-  const picked = await pickGroup(workspace, FALL_2027, LECTURE);
+  const picked = await pick(workspace, FALL_2027, LECTURE);
 
   expect(picked).toMatchObject({
     kind: "refused",
@@ -126,7 +160,7 @@ it("refuses to write over a State File it could not read, rather than losing it"
     warnings: [{ kind: "schema-version-too-new", found: 99 }],
   });
   expect(workspace.written()).toEqual([]);
-  expect(await workspace.read(REF)).toEqual({ schemaVersion: 99 });
+  expect((await workspace.readStateFile(REF))?.data).toEqual({ schemaVersion: 99 });
 });
 
 it("hands the previous value and the edit's label to the undo history", async () => {
@@ -134,9 +168,9 @@ it("hands the previous value and the edit's label to the undo history", async ()
   const history: StateEdit[] = [];
   const into = { push: (edit: StateEdit) => void history.push(edit) };
 
-  await pickGroup(workspace, FALL_2027, LECTURE, { history: into });
-  await pickGroup(workspace, FALL_2027, CLASHING, { history: into });
-  await removeGroupPick(
+  await pick(workspace, FALL_2027, LECTURE, { history: into });
+  await pick(workspace, FALL_2027, CLASHING, { history: into });
+  await unpick(
     workspace,
     FALL_2027,
     { courseNumber: "89-210", lessonType: "הרצאה" },
@@ -157,9 +191,9 @@ it("hands the previous value and the edit's label to the undo history", async ()
 
 it("leaves an untouched Variant alone when another one is edited", async () => {
   const workspace = ready();
-  await pickGroup(workspace, FALL_2027, LECTURE);
+  await pick(workspace, FALL_2027, LECTURE);
 
-  await pickGroup(workspace, { ...FALL_2027, variant: "B" }, CLASHING);
+  await pick(workspace, { ...FALL_2027, variant: "B" }, CLASHING);
 
   await expect(readTimetable(workspace, FALL_2027)).resolves.toMatchObject({
     view: { picks: [LECTURE] },
@@ -172,7 +206,7 @@ it("leaves an untouched Variant alone when another one is edited", async () => {
 it("keeps each State File to itself", async () => {
   const workspace = ready();
 
-  await pickGroup(workspace, { ...FALL_2027, stateFile: "alice" }, LECTURE);
+  await pick(workspace, { ...FALL_2027, stateFile: "alice" }, LECTURE);
 
   await expect(
     readTimetable(workspace, { ...FALL_2027, stateFile: "bob" }),
@@ -186,7 +220,7 @@ it("reports a Workspace that would not touch the file, rather than crashing", as
   // there is a picker — so this is the refusal arriving as a reason and not as a 500.
   const at = { ...FALL_2027, stateFile: "../elsewhere" };
 
-  await expect(pickGroup(ready(), at, LECTURE)).resolves.toMatchObject({
+  await expect(pickGroup(ready(), at, LECTURE, { basedOn: undefined })).resolves.toMatchObject({
     kind: "refused",
     reason: "workspace-refused",
   });
@@ -201,7 +235,7 @@ it("refuses to pick into a folder that is not a Workspace yet", async () => {
   // which is the same refusal `importCrawl` makes
   const workspace = memoryWorkspace();
 
-  const picked = await pickGroup(workspace, FALL_2027, LECTURE);
+  const picked = await pick(workspace, FALL_2027, LECTURE);
 
   expect(picked).toMatchObject({ kind: "refused", reason: "workspace-not-ready" });
   expect(workspace.written()).toEqual([]);
