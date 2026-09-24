@@ -185,14 +185,20 @@
   }
 
   /**
-   * Not read yet: the first answer about the State File has not arrived, so whether this
-   * Group is a Pick is unknown rather than false (#111). Neither pencil nor ink — dotted
-   * and held back, so a week mid-read does not read as a week with nothing picked on it.
-   * It borrows no hue of its own: the state is about knowledge, not about the Group.
+   * Not read yet: no answer about the State File has arrived, so whether this Group is a
+   * Pick is unknown rather than false (#111). Neither pencil nor ink — dotted, and in the
+   * pencil grey rather than a tint of the Lesson Type, which is two properties as this
+   * week's states are required to differ by (docs/design.md, "Visual language"). It
+   * borrows no hue of its own: the state is about knowledge, not about the Group.
+   *
+   * **Not an opacity.** Dimming the tile composites its text toward the paper as well, and
+   * an 11px detail line at 0.55 falls below 3:1 against `--paper` in the light scheme —
+   * the one kind of colour change a token the dark scheme redefines cannot rescue, because
+   * it is applied after the token. The border carries the state; the words stay readable.
    */
-  .tile.is-unknown {
+  .tile.is-unread {
     border-style: dotted;
-    opacity: 0.55;
+    border-color: var(--pencil);
   }
 
   /**

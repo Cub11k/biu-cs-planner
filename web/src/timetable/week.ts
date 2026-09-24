@@ -162,7 +162,7 @@ export function weekGroups(input: {
   // An option is only known *not* to be a Pick once the Picks are known. Before that the
   // Group is on the week — it is in the Catalog, which has been read — with its pick state
   // left unsaid rather than answered `false`.
-  const unpicked = input.picks === undefined ? undefined : false;
+  const pickedIfKnown = input.picks === undefined ? undefined : false;
   const options: WeekGroup[] =
     offering === undefined
       ? []
@@ -172,7 +172,7 @@ export function weekGroups(input: {
           lessonType: group.lessonType,
           number: group.number,
           meetings: group.meetings,
-          picked: unpicked,
+          picked: pickedIfKnown,
         }));
 
   return [...picked, ...options.filter((group) => !already.has(groupKey(group)))];

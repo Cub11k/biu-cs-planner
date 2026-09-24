@@ -54,13 +54,13 @@ const week = (
   offer: Offering | undefined,
   options: {
     language?: "en" | "he";
-    /** `undefined` is the State File not read yet, which `null` here asks for. */
-    picks?: readonly GroupPick[] | null;
+    /** The Picks, or `"unread"` for the State File nobody has read yet. */
+    picks?: readonly GroupPick[] | "unread";
     clashing?: ReadonlySet<string>;
   } = {},
 ): string => {
   const language = options.language ?? "en";
-  const picks = options.picks === null ? undefined : options.picks ?? [];
+  const picks = options.picks === "unread" ? undefined : options.picks ?? [];
 
   return renderToStaticMarkup(
     createElement(WeekGrid, {
@@ -130,10 +130,13 @@ it("draws a Group nobody picked in pencil, with no ink and no red pen", () => {
  * the affirmative claim that this Group is not picked.
  */
 it("draws a Group whose pick state has not been read as neither ink nor pencil", () => {
-  const markup = week(offering(THREE_GROUPS), { picks: null });
+  const markup = week(offering(THREE_GROUPS), { picks: "unread" });
 
-  expect(markup).toContain("tile is-unknown");
+  expect(markup).toContain("tile is-unread");
+  // `mixed` and `busy` together: partly pressed on its own would claim the Group is half a
+  // Pick, which is as untrue as `false` claiming it is none
   expect(markup).toContain('aria-pressed="mixed"');
+  expect(markup).toContain('aria-busy="true"');
   for (const forbidden of ['aria-pressed="false"', "is-picked", "is-clashing"]) {
     expect(markup).not.toContain(forbidden);
   }

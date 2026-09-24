@@ -111,6 +111,28 @@ function holdTheRead(): () => void {
   };
 }
 
+/**
+ * Holds one save's **answer**, after the fake has accepted it and moved the file. That is the
+ * only way to make a refusal resolve *before* the success that caused it, which is the order
+ * a single `staleSave` boolean used to lose.
+ */
+let answerHeldFor: string | undefined;
+let answerHeld: Promise<void> | undefined;
+
+function holdTheAnswerFor(groupNumber: string): () => void {
+  let release = (): void => {};
+  const promise = new Promise<void>((resolve) => {
+    release = (): void => resolve();
+  });
+  answerHeldFor = groupNumber;
+  answerHeld = promise;
+  return () => {
+    answerHeldFor = undefined;
+    answerHeld = undefined;
+    release();
+  };
+}
+
 /** The same, for the saves. */
 function holdTheSaves(): () => void {
   let release = (): void => {};
@@ -157,6 +179,8 @@ beforeEach(() => {
   changedUnderneath = false;
   readHeld = undefined;
   saveHeld = undefined;
+  answerHeldFor = undefined;
+  answerHeld = undefined;
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = input instanceof Request ? input.url : String(input);
     const { pathname } = new URL(url, location.href);
@@ -202,6 +226,17 @@ beforeEach(() => {
         });
       }
       version += 1;
+
+      // Held here, after the file has moved and before its Picks change: another save now
+      // sees a revision it cannot match and is refused, while this one's effect stays
+      // invisible until its answer is read. That is what makes a refusal readable *before*
+      // the success that caused it, which is the order a single boolean used to lose.
+      if (
+        answerHeld !== undefined &&
+        (body as { groupNumber?: string } | undefined)?.groupNumber === answerHeldFor
+      ) {
+        await answerHeld;
+      }
     }
 
     if (method === "POST") {
@@ -404,6 +439,17 @@ it("says a click was not saved when the file changed under the page, and keeps t
   expect(mounted.textContent).toContain("1 group picked");
   // and the screen re-read, so what it shows is the file rather than its own memory of it
   expect(sent.filter((request) => request.method === "GET").length).toBeGreaterThan(readsBefore);
+
+  // The notice is the account of *that* click, so the next click is what retires it — not a
+  // later success, which may be another click's answer entirely (#111).
+  tileFor(mounted, "03", "Tirgul").click();
+
+  await vi.waitFor(() => {
+    if (!tileFor(mounted, "03", "Tirgul").classList.contains("is-picked")) {
+      throw new Error("clicking again after a refusal saved nothing");
+    }
+  });
+  expect(mounted.textContent).not.toContain("your click was not saved");
 });
 
 /** The refused answer the screen has to say something honest about. */
@@ -430,7 +476,7 @@ it("says the folder is not a workspace rather than that nothing is picked", asyn
  * a mounted screen with two answers arriving at different times has both halves.
  */
 const STILL_LOADING = "Your saved picks are still loading";
-const NOT_SAVED = "Your click was not saved";
+const NOT_SAVED = "Your click was not saved.";
 const FILE_CHANGED = "The file changed since this page read it";
 
 /** March 2027: the Spring Semester of the same Academic Year, which is another week. */
@@ -445,10 +491,20 @@ async function waitForText(mounted: HTMLElement, wanted: string): Promise<void> 
   });
 }
 
-/** How a tile is actually drawn, so a class nothing styles cannot pass for a state. */
-const drawnAs = (tile: HTMLElement): { border: string; opacity: number } => {
+/**
+ * How a tile is actually drawn, so a class nothing styles cannot pass for a state.
+ *
+ * `opacity` is asserted as well as the border because dimming the tile is the tempting way to
+ * draw "not read yet" and it takes the 11px detail line below 3:1 with it: the state has to
+ * be carried by the border, not by fading the words.
+ */
+const drawnAs = (tile: HTMLElement): { border: string; colour: string; opacity: number } => {
   const style = getComputedStyle(tile);
-  return { border: style.borderTopStyle, opacity: Number(style.opacity) };
+  return {
+    border: style.borderTopStyle,
+    colour: style.borderTopColor,
+    opacity: Number(style.opacity),
+  };
 };
 
 it("draws a Group as neither picked nor unpicked while the Picks are still loading", async () => {
@@ -458,23 +514,31 @@ it("draws a Group as neither picked nor unpicked while the Picks are still loadi
 
   // unknowable rather than false: no ink, no pencil, and `mixed` rather than `false` —
   // the page has not read the file and says so instead of guessing
-  expect(unread.classList.contains("is-unknown")).toBe(true);
+  expect(unread.classList.contains("is-unread")).toBe(true);
   expect(unread.classList.contains("is-picked")).toBe(false);
   expect(unread.getAttribute("aria-pressed")).toBe("mixed");
-  // and it is *drawn* as neither, not merely classed as neither: dotted and held back
-  expect(drawnAs(unread)).toEqual({ border: "dotted", opacity: 0.55 });
+  expect(unread.getAttribute("aria-busy")).toBe("true");
+  // and it is *drawn* as neither, not merely classed as neither
+  const asUnread = drawnAs(unread);
+  expect(asUnread.border).toBe("dotted");
+  expect(asUnread.opacity).toBe(1);
 
   release();
 
   // once the Picks are read, the same Group is the pencil option it turns out to be
   await vi.waitFor(() => {
-    if (tileFor(mounted, "01").classList.contains("is-unknown")) {
+    if (tileFor(mounted, "01").classList.contains("is-unread")) {
       throw new Error("the Picks arrived and the week is still unread");
     }
   });
   const pencil = tileFor(mounted, "01");
   expect(pencil.getAttribute("aria-pressed")).toBe("false");
-  expect(drawnAs(pencil)).toEqual({ border: "dashed", opacity: 1 });
+  expect(pencil.getAttribute("aria-busy")).toBe("false");
+  const asPencil = drawnAs(pencil);
+  expect(asPencil.border).toBe("dashed");
+  expect(asPencil.opacity).toBe(1);
+  // two properties apart, as this week's states are required to be
+  expect(asUnread.colour).not.toBe(asPencil.colour);
 });
 
 it("holds a click made before the Picks arrived, says so, and saves it on the revision they bring", async () => {
@@ -503,6 +567,29 @@ it("holds a click made before the Picks arrived, says so, and saves it on the re
   expect(mounted.textContent).not.toContain(FILE_CHANGED);
   expect(mounted.textContent).not.toContain(STILL_LOADING);
   expect(mounted.textContent).toContain("1 group picked");
+});
+
+/**
+ * A `mixed` tile does not change state when it is clicked and nothing moves focus, so a
+ * screen-reader user has no way to tell a held click from a lost one unless the notice is
+ * announced. Every sentence that accounts for a click lives in one live region.
+ */
+it("puts the account of a click in a live region, so it is announced", async () => {
+  const release = holdTheRead();
+  const mounted = await openWeek();
+
+  tileFor(mounted, "01").click();
+  await waitForText(mounted, STILL_LOADING);
+
+  const region = mounted.querySelector('[role="status"]');
+  expect(region?.textContent).toContain(STILL_LOADING);
+  release();
+  // and the count that replaces it is announced by the same region
+  await vi.waitFor(() => {
+    if (!(region?.textContent ?? "").includes("1 group picked")) {
+      throw new Error("the region never carried what became of the click");
+    }
+  });
 });
 
 /**
@@ -680,6 +767,8 @@ it("starts a held click's save once even when a fresh answer arrives mid-save", 
       throw new Error("the change count moved and the screen did not re-read");
     }
   });
+  // the Picks have arrived and the click is being saved, so "still loading" is no longer true
+  expect(mounted.textContent).not.toContain(STILL_LOADING);
 
   releaseSaves();
 
@@ -691,4 +780,84 @@ it("starts a held click's save once even when a fresh answer arrives mid-save", 
   expect(sent.filter((request) => request.method === "POST")).toHaveLength(1);
   expect(mounted.textContent).toContain("1 group picked");
   expect(mounted.textContent).not.toContain(FILE_CHANGED);
+});
+
+/**
+ * A stale refusal mid-drain must not doom the clicks behind it.
+ *
+ * The refusal leaves the week on screen alone — deliberately, so the student keeps a week they
+ * can read — and triggers a re-read. Firing the next held click at the revision that was just
+ * refused would send a request that cannot succeed, and lose a click the code had everything
+ * it needed to save. It waits for the re-read instead.
+ */
+it("sends the rest of the queue on the re-read, not on the revision just refused", async () => {
+  const release = holdTheRead();
+  const mounted = await openWeek();
+
+  tileFor(mounted, "01").click();
+  tileFor(mounted, "03", "Tirgul").click();
+  await waitForText(mounted, STILL_LOADING);
+
+  // somebody else writes the file while the week is loading, so the first held click is refused
+  changedUnderneath = true;
+  release();
+
+  await vi.waitFor(() => {
+    if (!tileFor(mounted, "03", "Tirgul").classList.contains("is-picked")) {
+      throw new Error("the click behind the refused one was lost too");
+    }
+  });
+  const recorded = sent.filter((request) => request.method === "POST");
+  expect(recorded.map((request) => request.body)).toMatchObject([
+    // refused: the file is v1 by the time this lands
+    { groupNumber: "01", basedOn: "v0" },
+    // and this one goes out on the revision the re-read brought, not on v0 again
+    { groupNumber: "03", basedOn: "v1" },
+  ]);
+  // the refused click is not re-applied (#104), and the student is told it was not saved
+  expect(tileFor(mounted, "01").classList.contains("is-picked")).toBe(false);
+  expect(mounted.textContent).toContain(FILE_CHANGED);
+  expect(mounted.textContent).toContain("1 group picked");
+});
+
+/**
+ * Two saves can be in flight at once now — a held click draining while the student clicks
+ * again — and the second is refused because the first moved the file. If the success clears
+ * the refusal's notice, the refused click is dropped with no account at all: #111's own
+ * failure, arriving through #111's own machinery.
+ *
+ * The order that used to lose it is the one this drives: the refusal is read *before* the
+ * success that caused it, which needs the accepted save's answer held open.
+ */
+it("still says a click was refused when the save that refused it succeeds afterwards", async () => {
+  const release = holdTheRead();
+  const mounted = await openWeek();
+
+  tileFor(mounted, "01").click();
+  await waitForText(mounted, STILL_LOADING);
+
+  // the held click is accepted and moves the file to v1, but its answer is held back
+  const releaseAnswer = holdTheAnswerFor("01");
+  release();
+  await vi.waitFor(() => {
+    if (!sent.some((request) => request.method === "POST")) {
+      throw new Error("the held click was never sent");
+    }
+  });
+
+  // a live click on the week still showing v0, so the file has moved under it
+  tileFor(mounted, "03", "Tirgul").click();
+  await waitForText(mounted, FILE_CHANGED);
+
+  releaseAnswer();
+
+  await vi.waitFor(() => {
+    if (!tileFor(mounted, "01").classList.contains("is-picked")) {
+      throw new Error("the held click never landed");
+    }
+  });
+  // the refusal is still on screen: the click that was refused is still unaccounted for
+  // otherwise, and a success is not an answer about it
+  expect(mounted.textContent).toContain(FILE_CHANGED);
+  expect(mounted.textContent).toContain("1 group picked");
 });

@@ -64,11 +64,12 @@ const english = {
    */
   picksHeld: "Your saved picks are still loading. Your click is waiting for them.",
   /**
-   * …and the same click when the answer it was waiting for never came: the file could not be
-   * read, or the screen is showing another week now. Both are that answer never arriving,
-   * which is what the student needs to know; neither is anything they did.
+   * …and the same click when it had to be dropped. It names no cause on purpose: the three
+   * are a file that could not be read, a page that cannot reach the server, and a screen
+   * now showing another week, and in every one of them the answer beside this sentence
+   * already says which. Naming one here made it wrong in the other two.
    */
-  picksHeldLost: "Your click was not saved: the saved picks it was waiting for never arrived.",
+  picksHeldLost: "Your click was not saved.",
 
   noFixedTime: "No fixed time",
   groupsCount: "{count} groups",
@@ -145,7 +146,7 @@ const hebrew: Record<StringKey, string> = {
     "הקובץ השתנה מאז שהדף קרא אותו, ולכן הלחיצה לא נשמרה. " +
     "השבוע מוצג כפי שהקובץ נראה עכשיו — לחצו שוב אם עדיין תרצו את הבחירה.",
   picksHeld: "הבחירות השמורות עדיין נטענות. הלחיצה שלכם ממתינה להן.",
-  picksHeldLost: "הלחיצה שלכם לא נשמרה: הבחירות השמורות שהיא חיכתה להן לא הגיעו.",
+  picksHeldLost: "הלחיצה שלכם לא נשמרה.",
 
   noFixedTime: "ללא שעה קבועה",
   groupsCount: "{count} קבוצות",

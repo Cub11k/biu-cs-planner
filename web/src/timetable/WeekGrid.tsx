@@ -125,6 +125,7 @@ export function WeekGrid({
               // three states, because the Picks may not have been read yet: `mixed` is
               // "we cannot say", and clicking it asks for the Group rather than toggling
               aria-pressed={group.picked ?? "mixed"}
+              aria-busy={group.picked === undefined}
               onClick={() => onPick(group)}
             >
               <span
@@ -160,7 +161,7 @@ function tileClass(group: WeekGroup, clashes: boolean, highlighted: boolean): st
   return [
     "tile",
     group.picked === true ? "is-picked" : undefined,
-    group.picked === undefined ? "is-unknown" : undefined,
+    group.picked === undefined ? "is-unread" : undefined,
     clashes ? "is-clashing" : undefined,
     highlighted ? "is-highlighted" : undefined,
   ]
@@ -203,8 +204,15 @@ function GroupTile({
       data-lesson-slot={lessonSlot(tile.group.lessonType)}
       // a toggle, because clicking a Group already picked removes that Pick; "pressed" is
       // what a screen reader says instead of the ink a sighted student sees — and `mixed`
-      // while the Picks have not been read, which is neither pressed nor not (#111)
+      // while the Picks have not been read, which is neither pressed nor not (#111).
+      //
+      // ARIA has no "unknown" for a toggle, and `mixed` means *partly* pressed, so it is the
+      // least wrong of three rather than the right one: `false` asserts this Group is not a
+      // Pick, and dropping the attribute turns the toggle into a command mid-flight. What
+      // makes it honest is `aria-busy` beside it — "partly pressed, and still being worked
+      // out" — and the notice line, which is a live region so the held click is announced.
       aria-pressed={tile.group.picked ?? "mixed"}
+      aria-busy={tile.group.picked === undefined}
       style={
         {
           top: box.topPx,

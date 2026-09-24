@@ -152,12 +152,18 @@ export function TimetableScreen({
 
   const [selected, setSelected] = useState<string | undefined>(undefined);
   /**
-   * That the last click was refused because the file had changed, and how many times this
-   * screen has had to re-read for that reason.
+   * That a click was refused because the file had changed, and how many times this screen
+   * has had to re-read for that reason.
    *
-   * The notice stays until the next click goes through rather than until the fresh week
+   * The notice stays until the next click is *made* rather than until the fresh week
    * arrives: it is the only account the student gets of a click that did nothing, and the
    * re-read it triggers lands in milliseconds.
+   *
+   * Cleared by the click and not by a later success, because more than one save can be in
+   * flight at once — a held click draining while the student makes another — and a success
+   * that cleared this would swallow the refusal of the click beside it, leaving a refused
+   * click with no account at all. Whose refusal it was is not distinguished; that is
+   * #104's question, and one sentence for "a click was refused" is the honest floor.
    */
   const [staleSave, setStaleSave] = useState(false);
   const [rereads, setRereads] = useState(0);
@@ -178,6 +184,17 @@ export function TimetableScreen({
   const [heldLost, setHeldLost] = useState(false);
   /** That a held click is in flight, so the drain below sends one at a time. */
   const sending = useRef(false);
+  /**
+   * The answer a save was just refused on, held by identity.
+   *
+   * A stale refusal leaves the week on screen alone — deliberately, so the student keeps a
+   * week they can still read — and triggers a re-read. Until that re-read lands, the answer
+   * on screen carries a revision the file has already moved past, and firing the next held
+   * click at it would be sending a request that cannot succeed. So the drain waits for *any*
+   * newer answer: by identity and not by revision, because a file reverted to the revision it
+   * had is still news, and waiting for a different string would wait for ever.
+   */
+  const refusedOn = useRef<TimetableState | undefined>(undefined);
 
   const askCatalog = useCallback(
     () => fetchOfferings(api, { academicYear, semester }),
@@ -214,11 +231,14 @@ export function TimetableScreen({
    * entry, and the answer carries the Variant as it stands afterwards — so the screen shows
    * what the file holds rather than what it hoped the file would hold.
    *
-   * `basedOn` is a parameter rather than read from `timetable` here: a held click is sent on
-   * the revision the *arriving* answer carries, and the two callers know which revision
-   * theirs is. The week and the revision a save claims still come from one read — that is
-   * the rule (docs/design.md, "External edits") — it is just no longer always the read on
-   * screen at the moment of the click.
+   * `basedOn` and `query` are parameters rather than read from this render: a held click is
+   * sent on the revision the *arriving* answer carries, and it belongs to the week it was
+   * made on rather than the week now on screen (`HeldClick`). The week and the revision a
+   * save claims still come from one read — that is the rule (docs/design.md, "External
+   * edits") — it is just no longer always the read on screen at the moment of the click.
+   *
+   * The answer comes back as well as being shown, because the drain has to know whether this
+   * revision was refused before it sends the next held click at the same one.
    */
   const save = useCallback(
     (
@@ -226,7 +246,7 @@ export function TimetableScreen({
       remove: boolean,
       basedOn: StateFileVersion,
       query: TimetableQuery,
-    ): Promise<void> => {
+    ): Promise<TimetableResult> => {
       const slot = { courseNumber: group.courseNumber, lessonType: group.lessonType };
       const done = remove
         ? removePick(api, query, slot, basedOn)
@@ -243,7 +263,7 @@ export function TimetableScreen({
             basedOn,
           );
 
-      return done.then((answer) => {
+      return done.then((answer): TimetableResult => {
         // The file is not what this page was showing, so the click was refused rather than
         // allowed to destroy whoever else's edit (#90). The week on screen is kept and
         // re-read: replacing it with the refusal would blank a week the student can still
@@ -251,10 +271,10 @@ export function TimetableScreen({
         if (answer.kind === "refused" && answer.reason === "state-file-changed") {
           setStaleSave(true);
           setRereads((count) => count + 1);
-          return;
+          return answer;
         }
-        setStaleSave(false);
         setTimetable(answer);
+        return answer;
       });
     },
     [setTimetable],
@@ -263,6 +283,7 @@ export function TimetableScreen({
   const onPick = (group: WeekGroup): void => {
     // whatever became of the last click, this one is the account the student is owed now
     setHeldLost(false);
+    setStaleSave(false);
     const query = { academicYear, semester };
 
     if (timetable.kind !== "served") {
@@ -284,6 +305,8 @@ export function TimetableScreen({
   useEffect(() => {
     const next = held[0];
     if (next === undefined || sending.current) return;
+    // this revision has already been refused once; the re-read it triggered is what to wait for
+    if (refusedOn.current === timetable) return;
 
     // The screen is being asked about another week now, so the answer this click is waiting
     // for is never coming. It is dropped rather than sent on this week's revision, which one
@@ -322,8 +345,14 @@ export function TimetableScreen({
     }
 
     sending.current = true;
-    void save(next.group, false, timetable.version, next.query).finally(() => {
+    const sentOn = timetable;
+    void save(next.group, false, timetable.version, next.query).then((answer) => {
       sending.current = false;
+      // This click is spent either way. A refused one is not re-sent — that is #104 — but the
+      // rest of the queue must not be fired at the revision that refused it.
+      if (answer.kind === "refused" && answer.reason === "state-file-changed") {
+        refusedOn.current = sentOn;
+      }
       setHeld((waiting) => waiting.slice(1));
     });
   }, [held, timetable, save, academicYear, semester]);
@@ -381,13 +410,24 @@ export function TimetableScreen({
             {chosen === undefined
               ? t(language, "hintChoose")
               : t(language, "hintShowing", { course: courseName(chosen, language) })}
-            {picksNotice(language, timetable) === undefined ? null : (
-              <span>{picksNotice(language, timetable)}</span>
-            )}
-            {held.length > 0 && <span>{t(language, "picksHeld")}</span>}
-            {heldLost && <span>{t(language, "picksHeldLost")}</span>}
-            {staleSave && <span>{t(language, "picksStale")}</span>}
-            {clashes.length > 0 && <span>{clashesSaid(language, clashes.length)}</span>}
+            {/* A live region, because every sentence in it is an account of something the
+                student cannot otherwise tell happened: a click held, a click dropped, a click
+                refused, a Clash found. Nothing moves focus and a `mixed` tile does not change
+                state when clicked, so without this a screen-reader user's click is silently
+                dropped — which is the failure #111 is about, for them. */}
+            <span role="status" className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              {picksNotice(language, timetable) === undefined ? null : (
+                <span>{picksNotice(language, timetable)}</span>
+              )}
+              {/* only while it is true: once the answer is served the click is being saved
+                  rather than waiting, and the ink it produces is its own account */}
+              {held.length > 0 && timetable.kind !== "served" && (
+                <span>{t(language, "picksHeld")}</span>
+              )}
+              {heldLost && <span>{t(language, "picksHeldLost")}</span>}
+              {staleSave && <span>{t(language, "picksStale")}</span>}
+              {clashes.length > 0 && <span>{clashesSaid(language, clashes.length)}</span>}
+            </span>
             <span className="ms-auto flex items-center gap-2 text-xs text-pencil">
               <span className="legend-swatch inline-block h-3 w-4 rounded-xs" />
               {t(language, "legendPencil")}
