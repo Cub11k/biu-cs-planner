@@ -1,3 +1,5 @@
+import type { StateFileSave, StateFileVersion } from "@biu-cs-planner/core";
+
 /**
  * The Workspace port: how `app` reaches the student's folder without knowing it is a
  * folder. A file is named by what it is, never by where it lives, so no path is built
@@ -87,6 +89,67 @@ export function requireStateFileName(name: string): void {
 }
 
 /**
+ * What a State File holds, and which revision that content is.
+ *
+ * The version is produced by whatever read the file, because that is the only thing that
+ * can: `core` is handed already-parsed JSON and performs no I/O, so it never sees what a
+ * revision would have to be computed from (`StateFileVersion` in
+ * `core/src/state/file.ts`). Each adapter says in its own words what it hashes.
+ */
+export type StateFileContents = { data: unknown; version: StateFileVersion };
+
+/**
+ * A save was based on a revision the State File no longer holds: something else wrote it
+ * between the read the student is looking at and this save. The overwrite is refused, which
+ * is what `docs/design.md`, "External edits" promises.
+ *
+ * **Deliberately not a `WorkspaceRefusedError`.** That one means a target a Workspace will
+ * not touch — a name that is a path, a file outside the folder — and is a mistake in the
+ * request. This target is perfectly legitimate and the request is well formed; what is
+ * stale is the revision it was based on. A caller that folded the two together would tell a
+ * student to fix a file name when what they need to do is reload.
+ *
+ * **And it is a refusal at all, in an app where every domain check is a Warning and the
+ * edit goes through** (CLAUDE.md; ADR-0013). That grain holds because a Warning costs
+ * nothing: a Clash is reported and the Pick is kept, so the student decides. Here "going
+ * through" means the bytes of somebody's work are gone, with nothing left to decide and
+ * nothing to warn about afterwards — the Warning would be a note attached to the loss. So
+ * this is not an exception to the rule but the other side of it: the rule is that the app
+ * never overrules a student about their own data, and overwriting an edit they cannot see
+ * is exactly that. It is also not a check on what they chose. It is a check on what the
+ * file is, which is the same class of refusal as a folder that is not a Workspace yet.
+ *
+ * `found` is the revision the file holds now, and `undefined` means it holds none: it was
+ * deleted, or — when `basedOn` is `undefined` — it was created after this save was based on
+ * its absence.
+ */
+export class StateFileChangedError extends Error {
+  override readonly name = "StateFileChangedError";
+  /** The revision the save was based on; `undefined` claims there was no file. */
+  readonly basedOn: StateFileVersion | undefined;
+  /** The revision the file holds now; `undefined` means there is no file. */
+  readonly found: StateFileVersion | undefined;
+
+  constructor(
+    name: string,
+    revisions: { basedOn: StateFileVersion | undefined; found: StateFileVersion | undefined },
+  ) {
+    super(
+      `refusing to overwrite the State File ${JSON.stringify(name)}: ` +
+        (revisions.found === undefined
+          ? revisions.basedOn === undefined
+            ? "it is not there"
+            : "it is no longer there"
+          : revisions.basedOn === undefined
+            ? "it already exists, and this save was based on there being no file"
+            : "it changed since the save was based on it"),
+    );
+    this.basedOn = revisions.basedOn;
+    this.found = revisions.found;
+  }
+}
+
+/**
  * A folder being watched. `stop` is idempotent and leaves nothing behind that could keep
  * the process alive, which is what a caller with a shutdown path needs: the server runs in
  * the foreground of a terminal and Ctrl-C has to end it (docs/design.md, "CLI and
@@ -112,13 +175,43 @@ export type Workspace = {
   /**
    * Parsed JSON, or undefined when the file is not there. Never throws for absence;
    * throws `WorkspaceRefusedError` when the target is one a Workspace will not touch.
+   *
+   * A `CatalogRef` and not a `WorkspaceRef`, because a State File is read through
+   * `readStateFile` and there is deliberately no second way to read one: a read that
+   * handed back content without its revision would be a read nothing can safely save
+   * after, and the compiler is what keeps that from being written by accident. A Catalog
+   * needs none — it is re-importable from its Raw Crawl and nothing edits one in place.
    */
-  read(ref: WorkspaceRef): Promise<unknown>;
+  read(ref: CatalogRef): Promise<unknown>;
   /**
    * Atomic: an interrupted write leaves the previous file intact. Throws
    * `WorkspaceRefusedError` on a target a Workspace will not touch.
+   *
+   * For the files nothing edits in place. A State File is saved through `saveStateFile`.
    */
-  write(ref: WorkspaceRef, data: unknown): Promise<void>;
+  write(ref: CatalogRef, data: unknown): Promise<void>;
+  /**
+   * What a State File holds and which revision that is, or undefined when it is not there.
+   * Absence is not an error, exactly as for `read`.
+   *
+   * This is the half of the external-edit guard that `core` cannot reach: the version has
+   * to be produced where the file is, and it travels from here through the use case, the
+   * API and the page, back to `saveStateFile`.
+   */
+  readStateFile(ref: StateFileRef): Promise<StateFileContents | undefined>;
+  /**
+   * Saves a State File, and refuses to overwrite one that is not the revision the save was
+   * based on: `StateFileChangedError`, whose doc says why this one refuses rather than
+   * warning. Atomic as `write` is, and it hands back the revision it wrote so the next save
+   * from the same page needs no re-read.
+   *
+   * It takes the whole `StateFileSave` that `core`'s `writeStateFile` produced rather than
+   * the JSON and a version separately. They are produced together so that no caller has to
+   * remember to ask for the version, and this is where they are also *consumed* together:
+   * there is no way to hand a State File's content to a Workspace without the revision it
+   * was based on, which is the hole #90 was filed for.
+   */
+  saveStateFile(ref: StateFileRef, save: StateFileSave): Promise<StateFileVersion>;
   /**
    * Watches the **folder**, not individual files, and calls back once per event it sees —
    * creation, modification, deletion and rename alike. Watching individual files cannot

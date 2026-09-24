@@ -8,6 +8,7 @@ import {
   type MeetingClash,
   type PickSlot,
   type Semester,
+  type StateFileVersion,
   type StateFileWarning,
   type State,
   type VariantRef,
@@ -52,10 +53,26 @@ export type TimetableView = {
 };
 
 export type TimetableResult =
-  | { kind: "served"; view: TimetableView; warnings: StateFileWarning[] }
+  /**
+   * `version` is the revision of the State File this view was read from, and the one a save
+   * of an edit made on it has to be based on — `undefined` when there is no file yet. It
+   * travels with the view rather than being asked for separately, so that whatever shows the
+   * Picks is holding the revision they came from and nothing has to remember to fetch it
+   * (docs/design.md, "External edits").
+   */
+  | {
+      kind: "served";
+      view: TimetableView;
+      version: StateFileVersion | undefined;
+      warnings: StateFileWarning[];
+    }
   | { kind: "refused"; reason: EditRefusal; warnings: StateFileWarning[] };
 
-export type PickOptions = { history?: EditHistory };
+export type PickOptions = {
+  /** The revision the student's view was read from; see `EditOptions.basedOn`. */
+  basedOn: StateFileVersion | undefined;
+  history?: EditHistory;
+};
 
 const where = (at: TimetableRef): VariantRef => ({
   academicYear: at.academicYear,
@@ -79,7 +96,12 @@ export async function readTimetable(
     return { kind: "refused", reason: loaded.refused, warnings: loaded.warnings };
   }
 
-  return { kind: "served", view: view(loaded.state, where(at)), warnings: loaded.warnings };
+  return {
+    kind: "served",
+    view: view(loaded.state, where(at)),
+    version: loaded.version,
+    warnings: loaded.warnings,
+  };
 }
 
 /** Applies one edit to the Variant and reports what the Variant holds afterwards. */
@@ -99,7 +121,12 @@ async function edit(
     return { kind: "refused", reason: outcome.reason, warnings: outcome.warnings };
   }
 
-  return { kind: "served", view: view(outcome.state, where(at)), warnings: outcome.warnings };
+  return {
+    kind: "served",
+    view: view(outcome.state, where(at)),
+    version: outcome.version,
+    warnings: outcome.warnings,
+  };
 }
 
 /**
@@ -110,7 +137,7 @@ export async function pickGroup(
   workspace: Workspace,
   at: TimetableRef,
   pick: GroupPick,
-  options: PickOptions = {},
+  options: PickOptions,
 ): Promise<TimetableResult> {
   return edit(
     workspace,
@@ -125,7 +152,7 @@ export async function removeGroupPick(
   workspace: Workspace,
   at: TimetableRef,
   slot: PickSlot,
-  options: PickOptions = {},
+  options: PickOptions,
 ): Promise<TimetableResult> {
   return edit(
     workspace,

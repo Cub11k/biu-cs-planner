@@ -4,9 +4,10 @@ import {
   stateSchema,
   writeStateFile,
   type State,
+  type StateFileVersion,
   type StateFileWarning,
 } from "@biu-cs-planner/core";
-import { WorkspaceRefusedError, type Workspace } from "./workspace.ts";
+import { StateFileChangedError, WorkspaceRefusedError, type Workspace } from "./workspace.ts";
 
 /**
  * Editing a State File: read it, apply a pure `state -> state` function from `core`, save
@@ -42,7 +43,21 @@ export type StateEditing = {
   apply(state: State): State;
 };
 
-export type EditOptions = { history?: EditHistory };
+export type EditOptions = {
+  /**
+   * Which revision of the State File this edit was based on — the one the student's view was
+   * read from, carried here from wherever that view lives (`docs/design.md`, "External
+   * edits"). `undefined` claims there was no file, and is guarded as such rather than being
+   * a way past the guard.
+   *
+   * Required, and with no default, because a default is how this hole was open in the first
+   * place: #63 gave `writeStateFile` the parameter, nothing could produce a version, and
+   * `undefined` went in everywhere while the signature made it look handled. A caller that
+   * cannot say what it was based on has not read the file, and cannot safely write it.
+   */
+  basedOn: StateFileVersion | undefined;
+  history?: EditHistory;
+};
 
 /**
  * Why an edit did not happen. Never a domain check on what the student chose: each is
@@ -52,12 +67,35 @@ export type EditRefusal =
   /** The folder is not a Workspace yet, and nothing is made into one behind their back. */
   | "workspace-not-ready"
   | "state-file-unreadable"
+  /**
+   * The file is not the revision this edit was based on: another tab, Dropbox, git or an
+   * editor wrote it in between, and overwriting it would destroy that writer's work. The
+   * one refusal in the app that is not a Warning, and `StateFileChangedError` in
+   * `./workspace.ts` says why.
+   */
+  | "state-file-changed"
   | "workspace-refused";
 
 export type EditOutcome =
-  | { kind: "saved"; state: State; edit: StateEdit; warnings: StateFileWarning[] }
-  /** The edit changed nothing, so nothing was written and there is nothing to undo. */
-  | { kind: "unchanged"; state: State; warnings: StateFileWarning[] }
+  /** `version` is the revision this save wrote: what the caller's next save is based on. */
+  | {
+      kind: "saved";
+      state: State;
+      version: StateFileVersion;
+      edit: StateEdit;
+      warnings: StateFileWarning[];
+    }
+  /**
+   * The edit changed nothing, so nothing was written and there is nothing to undo. It still
+   * carries the revision the file holds — `undefined` when there is no file — because the
+   * caller's next save has to be based on something.
+   */
+  | {
+      kind: "unchanged";
+      state: State;
+      version: StateFileVersion | undefined;
+      warnings: StateFileWarning[];
+    }
   | { kind: "refused"; reason: EditRefusal; warnings: StateFileWarning[] };
 
 /**
@@ -69,7 +107,11 @@ const newState = (): State => stateSchema.parse({ schemaVersion: CURRENT_STATE_S
 
 /** What reading the current State File can come back as. */
 export type StateFileLoad =
-  | { state: State; warnings: StateFileWarning[] }
+  /**
+   * `version` is the revision read, and `undefined` when there was no file: a new State
+   * File is based on no revision, which is what a first save has to carry.
+   */
+  | { state: State; version: StateFileVersion | undefined; warnings: StateFileWarning[] }
   | { refused: EditRefusal; warnings: StateFileWarning[] };
 
 /**
@@ -91,32 +133,42 @@ export async function readStateFile(
   workspace: Workspace,
   name: string,
 ): Promise<StateFileLoad> {
-  let stored: unknown;
+  let stored: { data: unknown; version: StateFileVersion } | undefined;
   try {
-    stored = await workspace.read({ kind: "state", name });
+    stored = await workspace.readStateFile({ kind: "state", name });
   } catch (error) {
     if (error instanceof WorkspaceRefusedError) {
       return { refused: "workspace-refused", warnings: [] };
     }
     throw error;
   }
-  if (stored === undefined) return { state: newState(), warnings: [] };
+  if (stored === undefined) return { state: newState(), version: undefined, warnings: [] };
 
   // a file is untrusted input whoever wrote it, so every read goes through the schema
-  const parsed = parseStateFile(stored);
+  const parsed = parseStateFile(stored.data);
   if (!parsed.state) return { refused: "state-file-unreadable", warnings: parsed.warnings };
 
-  return { state: parsed.state, warnings: parsed.warnings };
+  return { state: parsed.state, version: stored.version, warnings: parsed.warnings };
 }
 
 /**
  * Applies one edit and saves.
  *
- * **`basedOn` is `undefined`, deliberately.** `writeStateFile` takes the version the save
- * was based on so that the external-edit guard can refuse an overwrite of a file that
- * changed on disk meanwhile, but nothing can produce a version yet: `StateFileRead` carries
- * none and `Workspace.write(ref, data)` takes none. `undefined` is the only argument
- * available and is the accepted state until #90 gives the port a version to carry.
+ * **Guarded on the revision the caller was looking at** (`docs/design.md`, "External
+ * edits"). Two checks, and they answer different questions:
+ *
+ *   - here, before `apply` runs: is the student's *view* still current? An edit is a pure
+ *     function of the State, so applying one to a State the student never saw produces a
+ *     document nobody asked for — a Pick landing in a Variant someone else renamed. Their
+ *     click meant something about what was on their screen, so a stale view is refused
+ *     before the edit is applied rather than after it is written.
+ *   - in the adapter, at the write: is the *file* still what was just read? Only the thing
+ *     holding the file can answer that, and the window between this read and that write is
+ *     real however short it is (`server/src/workspace.fs.ts`).
+ *
+ * The save is based on the revision this function read rather than on the one it was handed.
+ * The two are equal by the time the check above has passed, and reading it from the file is
+ * what makes that the *only* place a revision enters the write.
  *
  * `StateFileUnwritableError` is left to propagate rather than caught. It can only be
  * reached by a value the schema rejects, `apply` is a pure function over a `State` the
@@ -129,7 +181,7 @@ export async function editStateFile(
   workspace: Workspace,
   name: string,
   editing: StateEditing,
-  options: EditOptions = {},
+  options: EditOptions,
 ): Promise<EditOutcome> {
   const status = await workspace.status();
   if (!status.ready) {
@@ -141,18 +193,31 @@ export async function editStateFile(
     return { kind: "refused", reason: loaded.refused, warnings: loaded.warnings };
   }
 
+  // The view the edit was made from is gone: another tab, Dropbox, git or an editor wrote
+  // the file since. Refused rather than applied, and the caller reloads (#90).
+  if (loaded.version !== options.basedOn) {
+    return { kind: "refused", reason: "state-file-changed", warnings: loaded.warnings };
+  }
+
   const previous = loaded.state;
   const next = editing.apply(previous);
   // an edit that changed nothing writes nothing: a save moves the Workspace's change
   // count, and a page reloading over an edit that did not happen is noise
   if (next === previous) {
-    return { kind: "unchanged", state: previous, warnings: loaded.warnings };
+    return { kind: "unchanged", state: previous, version: loaded.version, warnings: loaded.warnings };
   }
 
-  const save = writeStateFile(next, { basedOn: undefined });
+  const save = writeStateFile(next, { basedOn: loaded.version });
+  let version: StateFileVersion;
   try {
-    await workspace.write({ kind: "state", name }, save.json);
+    version = await workspace.saveStateFile({ kind: "state", name }, save);
   } catch (error) {
+    // The file changed between the read above and this write, which is the half of the
+    // guard only the adapter can make. Distinct from a target it will not touch, and
+    // checked first, because the two ask the student for different things.
+    if (error instanceof StateFileChangedError) {
+      return { kind: "refused", reason: "state-file-changed", warnings: loaded.warnings };
+    }
     if (error instanceof WorkspaceRefusedError) {
       return { kind: "refused", reason: "workspace-refused", warnings: loaded.warnings };
     }
@@ -164,5 +229,5 @@ export async function editStateFile(
   const edit: StateEdit = { label: editing.label, previous };
   options.history?.push(edit);
 
-  return { kind: "saved", state: next, edit, warnings: loaded.warnings };
+  return { kind: "saved", state: next, version, edit, warnings: loaded.warnings };
 }

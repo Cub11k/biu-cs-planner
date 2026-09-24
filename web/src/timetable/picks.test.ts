@@ -20,7 +20,16 @@ const LECTURE: GroupPick = {
   meetings: [{ semester: "fall", day: "tuesday", start: "15:00", end: "18:00" }],
 };
 
-const served = { variantName: "A", picks: [LECTURE], clashes: [], warnings: [] };
+/** A revision, in the shape the adapter produces: a SHA-256 of the file, as hex. */
+const VERSION = "a".repeat(64);
+
+const served = {
+  variantName: "A",
+  picks: [LECTURE],
+  clashes: [],
+  version: VERSION,
+  warnings: [],
+};
 
 /** Stands in for the network, recording what the typed client actually sent. */
 function client(answer: (request: Request) => Response | Promise<Response>) {
@@ -41,32 +50,67 @@ it("asks for one Semester's Picks, by year and Semester and with the launch toke
   expect(new URL(sent[0]!.url).pathname).toBe("/api/timetable/2027/fall");
   expect(sent[0]!.method).toBe("GET");
   expect(sent[0]!.headers.get("Authorization")).toBe(`Bearer ${TOKEN}`);
-  expect(result).toEqual({ kind: "served", variantName: "A", picks: [LECTURE], clashes: [] });
+  expect(result).toEqual({
+    kind: "served",
+    variantName: "A",
+    picks: [LECTURE],
+    clashes: [],
+    // what the page holds so that a save made on this view can say what it was based on
+    version: VERSION,
+  });
 });
 
 it("sends the Pick, snapshot and all, to the route that records one", async () => {
   const { sent, api } = client(() => Response.json(served));
 
-  await recordPick(api, FALL_2027, LECTURE);
+  await recordPick(api, FALL_2027, LECTURE, VERSION);
 
   expect(new URL(sent[0]!.url).pathname).toBe("/api/timetable/2027/fall/picks");
   expect(sent[0]!.method).toBe("POST");
-  // the snapshot is what makes "changed since picked" possible later, so it is sent
+  // the snapshot is what makes "changed since picked" possible later, so it is sent — and so
+  // is the revision the view was read from, which is what the server guards on (#90)
+  await expect(sent[0]!.json()).resolves.toEqual({ ...LECTURE, basedOn: VERSION });
+});
+
+/**
+ * A first save is based on no file, and that claim is carried rather than left out: the
+ * server treats an absent revision as "there is no State File yet" and refuses it when
+ * there is one, so the page never sends nothing by accident.
+ */
+it("says a save was based on no file when the page has no revision to send", async () => {
+  const { sent, api } = client(() => Response.json(served));
+
+  await recordPick(api, FALL_2027, LECTURE, undefined);
+
   await expect(sent[0]!.json()).resolves.toEqual(LECTURE);
+});
+
+/** A refused overwrite arrives as its own reason, so the screen can say what happened. */
+it("reports a save the server refused because the file had changed", async () => {
+  const { api } = client(() =>
+    Response.json({ reason: "state-file-changed", warnings: [] }, { status: 409 }),
+  );
+
+  const result = await recordPick(api, FALL_2027, LECTURE, VERSION);
+
+  expect(result).toEqual({ kind: "refused", reason: "state-file-changed", warnings: [] });
 });
 
 it("names the slot, and only the slot, when removing a Pick", async () => {
   const { sent, api } = client(() => Response.json({ ...served, picks: [] }));
 
-  const result = await removePick(api, FALL_2027, {
-    courseNumber: "89-110",
-    lessonType: "הרצאה",
-  });
+  const result = await removePick(
+    api,
+    FALL_2027,
+    { courseNumber: "89-110", lessonType: "הרצאה" },
+    VERSION,
+  );
 
   expect(sent[0]!.method).toBe("DELETE");
   await expect(sent[0]!.json()).resolves.toEqual({
     courseNumber: "89-110",
     lessonType: "הרצאה",
+    basedOn: VERSION,
   });
   expect(result).toMatchObject({ kind: "served", picks: [] });
 });
@@ -82,7 +126,7 @@ it("carries a Clash back rather than treating it as a failure", async () => {
   ];
   const { api } = client(() => Response.json({ ...served, clashes }));
 
-  const result = await recordPick(api, FALL_2027, LECTURE);
+  const result = await recordPick(api, FALL_2027, LECTURE, VERSION);
 
   expect(result.kind).toBe("served");
   if (result.kind !== "served") throw new Error("a Clash was treated as a refusal");
@@ -95,7 +139,7 @@ it("says the State File was refused, and carries the Warnings that say why", asy
     Response.json({ reason: "state-file-unreadable", warnings }, { status: 409 }),
   );
 
-  const result = await recordPick(api, FALL_2027, LECTURE);
+  const result = await recordPick(api, FALL_2027, LECTURE, VERSION);
 
   expect(result).toEqual({ kind: "refused", reason: "state-file-unreadable", warnings });
 });
@@ -106,7 +150,7 @@ it("keeps a folder that is not a Workspace apart from a file it could not read",
   );
 
   // the two ask the student for different things: accept the layout, or fix the file
-  await expect(recordPick(api, FALL_2027, LECTURE)).resolves.toEqual({
+  await expect(recordPick(api, FALL_2027, LECTURE, VERSION)).resolves.toEqual({
     kind: "refused",
     reason: "workspace-not-ready",
     warnings: [],
@@ -125,5 +169,5 @@ it("says the server is not there rather than throwing at the screen", async () =
   });
 
   await expect(fetchTimetable(api, FALL_2027)).resolves.toEqual({ kind: "unreachable" });
-  await expect(recordPick(api, FALL_2027, LECTURE)).resolves.toEqual({ kind: "unreachable" });
+  await expect(recordPick(api, FALL_2027, LECTURE, VERSION)).resolves.toEqual({ kind: "unreachable" });
 });

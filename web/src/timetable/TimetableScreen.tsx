@@ -9,6 +9,7 @@ import {
   recordPick,
   removePick,
   type GroupPick,
+  type StateRefusal,
   type TimetableResult,
 } from "./picks.ts";
 import { clashingGroups, weekGroups, type WeekGroup } from "./week.ts";
@@ -34,6 +35,18 @@ const WARNING_STRING = new Map<CatalogWarning["kind"], StringKey>([
   ["schema-version-unsupported", "warningSchemaUnsupported"],
   ["workspace-refused", "warningWorkspaceRefused"],
 ]);
+
+/**
+ * Why the API would not touch the State File, in words the student can act on. Exhaustive
+ * against the contract, so a reason added to the API is a compile error here rather than a
+ * sentence about an unreadable file shown for something else entirely.
+ */
+const REFUSAL_STRING = {
+  "workspace-not-ready": "picksNotSaved",
+  "state-file-unreadable": "picksUnreadable",
+  "state-file-changed": "picksStale",
+  "workspace-refused": "picksUnreadable",
+} as const satisfies Record<NonNullable<StateRefusal>, StringKey>;
 
 /** Absence is not a fault: the year simply has no Catalog yet, and one can be imported. */
 const isAbsence = (warnings: readonly CatalogWarning[]): boolean =>
@@ -126,6 +139,16 @@ export function TimetableScreen({
   const semester = semesterOf(today);
 
   const [selected, setSelected] = useState<string | undefined>(undefined);
+  /**
+   * That the last click was refused because the file had changed, and how many times this
+   * screen has had to re-read for that reason.
+   *
+   * The notice stays until the next click goes through rather than until the fresh week
+   * arrives: it is the only account the student gets of a click that did nothing, and the
+   * re-read it triggers lands in milliseconds.
+   */
+  const [staleSave, setStaleSave] = useState(false);
+  const [rereads, setRereads] = useState(0);
 
   const askCatalog = useCallback(
     () => fetchOfferings(api, { academicYear, semester }),
@@ -138,7 +161,7 @@ export function TimetableScreen({
 
   const [catalog]: [CatalogState, unknown] = useReloading(askCatalog, workspaceChanges);
   const [timetable, setTimetable]: [TimetableState, (answer: TimetableResult) => void] =
-    useReloading(askTimetable, workspaceChanges);
+    useReloading(askTimetable, workspaceChanges + rereads);
 
   const offerings = catalog.kind === "served" ? catalog.offerings : [];
   const picks = timetable.kind === "served" ? timetable.picks : [];
@@ -159,17 +182,39 @@ export function TimetableScreen({
   const onPick = (group: WeekGroup): void => {
     const query = { academicYear, semester };
     const slot = { courseNumber: group.courseNumber, lessonType: group.lessonType };
+    // Which revision of the State File this click was made on, taken from the answer the
+    // screen is showing rather than remembered separately: the week and the revision it is
+    // have to be the same read, or a save could claim a view nobody was looking at
+    // (docs/design.md, "External edits").
+    const basedOn = timetable.kind === "served" ? timetable.version : undefined;
     const done = group.picked
-      ? removePick(api, query, slot)
+      ? removePick(api, query, slot, basedOn)
       : // the snapshot is taken here, off the Meetings the page is showing: a Pick carries
         // the Group's Meetings as they stood when it was made (CONTEXT.md, "Pick")
-        recordPick(api, query, {
-          ...slot,
-          groupNumber: group.number,
-          meetings: [...group.meetings],
-        } as GroupPick);
+        recordPick(
+          api,
+          query,
+          {
+            ...slot,
+            groupNumber: group.number,
+            meetings: [...group.meetings],
+          } as GroupPick,
+          basedOn,
+        );
 
-    void done.then(setTimetable);
+    void done.then((answer) => {
+      // The file is not what this page was showing, so the click was refused rather than
+      // allowed to destroy whoever else's edit (#90). The week on screen is kept and
+      // re-read: replacing it with the refusal would blank a week the student can still
+      // see, and would throw away the revision the next click needs.
+      if (answer.kind === "refused" && answer.reason === "state-file-changed") {
+        setStaleSave(true);
+        setRereads((count) => count + 1);
+        return;
+      }
+      setStaleSave(false);
+      setTimetable(answer);
+    });
   };
 
   // one spelling of the year on the whole screen: the header and the sidebar disagreeing
@@ -225,6 +270,7 @@ export function TimetableScreen({
             {picksNotice(language, timetable) === undefined ? null : (
               <span>{picksNotice(language, timetable)}</span>
             )}
+            {staleSave && <span>{t(language, "picksStale")}</span>}
             {clashes.length > 0 && <span>{clashesSaid(language, clashes.length)}</span>}
             <span className="ms-auto flex items-center gap-2 text-xs text-pencil">
               <span className="legend-swatch inline-block h-3 w-4 rounded-xs" />
@@ -273,7 +319,7 @@ function picksNotice(language: Language, timetable: TimetableState): string | un
     case "refused":
       return t(
         language,
-        timetable.reason === "workspace-not-ready" ? "picksNotSaved" : "picksUnreadable",
+        timetable.reason === undefined ? "picksUnreadable" : REFUSAL_STRING[timetable.reason],
       );
     case "served":
       return picksSaid(language, timetable.picks.length);

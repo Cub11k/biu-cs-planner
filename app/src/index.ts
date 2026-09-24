@@ -38,9 +38,11 @@ export {
 export {
   isStateFileName,
   requireStateFileName,
+  StateFileChangedError,
   WORKSPACE_LAYOUT,
   WorkspaceRefusedError,
   type CatalogRef,
+  type StateFileContents,
   type StateFileRef,
   type Workspace,
   type WorkspaceChanged,

@@ -1,17 +1,22 @@
+import { createHash } from "node:crypto";
 import { watch, type FSWatcher } from "node:fs";
 import { mkdir, readdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import {
   isStateFileName,
   requireStateFileName,
+  StateFileChangedError,
   WORKSPACE_LAYOUT,
   WorkspaceRefusedError,
+  type StateFileContents,
+  type StateFileRef,
   type Workspace,
   type WorkspaceFolder,
   type WorkspaceRef,
   type WorkspaceStatus,
   type WorkspaceWatcher,
 } from "@biu-cs-planner/app";
+import type { StateFileSave, StateFileVersion } from "@biu-cs-planner/core";
 
 /**
  * The Workspace as a folder of JSON files (ADR-0003). This is the only place that knows
@@ -49,6 +54,33 @@ class OutsideWorkspaceError extends WorkspaceRefusedError {
     super(`refusing ${what}: it resolves outside the Workspace`);
   }
 }
+
+/**
+ * Which revision of a State File this is: a SHA-256 of its bytes, as hex.
+ *
+ * **A content hash, ruled by the maintainer on #90 and not an mtime.** The question the
+ * external-edit guard asks is "is the file still what I read?", and only the content answers
+ * it: `git checkout` stamps an mtime to now with the content unchanged, sync clients differ
+ * on whether they preserve one, and its granularity varies by filesystem — so an mtime guard
+ * refuses saves nobody endangered, and a guard that misfires teaches a student to ignore it.
+ *
+ * **The bytes as read, not the document they parse to.** `parseStateFile` is deliberately
+ * forgiving: it drops an entry it cannot read and keeps the rest. A hash taken after that
+ * would be a hash of the repaired document, so an external edit that damaged only an entry
+ * the reader drops would produce an identical revision and be invisible — the guard would be
+ * blind exactly where the file is damaged. Hashing the bytes also needs no canonical form.
+ *
+ * **And a hash rather than remembering the bytes**, which would need no hash at all and would
+ * be enough for a guard that lived only in this adapter. It is not enough for two views of one
+ * plan open side by side, which is the workflow this app replaces: the version has to be small
+ * enough for a page to hold and hand back on its next save, and the file's content is not.
+ *
+ * SHA-256 because it is the obvious one available on all three runtimes through `node:crypto`;
+ * this is conflict detection and not a security boundary, so the choice is about availability
+ * rather than strength.
+ */
+const revisionOf = (bytes: Uint8Array): StateFileVersion =>
+  createHash("sha256").update(bytes).digest("hex");
 
 /** Absent, to this module, is not an error: the caller decides what absence means. */
 async function realPathOrAbsent(path: string): Promise<string | undefined> {
@@ -125,6 +157,54 @@ export function fileSystemWorkspace(rootPath: string): Workspace {
     return { path: target };
   };
 
+  /**
+   * The bytes of a file, or nothing when it is not there. A read of a State File needs the
+   * bytes themselves and not the text they decode to, because the revision is taken from
+   * them: decoding first would hash a normalised copy of the file rather than the file.
+   */
+  const bytesOrAbsent = async (path: string): Promise<Uint8Array | undefined> => {
+    try {
+      return await readFile(path);
+    } catch {
+      return undefined;
+    }
+  };
+
+  /** What a file holds: its JSON, or its text when that is not what it holds. */
+  const contentOf = (bytes: Uint8Array): unknown => {
+    const raw = new TextDecoder().decode(bytes);
+    try {
+      return JSON.parse(raw);
+    } catch {
+      // Content that is not JSON is handed back as it was found. Reporting it is the
+      // caller's job, and inventing a stand-in value here would hide what is wrong.
+      return raw;
+    }
+  };
+
+  /** The revision the file holds right now, or nothing when there is no file. */
+  const revisionOnDisk = async (path: string): Promise<StateFileVersion | undefined> => {
+    const bytes = await bytesOrAbsent(path);
+    return bytes === undefined ? undefined : revisionOf(bytes);
+  };
+
+  /**
+   * Written to a temporary name in the same directory and renamed over the target, which is
+   * atomic on a POSIX filesystem: an interrupted write leaves the previous file whole rather
+   * than truncating it (docs/design.md, "Storage"). Both writes go through this, so neither
+   * can lose the cleanup the other has.
+   */
+  const writeAtomically = async (ref: WorkspaceRef, target: string, json: string): Promise<void> => {
+    const temporary = temporaryPath(ref);
+    try {
+      await writeFile(temporary, json, "utf8");
+      await rename(temporary, target);
+    } catch (error) {
+      await rm(temporary, { force: true });
+      throw error;
+    }
+  };
+
   /** A folder is usable only if it exists *and* stays inside the Workspace. */
   const usablePath = async (path: string): Promise<string | undefined> => {
     const realRoot = await realPathOrAbsent(root);
@@ -194,26 +274,10 @@ export function fileSystemWorkspace(rootPath: string): Workspace {
       const check = await contained(target);
       if ("missing" in check) return undefined;
 
-      let raw: string;
-      try {
-        raw = await readFile(check.path, "utf8");
-      } catch {
-        return undefined;
-      }
-      try {
-        return JSON.parse(raw);
-      } catch {
-        // Content that is not JSON is handed back as it was found. Reporting it is the
-        // caller's job, and inventing a stand-in value here would hide what is wrong.
-        return raw;
-      }
+      const bytes = await bytesOrAbsent(check.path);
+      return bytes === undefined ? undefined : contentOf(bytes);
     },
 
-    /**
-     * Written to a temporary name in the same directory and renamed over the target,
-     * which is atomic on a POSIX filesystem: an interrupted write leaves the previous
-     * file whole rather than truncating it (docs/design.md, "Storage").
-     */
     async write(ref, data): Promise<void> {
       const target = filePath(ref);
       requireJsonName(target);
@@ -222,23 +286,63 @@ export function fileSystemWorkspace(rootPath: string): Workspace {
       // A Catalog's folder not being there is what makes the target missing, so that check
       // is also the one that keeps a Catalog out of a folder nobody agreed to.
       if ("missing" in check) throw new Error(NOT_A_WORKSPACE);
-      // A State File lives at the root, and a root exists whether or not the folder is a
-      // Workspace, so for that one the layout is asked about outright. Nothing is written
-      // into a folder the student has not agreed to (docs/design.md, "Storage").
-      if (ref.kind === "state" && (await missingFolders()).length > 0) {
-        throw new Error(NOT_A_WORKSPACE);
-      }
       // serialise first: a value that cannot be written must not reach the filesystem
-      const json = JSON.stringify(data, null, 2) + "\n";
+      await writeAtomically(ref, check.path, JSON.stringify(data, null, 2) + "\n");
+    },
 
-      const temporary = temporaryPath(ref);
-      try {
-        await writeFile(temporary, json, "utf8");
-        await rename(temporary, check.path);
-      } catch (error) {
-        await rm(temporary, { force: true });
-        throw error;
+    async readStateFile(ref: StateFileRef): Promise<StateFileContents | undefined> {
+      const target = filePath(ref);
+      requireJsonName(target);
+
+      const check = await contained(target);
+      if ("missing" in check) return undefined;
+
+      const bytes = await bytesOrAbsent(check.path);
+      // The revision comes from the same bytes the content does, in one read: two reads
+      // could hash one file and parse another.
+      return bytes === undefined
+        ? undefined
+        : { data: contentOf(bytes), version: revisionOf(bytes) };
+    },
+
+    /**
+     * The external-edit guard (#90; docs/design.md, "External edits"). The file is read again
+     * here and refused when it is not the revision the save was based on — including when the
+     * save was based on there being no file and there now is one, which is the same claim
+     * about the same file and is checked the same way.
+     *
+     * **The window this does not close.** Between the hash below and the rename, another
+     * process can still write, and no POSIX rename can be made conditional on the target's
+     * content. Closing it would need a lock file, which the design already has for a second
+     * server on one Workspace and which cannot bind Dropbox or an editor anyway. What this
+     * guard is for is a file changed seconds or minutes ago by a sync client, a checkout or
+     * another tab, and for those the window is not where the risk is. Said out loud rather
+     * than implied by a check that looks total.
+     */
+    async saveStateFile(ref: StateFileRef, save: StateFileSave): Promise<StateFileVersion> {
+      const target = filePath(ref);
+      requireJsonName(target);
+
+      const check = await contained(target);
+      if ("missing" in check) throw new Error(NOT_A_WORKSPACE);
+      // A State File lives at the root, and a root exists whether or not the folder is a
+      // Workspace, so for this one the layout is asked about outright. Nothing is written
+      // into a folder the student has not agreed to (docs/design.md, "Storage").
+      if ((await missingFolders()).length > 0) throw new Error(NOT_A_WORKSPACE);
+
+      // serialise first: a value that cannot be written must not reach the filesystem
+      const json = JSON.stringify(save.json, null, 2) + "\n";
+
+      // as late as it can be made, so that as little as possible happens between the check
+      // and the rename it guards
+      const found = await revisionOnDisk(check.path);
+      if (found !== save.basedOn) {
+        throw new StateFileChangedError(ref.name, { basedOn: save.basedOn, found });
       }
+
+      await writeAtomically(ref, check.path, json);
+      // the revision of what was just written: a read of it would hash these same bytes
+      return revisionOf(new TextEncoder().encode(json));
     },
 
     /**

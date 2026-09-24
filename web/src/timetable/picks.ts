@@ -40,11 +40,30 @@ export type StateRefusal = Extract<Answer, { reason: unknown }>["reason"];
 /** Why the API would not serve or edit the State File. */
 export type StateWarning = Extract<Answer, { reason: unknown }>["warnings"][number];
 
+/**
+ * Which revision of the State File a view is, and what a save made on that view has to be
+ * based on (docs/design.md, "External edits"). Opaque: the page holds it and hands it back,
+ * and nothing here may take it apart or compare it for anything but equality.
+ *
+ * The page holds it rather than the server keeping it because two views of one plan open side
+ * by side is a real way of working — the workflow this app replaces — and a server-side memory
+ * of "the bytes I last served" cannot tell the second tab's stale save from the first tab's
+ * fresh one. `undefined` is the claim that there is no State File yet.
+ */
+export type StateFileVersion = ServedTimetable["version"];
+
 /** The guard answers before the route does, so its status is not one of the route's. */
 const UNAUTHORIZED = 401;
 
 export type TimetableResult =
-  | { kind: "served"; variantName: string; picks: GroupPick[]; clashes: Clash[] }
+  | {
+      kind: "served";
+      variantName: string;
+      picks: GroupPick[];
+      clashes: Clash[];
+      /** What this view is, so an edit made on it can say what it was based on. */
+      version: StateFileVersion;
+    }
   /**
    * The API would not touch the State File and said why — the folder is not a Workspace
    * yet, the file could not be read, or the Workspace refused the name. The reason and
@@ -93,6 +112,7 @@ async function read(
     variantName: body.variantName,
     picks: body.picks,
     clashes: body.clashes,
+    version: body.version,
   };
 }
 
@@ -125,22 +145,37 @@ export async function fetchTimetable(
 /**
  * Records a Pick, snapshot and all. Picking a second Group for a Lesson Type already
  * picked replaces the first, which is the server's doing and not this module's.
+ *
+ * `basedOn` is the revision the view being edited was read from, and it is a parameter rather
+ * than something this module remembers: the page decides which view a click was made on, and
+ * a module that kept "the last version I saw" would happily save a second tab's click onto a
+ * revision the first tab replaced. Leaving it out is not available, because a save that does
+ * not say what it was based on is the hole #90 was filed for; `undefined` is the claim that
+ * there is no State File yet, and the server refuses it when there is one.
  */
 export async function recordPick(
   client: ApiClient,
   query: TimetableQuery,
   pick: GroupPick,
+  basedOn: StateFileVersion,
 ): Promise<TimetableResult> {
-  const request = { ...asRead(query), json: pick } as InferRequestType<PickRoute>;
+  const request = {
+    ...asRead(query),
+    json: { ...pick, basedOn },
+  } as InferRequestType<PickRoute>;
   return ask(() => client.api.timetable[":year"][":semester"].picks.$post(request));
 }
 
-/** Removes the Pick filling one Lesson Type of one Offering. */
+/** Removes the Pick filling one Lesson Type of one Offering, guarded as recording one is. */
 export async function removePick(
   client: ApiClient,
   query: TimetableQuery,
   slot: PickSlot,
+  basedOn: StateFileVersion,
 ): Promise<TimetableResult> {
-  const request = { ...asRead(query), json: slot } as InferRequestType<UnpickRoute>;
+  const request = {
+    ...asRead(query),
+    json: { ...slot, basedOn },
+  } as InferRequestType<UnpickRoute>;
   return ask(() => client.api.timetable[":year"][":semester"].picks.$delete(request));
 }

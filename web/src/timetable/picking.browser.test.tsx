@@ -78,6 +78,15 @@ let picks: GroupPick[] = [];
 let sent: Array<{ method: string; pathname: string; body: unknown }> = [];
 /** Set to make the next Timetable answer a refusal, the way a 409 arrives. */
 let refuse: { reason: string; warnings: unknown[] } | undefined;
+/**
+ * Which revision the fake server's State File is, moved by every save it accepts. A save
+ * that names another one is refused, exactly as the real server refuses it (#90) — so these
+ * tests only pass while the screen is carrying the revision it was served and handing it
+ * back on the next click.
+ */
+let version: number;
+/** Set to answer the next save as a file that changed under the page. */
+let changedUnderneath: boolean;
 
 const json = (body: unknown): Response =>
   new Response(JSON.stringify(body), {
@@ -94,6 +103,8 @@ beforeEach(() => {
   picks = [];
   sent = [];
   refuse = undefined;
+  version = 0;
+  changedUnderneath = false;
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = input instanceof Request ? input.url : String(input);
     const { pathname } = new URL(url, location.href);
@@ -110,6 +121,23 @@ beforeEach(() => {
         status: 409,
         headers: { "content-type": "application/json" },
       });
+    }
+
+    if (method === "POST" || method === "DELETE") {
+      const { basedOn } = body as { basedOn?: string };
+      if (changedUnderneath) {
+        changedUnderneath = false;
+        // somebody else wrote the file, so the revision the page holds is not the file's
+        version += 1;
+        return new Response(JSON.stringify({ reason: "state-file-changed", warnings: [] }), {
+          status: 409,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (basedOn !== `v${version}`) {
+        throw new Error(`a save based on ${String(basedOn)} when the file is v${version}`);
+      }
+      version += 1;
     }
 
     if (method === "POST") {
@@ -137,7 +165,7 @@ beforeEach(() => {
         ? [clashBetween("01", "03")]
         : [];
 
-    return json({ variantName: "A", picks, clashes, warnings: [] });
+    return json({ variantName: "A", picks, clashes, version: `v${version}`, warnings: [] });
   }) as typeof fetch;
 });
 
@@ -277,6 +305,34 @@ it("draws a Pick that Clashes in red pen, and still keeps it", async () => {
   expect(tileFor(mounted, "03", "Tirgul").classList.contains("is-picked")).toBe(true);
   expect(mounted.textContent).toContain("2 groups picked");
   expect(mounted.textContent).toContain("1 clash");
+});
+
+/**
+ * The external-edit guard as the student meets it (#90): the file changed under the page, the
+ * click was refused rather than allowed to overwrite whoever else's edit, and the screen says
+ * so and shows the file as it now is — it does not blank the week it can still see.
+ */
+it("says a click was not saved when the file changed under the page, and keeps the week", async () => {
+  const mounted = await openWeek();
+  tileFor(mounted, "01").click();
+  await vi.waitFor(() => {
+    if (!tileFor(mounted, "01").classList.contains("is-picked")) throw new Error("not picked");
+  });
+  const readsBefore = sent.filter((request) => request.method === "GET").length;
+
+  changedUnderneath = true;
+  tileFor(mounted, "03", "Tirgul").click();
+
+  await vi.waitFor(() => {
+    if (!(mounted.textContent ?? "").includes("your click was not saved")) {
+      throw new Error("a refused save said nothing to the student");
+    }
+  });
+  // the Pick that is in the file is still drawn: a refusal costs nothing already there
+  expect(tileFor(mounted, "01").classList.contains("is-picked")).toBe(true);
+  expect(mounted.textContent).toContain("1 group picked");
+  // and the screen re-read, so what it shows is the file rather than its own memory of it
+  expect(sent.filter((request) => request.method === "GET").length).toBeGreaterThan(readsBefore);
 });
 
 /** The refused answer the screen has to say something honest about. */

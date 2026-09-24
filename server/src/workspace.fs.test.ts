@@ -12,6 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
+import { StateFileChangedError, WorkspaceRefusedError } from "@biu-cs-planner/app";
 import { fileSystemWorkspace } from "./workspace.fs.ts";
 
 let root: string;
@@ -412,29 +413,180 @@ const STATE = {
   settings: { language: "en", examSpacingDays: 3 },
 };
 
+const ALICE = { kind: "state", name: "alice" } as const;
+
+/** A save based on no file: the claim that this State File does not exist yet. */
+const firstSave = (data: unknown) => ({ json: data as Record<string, unknown>, basedOn: undefined });
+
+/** The State File as it sits on disk, whoever wrote it. */
+const aliceOnDisk = (): Promise<string> => readFile(join(root, "alice.state.json"), "utf8");
+
 it("stores a State File at the Workspace root, under the name it was given", async () => {
   const workspace = fileSystemWorkspace(root);
   await workspace.create();
 
-  await workspace.write({ kind: "state", name: "alice" }, STATE);
+  await workspace.saveStateFile(ALICE, firstSave(STATE));
 
-  expect(await workspace.read({ kind: "state", name: "alice" })).toEqual(STATE);
-  const raw = await readFile(join(root, "alice.state.json"), "utf8");
-  expect(JSON.parse(raw)).toEqual(STATE);
+  expect((await workspace.readStateFile(ALICE))?.data).toEqual(STATE);
+  expect(JSON.parse(await aliceOnDisk())).toEqual(STATE);
 });
 
 it("reports a State File that is not there as absent rather than failing", async () => {
   const workspace = fileSystemWorkspace(root);
   await workspace.create();
 
-  expect(await workspace.read({ kind: "state", name: "nobody" })).toBeUndefined();
+  expect(await workspace.readStateFile({ kind: "state", name: "nobody" })).toBeUndefined();
+});
+
+/**
+ * The external-edit guard (#90). A revision is a hash of the file's bytes as read, which is
+ * the choice `docs/design.md`, "External edits" needs and the one the maintainer ruled for:
+ * it answers the question actually being asked — is the file still what I read? — where an
+ * mtime answers a different one and misfires on a `git checkout`.
+ */
+it("hands a revision back with a State File, and takes it back on the save", async () => {
+  const workspace = fileSystemWorkspace(root);
+  await workspace.create();
+
+  const written = await workspace.saveStateFile(ALICE, firstSave(STATE));
+
+  const held = await workspace.readStateFile(ALICE);
+  // the revision a save reports having written is the one the next read finds, so a page
+  // saving twice in a row needs no read in between
+  expect(held?.version).toBe(written);
+  // a hash and not the file: 64 hex characters of SHA-256, small enough for a page to hold
+  expect(held?.version).toMatch(/^[0-9a-f]{64}$/);
+  await expect(
+    workspace.saveStateFile(ALICE, { json: { schemaVersion: 1 }, basedOn: held?.version }),
+  ).resolves.toMatch(/^[0-9a-f]{64}$/);
+});
+
+/**
+ * The revision is computed from the file and remembered nowhere, so a second server over the
+ * same folder agrees about it. An adapter that remembered the bytes it last read would agree
+ * with itself and with nobody else — which is the two-tab lost update this guard exists for.
+ */
+it("agrees with a second Workspace over the same folder about what revision a file is", async () => {
+  const first = fileSystemWorkspace(root);
+  await first.create();
+  await first.saveStateFile(ALICE, firstSave(STATE));
+
+  const second = fileSystemWorkspace(root);
+
+  expect((await second.readStateFile(ALICE))?.version).toBe(
+    (await first.readStateFile(ALICE))?.version,
+  );
+});
+
+it("refuses to overwrite a State File that changed on disk since it was read", async () => {
+  const workspace = fileSystemWorkspace(root);
+  await workspace.create();
+  await workspace.saveStateFile(ALICE, firstSave(STATE));
+  const stale = (await workspace.readStateFile(ALICE))?.version;
+  // Dropbox, git, an editor, or the other tab
+  const fromOutside = JSON.stringify({ ...STATE, pins: [{ courseNumber: "89-110" }] });
+  await writeFile(join(root, "alice.state.json"), fromOutside, "utf8");
+
+  const refused = workspace.saveStateFile(ALICE, { json: { schemaVersion: 1 }, basedOn: stale });
+
+  await expect(refused).rejects.toThrow(StateFileChangedError);
+  // a refusal costs the other writer nothing: their file is there, byte for byte
+  expect(await aliceOnDisk()).toBe(fromOutside);
+  // and nothing was left lying in the folder by the write that did not happen
+  expect((await readdir(root)).sort()).toEqual([
+    ".backups",
+    "alice.state.json",
+    "catalogs",
+    "requirements",
+  ]);
+});
+
+/**
+ * A conflict is not a target the Workspace will not touch. The two ask the student for
+ * different things — reload, or fix a file name — so a caller must be able to tell them
+ * apart (app/src/workspace.ts).
+ */
+it("makes a conflict distinguishable from a refusal about the target itself", async () => {
+  const workspace = fileSystemWorkspace(root);
+  await workspace.create();
+  await workspace.saveStateFile(ALICE, firstSave(STATE));
+
+  const error = await workspace
+    .saveStateFile(ALICE, firstSave({ schemaVersion: 1 }))
+    .catch((thrown: unknown) => thrown);
+
+  expect(error).toBeInstanceOf(StateFileChangedError);
+  expect(error).not.toBeInstanceOf(WorkspaceRefusedError);
+  expect((error as StateFileChangedError).basedOn).toBeUndefined();
+  expect((error as StateFileChangedError).found).toMatch(/^[0-9a-f]{64}$/);
+});
+
+/**
+ * The property a content revision buys, and the acceptance criterion that asked whether the
+ * scheme could tell: a tool that rewrote the file with the same bytes changed nothing, so
+ * nothing is refused. `git checkout` of an unchanged file is exactly this case, and it is
+ * where an mtime would have misfired.
+ */
+it("does not refuse a save when the file was rewritten with identical content", async () => {
+  const workspace = fileSystemWorkspace(root);
+  await workspace.create();
+  const version = await workspace.saveStateFile(ALICE, firstSave(STATE));
+  const asWritten = await aliceOnDisk();
+
+  await rm(join(root, "alice.state.json"));
+  await writeFile(join(root, "alice.state.json"), asWritten, "utf8");
+
+  expect((await workspace.readStateFile(ALICE))?.version).toBe(version);
+  await expect(
+    workspace.saveStateFile(ALICE, { json: { schemaVersion: 1 }, basedOn: version }),
+  ).resolves.toEqual(expect.any(String));
+});
+
+/**
+ * Hashing the **bytes** and not the parsed document, which is the less obvious half of the
+ * ruling. `parseStateFile` is deliberately forgiving — it drops an entry it cannot read and
+ * keeps the rest — so a hash of what it parsed would be a hash of the *repaired* file, and an
+ * external edit that damaged only a dropped entry would be invisible to the guard. That is
+ * precisely the case where the file needs looking at.
+ *
+ * The cost, stated rather than hidden: a pure reformat of a file only the app writes is a
+ * false refusal, whose remedy is to reload and look.
+ */
+it("hashes the bytes it read, not the document they parse to", async () => {
+  const workspace = fileSystemWorkspace(root);
+  await workspace.create();
+  await workspace.saveStateFile(ALICE, firstSave(STATE));
+  const version = (await workspace.readStateFile(ALICE))?.version;
+
+  // same JSON, different bytes: an editor's reformat, or a damaged entry the reader drops
+  await writeFile(join(root, "alice.state.json"), JSON.stringify(STATE), "utf8");
+
+  const reformatted = await workspace.readStateFile(ALICE);
+  expect(reformatted?.data).toEqual(STATE);
+  expect(reformatted?.version).not.toBe(version);
+});
+
+/**
+ * A State File the app cannot read still has a revision, because the guard is about the file
+ * and not about the document: whatever decides what to do with unreadable content
+ * (`app/src/edit.ts` refuses to overwrite it) needs to be able to say which revision it saw.
+ */
+it("gives content that is not JSON a revision, as it gives one to a file it can read", async () => {
+  const workspace = fileSystemWorkspace(root);
+  await workspace.create();
+  await writeFile(join(root, "alice.state.json"), "{ this is not json", "utf8");
+
+  const held = await workspace.readStateFile(ALICE);
+
+  expect(held?.data).toBe("{ this is not json");
+  expect(held?.version).toMatch(/^[0-9a-f]{64}$/);
 });
 
 it("lists the State Files the Workspace holds, and nothing else at its root", async () => {
   const workspace = fileSystemWorkspace(root);
   await workspace.create();
-  await workspace.write({ kind: "state", name: "bob" }, STATE);
-  await workspace.write({ kind: "state", name: "alice" }, STATE);
+  await workspace.saveStateFile({ kind: "state", name: "bob" }, firstSave(STATE));
+  await workspace.saveStateFile(ALICE, firstSave(STATE));
   await workspace.write({ kind: "catalog", academicYear: 2027 }, CATALOG);
   // neither a Catalog nor anything else at the root is a State File
   await writeFile(join(root, "notes.txt"), "ignore me");
@@ -457,12 +609,12 @@ it("refuses a State File whose name is a path rather than a name", async () => {
   await workspace.create();
 
   for (const name of ["../escaped", "sub/alice", "alice/../../escaped", "", ".hidden", ".."]) {
-    await expect(workspace.read({ kind: "state", name })).rejects.toThrow(
+    await expect(workspace.readStateFile({ kind: "state", name })).rejects.toThrow(
       /WorkspaceRefusedError|refusing/,
     );
-    await expect(workspace.write({ kind: "state", name }, STATE)).rejects.toThrow(
-      /WorkspaceRefusedError|refusing/,
-    );
+    await expect(
+      workspace.saveStateFile({ kind: "state", name }, firstSave(STATE)),
+    ).rejects.toThrow(/WorkspaceRefusedError|refusing/);
   }
   expect((await readdir(root)).sort()).toEqual([".backups", "catalogs", "requirements"]);
 });
@@ -480,7 +632,7 @@ it("cleans up its temporary when the rename it needs cannot be made", async () =
   await workspace.create();
   await mkdir(join(root, "alice.state.json"));
 
-  await expect(workspace.write({ kind: "state", name: "alice" }, STATE)).rejects.toThrow();
+  await expect(workspace.saveStateFile(ALICE, firstSave(STATE))).rejects.toThrow();
 
   expect((await readdir(root)).sort()).toEqual([
     ".backups",
@@ -498,7 +650,7 @@ it("cleans up its temporary when the rename it needs cannot be made", async () =
 it("refuses to write a State File into a folder that is not a Workspace yet", async () => {
   const workspace = fileSystemWorkspace(root);
 
-  await expect(workspace.write({ kind: "state", name: "alice" }, STATE)).rejects.toThrow(
+  await expect(workspace.saveStateFile(ALICE, firstSave(STATE))).rejects.toThrow(
     /layout does not exist/,
   );
   expect(await readdir(root)).toEqual([]);
