@@ -1,9 +1,10 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { readCalls, UNRESOLVED, type CallTargets } from "./calls.ts";
 import { collect } from "./collect.ts";
+import type { Report } from "./render.ts";
 
 const ROOT = resolve(import.meta.dirname, "../..");
 
@@ -19,7 +20,7 @@ const ROOT = resolve(import.meta.dirname, "../..");
  */
 
 /** One fixture repository, written out and read back as `collect` reads this one. */
-function edgesOf(files: Record<string, string>): string[] {
+function reportOf(files: Record<string, string>): Report {
   const root = mkdtempSync(join(tmpdir(), "calls-"));
   try {
     for (const [rel, text] of Object.entries(files)) {
@@ -27,13 +28,17 @@ function edgesOf(files: Record<string, string>): string[] {
       mkdirSync(dirname(file), { recursive: true });
       writeFileSync(file, text, "utf8");
     }
-    return collect(root)
-      .edges.map((e) => `${e.from} -> ${e.to}`)
-      .sort();
+    return collect(root);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 }
+
+/** Its call edges as `from -> to`, sorted, which is what most of these ask about. */
+const edgesOf = (files: Record<string, string>): string[] =>
+  reportOf(files)
+    .edges.map((e) => `${e.from} -> ${e.to}`)
+    .sort();
 
 /** A workspace manifest. `main` absent is `web`'s case: no `exports`, so nothing imports it. */
 const manifest = (workspace: string, main?: string): string =>
@@ -401,6 +406,33 @@ describe("a call this repository owns and cannot place", () => {
       }),
     ).toEqual([`core/src/use.ts#useIt -> ${UNRESOLVED}#thing`]);
   });
+
+  it("draws one for a name reached only through a star barrel, whose dependency it still records", () => {
+    // #93's split, asserted as a split rather than as one fact. `export * from "./thing.ts"`
+    // names nothing, so the barrel exports no `thing` and the call through it places nothing —
+    // an `UNRESOLVED` node, not a dropped edge. The barrel's *dependency* on `./thing.ts` is
+    // recorded all the same, as a value import, which is what the module graph draws and
+    // `tools/pr-review/layering.ts` judges. A fixture: no workspace writes a star (below).
+    const report = reportOf({
+      "core/package.json": manifest("core", "./src/index.ts"),
+      "core/src/thing.ts": lines(`export function thing(): string {`, `  return "t";`, `}`),
+      "core/src/one.ts": lines(`export * from "./thing.ts";`),
+      "core/src/use.ts": lines(
+        `import { thing } from "./one.ts";`,
+        `export function useIt(): unknown {`,
+        `  return thing();`,
+        `}`,
+      ),
+    });
+    expect(report.edges.map((e) => `${e.from} -> ${e.to}`).sort()).toEqual([
+      `core/src/use.ts#useIt -> ${UNRESOLVED}#thing`,
+    ]);
+    const barrel = report.modules.find((m) => m.path === "core/src/one.ts");
+    expect(barrel?.exports).toEqual([]);
+    expect(barrel?.imports).toEqual([
+      { specifier: "core/src/thing.ts", typeOnly: false, erasable: false },
+    ]);
+  });
 });
 
 /**
@@ -408,7 +440,8 @@ describe("a call this repository owns and cannot place", () => {
  * prove the rule is what this tree is read by.
  */
 describe("this repository", () => {
-  const edges = collect(ROOT).edges;
+  const report = collect(ROOT);
+  const edges = report.edges;
   const workspaceOf = (ref: string): string => ref.split("/")[0] ?? "";
 
   /**
@@ -479,5 +512,31 @@ describe("this repository", () => {
     // that a name someone imports is no longer exported where they import it from, or that a
     // workspace is being imported as a package it cannot be reached by.
     expect(edges.filter((e) => e.to.startsWith(`${UNRESOLVED}#`))).toEqual([]);
+  });
+
+  it("re-exports by name in every module it reads, so no star hides a name from the graph", () => {
+    // The other canary, and the condition #93 turns on: a star carries the dependency and none
+    // of the names, so any call through one would go to `UNRESOLVED`. A gap in a picture rather
+    // than a hole in a gate — the edge is still drawn and still judged — and `calls.ts`'s header
+    // records that instead of following it, on the grounds asserted here: there are none. If
+    // this fails, read that note before adding a star; following one is real machinery.
+    //
+    // Read as text rather than off the AST because nothing in `Module` records that a star was
+    // written: `readModule` pushes the specifier and no name, so the collected data cannot
+    // answer this. Over the modules the report reads, which is the four workspaces minus their
+    // tests — `layering.ts` judges a test file and this does not.
+    const stars = report.modules.filter((m) =>
+      /^\s*export\s+(?:type\s+)?\*/m.test(readFileSync(join(ROOT, m.path), "utf8")),
+    );
+    expect(stars.map((m) => m.path)).toEqual([]);
+    // Over all four workspaces, rather than over whatever list `collect` happened to build:
+    // `walk` returns nothing for a directory that is not there, so a renamed source dir would
+    // leave this passing while claiming four.
+    expect([...new Set(report.modules.map((m) => m.workspace))].sort()).toEqual([
+      "app",
+      "core",
+      "server",
+      "web",
+    ]);
   });
 });
