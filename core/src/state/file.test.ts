@@ -408,6 +408,45 @@ it("warns about a Blocked Time that ends at or before it starts, and keeps it", 
 });
 
 /**
+ * What that Warning is *not* for, pinned so it cannot quietly become so (issue #82). A clock
+ * `core/src/clock.ts` cannot read never reaches the range check: `blockedTimeSchema` carries the
+ * same pattern, so the entry is refused before it is ever a Blocked Time and `entry-dropped`
+ * names where the cause is. `blocked-time-does-not-advance` therefore speaks only about a week
+ * and never about a clock, which is what ADR-0012 records.
+ *
+ * This is the tripwire for that, and in the one direction that needs one: widen the *schema's*
+ * spelling without the clock's and the entry survives into `checkBlockedRanges`, where it would
+ * acquire a Warning naming a cause that did not happen, and this fails. Widening the clock alone
+ * changes nothing here, because the schema still refuses the entry — that direction is
+ * `tools/ci/clock-pattern.test.ts`'s to catch (issue #89). It guards the spellings against each
+ * other; this guards what the reader says if they ever part.
+ */
+it("drops a Blocked Time whose clock cannot be read, rather than calling it a range", () => {
+  for (const unreadable of ["9:00", "24:00", "09:0", "morning", ""]) {
+    for (const field of ["start", "end"] as const) {
+      const file = fullFile();
+      file.timetables[0]!.blockedTimes = [
+        {
+          semester: "fall",
+          day: "sunday",
+          start: field === "start" ? unreadable : "08:00",
+          end: field === "end" ? unreadable : "17:00",
+          label: "work",
+        },
+      ];
+
+      const where = `${field}=${unreadable}`;
+      const result = parseStateFile(onDisk(file));
+
+      expect(result.state?.timetables[0]?.blockedTimes, where).toEqual([]);
+      expect(result.warnings, where).toEqual([
+        { kind: "entry-dropped", at: "timetables[0].blockedTimes[0]", field },
+      ]);
+    }
+  }
+});
+
+/**
  * The other half of that night shift, and the reason this check reads minutes rather than
  * comparing strings: as an `end`, `00:00` is the end of the Day, so `22:00`–`00:00` keeps the
  * evening free and is the correct spelling of it. A Warning on the right answer is how a
