@@ -58,7 +58,19 @@ export type {
   StateFileVersion,
   StateFileWarning,
 } from "./state/file.ts";
-export { CURRENT_STATE_SCHEMA_VERSION, stateSchema } from "./state/schema.ts";
+export {
+  clashesIn,
+  DEFAULT_VARIANT_NAME,
+  recordPick,
+  removePick,
+  variantAt,
+} from "./state/picks.ts";
+export type { PickSlot, VariantRef } from "./state/picks.ts";
+export {
+  CURRENT_STATE_SCHEMA_VERSION,
+  groupPickSchema,
+  stateSchema,
+} from "./state/schema.ts";
 export type {
   Attempt,
   BlockedTime,

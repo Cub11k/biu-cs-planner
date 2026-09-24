@@ -145,8 +145,19 @@ it("refuses a body past the size cap", async () => {
 it("never names a file path in what it sends back", async () => {
   await post("/api/workspace", {});
   await post("/api/catalog/2027/import", CRAWL);
+  await post("/api/timetable/2027/fall/picks", {
+    courseNumber: "89-110",
+    lessonType: "הרצאה",
+    groupNumber: "01",
+    meetings: [],
+  });
 
-  for (const path of ["/api/workspace", "/api/catalog/2027/offerings?semester=fall", "/api/catalog/2027/offerings/89-110"]) {
+  for (const path of [
+    "/api/workspace",
+    "/api/catalog/2027/offerings?semester=fall",
+    "/api/catalog/2027/offerings/89-110",
+    "/api/timetable/2027/fall",
+  ]) {
     const text = await (await get(path)).text();
     expect(text).not.toContain(root);
     expect(text).not.toContain(".json");
@@ -343,4 +354,208 @@ it("refuses the change count to a request with no launch token", async () => {
   const answer = await api.request("/api/workspace/changes");
 
   expect(answer.status).toBe(401);
+});
+
+/**
+ * Picking a Group, through the API and onto the disk.
+ *
+ * The one that matters is the restart: a Pick is worth nothing if it lives in the server's
+ * memory, so the API is built again over the same folder — which is all a restart is here,
+ * since the server holds nothing but the Workspace path — and asked what it has.
+ *
+ * Fixture data is invented. 89-110 and 89-210 are real BIU course numbers, the Meetings are
+ * not, and no crawled data is committed to this repo (ADR-0006).
+ */
+const LECTURE = {
+  courseNumber: "89-110",
+  lessonType: "הרצאה",
+  groupNumber: "01",
+  meetings: [{ semester: "fall", day: "tuesday", start: "15:00", end: "18:00" }],
+};
+const OTHER_LECTURE = { ...LECTURE, groupNumber: "02" };
+/** Overlaps LECTURE on Tuesday afternoon, so picking both is a Clash. */
+const CLASHING = {
+  courseNumber: "89-210",
+  lessonType: "הרצאה",
+  groupNumber: "01",
+  meetings: [{ semester: "fall", day: "tuesday", start: "16:00", end: "17:00" }],
+};
+
+const TIMETABLE = "/api/timetable/2027/fall";
+const PICKS = `${TIMETABLE}/picks`;
+
+const remove = (path: string, body: unknown) =>
+  api.request(path, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json", ...bearer },
+    body: JSON.stringify(body),
+  });
+
+/** A new server over the same folder: nothing of the old one's memory survives it. */
+const restart = (): void => {
+  api = createApi({
+    workspace: fileSystemWorkspace(root),
+    token: TOKEN,
+    changes: { changeCount: () => changeCount },
+  });
+};
+
+it("keeps a Pick across a restart, which is the whole point of a State File", async () => {
+  await post("/api/workspace", {});
+
+  const picked = await post(PICKS, LECTURE);
+  expect(picked.status).toBe(200);
+  await expect(picked.json()).resolves.toMatchObject({ picks: [LECTURE] });
+
+  restart();
+
+  const after = await get(TIMETABLE);
+  expect(after.status).toBe(200);
+  await expect(after.json()).resolves.toMatchObject({
+    variantName: "A",
+    picks: [LECTURE],
+    clashes: [],
+  });
+});
+
+it("serves an empty week before anything is picked, rather than failing", async () => {
+  await post("/api/workspace", {});
+
+  const response = await get(TIMETABLE);
+
+  expect(response.status).toBe(200);
+  await expect(response.json()).resolves.toMatchObject({ picks: [], clashes: [] });
+});
+
+it("replaces the Pick for a Lesson Type already picked", async () => {
+  await post("/api/workspace", {});
+  await post(PICKS, LECTURE);
+
+  const again = await post(PICKS, OTHER_LECTURE);
+
+  await expect(again.json()).resolves.toMatchObject({ picks: [OTHER_LECTURE] });
+});
+
+it("records a Pick that Clashes and reports the Clash, refusing nothing", async () => {
+  await post("/api/workspace", {});
+  await post(PICKS, LECTURE);
+
+  const clashing = await post(PICKS, CLASHING);
+
+  expect(clashing.status).toBe(200);
+  const body = (await clashing.json()) as { picks: unknown[]; clashes: Array<{ kind: string }> };
+  expect(body.picks).toHaveLength(2);
+  expect(body.clashes).toHaveLength(1);
+  expect(body.clashes[0]?.kind).toBe("meeting-meeting");
+});
+
+it("removes a Pick, and says so again when there is none left to remove", async () => {
+  await post("/api/workspace", {});
+  await post(PICKS, LECTURE);
+
+  const slot = { courseNumber: LECTURE.courseNumber, lessonType: LECTURE.lessonType };
+  const removed = await remove(PICKS, slot);
+  expect(removed.status).toBe(200);
+  await expect(removed.json()).resolves.toMatchObject({ picks: [] });
+
+  const again = await remove(PICKS, slot);
+  expect(again.status).toBe(200);
+  await expect(again.json()).resolves.toMatchObject({ picks: [] });
+});
+
+/**
+ * Every rejection this API makes is a named error with an explicit status, and there is no
+ * unnamed 500 anywhere in it. The writer throws `StateFileUnwritableError` on a value its
+ * schema would reject, and this is what keeps that unreachable: a body that is not a Pick
+ * never reaches the domain, so no `State` is ever built from one (#80).
+ */
+it("names every bad Pick request as a 400, and never lets one become a 500", async () => {
+  await post("/api/workspace", {});
+
+  const bad: Array<[string, Response]> = [
+    ["not-a-pick", await post(PICKS, { courseNumber: "89-110" })],
+    ["not-a-pick", await post(PICKS, { ...LECTURE, meetings: [{ day: "funday" }] })],
+    ["not-a-pick", await post(PICKS, "a string")],
+    ["not-a-pick-slot", await remove(PICKS, { courseNumber: 89110 })],
+    ["bad-year", await post("/api/timetable/nineteen/fall/picks", LECTURE)],
+    ["bad-semester", await post("/api/timetable/2027/winter/picks", LECTURE)],
+    ["bad-semester", await get("/api/timetable/2027/winter")],
+  ];
+
+  for (const [error, response] of bad) {
+    expect(response.status, error).toBe(400);
+    await expect(response.json(), error).resolves.toEqual({ error });
+  }
+
+  // and nothing was written: the State File does not exist
+  expect((await readdir(root)).filter((name) => name.endsWith(".state.json"))).toEqual([]);
+});
+
+it("refuses a Pick body carrying __proto__ before the schema ever sees it", async () => {
+  await post("/api/workspace", {});
+
+  const response = await api.request(PICKS, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...bearer },
+    body: '{"courseNumber":"89-110","lessonType":"הרצאה","groupNumber":"01","meetings":[],"__proto__":{"polluted":true}}',
+  });
+
+  expect(response.status).toBe(400);
+  await expect(response.json()).resolves.toEqual({ error: "unsafe-keys" });
+  expect(({} as Record<string, unknown>)["polluted"]).toBeUndefined();
+});
+
+it("will not overwrite a State File it could not read", async () => {
+  await post("/api/workspace", {});
+  // a hand edit, a half-synced file, or another tool's output
+  await writeFile(join(root, "me.state.json"), '{"schemaVersion":99}', "utf8");
+
+  const response = await post(PICKS, LECTURE);
+
+  expect(response.status).toBe(409);
+  await expect(response.json()).resolves.toMatchObject({
+    reason: "state-file-unreadable",
+    warnings: [{ kind: "schema-version-too-new", found: 99 }],
+  });
+  expect(await readFile(join(root, "me.state.json"), "utf8")).toBe('{"schemaVersion":99}');
+});
+
+it("will not overwrite a State File that is not even JSON", async () => {
+  await post("/api/workspace", {});
+  // a half-written file, or a sync that stopped mid-copy. The adapter hands back what it
+  // found rather than inventing a stand-in, so the reader says "file-unreadable" and the
+  // edit is refused — the one shape that could otherwise lose a whole Plan silently
+  await writeFile(join(root, "me.state.json"), "{ not json at all", "utf8");
+
+  const response = await post(PICKS, LECTURE);
+
+  expect(response.status).toBe(409);
+  await expect(response.json()).resolves.toMatchObject({
+    reason: "state-file-unreadable",
+    warnings: [{ kind: "file-unreadable" }],
+  });
+  expect(await readFile(join(root, "me.state.json"), "utf8")).toBe("{ not json at all");
+});
+
+it("refuses a Pick to a request with no launch token", async () => {
+  await post("/api/workspace", {});
+
+  const answer = await api.request(PICKS, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(LECTURE),
+  });
+
+  expect(answer.status).toBe(401);
+});
+
+it("refuses to record a Pick into a folder that is not a Workspace yet", async () => {
+  const response = await post(PICKS, LECTURE);
+
+  // a named 409, the way the import route answers it — never an unnamed 500
+  expect(response.status).toBe(409);
+  await expect(response.json()).resolves.toEqual({
+    reason: "workspace-not-ready",
+    warnings: [],
+  });
 });

@@ -8,6 +8,27 @@ export {
   type QueryWarning,
 } from "./queries.ts";
 export {
+  editStateFile,
+  readStateFile,
+  type EditHistory,
+  type EditOptions,
+  type EditOutcome,
+  type EditRefusal,
+  type StateEdit,
+  type StateEditing,
+  type StateFileLoad,
+} from "./edit.ts";
+export {
+  DEFAULT_STATE_FILE,
+  pickGroup,
+  readTimetable,
+  removeGroupPick,
+  type PickOptions,
+  type TimetableRef,
+  type TimetableResult,
+  type TimetableView,
+} from "./picks.ts";
+export {
   watchWorkspace,
   DEFAULT_SETTLE_MS,
   type Schedule,

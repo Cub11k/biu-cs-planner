@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { t, type Language, type StringKey } from "../i18n/strings.ts";
-import { courseName, isUntimedIn, type Offering, type Semester } from "./catalog.ts";
+import { isUntimedIn, type Semester } from "./catalog.ts";
 import { lessonSlot, lessonTypeName } from "./lessonType.ts";
 import {
   daysShown,
   formatClock,
+  groupKey,
   hourLines,
   hourRange,
   tileBox,
@@ -12,6 +13,7 @@ import {
   tilesFor,
   type HourRange,
   type Tile,
+  type WeekGroup,
 } from "./week.ts";
 
 /** Tall enough that a two-hour Meeting has room for its name and its times. */
@@ -20,22 +22,38 @@ const HOUR_PX = 66;
 export type WeekGridProps = {
   language: Language;
   semester: Semester;
-  /** The Course whose Groups are on the week; none until one is chosen. */
-  offering: Offering | undefined;
+  /**
+   * Every Group on the week: the Variant's Picks, and the Groups of the Course the student
+   * is looking at as options. `week.ts` builds the list; this draws it.
+   */
+  groups: readonly WeekGroup[];
+  /** The Groups a Clash touches, by `groupKey`. Red pen, and nothing refused. */
+  clashing?: ReadonlySet<string>;
+  /** Picking a Group — or, on one already picked, removing that Pick. */
+  onPick: (group: WeekGroup) => void;
 };
 
 /**
- * One Semester's week. Every block on it is pencil — a dashed outline on the surface
- * colour, an option nobody has taken — because there is no Variant and no Pick yet
- * (docs/design.md, "Visual language").
+ * One Semester's week.
  *
- * The component decides nothing: `week.ts` says which days and hours the grid has and
- * where each block goes, and this turns those answers into elements.
+ * Three of the states docs/design.md, "Visual language" names are drawn here: **pencil**, a
+ * dashed outline for an option nobody has taken; **ink**, a solid border with a thick start
+ * edge and a tint of the Lesson Type's colour, for a Pick; and **red pen** for a Pick that
+ * Clashes. Hatching — time already taken — waits for Blocked Times.
+ *
+ * The component decides nothing: `week.ts` says which Groups the week shows, which days and
+ * hours the grid has, where each block goes and which Groups a Clash touches, and this turns
+ * those answers into elements.
  */
-export function WeekGrid({ language, semester, offering }: WeekGridProps): React.JSX.Element {
+export function WeekGrid({
+  language,
+  semester,
+  groups,
+  clashing,
+  onPick,
+}: WeekGridProps): React.JSX.Element {
   const [highlighted, setHighlighted] = useState<string | undefined>(undefined);
 
-  const groups = offering?.groups ?? [];
   const tiles = tilesFor(groups, semester);
   const days = daysShown(tiles);
   const range = hourRange(tiles);
@@ -76,14 +94,15 @@ export function WeekGrid({ language, semester, offering }: WeekGridProps): React
             {tiles
               .filter((tile) => tile.day === day)
               .map((tile) => (
-                <PencilTile
+                <GroupTile
                   key={tile.key}
                   tile={tile}
                   range={range}
-                  offering={offering}
                   language={language}
+                  clashes={clashing?.has(tile.groupKey) ?? false}
                   highlighted={tile.groupKey === highlighted}
                   onHighlight={setHighlighted}
+                  onPick={onPick}
                 />
               ))}
           </div>
@@ -94,22 +113,28 @@ export function WeekGrid({ language, semester, offering }: WeekGridProps): React
         <div className="untimed flex flex-wrap items-center gap-2 border-t border-rule bg-paper px-3 py-2">
           <span className="text-xs text-pencil">{t(language, "noFixedTime")}</span>
           {untimed.map((group) => (
-            <div
-              key={`${group.lessonType}|${group.number}`}
-              className="tile"
+            <button
+              key={groupKey(group)}
+              type="button"
+              className={tileClass(group, clashing?.has(groupKey(group)) ?? false, false)}
               data-lesson-slot={lessonSlot(group.lessonType)}
+              aria-pressed={group.picked}
+              onClick={() => onPick(group)}
             >
-              <div className="tile-name" style={{ "--name-lines": 1 } as React.CSSProperties}>
-                {offering === undefined ? "" : courseName(offering, language)}
-              </div>
-              <div className="tile-detail">
+              <span
+                className="tile-name"
+                style={{ "--name-lines": 1 } as React.CSSProperties}
+              >
+                {group.courseName}
+              </span>
+              <span className="tile-detail">
                 {[
-                  offering?.courseNumber ?? "",
+                  group.courseNumber,
                   lessonTypeName(group.lessonType, language),
                   group.number,
                 ].join(" · ")}
-              </div>
-            </div>
+              </span>
+            </button>
           ))}
         </div>
       )}
@@ -117,25 +142,42 @@ export function WeekGrid({ language, semester, offering }: WeekGridProps): React
   );
 }
 
-function PencilTile({
+/**
+ * Pencil, ink and red pen, as classes rather than as styles: the colours are tokens in
+ * index.css and a component holds no raw colour value (docs/design.md, "Light and dark").
+ */
+function tileClass(group: WeekGroup, clashes: boolean, highlighted: boolean): string {
+  return [
+    "tile",
+    group.picked ? "is-picked" : undefined,
+    clashes ? "is-clashing" : undefined,
+    highlighted ? "is-highlighted" : undefined,
+  ]
+    .filter((part) => part !== undefined)
+    .join(" ");
+}
+
+function GroupTile({
   tile,
   range,
-  offering,
   language,
+  clashes,
   highlighted,
   onHighlight,
+  onPick,
 }: {
   tile: Tile;
   range: HourRange;
-  offering: Offering | undefined;
   language: Language;
+  clashes: boolean;
   highlighted: boolean;
   onHighlight: (groupKey: string | undefined) => void;
+  onPick: (group: WeekGroup) => void;
 }): React.JSX.Element {
   const box = tileBox(tile, range, HOUR_PX);
   const text = tileText({
-    name: offering === undefined ? "" : courseName(offering, language),
-    courseNumber: offering?.courseNumber ?? "",
+    name: tile.group.courseName,
+    courseNumber: tile.group.courseNumber,
     lessonTypeName: lessonTypeName(tile.group.lessonType, language),
     groupNumber: tile.group.number,
     startMinutes: tile.startMinutes,
@@ -144,10 +186,13 @@ function PencilTile({
   });
 
   return (
-    <div
-      className={`tile${highlighted ? " is-highlighted" : ""}`}
+    <button
+      type="button"
+      className={tileClass(tile.group, clashes, highlighted)}
       data-lesson-slot={lessonSlot(tile.group.lessonType)}
-      tabIndex={0}
+      // a toggle, because clicking a Group already picked removes that Pick; "pressed" is
+      // what a screen reader says instead of the ink a sighted student sees
+      aria-pressed={tile.group.picked}
       style={
         {
           top: box.topPx,
@@ -157,13 +202,14 @@ function PencilTile({
           "--name-lines": text.nameLines,
         } as React.CSSProperties
       }
+      onClick={() => onPick(tile.group)}
       onMouseEnter={() => onHighlight(tile.groupKey)}
       onMouseLeave={() => onHighlight(undefined)}
       onFocus={() => onHighlight(tile.groupKey)}
       onBlur={() => onHighlight(undefined)}
     >
-      <div className="tile-name">{text.name}</div>
-      <div className="tile-detail">
+      <span className="tile-name">{text.name}</span>
+      <span className="tile-detail">
         {text.detail}
         {text.times === undefined ? null : (
           <>
@@ -173,7 +219,7 @@ function PencilTile({
             <bdi dir="ltr">{text.times}</bdi>
           </>
         )}
-      </div>
-    </div>
+      </span>
+    </button>
   );
 }

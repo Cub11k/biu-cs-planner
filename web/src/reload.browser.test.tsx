@@ -54,6 +54,8 @@ let served: Offering[] = [BEFORE];
 let changeCount = 0;
 let polls = 0;
 let asks = 0;
+/** Holds the Catalog answer open, so a test can look at the screen mid-re-read. */
+let held: Promise<void> | undefined;
 
 const json = (body: unknown): Response =>
   new Response(JSON.stringify(body), {
@@ -66,6 +68,7 @@ beforeEach(() => {
   changeCount = 0;
   polls = 0;
   asks = 0;
+  held = undefined;
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = input instanceof Request ? input.url : String(input);
     const { pathname } = new URL(url, location.href);
@@ -75,7 +78,12 @@ beforeEach(() => {
       polls += 1;
       return json({ changeCount });
     }
+    if (pathname.startsWith("/api/timetable")) {
+      // nothing is picked in this fixture: what is under test here is the Catalog
+      return json({ variantName: "A", picks: [], clashes: [], warnings: [] });
+    }
     asks += 1;
+    if (held !== undefined) await held;
     return json({ offerings: served });
   }) as typeof fetch;
 });
@@ -189,4 +197,65 @@ it("reloads the whole app when the server's change count moves", async () => {
     },
     { timeout: 8000, interval: 100 },
   );
+});
+
+/**
+ * And it re-reads **without blanking what is on screen**.
+ *
+ * From the moment a Pick can be saved, every save moves the change count — the watcher
+ * watches the Workspace root and filters no filenames — so this re-read happens per Pick
+ * and not only when someone drops a file in by hand. #88 ruled the reload idempotent
+ * rather than suppressed, and a screen that flashed "Loading the catalog…" on every Pick
+ * would be the suppression argument all over again.
+ *
+ * The Catalog answer is held open here so the screen can be looked at mid-re-read, which is
+ * the only moment the difference exists.
+ */
+it("keeps the Catalog on screen while it re-reads after a change", async () => {
+  const mounted = await show(0);
+  expect(courseNumbers(mounted)).toEqual([BEFORE.courseNumber]);
+
+  let release = (): void => {};
+  held = new Promise<void>((resolve) => {
+    release = () => resolve();
+  });
+  served = [AFTER];
+  await show(1);
+
+  // the request is in flight and the old Catalog is still there to work with
+  await vi.waitFor(() => {
+    if (asks < 2) throw new Error("the screen has not asked for the Catalog again");
+  });
+  expect(courseNumbers(mounted)).toEqual([BEFORE.courseNumber]);
+  expect(mounted.textContent).not.toContain("Loading the catalog");
+
+  release();
+  await vi.waitFor(() => {
+    expect(courseNumbers(mounted)).toEqual([AFTER.courseNumber]);
+  });
+});
+
+/** A first load has genuinely nothing to show, so it still says so. */
+it("says it is loading on the first read, when there is nothing to keep", async () => {
+  let release = (): void => {};
+  held = new Promise<void>((resolve) => {
+    release = () => resolve();
+  });
+
+  const mounted = document.createElement("div");
+  host = mounted;
+  document.body.append(mounted);
+  root = createRoot(mounted);
+  root.render(<TimetableScreen language="en" onLanguage={() => {}} today={TODAY} />);
+
+  await vi.waitFor(() => {
+    if (!(mounted.textContent ?? "").includes("Loading the catalog")) {
+      throw new Error("the first load said nothing about loading");
+    }
+  });
+
+  release();
+  await vi.waitFor(() => {
+    expect(courseNumbers(mounted)).toEqual([BEFORE.courseNumber]);
+  });
 });

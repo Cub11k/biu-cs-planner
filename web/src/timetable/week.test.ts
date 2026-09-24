@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import type { Group, Semester } from "./catalog.ts";
+import type { Day, Semester } from "./catalog.ts";
 import {
   DEFAULT_HOUR_RANGE,
   daysShown,
@@ -13,20 +13,26 @@ import {
   tileText,
   tilesFor,
   WEEK_DAYS,
+  clashingGroups,
+  groupKey,
+  weekGroups,
+  type WeekGroup,
 } from "./week.ts";
 
 const FALL: Semester = "fall";
 
-/** A Group as the API hands it over, with its Meetings written the way Shoham writes them. */
+/** A Group as the week draws it, with its Meetings written the way Shoham writes them. */
 function group(
   number: string,
   lessonType: string,
-  meetings: ReadonlyArray<[Group["meetings"][number]["day"], string, string, Semester?]>,
-): Group {
+  meetings: ReadonlyArray<[Day, string, string, Semester?]>,
+): WeekGroup {
   return {
+    courseNumber: "89-110",
+    courseName: "Introduction to Computer Science",
     number,
     lessonType,
-    lecturers: [],
+    picked: false,
     meetings: meetings.map(([day, start, end, semester]) => ({
       semester: semester ?? FALL,
       day,
@@ -99,7 +105,7 @@ describe("placing a Semester's Meetings", () => {
     const tiles = tilesFor([lecture], FALL);
 
     expect(tiles).toHaveLength(2);
-    expect(new Set(tiles.map((tile) => tile.groupKey))).toEqual(new Set(["הרצאה|01"]));
+    expect(new Set(tiles.map((tile) => tile.groupKey))).toEqual(new Set(["89-110|הרצאה|01"]));
   });
 
   it("leaves the other Semester's Meetings of a Year-long Group off the week", () => {
@@ -338,5 +344,85 @@ describe("the clock the shared table says core and web both read", () => {
         occupiesTime ? [[range.startMinutes, range.endMinutes]] : [],
       ]);
     }
+  });
+});
+
+describe("what the week shows", () => {
+  const PICK = {
+    courseNumber: "89-210",
+    lessonType: "הרצאה",
+    groupNumber: "02",
+    meetings: [{ semester: FALL, day: "monday" as const, start: "09:00", end: "11:00" }],
+  };
+
+  const offering = {
+    courseNumber: "89-110",
+    nameHebrew: "מבוא למדעי המחשב",
+    credits: { known: true, total: 5 },
+    semesters: [FALL],
+    exams: { known: false, sittings: [] },
+    groups: [
+      { number: "01", lessonType: "הרצאה", lecturers: [], meetings: [] },
+      { number: "03", lessonType: "תרגיל", lecturers: [], meetings: [] },
+    ],
+  };
+
+  const nameOf = (courseNumber: string): string =>
+    courseNumber === "89-110" ? "Introduction to Computer Science" : courseNumber;
+
+  it("shows every Pick and the chosen Course's Groups, and says which are picked", () => {
+    const shown = weekGroups({ offering, picks: [PICK], nameOf });
+
+    expect(shown.map((group) => [group.courseNumber, group.number, group.picked])).toEqual([
+      ["89-210", "02", true],
+      ["89-110", "01", false],
+      ["89-110", "03", false],
+    ]);
+  });
+
+  it("names a picked Course by its number when the Catalog no longer names it", () => {
+    const [shown] = weekGroups({ offering: undefined, picks: [PICK], nameOf });
+
+    // the Pick carries its own snapshot, so it is still drawn — with the one name it has
+    expect(shown).toMatchObject({ courseName: "89-210", meetings: PICK.meetings });
+  });
+
+  it("draws a Group that is both an option and the Pick for its slot once, as the Pick", () => {
+    const picked = { ...PICK, courseNumber: "89-110", lessonType: "הרצאה", groupNumber: "01" };
+
+    const shown = weekGroups({ offering, picks: [picked], nameOf });
+
+    expect(shown.filter((group) => group.number === "01")).toHaveLength(1);
+    expect(shown.find((group) => group.number === "01")?.picked).toBe(true);
+  });
+
+  it("keeps two Courses' lecture 01 apart, because a Group key carries its Course", () => {
+    const mine = { courseNumber: "89-110", lessonType: "הרצאה", number: "01" };
+    const theirs = { courseNumber: "89-210", lessonType: "הרצאה", number: "01" };
+
+    expect(groupKey(mine)).not.toBe(groupKey(theirs));
+  });
+
+  it("marks both Groups of a Clash, and the one Group of a Blocked Time Clash", () => {
+    const first = { courseNumber: "89-110", lessonType: "הרצאה", number: "01" };
+    const second = { courseNumber: "89-210", lessonType: "הרצאה", number: "01" };
+    // a third Group, so the Blocked Time half of the answer is a key the Meeting half
+    // could not have contributed — otherwise deleting that half changes nothing
+    const third = { courseNumber: "89-230", lessonType: "תרגיל", number: "04" };
+    const span = { semester: FALL, day: "tuesday" as const, start: "16:00", end: "17:00" };
+
+    const keys = clashingGroups([
+      {
+        kind: "meeting-meeting",
+        overlap: span,
+        first: { group: first, meeting: span },
+        second: { group: second, meeting: span },
+      },
+      { kind: "meeting-blocked-time", overlap: span, group: third, meeting: span, blockedTime: span },
+    ]);
+
+    expect([...keys].sort()).toEqual(
+      [groupKey(first), groupKey(second), groupKey(third)].sort(),
+    );
   });
 });

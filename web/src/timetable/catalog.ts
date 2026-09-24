@@ -36,7 +36,10 @@ export function courseName(offering: Offering, language: Language): string {
  * Semester has to ask for that Semester's Meetings rather than for the Group's
  * (CONTEXT.md, "Year-long Course"; docs/research/shoham-raw-shape.md).
  */
-export function meetingsInSemester(group: Group, semester: Semester): Meeting[] {
+export function meetingsInSemester(
+  group: { meetings: readonly Meeting[] },
+  semester: Semester,
+): Meeting[] {
   return group.meetings.filter((meeting) => meeting.semester === semester);
 }
 
@@ -45,6 +48,6 @@ export function meetingsInSemester(group: Group, semester: Semester): Meeting[] 
  * Shoham has not published times for yet. It belongs in the "No fixed time" strip and
  * never on the grid (CONTEXT.md, "Untimed Group"; docs/design.md, "Grid and Picks").
  */
-export function isUntimedIn(group: Group, semester: Semester): boolean {
+export function isUntimedIn(group: { meetings: readonly Meeting[] }, semester: Semester): boolean {
   return meetingsInSemester(group, semester).length === 0;
 }

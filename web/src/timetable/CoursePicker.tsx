@@ -1,25 +1,32 @@
 import { useId, useState } from "react";
 import { t, type Language } from "../i18n/strings.ts";
 import { courseName, type Offering } from "./catalog.ts";
+import { lessonTypeName } from "./lessonType.ts";
+import type { GroupPick } from "./picks.ts";
 
 export type CoursePickerProps = {
   language: Language;
   offerings: readonly Offering[];
+  /** Every Pick in the Variant, so a Course can show what is already chosen for it. */
+  picks: readonly GroupPick[];
   selected: string | undefined;
   onSelect: (courseNumber: string) => void;
 };
 
 /**
- * Choosing the Course whose Groups the week shows.
+ * Choosing the Course whose Groups the week shows, and seeing what is picked for each.
  *
  * This stands where the Tray will stand. It is deliberately not a Tray: a Tray holds a
- * Semester's planned Attempts plus Courses added directly (CONTEXT.md), and there is no
- * State File, no Plan and no Variant yet — so what a student can choose from today is the
- * Catalog itself. It is replaced, not extended, when the Tray arrives.
+ * Semester's planned Attempts plus Courses added directly (CONTEXT.md), and there are no
+ * Attempts and no Plan yet — so what a student can choose from today is the Catalog itself.
+ * It is replaced, not extended, when the Tray arrives, and the chip per Lesson Type the
+ * Tray is to carry (docs/design.md, "Grid and Picks") is what the picked line below stands
+ * in for until then.
  */
 export function CoursePicker({
   language,
   offerings,
+  picks,
   selected,
   onSelect,
 }: CoursePickerProps): React.JSX.Element {
@@ -47,7 +54,9 @@ export function CoursePicker({
         <p className="text-sm text-pencil">{t(language, "catalogEmpty")}</p>
       ) : (
         <ul className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-auto">
-          {matches.map((offering) => (
+          {matches.map((offering) => {
+            const chosen = picked(picks, offering.courseNumber, language);
+            return (
             <li key={offering.courseNumber}>
               <button
                 type="button"
@@ -63,13 +72,38 @@ export function CoursePicker({
                 <span className="block text-xs text-pencil">
                   {offering.courseNumber} · {groupCount(language, offering.groups.length)}
                 </span>
+                {chosen === undefined ? null : (
+                  <span className="mt-0.5 block text-xs font-medium text-ink-soft">
+                    {t(language, "pickedLabel")} {chosen}
+                  </span>
+                )}
               </button>
             </li>
-          ))}
+            );
+          })}
         </ul>
       )}
     </div>
   );
+}
+
+/**
+ * What is picked for one Course, as "Lecture 01 · Tirgul 03", or nothing when it has no
+ * Pick. One Pick per Lesson Type, so there is one entry per Lesson Type chosen — a Lesson
+ * Type with no Pick is simply absent, and naming the ones still missing is the Tray's chip
+ * per Lesson Type (docs/design.md, "Grid and Picks") rather than this line.
+ */
+function picked(
+  picks: readonly GroupPick[],
+  courseNumber: string,
+  language: Language,
+): string | undefined {
+  const mine = picks.filter((pick) => pick.courseNumber === courseNumber);
+  if (mine.length === 0) return undefined;
+
+  return mine
+    .map((pick) => `${lessonTypeName(pick.lessonType, language)} ${pick.groupNumber}`)
+    .join(" · ");
 }
 
 /** One Group is not "1 groups", and Hebrew's singular is a different word again. */

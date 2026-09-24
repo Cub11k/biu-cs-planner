@@ -1,9 +1,17 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api.ts";
 import { DIRECTION, t, type Language, type StringKey } from "../i18n/strings.ts";
 import { academicYearOf, academicYearSpan, semesterOf } from "./calendar.ts";
 import { courseName, type Semester } from "./catalog.ts";
 import { fetchOfferings, type CatalogWarning, type OfferingsResult } from "./offerings.ts";
+import {
+  fetchTimetable,
+  recordPick,
+  removePick,
+  type GroupPick,
+  type TimetableResult,
+} from "./picks.ts";
+import { clashingGroups, weekGroups, type WeekGroup } from "./week.ts";
 import { CoursePicker } from "./CoursePicker.tsx";
 import { WeekGrid } from "./WeekGrid.tsx";
 
@@ -14,6 +22,7 @@ const SEMESTER_STRING = {
 } as const satisfies Record<Semester, StringKey>;
 
 type CatalogState = { kind: "loading" } | OfferingsResult;
+type TimetableState = { kind: "loading" } | TimetableResult;
 
 /**
  * Why the API served no Catalog, said in words the student can act on. A Warning nobody
@@ -29,6 +38,60 @@ const WARNING_STRING = new Map<CatalogWarning["kind"], StringKey>([
 /** Absence is not a fault: the year simply has no Catalog yet, and one can be imported. */
 const isAbsence = (warnings: readonly CatalogWarning[]): boolean =>
   warnings.length === 0 || warnings.every((warning) => warning.kind === "no-catalog-for-year");
+
+/**
+ * Asks the API again whenever the Workspace changes, **without blanking what is on screen**.
+ *
+ * Every save moves the Workspace's change count — the watcher watches the root and filters
+ * no filenames — so from the moment a Pick can be saved, the page that made it re-reads on
+ * every edit. That reload is made idempotent rather than suppressed (#88): the answer
+ * already on screen stays until the new one arrives, and only a first load, or a switch to
+ * another Semester, shows `loading`, because then there is genuinely nothing to show.
+ *
+ * `load` is the question: memoise it on what it asks for, and a change to it is a change of
+ * question rather than news about the folder.
+ */
+function useReloading<T>(
+  load: () => Promise<T>,
+  workspaceChanges: number,
+): [{ kind: "loading" } | T, (answer: T) => void] {
+  const [answer, setAnswer] = useState<{ kind: "loading" } | T>({ kind: "loading" });
+  const shownFor = useRef<typeof load | undefined>(undefined);
+  /**
+   * Which answer the screen is showing. It has to be counted rather than flagged, because
+   * a save is itself what moves the change count: the re-read it triggers can be sent
+   * before the file is written and answer after the edit's own answer has already been
+   * shown, and a bare "is this effect still current" flag would let that stale Variant
+   * overwrite the new one. An answer older than what is on screen is dropped.
+   */
+  const shown = useRef(0);
+
+  /** An answer from outside the effect — an edit's own — is the newest by definition. */
+  const showAnswer = useCallback((fresh: T): void => {
+    shown.current += 1;
+    setAnswer(fresh);
+  }, []);
+
+  useEffect(() => {
+    const mine = (shown.current += 1);
+    if (shownFor.current !== load) setAnswer({ kind: "loading" });
+
+    // `load` resolves rather than rejects for every answer the API can give, which is why
+    // there is no `catch` here: a rejection would be a bug in the client, not an answer.
+    void load().then((fresh) => {
+      if (shown.current !== mine) return;
+      shownFor.current = load;
+      setAnswer(fresh);
+    });
+
+    return () => {
+      // whatever this run asked for is no longer what the screen is waiting on
+      shown.current += 1;
+    };
+  }, [load, workspaceChanges]);
+
+  return [answer, showAnswer];
+}
 
 export type TimetableScreenProps = {
   language: Language;
@@ -46,8 +109,9 @@ export type TimetableScreenProps = {
 };
 
 /**
- * The landing screen: the week of one Semester of the current Academic Year, and the
- * Catalog to choose a Course from. Choosing one puts its Groups' Meetings on the week.
+ * The landing screen: the week of one Semester of the current Academic Year, the Catalog to
+ * choose a Course from, and the Picks the student has already made. Choosing a Course puts
+ * its Groups on the week as options; clicking one Picks it, and clicking a Pick removes it.
  *
  * It reaches the domain only through the typed client in ../api.ts, which is the only
  * thing on this side that knows the API contract (docs/design.md, "Architecture").
@@ -61,26 +125,53 @@ export function TimetableScreen({
   const academicYear = academicYearOf(today);
   const semester = semesterOf(today);
 
-  const [catalog, setCatalog] = useState<CatalogState>({ kind: "loading" });
   const [selected, setSelected] = useState<string | undefined>(undefined);
 
-  useEffect(() => {
-    let current = true;
-    setCatalog({ kind: "loading" });
+  const askCatalog = useCallback(
+    () => fetchOfferings(api, { academicYear, semester }),
+    [academicYear, semester],
+  );
+  const askTimetable = useCallback(
+    () => fetchTimetable(api, { academicYear, semester }),
+    [academicYear, semester],
+  );
 
-    fetchOfferings(api, { academicYear, semester }).then((result) => {
-      if (current) setCatalog(result);
-    });
-
-    return () => {
-      current = false;
-    };
-    // `workspaceChanges` is a dependency and nothing else: a Catalog that appeared in the
-    // folder is read again here, because the Catalog this screen is showing may be it
-  }, [academicYear, semester, workspaceChanges]);
+  const [catalog]: [CatalogState, unknown] = useReloading(askCatalog, workspaceChanges);
+  const [timetable, setTimetable]: [TimetableState, (answer: TimetableResult) => void] =
+    useReloading(askTimetable, workspaceChanges);
 
   const offerings = catalog.kind === "served" ? catalog.offerings : [];
+  const picks = timetable.kind === "served" ? timetable.picks : [];
+  const clashes = timetable.kind === "served" ? timetable.clashes : [];
   const chosen = offerings.find((offering) => offering.courseNumber === selected);
+
+  /** A picked Course the Catalog no longer names shows its number, which it always has. */
+  const nameOf = (courseNumber: string): string => {
+    const known = offerings.find((offering) => offering.courseNumber === courseNumber);
+    return known === undefined ? courseNumber : courseName(known, language);
+  };
+
+  /**
+   * Picking, and un-picking. One call per click, which is what ADR-0013 makes one undo
+   * entry, and the answer carries the Variant as it stands afterwards — so the screen shows
+   * what the file holds rather than what it hoped the file would hold.
+   */
+  const onPick = (group: WeekGroup): void => {
+    const query = { academicYear, semester };
+    const slot = { courseNumber: group.courseNumber, lessonType: group.lessonType };
+    const done = group.picked
+      ? removePick(api, query, slot)
+      : // the snapshot is taken here, off the Meetings the page is showing: a Pick carries
+        // the Group's Meetings as they stood when it was made (CONTEXT.md, "Pick")
+        recordPick(api, query, {
+          ...slot,
+          groupNumber: group.number,
+          meetings: [...group.meetings],
+        } as GroupPick);
+
+    void done.then(setTimetable);
+  };
+
   // one spelling of the year on the whole screen: the header and the sidebar disagreeing
   // about 2026-27 and 2027 reads as if a different year were the one missing
   const yearLabel = t(language, "academicYear", academicYearSpan(academicYear));
@@ -119,6 +210,7 @@ export function TimetableScreen({
             <CoursePicker
               language={language}
               offerings={offerings}
+              picks={picks}
               selected={selected}
               onSelect={setSelected}
             />
@@ -126,31 +218,79 @@ export function TimetableScreen({
         </aside>
 
         <section className="flex min-w-0 flex-col">
-          <p className="flex items-center gap-3 border-b border-rule bg-hint px-4 py-2 text-sm text-ink-soft">
+          <p className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-rule bg-hint px-4 py-2 text-sm text-ink-soft">
             {chosen === undefined
               ? t(language, "hintChoose")
               : t(language, "hintShowing", { course: courseName(chosen, language) })}
+            {picksNotice(language, timetable) === undefined ? null : (
+              <span>{picksNotice(language, timetable)}</span>
+            )}
+            {clashes.length > 0 && <span>{clashesSaid(language, clashes.length)}</span>}
             <span className="ms-auto flex items-center gap-2 text-xs text-pencil">
-              <span className="inline-block h-3 w-4 rounded-xs border-2 border-dashed border-pencil" />
+              <span className="legend-swatch inline-block h-3 w-4 rounded-xs" />
               {t(language, "legendPencil")}
+              <span className="legend-swatch is-picked inline-block h-3 w-4 rounded-xs" />
+              {t(language, "legendInk")}
+              {/* also `is-picked`: on the week a Clash is always a Pick */}
+              <span className="legend-swatch is-picked is-clashing inline-block h-3 w-4 rounded-xs" />
+              {t(language, "legendClash")}
             </span>
           </p>
 
           <div className="min-h-0 flex-1 overflow-auto">
-            {/* keyed by the Course: choosing another one starts the week fresh, so a
-                Group highlighted under the pointer cannot carry over to a Group of the
-                same number and Lesson Type in the Course that replaced it */}
             <WeekGrid
-              key={chosen?.courseNumber ?? "none"}
               language={language}
               semester={semester}
-              offering={chosen}
+              groups={weekGroups({ offering: chosen, picks, nameOf })}
+              clashing={clashingGroups(clashes)}
+              onPick={onPick}
             />
           </div>
         </section>
       </div>
     </div>
   );
+}
+
+/**
+ * What the hint line says about the Picks — and what it does **not** say.
+ *
+ * Only a served answer knows how many Picks there are. Falling back to an empty list and
+ * counting that would put "Nothing picked yet" on screen for a server that is not
+ * answering, which is an affirmative false statement about a student's own data: their
+ * Picks are on disk and this page simply cannot see them. Each of the other four answers
+ * says what it actually is, as the Catalog half of this screen already does.
+ */
+function picksNotice(language: Language, timetable: TimetableState): string | undefined {
+  switch (timetable.kind) {
+    // the first read is in flight and there is nothing honest to say yet
+    case "loading":
+      return undefined;
+    case "unreachable":
+      return t(language, "apiUnreachable");
+    case "unauthorized":
+      return t(language, "catalogUnauthorized");
+    case "refused":
+      return t(
+        language,
+        timetable.reason === "workspace-not-ready" ? "picksNotSaved" : "picksUnreadable",
+      );
+    case "served":
+      return picksSaid(language, timetable.picks.length);
+  }
+}
+
+/** One Pick is not "1 groups picked", and Hebrew's singular is a different word again. */
+function picksSaid(language: Language, count: number): string {
+  if (count === 0) return t(language, "picksNone");
+  return count === 1 ? t(language, "picksCountOne") : t(language, "picksCount", { count });
+}
+
+/** A Clash is a Warning: it is counted and shown, and it refuses nothing. */
+function clashesSaid(language: Language, count: number): string {
+  return count === 1
+    ? t(language, "clashesCountOne")
+    : t(language, "clashesCount", { count });
 }
 
 /**

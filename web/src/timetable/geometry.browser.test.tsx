@@ -80,7 +80,14 @@ beforeEach(() => {
       return realFetch(input as RequestInfo, init);
     }
 
-    return new Response(JSON.stringify({ offerings: [OFFERING] }), {
+    // the screen asks two routes as it opens: the Catalog, and the Picks it has to draw.
+    // This fixture picks nothing, so the week here is pencil throughout.
+    const { pathname } = new URL(url, location.href);
+    const body = pathname.startsWith("/api/timetable")
+      ? { variantName: "A", picks: [], clashes: [], warnings: [] }
+      : { offerings: [OFFERING] };
+
+    return new Response(JSON.stringify(body), {
       status: 200,
       headers: { "content-type": "application/json" },
     });
