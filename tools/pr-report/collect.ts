@@ -92,9 +92,11 @@ function packageEntries(root: string): Map<string, string> {
  * had one entry and the module read last owned it. Here two modules exporting `groupKey`
  * hold one entry each, and no reading order can make one of them answer for the other.
  *
- * Only what can be called is kept. A `type` or an `interface` is not a callee, and a
- * re-export clause is read as `const` by `readModule` whether or not the name it names is a
- * type — harmless, because a call to a type is not something a compiling repo contains.
+ * Only what can be called is kept. A `type` or an `interface` is not a callee, and neither is
+ * a name a re-export clause spells with the `type` keyword (#92), so this filter is now exact
+ * rather than a tolerance for a `kind` that was always `const`. It was safe even then: an edge
+ * starts from a value import binding, and `verbatimModuleSyntax` makes a keywordless type
+ * re-export an error, so no compiling program could value-import one and call it.
  */
 function exportedNames(modules: readonly Module[]): Map<string, ExportedNames> {
   const byModule = new Map<string, ExportedNames>();
