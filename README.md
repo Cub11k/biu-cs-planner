@@ -52,10 +52,14 @@ and in any screenshot or pasted bug report that included either. If that has hap
 biu-cs-planner rotate-token
 ```
 
-That writes a new token and prints where it went. The old one stops working at once, and so
-does everything holding it: every bookmark you saved, and every tab still open on the planner
-— a tab like that will say it has no launch token. Start the app again and open the address it
-prints, and that tab is replaced by a working one.
+That writes a new token and prints where it went. **Stop the app with Ctrl-C if it is still
+running** — it read the old token when it started and goes on accepting it until it exits, so
+the rotation only takes effect when you restart.
+
+After that the old token is refused, and so is everything holding it: every bookmark you
+saved, and every tab still open on the planner — a tab like that will say it has no launch
+token. Start the app again and open the address it prints, and that tab is replaced by a
+working one.
 
 The token is one file, in your user config directory and never in your Workspace, because a
 Workspace gets synced and committed:

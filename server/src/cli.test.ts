@@ -157,6 +157,20 @@ it("warns in the rotation notice that bookmarks and open tabs have stopped worki
   expect(notice).not.toContain("http://");
 });
 
+/**
+ * The one thing this notice must not do is say a student is safe while they are not. A
+ * server that is up read the token at startup and holds it in memory, so the leaked token
+ * still opens that process; only the restart finishes the rotation.
+ */
+it("tells the student to stop a server that is still running", () => {
+  const notice = rotatedNotice({ path: "/tmp/config/token", replaced: true });
+
+  expect(notice).toContain("Ctrl-C");
+  expect(notice).toContain("until it exits");
+  // and does not claim the refusal has already taken effect everywhere
+  expect(notice).not.toContain("refused from now on");
+});
+
 it("does not claim a first token invalidated anything", () => {
   const notice = rotatedNotice({ path: "/tmp/config/token", replaced: false });
 

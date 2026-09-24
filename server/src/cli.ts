@@ -224,6 +224,13 @@ function command(name: string, rest: readonly string[]): Invocation {
  * has just stopped working — including the words the page itself will use, so the student
  * recognises the screen when they see it.
  *
+ * **It also says to stop a server that is still running**, and that is not politeness. A
+ * running server read the token once at startup and holds it in memory; `bin.ts` builds the
+ * guard from that string and never looks at the file again. So the old token keeps working
+ * against that process until it exits, and a notice that said the old token was refused
+ * "from now on" would be telling a student they were safe while the leak was still open.
+ * The rotation is only as good as the restart, and the output has to say so.
+ *
  * Takes the path and not the whole `Rotation`, so the token is not in reach of this text.
  */
 export function rotatedNotice({
@@ -238,9 +245,15 @@ export function rotatedNotice({
     : "biu-cs-planner: a launch token has been written.";
 
   const consequence = replaced
-    ? "The old token is refused from now on. Every bookmark holding it stops working, and\n" +
-      'so does every tab still open on the planner: a tab like that says it "has no launch\n' +
-      'token" until you open the new address.'
+    ? [
+        "Stop the app with Ctrl-C if it is still running. It read the old token when it",
+        "started and goes on accepting it until it exits, so the rotation is only as good",
+        "as the restart.",
+        "",
+        "After that the old token is refused. Every bookmark holding it stops working, and",
+        'so does every tab still open on the planner: a tab like that says it "has no launch',
+        'token" until you open the new address.',
+      ].join("\n")
     : "There was none here before, so nothing that used to work has stopped.";
 
   return [
