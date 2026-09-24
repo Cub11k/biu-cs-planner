@@ -2,10 +2,10 @@ import { serve, type ServerType } from "@hono/node-server";
 import { watchWorkspace } from "@biu-cs-planner/app";
 import { Hono } from "hono";
 import { createApi } from "./api.ts";
-import { parseArguments, type Launch } from "./cli.ts";
+import { parseArguments, rotatedNotice, type Launch } from "./cli.ts";
 import { onAFreePort } from "./port.ts";
 import { openInBrowser } from "./browser.ts";
-import { launchToken, launchUrl } from "./token.ts";
+import { launchToken, launchUrl, rotateLaunchToken } from "./token.ts";
 import { builtUiRoot, serveBuiltUi } from "./ui.ts";
 import { fileSystemWorkspace } from "./workspace.fs.ts";
 import { DEFAULT_PORT } from "./config.ts";
@@ -28,6 +28,14 @@ async function main(argv: readonly string[]): Promise<void> {
   if (invocation.kind === "refusal") {
     console.error(invocation.message);
     process.exitCode = 1;
+    return;
+  }
+  if (invocation.kind === "rotate-token") {
+    // no server, no Workspace, no browser: the whole command is one file being replaced.
+    // The token is left behind here deliberately — what is passed on to be printed is the
+    // path and the fact, so no line of output can carry the new secret.
+    const { path, replaced } = await rotateLaunchToken();
+    console.log(rotatedNotice({ path, replaced }));
     return;
   }
 

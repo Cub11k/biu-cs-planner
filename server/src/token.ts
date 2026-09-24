@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -10,6 +10,11 @@ import { join } from "node:path";
  * It lives in the user config directory and never in the Workspace, which the student
  * may sync to Dropbox or commit to git. It is stable across restarts, so the URL the
  * launcher prints stays a working bookmark (docs/design.md, "Authentication").
+ *
+ * Stability is also what makes a leak permanent: the launcher prints the token in a URL,
+ * and that URL is what a student pastes into a bug report or leaves in a screenshot. So
+ * `rotateLaunchToken` is the other half of the same decision — the escape hatch that
+ * makes a stable secret safe to keep.
  */
 const TOKEN_FILE = "token";
 
@@ -59,7 +64,7 @@ export function userConfigDirectory(
 export async function launchToken(
   directory: string = userConfigDirectory(),
 ): Promise<string> {
-  const path = join(directory, TOKEN_FILE);
+  const path = tokenFilePath(directory);
 
   const stored = await readTokenFile(path);
   if (stored !== undefined) return stored;
@@ -67,7 +72,7 @@ export async function launchToken(
   // 0o700: the directory is no more readable than the token it holds
   await mkdir(directory, { recursive: true, mode: 0o700 });
 
-  const token = randomBytes(TOKEN_BYTES).toString("base64url");
+  const token = freshToken();
   try {
     await writeFile(path, `${token}\n`, { flag: "wx", mode: 0o600 });
   } catch (error) {
@@ -80,6 +85,87 @@ export async function launchToken(
     await writeFile(path, `${token}\n`, { mode: 0o600 });
   }
   return token;
+}
+
+/** Where the token for a given config directory is kept. One place builds this name. */
+export function tokenFilePath(directory: string = userConfigDirectory()): string {
+  return join(directory, TOKEN_FILE);
+}
+
+/** One generator, so neither half of this file can drift from the other's shape. */
+function freshToken(): string {
+  return randomBytes(TOKEN_BYTES).toString("base64url");
+}
+
+/** What a rotation did. The path is what the CLI prints; the token is never printed. */
+export type Rotation = {
+  /** The token from now on. */
+  token: string;
+  /** The file it was written to, so the student is told and not left to guess. */
+  path: string;
+  /** Whether a token file was already there — that is, whether anything was invalidated. */
+  replaced: boolean;
+};
+
+/**
+ * Throws away the stored token and writes a new one. The recovery path for a token that
+ * has been seen by somebody else: it has no expiry and no revocation list, so replacing
+ * the file *is* the revocation (docs/design.md, "Authentication").
+ *
+ * Written to a temporary name in the same directory and renamed over the target, the same
+ * way `workspace.fs.ts` writes a State File and for a sharper reason. `writeFile` over the
+ * target truncates first, so an interrupted rotation could leave a file holding 40 of a
+ * token's 43 characters — a string `TOKEN_PATTERN` still accepts, because its floor is 40
+ * and it cannot tell a prefix from a token. The next launch would trust that prefix, and go
+ * on trusting it for the life of the installation while the page it handed a real token to
+ * could not authenticate with it. A rename is atomic on a POSIX filesystem, so the file is
+ * either the old token or the new one and never a prefix of either.
+ *
+ * The old token is never read. Rotating has to work on a config directory in any state,
+ * including the one `launchToken` refuses to launch from — a token file whose mode says
+ * nobody may read it. Rotation is how a student gets out of that too.
+ */
+export async function rotateLaunchToken(
+  directory: string = userConfigDirectory(),
+): Promise<Rotation> {
+  const path = tokenFilePath(directory);
+  const replaced = await exists(path);
+
+  // 0o700 and 0o600 both match `launchToken`: rotating must not quietly widen either
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+
+  const token = freshToken();
+  // the pid keeps two rotations apart, and the leading dot marks it as not the token.
+  // Removed first rather than opened with "wx", so a temporary left by a killed run does
+  // not make rotation — the recovery command — the one thing that cannot be done.
+  const temporary = join(directory, `.tmp-${process.pid}-${TOKEN_FILE}`);
+  await rm(temporary, { force: true });
+  try {
+    // "wx" after the remove so the mode is the one this call asks for, not whatever an
+    // existing file already carried
+    await writeFile(temporary, `${token}\n`, { flag: "wx", mode: 0o600 });
+    await rename(temporary, path);
+  } catch (error) {
+    await rm(temporary, { force: true });
+    throw error;
+  }
+
+  return { token, path, replaced };
+}
+
+/**
+ * Whether there is a file there at all — asked with `stat` rather than by reading it,
+ * because a token file nobody may read is still a token file, and still something a
+ * rotation replaces.
+ */
+async function exists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch (error) {
+    if (isErrnoCode(error, "ENOENT")) return false;
+    throw error;
+  }
 }
 
 /**
