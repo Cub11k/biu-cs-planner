@@ -4,6 +4,7 @@ import { mkdir, readdir, readFile, realpath, rename, rm, writeFile } from "node:
 import { basename, dirname, join, resolve, sep } from "node:path";
 import {
   isStateFileName,
+  requireCatalogRef,
   requireStateFileName,
   StateFileChangedError,
   WORKSPACE_LAYOUT,
@@ -56,6 +57,51 @@ class OutsideWorkspaceError extends WorkspaceRefusedError {
 }
 
 /**
+ * The errno codes that mean there is **no file**, as against a file that is there and cannot
+ * be read. `ENOENT` is nothing at that name. `ENOTDIR` is nothing at that name either — a
+ * component of the path is a plain file, so no file can exist below it. Every other code, and
+ * an error carrying no code at all, is the third answer below: unreadable, not absent, which
+ * is the safe way round for anything this cannot recognise (#109).
+ */
+const ABSENT = ["ENOENT", "ENOTDIR"];
+
+/** The errno a filesystem error carries, when it carries one. */
+const errnoOf = (error: unknown): string | undefined => {
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === "string" ? code : undefined;
+};
+
+/**
+ * A file that is there and whose contents cannot be read: `EACCES` behind a mode bit,
+ * `EISDIR` where a directory sits in a file's place, `EIO` on failing hardware, a lock a sync
+ * client holds mid-download. **The third answer #109 was filed for**, and neither of the other
+ * two:
+ *
+ *   - **Not absence.** Reported as absent, an unreadable State File has no revision, so a save
+ *     based on there being no file *matches*, the external-edit guard passes, and the atomic
+ *     rename destroys a file the app could not read. That is the one direction the guard may
+ *     not fail in, and a file whose contents cannot be seen is exactly the file it exists for.
+ *   - **Not the `readFile` error either.** Letting an `EACCES` out of the port turns a mode bit
+ *     into a 500, which is a different bug of the same size. A `WorkspaceRefusedError` is what
+ *     every caller of this port already turns into a Warning or a 409: a refusal is a Warning
+ *     the student can act on and never a crashed server (docs/design.md, "API and data rules").
+ *
+ * `WorkspaceRefusedError` and deliberately not `StateFileChangedError`: nothing changed, and
+ * that error's `basedOn`/`found` pair has nothing true to carry here — `found` would have to
+ * report a revision this adapter has just said it cannot determine. "A target a Workspace will
+ * not touch" is what a file it cannot read is, and it is the error `app/src/edit.ts` already
+ * maps to `workspace-refused` and the page already words as picks that could not be read.
+ */
+class UnreadableError extends WorkspaceRefusedError {
+  constructor(what: string, code: string | undefined) {
+    super(
+      `refusing ${what}: it is there and cannot be read` +
+        (code === undefined ? "" : ` (${code})`),
+    );
+  }
+}
+
+/**
  * Which revision of a State File this is: a SHA-256 of its bytes, as hex.
  *
  * **A content hash, ruled by the maintainer on #90 and not an mtime.** The question the
@@ -82,7 +128,15 @@ class OutsideWorkspaceError extends WorkspaceRefusedError {
 const revisionOf = (bytes: Uint8Array): StateFileVersion =>
   createHash("sha256").update(bytes).digest("hex");
 
-/** Absent, to this module, is not an error: the caller decides what absence means. */
+/**
+ * Absent, to this module, is not an error: the caller decides what absence means.
+ *
+ * Two answers here and three in `bytesOrAbsent`, and the difference is deliberate. A folder
+ * that exists and cannot be `realpath`ed reports the layout as missing, and everything that
+ * asks — `status`, `missingFolders`, `usablePath`, `contained` — then writes nothing and lists
+ * nothing. That fails **closed**: it costs a student a listing they can fix with a mode bit
+ * rather than a file, so it is not the #109 bug even though it is the same shape.
+ */
 async function realPathOrAbsent(path: string): Promise<string | undefined> {
   try {
     return await realpath(path);
@@ -158,19 +212,39 @@ export function fileSystemWorkspace(rootPath: string): Workspace {
   };
 
   /**
-   * The bytes of a file, or nothing when it is not there. A read of a State File needs the
-   * bytes themselves and not the text they decode to, because the revision is taken from
-   * them: decoding first would hash a normalised copy of the file rather than the file.
+   * The bytes of a file, nothing when there is **no file**, and `UnreadableError` when there
+   * is one whose contents cannot be read. Three answers rather than two, and only the first
+   * may be `undefined` (#109).
+   *
+   * A read of a State File needs the bytes themselves and not the text they decode to,
+   * because the revision is taken from them: decoding first would hash a normalised copy of
+   * the file rather than the file.
    */
   const bytesOrAbsent = async (path: string): Promise<Uint8Array | undefined> => {
     try {
       return await readFile(path);
-    } catch {
-      return undefined;
+    } catch (error) {
+      const code = errnoOf(error);
+      if (code !== undefined && ABSENT.includes(code)) return undefined;
+      throw new UnreadableError(path.replace(root, "."), code);
     }
   };
 
-  /** What a file holds: its JSON, or its text when that is not what it holds. */
+  /**
+   * What a file holds: its JSON, or its text when that is not what it holds.
+   *
+   * **A leading UTF-8 BOM is not content**, and dropping it is the intended behaviour rather
+   * than an accident of decoding separately from reading (#109). `TextDecoder` drops one and
+   * a Node `utf8` read does not, so before the revision needed the bytes, a Catalog or State
+   * File written by one of the several Windows editors that add a BOM came back from here as
+   * raw text — `JSON.parse` throws on it — and now parses. A hand-dropped Catalog is exactly
+   * the case docs/design.md, "Storage" cares about, so the file should be read as the JSON it
+   * holds.
+   *
+   * The **revision** is taken from the bytes as read, BOM included, and not from what this
+   * decodes: two files differing only by a BOM are two files on disk, and a guard that called
+   * them one revision would be blind to whichever tool added or removed it.
+   */
   const contentOf = (bytes: Uint8Array): unknown => {
     const raw = new TextDecoder().decode(bytes);
     try {
@@ -182,7 +256,12 @@ export function fileSystemWorkspace(rootPath: string): Workspace {
     }
   };
 
-  /** The revision the file holds right now, or nothing when there is no file. */
+  /**
+   * The revision the file holds right now, or nothing when there is no file — and neither
+   * when the file is there and cannot be read: `bytesOrAbsent`'s refusal propagates, so a
+   * save whose current revision cannot be determined is refused rather than compared against
+   * an `undefined` that a first save would match (#109).
+   */
   const revisionOnDisk = async (path: string): Promise<StateFileVersion | undefined> => {
     const bytes = await bytesOrAbsent(path);
     return bytes === undefined ? undefined : revisionOf(bytes);
@@ -268,6 +347,8 @@ export function fileSystemWorkspace(rootPath: string): Workspace {
     },
 
     async read(ref): Promise<unknown> {
+      // the runtime half of the narrowing to a `CatalogRef`, which a cast defeats (#113)
+      requireCatalogRef(ref);
       const target = filePath(ref);
       requireJsonName(target);
 
@@ -279,6 +360,11 @@ export function fileSystemWorkspace(rootPath: string): Workspace {
     },
 
     async write(ref, data): Promise<void> {
+      // The runtime half of the narrowing to a `CatalogRef` (#113). Also what puts a State
+      // File back behind a layout check: the one this used to carry could not be written once
+      // the parameter was narrowed, and a cast reached an unguarded write into a folder
+      // nobody agreed to. Refusing the ref outright is a stronger check than restoring it.
+      requireCatalogRef(ref);
       const target = filePath(ref);
       requireJsonName(target);
 

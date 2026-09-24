@@ -1,5 +1,6 @@
 import type { StateFileSave, StateFileVersion } from "@biu-cs-planner/core";
 import {
+  requireCatalogRef,
   requireStateFileName,
   StateFileChangedError,
   WORKSPACE_LAYOUT,
@@ -135,9 +136,17 @@ export function memoryWorkspace(
         .map(([, held]) => held.ref);
     },
     async read(ref): Promise<unknown> {
+      // The same refusal the real adapter makes, through the same function and so in the same
+      // words: a State File is read with its revision or not at all (#113).
+      requireCatalogRef(ref);
       return files.get(key(ref))?.data;
     },
     async write(ref, data): Promise<void> {
+      // Refused before the layout is looked at, as the real adapter refuses it: the ref being
+      // one this port will not write whole is about the target, not about the folder. A double
+      // that answered a cast with a conflict, or with a layout error, would prove the wrong
+      // refusal (#113).
+      requireCatalogRef(ref);
       writeFile(ref, data);
     },
     async readStateFile(ref: StateFileRef): Promise<StateFileContents | undefined> {

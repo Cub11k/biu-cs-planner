@@ -128,6 +128,13 @@ export type StateFileLoad =
  * A file this build cannot read at all is **not** overwritten: it may be hand-edited, and
  * saving over it would cost the student everything in it, silently. That is the rule
  * `importCrawl` already follows for a stored Catalog (docs/design.md, "Storage").
+ *
+ * Two ways a file is unreadable, and both end here rather than in a new empty State. Bytes
+ * that arrive and are not a State File the schema accepts are `state-file-unreadable`. A file
+ * whose bytes cannot be *got at* — a mode bit, a directory in its place, failing hardware — is
+ * the port's own refusal and comes back as `workspace-refused`; it used to arrive as
+ * `undefined`, indistinguishable from no file at all, and this function then built a new empty
+ * State and saved over it (#109).
  */
 export async function readStateFile(
   workspace: Workspace,

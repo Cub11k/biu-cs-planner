@@ -85,6 +85,54 @@ it("hands back a copy, so what was written cannot change afterwards", async () =
   });
 });
 
+/**
+ * #113, in the double, because a use case that reached `write` with a State File has to fail
+ * here as it fails on a disk. The narrowing to a `CatalogRef` is type-only and both adapters
+ * can still name a State File, so both make the refusal at runtime — through the one function
+ * in the port, so both make it in the same words (`server/src/workspace.fs.test.ts` asserts
+ * the same message).
+ */
+it("refuses a whole-file write of a State File, cast past the narrowing", async () => {
+  const workspace = memoryWorkspace({ created: true });
+  const alice = { kind: "state", name: "alice" } as const;
+  workspace.seed(alice, STATE);
+
+  const write = workspace.write as unknown as (ref: unknown, data: unknown) => Promise<void>;
+  await expect(write(alice, { schemaVersion: 2 })).rejects.toThrow(
+    /refusing the State File "alice" here/,
+  );
+
+  // nothing written, and what the file held is untouched
+  expect(workspace.written()).toEqual([]);
+  expect((await workspace.readStateFile(alice))?.data).toEqual(STATE);
+});
+
+/**
+ * Refused because of the ref and not because of the folder, which is the order the real adapter
+ * asks in: a double that answered this with the layout error would send a caller looking at the
+ * wrong thing, and a double that answered it with a conflict worse still.
+ */
+it("refuses a cast whole-file write of a State File before it looks at the layout", async () => {
+  const workspace = memoryWorkspace();
+
+  const write = workspace.write as unknown as (ref: unknown, data: unknown) => Promise<void>;
+  await expect(write({ kind: "state", name: "alice" }, STATE)).rejects.toThrow(
+    /refusing the State File "alice" here/,
+  );
+  expect(workspace.written()).toEqual([]);
+});
+
+/** And the read, in the same words: content with no revision is content nothing can save. */
+it("refuses a whole-file read of a State File", async () => {
+  const workspace = memoryWorkspace({ created: true });
+  const alice = { kind: "state", name: "alice" } as const;
+  workspace.seed(alice, STATE);
+
+  const read = workspace.read as unknown as (ref: unknown) => Promise<unknown>;
+  await expect(read(alice)).rejects.toThrow(WorkspaceRefusedError);
+  await expect(read(alice)).rejects.toThrow(/refusing the State File "alice" here/);
+});
+
 /** The real adapter refuses this, and a double that did not would prove a save that fails. */
 it("refuses a write before the layout exists", async () => {
   const workspace = memoryWorkspace();
