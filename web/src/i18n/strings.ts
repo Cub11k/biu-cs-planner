@@ -58,6 +58,13 @@ const english = {
   picksStale:
     "The file changed since this page read it, so your click was not saved. " +
     "The week is the file as it is now — click again if you still want it.",
+  /**
+   * A click made before the saved Picks had arrived. It is kept rather than sent on a
+   * guess about a file the page has not read, so this says where it went (#111).
+   */
+  picksHeld: "Your saved picks are still loading. Your click is waiting for them.",
+  /** …and the same click when the Picks never arrived, so there was nothing to send it on. */
+  picksHeldLost: "Your saved picks could not be read, so your click was not saved.",
 
   noFixedTime: "No fixed time",
   groupsCount: "{count} groups",
@@ -133,6 +140,8 @@ const hebrew: Record<StringKey, string> = {
   picksStale:
     "הקובץ השתנה מאז שהדף קרא אותו, ולכן הלחיצה לא נשמרה. " +
     "השבוע מוצג כפי שהקובץ נראה עכשיו — לחצו שוב אם עדיין תרצו את הבחירה.",
+  picksHeld: "הבחירות השמורות עדיין נטענות. הלחיצה שלכם ממתינה להן.",
+  picksHeldLost: "לא ניתן היה לקרוא את הבחירות השמורות, ולכן הלחיצה שלכם לא נשמרה.",
 
   noFixedTime: "ללא שעה קבועה",
   groupsCount: "{count} קבוצות",

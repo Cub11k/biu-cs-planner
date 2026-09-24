@@ -29,7 +29,11 @@ export type WeekGridProps = {
   groups: readonly WeekGroup[];
   /** The Groups a Clash touches, by `groupKey`. Red pen, and nothing refused. */
   clashing?: ReadonlySet<string>;
-  /** Picking a Group — or, on one already picked, removing that Pick. */
+  /**
+   * Picking a Group — or, on one already picked, removing that Pick. A Group whose pick
+   * state is not known yet is neither: what the screen does with that click is its own
+   * decision (#111), and this component only reports it.
+   */
   onPick: (group: WeekGroup) => void;
 };
 
@@ -118,7 +122,9 @@ export function WeekGrid({
               type="button"
               className={tileClass(group, clashing?.has(groupKey(group)) ?? false, false)}
               data-lesson-slot={lessonSlot(group.lessonType)}
-              aria-pressed={group.picked}
+              // three states, because the Picks may not have been read yet: `mixed` is
+              // "we cannot say", and clicking it asks for the Group rather than toggling
+              aria-pressed={group.picked ?? "mixed"}
               onClick={() => onPick(group)}
             >
               <span
@@ -145,11 +151,16 @@ export function WeekGrid({
 /**
  * Pencil, ink and red pen, as classes rather than as styles: the colours are tokens in
  * index.css and a component holds no raw colour value (docs/design.md, "Light and dark").
+ *
+ * `picked` has three readings and not two, so the test is `=== true` and `=== undefined`
+ * rather than truthiness: a Group whose pick state the page has not read yet gets neither
+ * ink nor pencil, because either would be an answer nobody has (#111).
  */
 function tileClass(group: WeekGroup, clashes: boolean, highlighted: boolean): string {
   return [
     "tile",
-    group.picked ? "is-picked" : undefined,
+    group.picked === true ? "is-picked" : undefined,
+    group.picked === undefined ? "is-unknown" : undefined,
     clashes ? "is-clashing" : undefined,
     highlighted ? "is-highlighted" : undefined,
   ]
@@ -191,8 +202,9 @@ function GroupTile({
       className={tileClass(tile.group, clashes, highlighted)}
       data-lesson-slot={lessonSlot(tile.group.lessonType)}
       // a toggle, because clicking a Group already picked removes that Pick; "pressed" is
-      // what a screen reader says instead of the ink a sighted student sees
-      aria-pressed={tile.group.picked}
+      // what a screen reader says instead of the ink a sighted student sees — and `mixed`
+      // while the Picks have not been read, which is neither pressed nor not (#111)
+      aria-pressed={tile.group.picked ?? "mixed"}
       style={
         {
           top: box.topPx,

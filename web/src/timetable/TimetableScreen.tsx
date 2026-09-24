@@ -9,10 +9,11 @@ import {
   recordPick,
   removePick,
   type GroupPick,
+  type StateFileVersion,
   type StateRefusal,
   type TimetableResult,
 } from "./picks.ts";
-import { clashingGroups, weekGroups, type WeekGroup } from "./week.ts";
+import { clashingGroups, isPicked, weekGroups, type WeekGroup } from "./week.ts";
 import { CoursePicker } from "./CoursePicker.tsx";
 import { WeekGrid } from "./WeekGrid.tsx";
 
@@ -149,6 +150,23 @@ export function TimetableScreen({
    */
   const [staleSave, setStaleSave] = useState(false);
   const [rereads, setRereads] = useState(0);
+  /**
+   * Clicks made before the first Timetable answer arrived, in the order they were made.
+   *
+   * The Catalog and the Picks are asked for in parallel, so the week is clickable while the
+   * State File has not been read. A click made then cannot be sent: it has no revision to
+   * be based on, and `undefined` there is the claim that there is no State File at all —
+   * which #90's guard refuses, leaving the student told a file changed that never did.
+   *
+   * So it is held. Of the three shapes #111 weighs this is the one that keeps the click:
+   * the alternatives either drop it silently or spend a sentence saying it was dropped, and
+   * a click on a Group is a small thing to have to make twice.
+   */
+  const [held, setHeld] = useState<readonly WeekGroup[]>([]);
+  /** That held clicks had to be dropped, because the file could not be read at all. */
+  const [heldLost, setHeldLost] = useState(false);
+  /** That a held click is in flight, so the drain below sends one at a time. */
+  const sending = useRef(false);
 
   const askCatalog = useCallback(
     () => fetchOfferings(api, { academicYear, semester }),
@@ -164,7 +182,13 @@ export function TimetableScreen({
     useReloading(askTimetable, workspaceChanges + rereads);
 
   const offerings = catalog.kind === "served" ? catalog.offerings : [];
-  const picks = timetable.kind === "served" ? timetable.picks : [];
+  /**
+   * The Picks, or `undefined` for *not read yet* — which is not the same as a Variant with
+   * no Picks in it. The week draws the difference and a click depends on it: an `[]` here
+   * would draw a Pick as a pencil option and let a click remove it by trying to record it
+   * (#111).
+   */
+  const picks = timetable.kind === "served" ? timetable.picks : undefined;
   const clashes = timetable.kind === "served" ? timetable.clashes : [];
   const chosen = offerings.find((offering) => offering.courseNumber === selected);
 
@@ -178,44 +202,106 @@ export function TimetableScreen({
    * Picking, and un-picking. One call per click, which is what ADR-0013 makes one undo
    * entry, and the answer carries the Variant as it stands afterwards — so the screen shows
    * what the file holds rather than what it hoped the file would hold.
+   *
+   * `basedOn` is a parameter rather than read from `timetable` here: a held click is sent on
+   * the revision the *arriving* answer carries, and the two callers know which revision
+   * theirs is. The week and the revision a save claims still come from one read — that is
+   * the rule (docs/design.md, "External edits") — it is just no longer always the read on
+   * screen at the moment of the click.
    */
-  const onPick = (group: WeekGroup): void => {
-    const query = { academicYear, semester };
-    const slot = { courseNumber: group.courseNumber, lessonType: group.lessonType };
-    // Which revision of the State File this click was made on, taken from the answer the
-    // screen is showing rather than remembered separately: the week and the revision it is
-    // have to be the same read, or a save could claim a view nobody was looking at
-    // (docs/design.md, "External edits").
-    const basedOn = timetable.kind === "served" ? timetable.version : undefined;
-    const done = group.picked
-      ? removePick(api, query, slot, basedOn)
-      : // the snapshot is taken here, off the Meetings the page is showing: a Pick carries
-        // the Group's Meetings as they stood when it was made (CONTEXT.md, "Pick")
-        recordPick(
-          api,
-          query,
-          {
-            ...slot,
-            groupNumber: group.number,
-            meetings: [...group.meetings],
-          } as GroupPick,
-          basedOn,
-        );
+  const save = useCallback(
+    (group: WeekGroup, remove: boolean, basedOn: StateFileVersion): Promise<void> => {
+      const query = { academicYear, semester };
+      const slot = { courseNumber: group.courseNumber, lessonType: group.lessonType };
+      const done = remove
+        ? removePick(api, query, slot, basedOn)
+        : // the snapshot is taken from the Meetings the page was showing: a Pick carries the
+          // Group's Meetings as they stood when it was made (CONTEXT.md, "Pick")
+          recordPick(
+            api,
+            query,
+            {
+              ...slot,
+              groupNumber: group.number,
+              meetings: [...group.meetings],
+            } as GroupPick,
+            basedOn,
+          );
 
-    void done.then((answer) => {
-      // The file is not what this page was showing, so the click was refused rather than
-      // allowed to destroy whoever else's edit (#90). The week on screen is kept and
-      // re-read: replacing it with the refusal would blank a week the student can still
-      // see, and would throw away the revision the next click needs.
-      if (answer.kind === "refused" && answer.reason === "state-file-changed") {
-        setStaleSave(true);
-        setRereads((count) => count + 1);
-        return;
-      }
-      setStaleSave(false);
-      setTimetable(answer);
-    });
+      return done.then((answer) => {
+        // The file is not what this page was showing, so the click was refused rather than
+        // allowed to destroy whoever else's edit (#90). The week on screen is kept and
+        // re-read: replacing it with the refusal would blank a week the student can still
+        // see, and would throw away the revision the next click needs.
+        if (answer.kind === "refused" && answer.reason === "state-file-changed") {
+          setStaleSave(true);
+          setRereads((count) => count + 1);
+          return;
+        }
+        setStaleSave(false);
+        setTimetable(answer);
+      });
+    },
+    [academicYear, semester, setTimetable],
+  );
+
+  const onPick = (group: WeekGroup): void => {
+    // whatever became of the last click, this one is the account the student is owed now
+    setHeldLost(false);
+
+    if (timetable.kind !== "served") {
+      setHeld((waiting) => [...waiting, group]);
+      return;
+    }
+    // Only a served answer knows this, and `picked` is a `boolean` once it does. A click on
+    // ink removes the Pick; a click on pencil records one.
+    void save(group, group.picked === true, timetable.version);
   };
+
+  /**
+   * The held clicks, sent once there is an answer to send them on.
+   *
+   * One per run rather than a loop: each send answers with the revision the next one has to
+   * be based on, and each is its own call and so its own undo entry (ADR-0013). The answer
+   * moves both `held` and `timetable`, which is what runs this effect again for the next.
+   */
+  useEffect(() => {
+    const next = held[0];
+    if (next === undefined || sending.current) return;
+
+    // the first read is still in flight, which is what the click is waiting for
+    if (timetable.kind === "loading") return;
+
+    // The file cannot be read, so there is no revision to save on and no week to reconcile
+    // against — and a click held for a file that may never arrive is worse than one lost.
+    // It is dropped, and said so: a click that vanishes without a word is the failure this
+    // ticket is about, and silence would only move it.
+    if (timetable.kind !== "served") {
+      setHeld([]);
+      setHeldLost(true);
+      return;
+    }
+
+    // This click was made on a tile that showed neither ink nor pencil, because the page had
+    // not read the file — so it asked for the Group to *be* a Pick, which is what a
+    // `mixed` toggle offers and what clicking one means. If the file already holds exactly
+    // this Pick then that is already so: there is nothing to send, and sending it anyway
+    // would write a Pick over itself and spend an undo entry doing it.
+    //
+    // This is where reconciling stops and #104 begins: nothing here re-applies an edit the
+    // server answered. A held click was never sent, and it goes out on the revision the
+    // first answer carries, so the guard has nothing to refuse it for.
+    if (isPicked(timetable.picks, next)) {
+      setHeld((waiting) => waiting.slice(1));
+      return;
+    }
+
+    sending.current = true;
+    void save(next, false, timetable.version).finally(() => {
+      sending.current = false;
+      setHeld((waiting) => waiting.slice(1));
+    });
+  }, [held, timetable, save]);
 
   // one spelling of the year on the whole screen: the header and the sidebar disagreeing
   // about 2026-27 and 2027 reads as if a different year were the one missing
@@ -255,7 +341,10 @@ export function TimetableScreen({
             <CoursePicker
               language={language}
               offerings={offerings}
-              picks={picks}
+              // an unread file shows no picked line, which is what it showed before #111;
+              // saying "this Course has nothing picked" while the file is unread is the
+              // same class of untruth as `picksNone`, and is its own ticket
+              picks={picks ?? []}
               selected={selected}
               onSelect={setSelected}
             />
@@ -270,6 +359,8 @@ export function TimetableScreen({
             {picksNotice(language, timetable) === undefined ? null : (
               <span>{picksNotice(language, timetable)}</span>
             )}
+            {held.length > 0 && <span>{t(language, "picksHeld")}</span>}
+            {heldLost && <span>{t(language, "picksHeldLost")}</span>}
             {staleSave && <span>{t(language, "picksStale")}</span>}
             {clashes.length > 0 && <span>{clashesSaid(language, clashes.length)}</span>}
             <span className="ms-auto flex items-center gap-2 text-xs text-pencil">

@@ -185,6 +185,17 @@
   }
 
   /**
+   * Not read yet: the first answer about the State File has not arrived, so whether this
+   * Group is a Pick is unknown rather than false (#111). Neither pencil nor ink — dotted
+   * and held back, so a week mid-read does not read as a week with nothing picked on it.
+   * It borrows no hue of its own: the state is about knowledge, not about the Group.
+   */
+  .tile.is-unknown {
+    border-style: dotted;
+    opacity: 0.55;
+  }
+
+  /**
    * Red pen: this Group Clashes. A Warning and nothing else — the Pick was recorded, and
    * nothing here refuses or moves it (docs/design.md, "Grid and Picks").
    */

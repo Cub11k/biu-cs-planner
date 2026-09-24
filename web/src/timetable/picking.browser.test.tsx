@@ -87,6 +87,39 @@ let refuse: { reason: string; warnings: unknown[] } | undefined;
 let version: number;
 /** Set to answer the next save as a file that changed under the page. */
 let changedUnderneath: boolean;
+/**
+ * Holds the *read* of the Timetable open while the Catalog is served at once, which is the
+ * window #111 is about: the screen asks for both in parallel, so the week is clickable
+ * before the State File has been read.
+ */
+let readHeld: Promise<void> | undefined;
+
+/** Holds the next Timetable reads, and gives back the release. */
+function holdTheRead(): () => void {
+  let release = (): void => {};
+  const promise = new Promise<void>((resolve) => {
+    release = (): void => resolve();
+  });
+  readHeld = promise;
+  return () => {
+    readHeld = undefined;
+    release();
+  };
+}
+
+/** One of the fixture's Groups as a Pick, the way a State File on disk would hold it. */
+function pickOf(groupNumber: string, lessonType = "הרצאה"): GroupPick {
+  const group = OFFERING.groups.find(
+    (candidate) => candidate.number === groupNumber && candidate.lessonType === lessonType,
+  );
+  if (group === undefined) throw new Error(`the fixture has no Group ${groupNumber}`);
+  return {
+    courseNumber: OFFERING.courseNumber,
+    lessonType: group.lessonType,
+    groupNumber: group.number,
+    meetings: [...group.meetings],
+  };
+}
 
 const json = (body: unknown): Response =>
   new Response(JSON.stringify(body), {
@@ -105,6 +138,7 @@ beforeEach(() => {
   refuse = undefined;
   version = 0;
   changedUnderneath = false;
+  readHeld = undefined;
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = input instanceof Request ? input.url : String(input);
     const { pathname } = new URL(url, location.href);
@@ -116,6 +150,9 @@ beforeEach(() => {
 
     if (pathname === "/api/workspace/changes") return json({ changeCount: 0 });
     if (!pathname.startsWith("/api/timetable")) return json({ offerings: [OFFERING] });
+    // only the read is held: a save the screen decides to send still goes through at once,
+    // so a test can tell "nothing was sent" from "something was sent and is waiting"
+    if (method === "GET" && readHeld !== undefined) await readHeld;
     if (refuse !== undefined) {
       return new Response(JSON.stringify(refuse), {
         status: 409,
@@ -348,4 +385,152 @@ it("says the folder is not a workspace rather than that nothing is picked", asyn
     }
   });
   expect(mounted.textContent).not.toContain("Nothing picked yet");
+});
+
+/**
+ * #111, the window itself: the Catalog is served at once and the read of the State File is
+ * held, so the week is on screen and clickable before the Picks are known.
+ *
+ * A browser and not a unit test of the reducer, because what is wrong is the join — which
+ * revision a click claims, and whether a tile the page has not read reads as unpicked. Only
+ * a mounted screen with two answers arriving at different times has both halves.
+ */
+const STILL_LOADING = "Your saved picks are still loading";
+const NOT_SAVED = "Your saved picks could not be read, so your click was not saved";
+const FILE_CHANGED = "The file changed since this page read it";
+
+/** Waits for a sentence to reach the screen, and says which one was missing when it does not. */
+async function waitForText(mounted: HTMLElement, wanted: string): Promise<void> {
+  await vi.waitFor(() => {
+    if (!(mounted.textContent ?? "").includes(wanted)) {
+      throw new Error(`the screen never said "${wanted}"`);
+    }
+  });
+}
+
+it("draws a Group as neither picked nor unpicked while the Picks are still loading", async () => {
+  const release = holdTheRead();
+  try {
+    const mounted = await openWeek();
+    const tile = tileFor(mounted, "01");
+
+    // unknowable rather than false: no ink, no pencil, and `mixed` rather than `false` —
+    // the page has not read the file and says so instead of guessing
+    expect(tile.classList.contains("is-unknown")).toBe(true);
+    expect(tile.classList.contains("is-picked")).toBe(false);
+    expect(tile.getAttribute("aria-pressed")).toBe("mixed");
+  } finally {
+    release();
+  }
+});
+
+it("holds a click made before the Picks arrived, says so, and saves it on the revision they bring", async () => {
+  const release = holdTheRead();
+  const mounted = await openWeek();
+
+  tileFor(mounted, "01").click();
+
+  // nothing is sent on a revision nobody has read: `basedOn: undefined` is the claim that
+  // there is no State File, and the guard would refuse it as a file that changed (#90)
+  await waitForText(mounted, STILL_LOADING);
+  expect(sent.filter((request) => request.method !== "GET")).toEqual([]);
+
+  release();
+
+  await vi.waitFor(() => {
+    if (!tileFor(mounted, "01").classList.contains("is-picked")) {
+      throw new Error("the held click never reached the file");
+    }
+  });
+  // the revision the first answer carried, not `undefined`
+  const recorded = sent.filter((request) => request.method === "POST");
+  expect(recorded).toHaveLength(1);
+  expect(recorded[0]?.body).toMatchObject({ groupNumber: "01", basedOn: "v0" });
+  // and the student was never sent looking for a change that never happened
+  expect(mounted.textContent).not.toContain(FILE_CHANGED);
+  expect(mounted.textContent).not.toContain(STILL_LOADING);
+  expect(mounted.textContent).toContain("1 group picked");
+});
+
+/**
+ * The half that predates #90: a click on a Group the file already picks used to send a POST,
+ * because `picks` fell back to `[]` and every tile read as unpicked. There is nothing to
+ * send — the file already says what the click asked for — so nothing is sent, and the ink
+ * the student wanted is what they get.
+ */
+it("sends nothing at all for a held click on a Group the file already picks", async () => {
+  picks = [pickOf("01")];
+  const release = holdTheRead();
+  const mounted = await openWeek();
+
+  tileFor(mounted, "01").click();
+  await waitForText(mounted, STILL_LOADING);
+
+  release();
+
+  await vi.waitFor(() => {
+    if (!tileFor(mounted, "01").classList.contains("is-picked")) {
+      throw new Error("the Pick in the file never reached the week");
+    }
+  });
+  await vi.waitFor(() => {
+    if ((mounted.textContent ?? "").includes(STILL_LOADING)) {
+      throw new Error("the click is still said to be waiting");
+    }
+  });
+  expect(sent.filter((request) => request.method !== "GET")).toEqual([]);
+  expect(mounted.textContent).not.toContain(FILE_CHANGED);
+  // and the Pick was not replaced by itself: one Pick, the one that was already there
+  expect(mounted.textContent).toContain("1 group picked");
+});
+
+/**
+ * Two clicks in the window are two Picks, in the order they were made — each on the revision
+ * the one before it produced. A queue rather than a last-click-wins, because dropping the
+ * first silently is the failure this ticket is about.
+ */
+it("saves several held clicks in order, each on the revision the one before produced", async () => {
+  const release = holdTheRead();
+  const mounted = await openWeek();
+
+  tileFor(mounted, "01").click();
+  tileFor(mounted, "03", "Tirgul").click();
+  await waitForText(mounted, STILL_LOADING);
+
+  release();
+
+  await vi.waitFor(() => {
+    if (!tileFor(mounted, "03", "Tirgul").classList.contains("is-picked")) {
+      throw new Error("the second held click never reached the file");
+    }
+  });
+  expect(tileFor(mounted, "01").classList.contains("is-picked")).toBe(true);
+  const recorded = sent.filter((request) => request.method === "POST");
+  expect(recorded.map((request) => request.body)).toMatchObject([
+    { groupNumber: "01", basedOn: "v0" },
+    { groupNumber: "03", basedOn: "v1" },
+  ]);
+  expect(mounted.textContent).not.toContain(FILE_CHANGED);
+  expect(mounted.textContent).toContain("2 groups picked");
+});
+
+/**
+ * And when the Picks never arrive there is no revision to save on and no week to reconcile
+ * against, so the held click is dropped — but said, because a click that vanishes without a
+ * word is exactly what this ticket was filed about.
+ */
+it("says a held click was not saved when the Picks could not be read at all", async () => {
+  const release = holdTheRead();
+  const mounted = await openWeek();
+
+  tileFor(mounted, "01").click();
+  await waitForText(mounted, STILL_LOADING);
+
+  refuse = { reason: "state-file-unreadable", warnings: [] };
+  release();
+
+  await waitForText(mounted, NOT_SAVED);
+  expect(sent.filter((request) => request.method !== "GET")).toEqual([]);
+  // the refusal it is, and not the one about a file that changed
+  expect(mounted.textContent).not.toContain(FILE_CHANGED);
 });
