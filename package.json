@@ -1,7 +1,7 @@
 {
   "name": "biu-cs-planner",
-  "version": "0.0.1",
-  "description": "A local course planner for Bar-Ilan University Computer Science students: a degree Plan across Semesters and a Timetable per Academic Year. Early work in progress, not yet usable.",
+  "version": "0.1.0",
+  "description": "A local course planner for Bar-Ilan University Computer Science students: build the weekly Timetable for an Academic Year, offline, in a folder you own. The degree Plan and Progress are not built yet.",
   "keywords": [
     "bar-ilan",
     "biu",
@@ -25,7 +25,11 @@
   "engines": {
     "node": ">=22"
   },
+  "bin": {
+    "biu-cs-planner": "dist/cli.js"
+  },
   "files": [
+    "dist",
     "README.md",
     "LICENSE"
   ],
@@ -38,17 +42,28 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json && tsc -p web/tsconfig.json",
     "test": "vitest run",
+    "test:node": "vitest run --project node",
+    "test:browser": "vitest run --project browser",
     "test:watch": "vitest",
+    "install:browsers": "playwright install chromium",
     "dev:server": "node --experimental-strip-types server/src/serve.ts",
     "dev:web": "npm run dev --workspace web",
-    "build": "npm run build --workspaces --if-present",
-    "coverage": "vitest run --coverage",
-    "report": "npm run coverage --silent && node tools/pr-report/main.ts"
+    "build": "npm run build --workspaces --if-present && npm run build:package",
+    "build:package": "node tools/package/main.ts",
+    "coverage": "vitest run --project node --coverage",
+    "report": "npm run coverage --silent && node tools/pr-report/main.ts",
+    "review": "node tools/pr-review/main.ts"
   },
   "devDependencies": {
+    "@anthropic-ai/sdk": "^0.126.0",
+    "@tailwindcss/vite": "^4.3.3",
     "@types/node": "^22",
-    "@vitest/coverage-v8": "^5.0.0",
+    "@vitest/browser": "^5.0.1",
+    "@vitest/browser-playwright": "^5.0.1",
+    "@vitest/coverage-v8": "^5.0.1",
+    "playwright": "^1.63.0",
     "typescript": "^5",
-    "vitest": "^5.0.0"
+    "vitest": "^5.0.1",
+    "zod": "^4.6.5"
   }
 }

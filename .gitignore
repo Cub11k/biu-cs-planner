@@ -6,6 +6,9 @@ dist/
 .npm/
 .playwright/
 
+# Screenshots Vitest attaches to a failing browser test, for looking at and throwing away
+.vitest/
+
 # Claude Code session transcripts: contain personal data (email, home paths)
 .sessions/
 

@@ -35,9 +35,9 @@ Three kinds of file, each with its own lifecycle, each carrying a `schemaVersion
 - Shoham is the only Catalog source; it needs no login but sits behind Radware bot protection. See [`research/biu-sources.md`](research/biu-sources.md).
 - The crawler lives in **its own repo** with a README covering how to run it and why it respects the site. It is not part of the app deliverable.
 - **Flow:** the student opens Shoham in a browser, runs a query by hand, then pastes the crawler script into the console. The script walks every results page and requests each Course's detail page one at a time with a delay, and can resume if interrupted.
-- **Output:** a Raw Crawl file with string fields as Shoham shows them, plus provenance (query parameters, crawl time, crawler version).
-- **Import:** the app's Shoham Importer turns a Raw Crawl into Catalog data, showing a preview with counts and parse Warnings before writing. Importing merges by Academic Year and course number, so crawls of several departments (e.g. for a double major) combine into one Catalog.
-- **Re-import:** before confirming, the importer shows what changed (Groups added, removed, moved). Afterwards, every Variant is compared against the new Catalog using its Pick snapshots:
+- **Output:** a Raw Crawl file with string fields as Shoham shows them, plus a `meta` block the Catalog keeps as provenance: what was queried, when it was crawled, by which crawler, against which page, and whether the run reached the end of its query. Older crawls carry none of it, and import anyway.
+- **Import:** the app's Shoham Importer turns a Raw Crawl into Catalog data, showing a preview with counts and parse Warnings before writing. Importing merges by Academic Year and course number, so crawls of several departments (e.g. for a double major) combine into one Catalog. A Raw Crawl is a **part** of a year and the app merges parts; several can be imported in one action. See [ADR-0010](adr/0010-raw-crawl-is-a-part-the-app-merges.md).
+- **Re-import:** before confirming, the importer shows what changed (Groups added, removed, moved). A part speaks for a Course it carries rows for, and within it for the Offerings whose Semesters the part covered; Groups it does not name there are superseded, with a Warning. See [ADR-0011](adr/0011-a-part-speaks-for-the-offerings-it-carries-rows-for.md). Afterwards, every Variant is compared against the new Catalog using its Pick snapshots:
   - a moved Group gets a "changed since picked" badge showing old and new times
   - a removed Group becomes "no longer offered" and its Course returns to unassigned
 
@@ -71,6 +71,8 @@ Requirements form a tree of these building blocks:
 - Programs: a base rule set plus a Track. A double major is two Programs evaluated against the same Attempts, with overlap rules.
 
 Anything the vocabulary cannot express becomes a Manual Requirement with its text. New building blocks are added only when real data forces them.
+
+**Every Requirement carries a stable id.** A Pin in the State File references a Requirement by that id and by nothing else, so an id has to survive a Requirements File being re-edited or reissued for a new Cohort — otherwise every Pin a student has made silently stops resolving. Ids are assigned by the maintainer writing the file, not derived from a Requirement's position in the tree or from its text, both of which move.
 
 ### Assignment
 
@@ -123,7 +125,7 @@ The three states need to differ in more than one property at once. Border style 
   - A **Group drawer** above the grid lists the selected Course's Groups as cards with times, lecturer and either "fits" or what it Clashes with. Hovering a card previews it on the week; clicking it Picks.
 - A Group with several Meetings is picked as a whole; hovering highlights all its Meetings.
 - **Complete and incomplete Courses:** a Course needs one Pick per Lesson Type it has, all in the same Semester. Until then it is marked incomplete.
-- **Year-long Courses:** one Pick per year. That a Year-long Course keeps the same Group in both Semesters is still to be confirmed when crawling.
+- **Year-long Courses:** one Pick per year, and the same Group covers both Semesters — confirmed from a real crawl, see [`research/shoham-raw-shape.md`](research/shoham-raw-shape.md).
 - **Untimed Groups** sit in a "No fixed time" strip under the grid. They count toward credits and Exams and never Clash.
 - **Clashes:** picked blocks that overlap sit side by side with a red border, as a Warning only.
 - **Tray contents:** the Semester's planned Attempts plus Courses added directly. Each Tray entry carries one chip per Lesson Type the Course has, filled with the Group number once picked and empty while missing, so what is still needed is visible without opening the Course.
@@ -166,12 +168,14 @@ The three states need to differ in more than one property at once. Border style 
 core/     pure domain: Requirement engine, Assignment solver, Plan checks, Clashes, Exams, generator.
           No I/O, no DOM, no fetch.
 app/      use cases (importRawCrawl, addAttempt, createVariant, diffVariantAgainstPlan, …)
-          plus a Workspace port: list, read, write and watch files.
+          plus a Workspace port: status, create, list, read, write and watch files.
 server/   Hono HTTP API exposing app/, filesystem Workspace adapter, static UI, CLI entry point.
 web/      thin React UI; talks only to the HTTP API through Hono's typed client.
 ```
 
 - `web` never imports `core` or `app`. It knows only the API contract, which is typed from the shared schemas without code generation.
+- That one edge, `web → server`, is narrowed twice over: to types, and to the **erasable** spelling of a type import. `import type { ApiType } from "@biu-cs-planner/server"` is what `web/src/api.ts` writes and the only form allowed. Under `verbatimModuleSyntax` (set in `tsconfig.base.json`) TypeScript emits imports as written: `import type { X } from "m"` disappears, while the inline `import { type X } from "m"` emits `import {} from "m"` — a specifier a bundler still has to resolve, which would pull `server/src/index.ts` → `workspace.fs.ts` → `node:fs/promises` into the browser bundle. The re-export forms split the same way (`export type { X } from` erases, `export { type X } from` does not) and are judged by the same rule.
+- The allowed edges are data in `tools/pr-review/layering.ts`, which is what the graph check on every pull request enforces. A narrowed entry there **always** means erasable: there is no weaker narrowing to choose, because the only reason to narrow an edge is that code must not travel along it.
 - One repo with npm workspaces, published as **one** npm package, `biu-cs-planner`. It contains the bundled server (zero runtime dependencies), the built UI and a `bin` entry. The name was unclaimed on npm on 2026-09-11.
 
 ## Storage
@@ -186,10 +190,15 @@ web/      thin React UI; talks only to the HTTP API through Hono's typed client.
   ```
 - On first run the app offers to create this layout. Nothing is written without asking.
 - **Autosave:** every edit saves the State File after a short delay, using atomic writes.
-- **Undo/redo:** every edit is a command in `app`; the server keeps the undo history for the session.
+- **Undo/redo:** an edit is a pure function in `core`; `app` keeps the previous State File value on a
+  stack with the label the use case supplied, and undo writes an earlier value back through the same
+  guarded save. One stack per open State File, settings excluded, the last 100 edits or 8 MB, held in
+  memory and gone on restart. There is no command concept ([ADR 0013](adr/0013-undo-is-snapshots-not-commands.md)).
 - **Backups:** rotating snapshots in `.backups/` (last 20 saves plus one per day for 30 days), restorable from the Workspace screen.
 - **External edits:** each save carries the file version it was based on. If the file changed on disk meanwhile (Dropbox, git, an editor), the server refuses the overwrite. The app then reloads and reports whether the last edit could be re-applied.
-- The server watches the Workspace folder, not individual files, and the UI reloads on external changes.
+- The server watches the Workspace folder, not individual files, and the UI reloads on external changes. Watching the folder is what sees a Catalog *appear* — dropped into `catalogs/` by hand, arriving with a git clone, landing over Dropbox — which watching a file cannot. One `fs.watch` per watched folder — the Workspace root, `catalogs/` and `requirements/` — non-recursive, so that a `.git` inside the Workspace does not turn every git operation into a reload. `.backups/` is not watched: a rotating snapshot is written only by the app and nothing in it is shown, so once autosave lands its snapshots would otherwise be a reload each.
+- **How the page hears about it:** each settled burst of filesystem events moves a count, and `GET /api/workspace/changes` serves it; the page remembers the last count it saw and reloads what it is showing when the number differs. A count and not a version: it restarts at 0 with the server, and nothing compares a file against it. A number the page **asks for**, not news the server pushes: `web` reaches the domain only through the HTTP API and may gain no second source of truth, an `EventSource` cannot send the launch token in an `Authorization` header (which would put it in a query string, the arrangement [ADR-0004](adr/0004-localhost-auth-bearer-token.md) turned down), and a websocket upgrade needs a different adapter on each of Node, Bun and Deno — a Node-only API in a server that avoids them. Pushing can be added behind the same count later without `web` learning anything new.
+- Bursts are debounced rather than throttled: an editor writing one file emits several events and a clone emits many, and each should be one reload, after the folder is quiet.
 
 ## Security
 
@@ -226,7 +235,7 @@ The rejected options (cookies, TLS, sockets) are in [ADR 0004](adr/0004-localhos
 7. **Supply chain:**
    - bundled server with zero runtime dependencies
    - committed lockfile
-   - no install scripts
+   - no install scripts: none in the published package, and none run by CI — every workflow installs with `--ignore-scripts`
    - published from GitHub Actions with npm provenance and trusted publishing
 
 ## CLI and distribution
@@ -258,8 +267,11 @@ The rejected options (cookies, TLS, sockets) are in [ADR 0004](adr/0004-localhos
   - `core` is test-driven with small invented fixture Catalogs and Requirements Files, independent of real data. It covers the engine, solver, Clashes, Exam spacing, generator and migrations.
   - The Shoham Importer is tested against real Raw Crawls kept as fixtures. The crawler repo tests its parsing against saved Shoham HTML pages, including a Year-long Course.
   - The Workspace adapter gets integration tests against a temporary folder.
-  - UI end-to-end tests (Playwright) wait until the Timetable screen design stabilizes.
-- CI runs on Node 22 and 24, plus a start-up smoke test on Bun and Deno.
+  - The Timetable's layout is asserted in a real Chromium (Vitest browser mode, Playwright provider): that the week reads right to left in Hebrew, that a time range survives a Hebrew line, that tiles stay in their columns, that the dark tokens resolve, and that the runner can draw Hebrew at all. Geometry, not appearance — screenshot baselines wait for the Timetable design to stabilize.
+  - UI end-to-end tests (Playwright driving a running server) wait until the Timetable screen design stabilizes.
+- CI runs the node tests on Node 22 and 24 and the browser tests in Chromium, plus a start-up smoke test on Bun
+  and Deno. The browser leg installs a Hebrew font deliberately: a runner that draws tofu boxes still passes every
+  layout assertion, so a suite that is green on one is worse than no suite.
 
 ## Build order
 
@@ -287,6 +299,9 @@ The rejected options (cookies, TLS, sockets) are in [ADR 0004](adr/0004-localhos
 
 ## Open facts
 
-- Does a Year-long Course keep the same Group in both Semesters? Confirm from Shoham when crawling.
 - Is a minimum-grade Prerequisite checked against the best or the latest passing Attempt? A policy setting in the Requirements File until the author checks.
-- How Shoham shows Year-long Courses. Confirm when crawling.
+
+Answered on 2026-09-13 from a real crawl, in [`research/shoham-raw-shape.md`](research/shoham-raw-shape.md):
+
+- **How Shoham shows Year-long Courses:** the Semester cell lists Fall and Spring on two lines, with no `שנתי` marker.
+- **Does a Year-long Course keep the same Group in both Semesters:** yes — one row, one Group number, weekly hours repeated per Semester.

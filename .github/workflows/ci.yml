@@ -1,0 +1,291 @@
+# The signal that says whether the code works. pr-report.yml builds the report a reviewer
+# reads; this is the pass/fail check beside it, on every pull request and every push to dev.
+#
+# Three claims get exercised. The matrix runs the node project on the supported floor
+# (Node 22) as well as the runtime development uses (Node 24), so an API that exists only
+# in 24 fails here rather than on a student's machine. The smoke jobs start the real
+# server under Bun and under Deno, because "the server avoids native modules and
+# Node-only APIs where possible, so `bunx` and `deno run npm:` work too" (docs/design.md,
+# "CLI and distribution") is a property nothing else touches. The browser job runs the
+# geometry assertions in a real Chromium, which is the only place a right-to-left week
+# and a bidi-reordered time range can be looked at (issue #45).
+#
+# `npm test` is the two test jobs together: the matrix runs `npm run test:node` and the
+# browser job runs `npm run test:browser`. Split because they want different machines --
+# and because the matrix passing on a runner with no Chromium on it is itself the claim
+# that the node project needs no browser. release.yml is the one place that still runs
+# `npm test` whole, because a tag on master runs that workflow and not this one.
+#
+# That every workflow installs with --ignore-scripts is checked too, but by
+# tools/ci/workflows.test.ts in the test run above rather than by a job here.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - dev
+
+# Read the tree and nothing else: this workflow runs tests and starts a server, and
+# writes to no part of GitHub. Every workflow here declares its own block rather than
+# inheriting one, and tools/ci/workflows.test.ts keeps that true.
+permissions:
+  contents: read
+
+# A pull request cancels its own earlier run: pushing a fix makes the previous commit's
+# verdict irrelevant. A push to dev does not, because there the group is the branch and
+# the predecessor is a different commit -- cancelling it would leave a commit that landed
+# on dev with no verdict at all, and nobody would know it was never tested.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    # A check that hangs is worse than one that fails: the default is six hours, which is
+    # six hours of nobody being told anything.
+    timeout-minutes: 15
+    strategy:
+      # Both legs always report: "fails on 22, passes on 24" is the answer this job exists
+      # to give, and stopping the matrix at the first failure would hide half of it.
+      fail-fast: false
+      matrix:
+        node:
+          - 22 # the floor in `engines`, which @types/node tracks
+          - 24 # what development runs on
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      # The committed lockfile, installed exactly, with no package's install script run:
+      # "no install scripts" is a supply-chain rule (docs/design.md), and an install here
+      # keeps it rather than trusting that no dependency has one.
+      - run: npm ci --ignore-scripts
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm run test:node
+
+  browser:
+    name: Browser geometry
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci --ignore-scripts
+
+      # Chromium carries no fonts of its own and `playwright install-deps` installs
+      # shared libraries rather than typefaces, so a bare runner draws Hebrew as boxes --
+      # and every geometry assertion passes against boxes, because boxes have widths.
+      # The font is installed on purpose rather than hoped for; if this line ever stops
+      # working, web/src/hebrewFont.browser.test.tsx says so instead of the suite going
+      # quietly green.
+      - name: Install a Hebrew font, and the libraries Chromium needs
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fonts-noto-core
+          fc-cache -f
+          npx playwright install-deps chromium
+
+      # The exact version, not the lockfile's hash: the browser is ~300MB of the same
+      # bytes every run, and it only changes when Playwright does. Keying on the lockfile
+      # would throw it away whenever any dependency moved.
+      - name: Read the Playwright version
+        id: playwright
+        run: echo "version=$(node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the browser download
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+
+      # `playwright` ships no install script, so nothing downloads a browser unless asked
+      # -- and were a future version to bring the postinstall back, the `--ignore-scripts`
+      # above would stop it. Explicit either way. A no-op when the cache hit.
+      - name: Download Chromium
+        run: npm run install:browsers
+
+      - name: Test
+        run: npm run test:browser
+
+  smoke:
+    name: ${{ matrix.name }} start-up
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Node is not one of the "it works here too" runtimes: it is the one the
+          # package runs on, and the one whose type stripping erases types instead of
+          # compiling them. `enum`, parameter properties, a namespace with values and
+          # `import =` have nothing to erase to, so they start the server on Bun and on
+          # Deno and fail here. tsconfig.base.json's erasableSyntaxOnly catches that when
+          # it is written; this leg catches what the compiler never sees -- a dependency,
+          # a generated file, or that flag being turned off again.
+          - runtime: node
+            name: Node
+            # The flag `npm run dev:server` passes. Node 22.18 and later strip types
+            # without being asked, but `engines` allows older 22s, and asking for
+            # stripping by name also says which of the two it is: stripping, never
+            # `--experimental-transform-types`, which would compile an enum and hide the
+            # very thing this leg is here to find.
+            start: node --experimental-strip-types server/src/serve.ts
+          - runtime: bun
+            name: Bun
+            start: bun server/src/serve.ts
+          - runtime: deno
+            name: Deno
+            # The permissions the server actually asks of the OS: a port, the Workspace
+            # and the token file, the environment and platform behind the config
+            # directory. Widening this list is a fine thing to do when the server grows a
+            # need — it is spelled out so that growing one is a visible edit.
+            start: >-
+              deno run --allow-net --allow-read --allow-write --allow-env --allow-sys
+              server/src/serve.ts
+    steps:
+      - uses: actions/checkout@v4
+
+      # Whichever runtime starts the server, the dependencies come from the committed
+      # lockfile, so that what starts here is what a student's `npm i -g` installs.
+      #
+      # For Bun and Deno this step is only the npm host. For the Node leg it is also the
+      # runtime under test, so the version is load-bearing: `--experimental-strip-types`
+      # does not exist before Node 22, and lowering this to the floor in `engines` would
+      # fail that leg with a flag error that reads like a broken server.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci --ignore-scripts
+
+      - if: matrix.runtime == 'bun'
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - if: matrix.runtime == 'deno'
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      # Not a second test suite: the server comes up, answers once, and goes away again.
+      # The health route is the one route that needs no launch token (ADR-0004), which is
+      # exactly what a probe from outside the app can ask for.
+      - name: Start the server, ask it one question, stop it
+        run: |
+          set -euo pipefail
+
+          # The port server/src/config.ts binds; the dev entry point takes no --port. When
+          # the CLI ticket lands the "next free port" fallback the design promises, this
+          # has to come out of the URL the launcher prints instead, or the probe will ask
+          # the wrong port and blame the runtime for the silence.
+          port=8900
+
+          ${{ matrix.start }} &
+          server=$!
+
+          # Thirty tries -- a minute and a half at worst -- but a process that has
+          # already died is not worth waiting for: that is the failure this job is looking
+          # for, so it is reported as itself rather than as a timeout.
+          answered=""
+          for _ in $(seq 1 30); do
+            if ! kill -0 "$server" 2>/dev/null; then
+              echo "::error::${{ matrix.name }} could not start the server: the process exited before answering."
+              wait "$server" || true
+              exit 1
+            fi
+            if curl -fs --max-time 2 "http://127.0.0.1:$port/api/health" -o health.json; then
+              answered=yes
+              break
+            fi
+            sleep 1
+          done
+
+          if [ -z "$answered" ]; then
+            echo "::error::${{ matrix.name }} started the server but it never answered on port $port."
+            kill "$server" 2>/dev/null || true
+            exit 1
+          fi
+
+          # the body goes in the log: it is what "one successful response" looked like
+          cat health.json
+          echo
+          answer_ok=""
+          if grep -q '"ok":true' health.json; then answer_ok=yes; fi
+
+          # Exiting cleanly is the rest of the claim. The server is stopped before the
+          # answer is judged, so a disappointing answer still leaves nothing running -- an
+          # orphan holds the step's output open, and the runner waits on that, so the job
+          # would hang for its whole timeout instead of failing.
+          gone_within() {
+            for _ in $(seq 1 "$1"); do
+              kill -0 "$server" 2>/dev/null || return 0
+              sleep 1
+            done
+            return 1
+          }
+
+          # SIGINT first, because Ctrl+C in a terminal is how a student stops this and
+          # SIGINT is what Ctrl+C sends. SIGTERM second, because a runtime that sleeps
+          # through the first has still stopped when asked, and which one did it is worth
+          # knowing rather than worth failing over -- see the warning below.
+          stopped_by=""
+          kill -INT "$server" 2>/dev/null || true
+          if gone_within 5; then
+            stopped_by=SIGINT
+          else
+            kill -TERM "$server" 2>/dev/null || true
+            if gone_within 5; then stopped_by=SIGTERM; fi
+          fi
+
+          if [ -z "$stopped_by" ]; then
+            kill -9 "$server" || true
+            wait "$server" || true
+            echo "::error::${{ matrix.name }} would not stop the server: neither Ctrl+C's SIGINT nor SIGTERM ended it, and it had to be killed."
+            exit 1
+          fi
+
+          # The status it went out with, not merely that it is gone. A server that answers
+          # and then crashes a moment later is also gone by the time we look, and "gone"
+          # on its own would call that a clean shutdown.
+          status=0
+          wait "$server" || status=$?
+          echo "Stopped by $stopped_by, exit status $status."
+
+          if [ "$stopped_by" != SIGINT ]; then
+            echo "::warning::${{ matrix.name }} did not stop the server on SIGINT within five seconds; SIGTERM ended it. A student's Ctrl+C may not be enough on this runtime."
+          fi
+
+          # 130 and 143 are ending on SIGINT and SIGTERM, which is what a runtime with no
+          # handler of its own does; 0 is a handler that chose to stop. Any other status is
+          # the server going down for reasons of its own rather than because it was asked.
+          case "$status" in
+            0 | 130 | 143) ;;
+            *)
+              echo "::error::${{ matrix.name }} did not shut the server down cleanly: it exited with status $status."
+              exit 1
+              ;;
+          esac
+
+          if [ -z "$answer_ok" ]; then
+            echo "::error::${{ matrix.name }} started the server, but /api/health did not answer with ok: true."
+            exit 1
+          fi

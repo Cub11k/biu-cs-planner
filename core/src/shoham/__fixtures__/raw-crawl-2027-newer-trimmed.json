@@ -1,0 +1,358 @@
+{
+ "meta": {
+  "schema": 1,
+  "script": "scripts/crawl/v1-crawl.js",
+  "label": "2027-cs",
+  "mode": "all",
+  "scraped_at": "2026-09-13T13:53:03.017Z",
+  "source": "https://courses.biu.ac.il/CoursesView.aspx",
+  "complete": true
+ },
+ "rows": [
+  {
+   "code": "89100",
+   "name": "פרויקט חונכות שנה א'",
+   "group": "03",
+   "teachers": "",
+   "kind": "הדרכה",
+   "semester": "סמסטר א'",
+   "day": "",
+   "hours": "",
+   "lid": "827739"
+  },
+  {
+   "code": "89100",
+   "name": "פרויקט חונכות שנה א'",
+   "group": "04",
+   "teachers": "",
+   "kind": "הדרכה",
+   "semester": "סמסטר א'",
+   "day": "",
+   "hours": "",
+   "lid": "827740"
+  },
+  {
+   "code": "89110",
+   "name": "מבוא למדעי המחשב",
+   "group": "01",
+   "teachers": "פרופ' נועה אגמון",
+   "kind": "הרצאה",
+   "semester": "סמסטר א'",
+   "day": "ג'",
+   "hours": "15:00 - 18:00",
+   "lid": "808655"
+  },
+  {
+   "code": "89110",
+   "name": "מבוא למדעי המחשב",
+   "group": "03",
+   "teachers": "מר עומרי פרי",
+   "kind": "תרגיל",
+   "semester": "סמסטר א'",
+   "day": "ג'",
+   "hours": "18:00 - 20:00",
+   "lid": "822335"
+  },
+  {
+   "code": "89110",
+   "name": "מבוא למדעי המחשב",
+   "group": "10",
+   "teachers": "מר איתי שדלצקי",
+   "kind": "תגבור",
+   "semester": "סמסטר א'",
+   "day": "ד'",
+   "hours": "19:00 - 21:00",
+   "lid": "821467"
+  },
+  {
+   "code": "89132",
+   "name": "חשבון אינפיניטסימלי 1",
+   "group": "01",
+   "teachers": "ד\"ר יוני זוהר",
+   "kind": "הרצאה",
+   "semester": "סמסטר א'",
+   "day": "ג',ד'",
+   "hours": "13:00 - 15:00\n09:00 - 11:00",
+   "lid": "822310"
+  },
+  {
+   "code": "89132",
+   "name": "חשבון אינפיניטסימלי 1",
+   "group": "02",
+   "teachers": "",
+   "kind": "הרצאה",
+   "semester": "סמסטר א'",
+   "day": "",
+   "hours": "",
+   "lid": "821602"
+  },
+  {
+   "code": "89132",
+   "name": "חשבון אינפיניטסימלי 1",
+   "group": "03",
+   "teachers": "מר אלעד עטייא",
+   "kind": "תרגיל",
+   "semester": "סמסטר א'",
+   "day": "ד'",
+   "hours": "11:00 - 13:00",
+   "lid": "822311"
+  },
+  {
+   "code": "89385",
+   "name": "סדנה לפרויקטים",
+   "group": "01",
+   "teachers": "ד\"ר אריאל רוט\nד\"ר הדר פרנקל",
+   "kind": "סדנה",
+   "semester": "סמסטר א'\nסמסטר ב'",
+   "day": "",
+   "hours": "",
+   "lid": "822277"
+  },
+  {
+   "code": "89385",
+   "name": "סדנה לפרויקטים",
+   "group": "02",
+   "teachers": "ד\"ר אריאל רוט\nד\"ר הדר פרנקל",
+   "kind": "סדנה",
+   "semester": "סמסטר א'\nסמסטר ב'",
+   "day": "",
+   "hours": "",
+   "lid": "822276"
+  }
+ ],
+ "details": {
+  "89110|סמסטר א'": {
+   "points": "3.00",
+   "code": "89110-01",
+   "hours": "סמסטר א' - 3.00",
+   "terms": [
+    {
+     "type": "מועד א'",
+     "date": "21/01/2027",
+     "hour": "16:00"
+    },
+    {
+     "type": "מועד ב'",
+     "date": "11/02/2027",
+     "hour": "16:00"
+    }
+   ],
+   "title": "מבוא למדעי המחשב",
+   "name_en": "Intro to Computers",
+   "department": "המחלקה למדעי המחשב",
+   "faculty": "מדעים מדויקים",
+   "kind": "הרצאה",
+   "teachers": "פרופ' נועה אגמון",
+   "day": "ג'",
+   "session_hours": "15:00 - 18:00",
+   "remark": "",
+   "clusters": "מודל - אתר מלווה קורס\nפרונטלי",
+   "syllabus": "CourseSylabusView.aspx?lid=808655"
+  },
+  "89385|סמסטר א'\nסמסטר ב'": {
+   "points": "4.00",
+   "code": "89385-01",
+   "hours": "סמסטר א' - 2.00\nסמסטר ב' - 2.00",
+   "terms": [],
+   "title": "סדנה לפרויקטים",
+   "name_en": "Project Lab",
+   "department": "המחלקה למדעי המחשב",
+   "faculty": "מדעים מדויקים",
+   "kind": "סדנה",
+   "teachers": "ד\"ר אריאל רוט\nד\"ר הדר פרנקל",
+   "day": "",
+   "session_hours": "",
+   "remark": "",
+   "clusters": "מודל - אתר מלווה קורס",
+   "syllabus": ""
+  },
+  "89132|סמסטר א'": {
+   "points": "4.00",
+   "code": "89132-01",
+   "hours": "סמסטר א' - 4.00",
+   "terms": [
+    {
+     "type": "מועד א'",
+     "date": "07/02/2027",
+     "hour": "16:00"
+    },
+    {
+     "type": "מועד ב'",
+     "date": "26/02/2027",
+     "hour": "09:00"
+    }
+   ],
+   "title": "חשבון אינפיניטסימלי 1",
+   "name_en": "Infinitesimal Math",
+   "department": "המחלקה למדעי המחשב",
+   "faculty": "מדעים מדויקים",
+   "kind": "הרצאה",
+   "teachers": "ד\"ר יוני זוהר",
+   "day": "ג',ד'",
+   "session_hours": "13:00 - 15:00\n09:00 - 11:00",
+   "remark": "",
+   "clusters": "מודל - אתר מלווה קורס\nפרונטלי",
+   "syllabus": ""
+  },
+  "89100|סמסטר א'": {
+   "points": "0.00",
+   "code": "89100-03",
+   "hours": "סמסטר א' - 8.00",
+   "terms": [],
+   "title": "פרויקט חונכות שנה א'",
+   "name_en": "Tutoring Project for First Year Students",
+   "department": "המחלקה למדעי המחשב",
+   "faculty": "מדעים מדויקים",
+   "kind": "הדרכה",
+   "teachers": "",
+   "day": "",
+   "session_hours": "",
+   "remark": "",
+   "clusters": "מודל - אתר מלווה קורס",
+   "syllabus": ""
+  }
+ },
+ "sections": {
+  "808655": {
+   "points": "3.00",
+   "code": "89110-01",
+   "hours": "סמסטר א' - 3.00",
+   "terms": [
+    {
+     "type": "מועד א'",
+     "date": "21/01/2027",
+     "hour": "16:00"
+    },
+    {
+     "type": "מועד ב'",
+     "date": "11/02/2027",
+     "hour": "16:00"
+    }
+   ],
+   "title": "מבוא למדעי המחשב",
+   "name_en": "Intro to Computers",
+   "department": "המחלקה למדעי המחשב",
+   "faculty": "מדעים מדויקים",
+   "kind": "הרצאה",
+   "teachers": "פרופ' נועה אגמון",
+   "day": "ג'",
+   "session_hours": "15:00 - 18:00",
+   "remark": "",
+   "clusters": "מודל - אתר מלווה קורס\nפרונטלי",
+   "syllabus": "CourseSylabusView.aspx?lid=808655"
+  },
+  "821467": {
+   "points": "0.00",
+   "code": "89110-10",
+   "hours": "סמסטר א' - 2.00",
+   "terms": [],
+   "title": "מבוא למדעי המחשב",
+   "name_en": "Intro to Computers",
+   "department": "המחלקה למדעי המחשב",
+   "faculty": "מדעים מדויקים",
+   "kind": "תגבור",
+   "teachers": "מר איתי שדלצקי",
+   "day": "ד'",
+   "session_hours": "19:00 - 21:00",
+   "remark": "",
+   "clusters": "מודל - אתר מלווה קורס\nפרונטלי",
+   "syllabus": ""
+  },
+  "822277": {
+   "points": "4.00",
+   "code": "89385-01",
+   "hours": "סמסטר א' - 2.00\nסמסטר ב' - 2.00",
+   "terms": [],
+   "title": "סדנה לפרויקטים",
+   "name_en": "Project Lab",
+   "department": "המחלקה למדעי המחשב",
+   "faculty": "מדעים מדויקים",
+   "kind": "סדנה",
+   "teachers": "ד\"ר אריאל רוט\nד\"ר הדר פרנקל",
+   "day": "",
+   "session_hours": "",
+   "remark": "",
+   "clusters": "מודל - אתר מלווה קורס",
+   "syllabus": ""
+  },
+  "822310": {
+   "points": "4.00",
+   "code": "89132-01",
+   "hours": "סמסטר א' - 4.00",
+   "terms": [
+    {
+     "type": "מועד א'",
+     "date": "07/02/2027",
+     "hour": "16:00"
+    },
+    {
+     "type": "מועד ב'",
+     "date": "26/02/2027",
+     "hour": "09:00"
+    }
+   ],
+   "title": "חשבון אינפיניטסימלי 1",
+   "name_en": "Infinitesimal Math",
+   "department": "המחלקה למדעי המחשב",
+   "faculty": "מדעים מדויקים",
+   "kind": "הרצאה",
+   "teachers": "ד\"ר יוני זוהר",
+   "day": "ג',ד'",
+   "session_hours": "13:00 - 15:00\n09:00 - 11:00",
+   "remark": "",
+   "clusters": "מודל - אתר מלווה קורס\nפרונטלי",
+   "syllabus": ""
+  },
+  "822311": {
+   "points": "2.00",
+   "code": "89132-03",
+   "hours": "סמסטר א' - 2.00",
+   "terms": [],
+   "title": "חשבון אינפיניטסימלי 1",
+   "name_en": "Infinitesimal Math",
+   "department": "המחלקה למדעי המחשב",
+   "faculty": "מדעים מדויקים",
+   "kind": "תרגיל",
+   "teachers": "מר אלעד עטייא",
+   "day": "ד'",
+   "session_hours": "11:00 - 13:00",
+   "remark": "",
+   "clusters": "מודל - אתר מלווה קורס\nפרונטלי",
+   "syllabus": ""
+  },
+  "822335": {
+   "points": "2.00",
+   "code": "89110-03",
+   "hours": "סמסטר א' - 2.00",
+   "terms": [],
+   "title": "מבוא למדעי המחשב",
+   "name_en": "Intro to Computers",
+   "department": "המחלקה למדעי המחשב",
+   "faculty": "מדעים מדויקים",
+   "kind": "תרגיל",
+   "teachers": "מר עומרי פרי",
+   "day": "ג'",
+   "session_hours": "18:00 - 20:00",
+   "remark": "",
+   "clusters": "מודל - אתר מלווה קורס\nפרונטלי",
+   "syllabus": ""
+  },
+  "827739": {
+   "points": "0.00",
+   "code": "89100-03",
+   "hours": "סמסטר א' - 8.00",
+   "terms": [],
+   "title": "פרויקט חונכות שנה א'",
+   "name_en": "Tutoring Project for First Year Students",
+   "department": "המחלקה למדעי המחשב",
+   "faculty": "מדעים מדויקים",
+   "kind": "הדרכה",
+   "teachers": "",
+   "day": "",
+   "session_hours": "",
+   "remark": "",
+   "clusters": "מודל - אתר מלווה קורס",
+   "syllabus": ""
+  }
+ }
+}

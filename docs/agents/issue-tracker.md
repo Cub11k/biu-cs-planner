@@ -4,7 +4,7 @@ Issues and specs for this repo live as GitHub issues. Use the `gh` CLI for all o
 
 ## Repo
 
-`Cub11k/biu-cs-planner`, **public**, default branch `master`. The `origin` remote uses the
+`Cub11k/biu-cs-planner`, **public**, default branch `dev`; `master` holds releases only. The `origin` remote uses the
 `github:` SSH alias from `~/.ssh/config`; `gh` resolves that to `github.com/Cub11k/biu-cs-planner`
 correctly, so no `-R` flag is needed when running inside the clone.
 
@@ -18,6 +18,26 @@ correctly, so no `-R` flag is needed when running inside the clone.
 - **Close**: `gh issue close <number> --comment "..."`
 
 Infer the repo from `git remote -v`; `gh` does this automatically when run inside a clone.
+
+## Tickets are frozen
+
+**Read issue bodies. Never write them.** A ticket is the record of what was asked for, and it is
+what a reviewer reads an implementation against. Rewriting it to match what got built destroys the
+only independent account of the original ask — the diff then agrees with the ticket by construction,
+and nobody can tell whether the work met the request or the request was moved.
+
+This holds even when the ticket has genuinely been superseded, and even when the new text would be
+more accurate. Especially then: a superseded ticket plus a dated amendment is a decision with a
+history, while a quietly corrected ticket is a decision with none.
+
+Amendments, findings, corrections and open questions go in the **comment thread**, where they carry
+a timestamp and an author and sit alongside the original instead of replacing it. When an amendment
+changes what should be built, write it as the *exact edit* it would be — quote the lines it
+replaces — so the ticket, the pull request and the implementation can be reconciled without anyone
+guessing which is current.
+
+Labels and assignees are not the body; change those freely. `gh issue edit --body` and
+`--body-file` are for creating a ticket, not for revising one.
 
 ## Pull requests as a triage surface
 

@@ -1,39 +1,32 @@
 import { useEffect, useState } from "react";
-import { api } from "./api.ts";
-import { DIRECTION, t, type Language } from "./i18n/strings.ts";
+import { useWorkspaceChanges } from "./changes.ts";
+import { DIRECTION, type Language } from "./i18n/strings.ts";
+import { TimetableScreen } from "./timetable/TimetableScreen.tsx";
 
-type Health = "checking" | "reachable" | "unreachable";
-
-const HEALTH_STRING = {
-  checking: "apiChecking",
-  reachable: "apiReachable",
-  unreachable: "apiUnreachable",
-} as const;
-
-export function App({ language = "en" as Language }): React.JSX.Element {
-  const [health, setHealth] = useState<Health>("checking");
+/**
+ * Opening the app lands on the Timetable (docs/design.md, "Screens").
+ *
+ * The language lives here because `dir` and `lang` belong on the root element: switching
+ * to Hebrew has to flip the whole document, not one pane of it.
+ *
+ * Watching the Workspace lives here for the same reason: a file appearing in the folder is
+ * news for the whole app and not for one pane of it, so it is asked for once here and
+ * handed to whichever screen is open (docs/design.md, "Storage").
+ */
+export function App({ language: initial = "en" as Language }): React.JSX.Element {
+  const [language, setLanguage] = useState<Language>(initial);
+  const workspaceChanges = useWorkspaceChanges();
 
   useEffect(() => {
-    let current = true;
-
-    api.api.health
-      .$get()
-      .then((response) => {
-        if (current) setHealth(response.ok ? "reachable" : "unreachable");
-      })
-      .catch(() => {
-        if (current) setHealth("unreachable");
-      });
-
-    return () => {
-      current = false;
-    };
-  }, []);
+    document.documentElement.lang = language;
+    document.documentElement.dir = DIRECTION[language];
+  }, [language]);
 
   return (
-    <main dir={DIRECTION[language]} className="min-h-dvh p-8">
-      <h1 className="text-2xl font-semibold">{t(language, "appName")}</h1>
-      <p className="mt-2 text-accent">{t(language, HEALTH_STRING[health])}</p>
-    </main>
+    <TimetableScreen
+      language={language}
+      onLanguage={setLanguage}
+      workspaceChanges={workspaceChanges}
+    />
   );
 }

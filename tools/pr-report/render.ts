@@ -1,7 +1,7 @@
-import type { CallEdge } from "./calls.ts";
+import { UNRESOLVED, type CallEdge } from "./calls.ts";
 import type { Coverage } from "./coverage.ts";
-import type { Module } from "./surface.ts";
-import { moduleName } from "./surface.ts";
+import type { ImportKind, Module } from "./surface.ts";
+import { mergeImports, moduleName, packageWorkspace } from "./surface.ts";
 import type { TestFile } from "./tests.ts";
 
 export type Report = {
@@ -17,7 +17,149 @@ const id = (s: string): string => s.replace(/[^A-Za-z0-9]/g, "_");
 const esc = (s: string): string => s.replace(/"/g, "'").replace(/\|/g, "\\|");
 const bar = (n: number): string => "█".repeat(Math.round(n / 10)).padEnd(10, "░");
 
-/** Modules as nodes, imports as edges, grouped by workspace. */
+/**
+ * One arrow, ready to draw.
+ *
+ * Deliberately **not** an `ImportRef` with fields added. `ImportRef.specifier` is documented
+ * as "repo-relative path for a local import, the package name for a bare one", and `to` here
+ * is neither of those for a package edge: it is the **workspace name**, which is the id of
+ * its box. Widening a documented field to mean a third thing is how a report starts
+ * disagreeing with itself, so the mermaid target gets its own name and the import's kind is
+ * carried whole rather than spread flat.
+ *
+ * `box` says whether the arrow ends at a workspace box or at a module, so the legend can
+ * explain the first only when the graph holds one. The two workspaces are carried because
+ * the count a reviewer reads before opening the fold is how many arrows leave their
+ * workspace, and that is a question about where an arrow lands rather than how it was
+ * written.
+ */
+type DrawnEdge = {
+  /** Repo-relative path of the module that writes the import. */
+  from: string;
+  /** The workspace that module lives in. */
+  fromWorkspace: string;
+  /** What the arrow points at: a module's repo-relative path, or a workspace's name. */
+  to: string;
+  /** The workspace the arrow lands in. */
+  toWorkspace: string;
+  /** Whether `to` is a workspace box rather than a module. */
+  box: boolean;
+  /** What travels along the import, and whether the statement survives the emit. */
+  kind: ImportKind;
+};
+
+/**
+ * Every arrow the module graph draws, from **both** of the fields an import can land in.
+ *
+ * `readModule` splits an import two ways: a relative one goes to `Module.imports` as a
+ * repo-relative path, and a bare one goes to `Module.packages` under the name it was
+ * written with. A cross-workspace import in this repo is always bare, so it is always in
+ * `packages` — and a version of this drawing read `imports` alone. It drew all four
+ * workspaces as boxes and **not one arrow between two of them**: the whole
+ * `web → server → app → core` chain that `docs/design.md` "Architecture" describes and
+ * `tools/pr-review/layering.ts` polices was absent from the picture `CLAUDE.md` sends a
+ * reviewer to before the diff (#77). `forbiddenEdges` reads both fields and always has,
+ * which is why the check was right about `web → server` while the graph beside it was
+ * silent.
+ *
+ * So the counts and the arrows both come from here, one function, rather than each field
+ * being remembered in each place: it was exactly one field going unread in one place that
+ * caused this, and `render` used to recompute the drawn set for its own summary.
+ *
+ * What still gets no arrow, and each for its own reason:
+ *
+ * - A third-party package — `zod`, `hono`, `react`. This graph is the shape of *this* repo,
+ *   and a node per library would bury that.
+ * - A scoped name with no workspace behind it. `@biu-cs-planner/tools` would be an arrow at
+ *   a box this graph never drew, so it is dropped rather than invented.
+ * - A workspace importing its own package. That is an arrow from a node to the box around
+ *   it, which tells a reader nothing and which mermaid has no sensible drawing for.
+ * - A `node:` builtin and a dynamic `import()`, neither of which `readModule` records at
+ *   all.
+ */
+function drawnEdges(modules: readonly Module[]): DrawnEdge[] {
+  const paths = new Set(modules.map((m) => m.path));
+  const boxes = new Set(modules.map((m) => m.workspace));
+  const out: DrawnEdge[] = [];
+
+  for (const m of modules) {
+    for (const dep of m.imports) {
+      if (!paths.has(dep.specifier)) continue;
+      out.push({
+        from: m.path,
+        fromWorkspace: m.workspace,
+        to: dep.specifier,
+        toWorkspace: dep.specifier.split("/")[0] ?? "",
+        box: false,
+        kind: dep,
+      });
+    }
+
+    // Re-specified from the package name to the workspace name, which is the id of its
+    // box, and then merged: `@biu-cs-planner/core` beside `@biu-cs-planner/core/thing` is
+    // one arrow, and `mergeImports` is already the rule for what that one arrow says —
+    // the weaker statement wins, so a single value import makes the edge a value edge.
+    const crossing = m.packages.flatMap((dep) => {
+      const workspace = packageWorkspace(dep.specifier);
+      if (!workspace || workspace === m.workspace || !boxes.has(workspace)) return [];
+      return [{ ...dep, specifier: workspace }];
+    });
+    for (const dep of mergeImports(crossing)) {
+      out.push({
+        from: m.path,
+        fromWorkspace: m.workspace,
+        to: dep.specifier,
+        toWorkspace: dep.specifier,
+        box: true,
+        kind: dep,
+      });
+    }
+  }
+
+  return out;
+}
+
+/**
+ * Modules as nodes, grouped into a box per workspace, and every import an edge — but not
+ * every edge ends at a module. A relative import points at the module it names; a
+ * cross-workspace import is written as a package name and points at the **workspace box**.
+ * `drawnEdges` is where that is decided, and where what is deliberately drawn nowhere is
+ * listed.
+ *
+ * A dashed arrow is **erased**: every statement on that edge compiles to nothing, so the
+ * edge leaves no specifier for a bundler to resolve. (Only the edge — another importer may
+ * still reach the same module.) It is still a real dependency — the shapes it names bind
+ * the two modules together — and that is worth seeing without opening either file.
+ *
+ * A solid arrow leaves a statement in the output. Usually because it carries code, and also
+ * for the inline `import { type X } from "…"`, which carries only types and still emits
+ * `import {} from "…"` — `ImportKind`'s table measures each of the five static forms
+ * against the compiler. That specifier is resolved, so the target module is reached and
+ * whatever it imports at its top comes with it.
+ *
+ * **So the arrow asks `erasable`, not `typeOnly`.** `typeOnly` is the weaker of the two
+ * fields and splits the wrong way for a graph: it would draw the inline spelling like the
+ * erased imports, while `tools/pr-review/layering.ts` decides a narrowed edge on `erasable`
+ * alone and posts a `spelling` finding against that same edge — in the review's own
+ * comment, under its own marker, beside this one on the same pull request. A reviewer is
+ * told to read this report before the diff, so a dashed arrow here would be the reassuring
+ * half of a pair of comments that disagree.
+ *
+ * Two styles, not three for `ImportKind`'s three states. What a reader scans this graph for
+ * is whether an edge survives to the output. Mermaid can draw a third — `==>`, or a
+ * labelled edge — but solid and dashed are the pair that read as "real" and "not real" on
+ * sight, and a third mark would carry its meaning entirely in the legend. The legend is
+ * what misled here: "carries only types" was true and still wrong. And the inline spelling
+ * is a state to notice and fix rather than one to give standing notation to. It is not
+ * hidden — solid is the safe direction, and `render` counts it separately and names the
+ * spelling whenever the graph holds one.
+ *
+ * **A package edge is drawn by that same rule**, which is much of the point of drawing them
+ * at all: the project's one narrowed edge is `web/src/api.ts -.-> server`, dashed because
+ * `import type { ApiType } from "@biu-cs-planner/server"` is erased. Four tickets in a row
+ * (#51, #58, #59, #69) reasoned about how that edge is drawn while it was in neither this
+ * graph nor its counts. It is in both now, and it asks the question the gate asks.
+ */
 function moduleMap(modules: Module[]): string {
   const byWorkspace = new Map<string, Module[]>();
   for (const m of modules) {
@@ -30,21 +172,30 @@ function moduleMap(modules: Module[]): string {
     for (const m of mods) lines.push(`    ${id(m.path)}["${esc(moduleName(m.path))}"]`);
     lines.push("  end");
   }
-  const paths = new Set(modules.map((m) => m.path));
-  for (const m of modules) {
-    for (const dep of m.imports) {
-      if (paths.has(dep)) lines.push(`  ${id(m.path)} --> ${id(dep)}`);
-    }
+  for (const edge of drawnEdges(modules)) {
+    lines.push(`  ${id(edge.from)} ${edge.kind.erasable ? "-.->" : "-->"} ${id(edge.to)}`);
   }
   return lines.join("\n");
 }
 
-/** Function-level call graph: the path a value actually takes through the code. */
+/**
+ * Function-level call graph: the path a value actually takes through the code.
+ *
+ * A node is `module#function`, and the module half is the point. `calls.ts` resolves a call
+ * through the importing module's own import statements, so a `groupKey()` written in `core`
+ * is `core`'s `groupKey` whatever else in the repository exports that name (#86).
+ *
+ * A callee this repo owns that could not be placed in a module gets a node of its own,
+ * labelled unresolved, rather than being left out — see `UNRESOLVED` for why silence would be
+ * the worse answer. The graph is read before the diff, so a missing arrow makes a claim too.
+ */
 function logicFlow(edges: CallEdge[]): string {
   if (!edges.length) return "flowchart LR\n  none[\"no internal calls found\"]";
   const label = (ref: string): string => {
     const [path, fn] = ref.split("#");
-    return `${moduleName(path ?? "")}.${fn ?? ""}`;
+    return path === UNRESOLVED
+      ? `${fn ?? ""} — unresolved`
+      : `${moduleName(path ?? "")}.${fn ?? ""}`;
   };
   const lines = ["flowchart LR"];
   const seen = new Set<string>();
@@ -66,6 +217,23 @@ function logicFlow(edges: CallEdge[]): string {
   return lines.join("\n");
 }
 
+/**
+ * A section GitHub keeps shut until someone asks for it.
+ *
+ * Most of this report is reference material — every test title, every edge of two graphs —
+ * and a reviewer scanning a pull request reads none of it in passing. Shut, each section is
+ * one line carrying its own size, so the choice to open it is made knowing what it costs.
+ *
+ * The blank line after `</summary>` is load-bearing. Without it GitHub renders the body as
+ * literal text instead of markdown, which is how a folded table becomes a wall of pipes.
+ */
+function fold(summary: string, body: readonly string[]): string[] {
+  return ["<details>", `<summary>${summary}</summary>`, "", ...body, "</details>", ""];
+}
+
+/** A fold's title. Bold rather than a heading: `<summary>` renders no `###`. */
+const title = (text: string, size: string): string => `<strong>${text}</strong> — ${size}`;
+
 export function render(report: Report): string {
   const { modules, tests, coverage, edges, unmeasured } = report;
   const cases = tests.reduce((n, t) => n + t.cases.length, 0);
@@ -77,6 +245,8 @@ export function render(report: Report): string {
     "Everything below is derived from the source and from a real test run. " +
       "Nothing is summarised by hand, so if it disagrees with the code, it is the report that is wrong.",
   );
+  out.push("");
+  out.push("The sections fold open. Each says how much is inside before you spend the scroll on it.");
   out.push("");
 
   const t = coverage.total;
@@ -96,65 +266,152 @@ export function render(report: Report): string {
   if (unmeasured.length) out.push(`| Modules with no coverage at all | ${unmeasured.length} |`);
   out.push("");
 
-  out.push("### How the modules depend on each other");
-  out.push("");
-  out.push("```mermaid");
-  out.push(moduleMap(modules));
-  out.push("```");
-  out.push("");
+  const drawn = drawnEdges(modules);
+  const erased = drawn.filter((d) => d.kind.erasable).length;
+  // Counted apart from the erased ones, never folded in with them: an import written
+  // `import { type X }` carries only types and still leaves `import {} from "…"` in the
+  // output, which is the difference `tools/pr-review/layering.ts` fails a narrowed edge
+  // over. A summary that added the two together would make the same claim the arrow used
+  // to make, one level up and read even sooner.
+  const kept = drawn.filter((d) => d.kind.typeOnly && !d.kind.erasable).length;
+  // Both counts are named in the summary rather than left inside, so a reviewer deciding
+  // whether to open the fold already knows whether any edge is only a shape — and whether
+  // any edge only looks like one.
+  //
+  // The arrows that leave their workspace get a count of their own beside them, because
+  // those few are the architecture: `web → server → app → core`, the chain
+  // `docs/design.md` draws and `tools/pr-review/layering.ts` enforces. It is the one number
+  // here that answers a question about the shape of the project rather than about one
+  // file's imports, and naming it outside the fold is what a separate workspace-level
+  // diagram would otherwise have been for. Counted by where an arrow **lands**, not by how
+  // it was written, so a relative import that reaches into another workspace counts too —
+  // there is none today and the label should not quietly stop being true if one appears.
+  const crossing = drawn.filter((d) => d.fromWorkspace !== d.toWorkspace).length;
+  const boxed = drawn.some((d) => d.box);
+  const size =
+    `${modules.length} modules, ${drawn.length} imports` +
+    (crossing ? `, ${crossing} into another workspace` : "") +
+    (erased ? `, ${erased} erased` : "") +
+    (kept ? `, ${kept} type-only but not erased` : "");
+  out.push(
+    ...fold(title("How the modules depend on each other", size), [
+      // Each line is worth saying only when the graph contains the thing it explains. A
+      // graph of solid arrows explains itself, and a graph with no arrows at all has
+      // nothing to explain.
+      ...(boxed
+        ? [
+            "An arrow that ends at a **workspace box** is an import written as a package " +
+              "name — `@biu-cs-planner/core` — which names a package and not a file, so there " +
+              "is no module for it to point at. `tools/pr-review/layering.ts` judges these " +
+              "edges, and others this graph does not hold: a cross-workspace import written " +
+              "as a relative path lands on a module rather than a box, and a test file's " +
+              "relative imports are judged without being drawn here at all.",
+            "",
+          ]
+        : []),
+      ...(erased
+        ? ["A dashed arrow is erased at compile time; a solid one leaves a statement in the output.", ""]
+        : []),
+      ...(kept
+        ? [
+            'An inline `import { type X } from "…"` carries only types and still emits ' +
+              '`import {} from "…"`, so the target is reached. Those draw solid, and where the ' +
+              "layering table narrows an edge, that spelling fails it.",
+            "",
+          ]
+        : []),
+      "```mermaid",
+      moduleMap(modules),
+      "```",
+      "",
+    ]),
+  );
 
-  out.push("### How a value flows through the functions");
-  out.push("");
-  out.push("Calls between the project's own functions. Library calls are left out.");
-  out.push("");
-  out.push("```mermaid");
-  out.push(logicFlow(edges));
-  out.push("```");
-  out.push("");
+  const refs = new Set(edges.flatMap((e) => [e.from, e.to]));
+  const calls = new Set(edges.map((e) => `${e.from}->${e.to}`)).size;
+  // Counted outside the fold for the same reason the crossing arrows are: it is the one
+  // number here that says how much of this graph is not known rather than how big it is, and
+  // a reviewer deciding whether to open the fold should not have to open it to learn that.
+  //
+  // Counted apart from the functions, too, because an unresolved node is not one: it stands
+  // for a callee whose module could not be found, and adding it to a count of functions would
+  // be the summary making the same kind of confident claim the graph itself used to make.
+  const unresolved = [...refs].filter((ref) => ref.startsWith(`${UNRESOLVED}#`)).length;
+  const functions = refs.size - unresolved;
+  out.push(
+    ...fold(
+      title(
+        "How a value flows through the functions",
+        `${functions} functions, ${calls} calls` + (unresolved ? `, ${unresolved} unresolved` : ""),
+      ),
+      [
+        "Calls between the project's own functions, each resolved through the calling " +
+          "module's own imports — so a name two modules both export is not confused for " +
+          "itself. Library calls are left out, and so is a call that does not leave the " +
+          "module it is written in.",
+        "",
+        ...(unresolved
+          ? [
+              "A node marked **unresolved** is a call to something this repository owns whose " +
+                "module could not be found — a name imported from a barrel that no longer " +
+                "re-exports it, say, or from a workspace with no package entry to reach it by. " +
+                "`tools/pr-report/calls.ts` lists the ways one can arise. It is drawn rather " +
+                "than dropped: an arrow missing from this graph reads as \"nothing is here\", " +
+                "which is a claim, and a wrong one.",
+              "",
+            ]
+          : []),
+        "```mermaid",
+        logicFlow(edges),
+        "```",
+        "",
+      ],
+    ),
+  );
 
-  out.push("### The shapes the data takes");
-  out.push("");
-  out.push("<details><summary>Exported types, as declared</summary>");
-  out.push("");
+  const shapes: string[] = [];
+  let typeCount = 0;
   for (const m of modules) {
     const types = m.exports.filter((e) => e.kind === "type");
     if (!types.length) continue;
-    out.push(`**${moduleName(m.path)}**`);
-    out.push("");
-    out.push("```ts");
-    for (const e of types) out.push(`type ${e.name} = ${e.signature}`);
-    out.push("```");
-    out.push("");
+    typeCount += types.length;
+    shapes.push(`**${moduleName(m.path)}**`);
+    shapes.push("");
+    shapes.push("```ts");
+    for (const e of types) shapes.push(`type ${e.name} = ${e.signature}`);
+    shapes.push("```");
+    shapes.push("");
   }
-  out.push("</details>");
-  out.push("");
+  out.push(...fold(title("The shapes the data takes", `${typeCount} exported types`), shapes));
 
-  out.push("### What the tests claim the code does");
-  out.push("");
-  out.push("Test titles, verbatim. This is the specification the change is held to.");
-  out.push("");
+  const claims: string[] = [];
+  claims.push("Test titles, verbatim. This is the specification the change is held to.");
+  claims.push("");
   for (const file of tests) {
     if (!file.cases.length) continue;
-    out.push(`**${file.path}** — ${file.cases.length} tests`);
-    out.push("");
+    claims.push(`**${file.path}** — ${file.cases.length} tests`);
+    claims.push("");
     for (const c of file.cases) {
-      out.push(`- ${c.suite.length ? `*${c.suite.join(" › ")}* — ` : ""}${c.title}`);
+      claims.push(`- ${c.suite.length ? `*${c.suite.join(" › ")}* — ` : ""}${c.title}`);
     }
-    out.push("");
+    claims.push("");
   }
+  out.push(...fold(title("What the tests claim the code does", `${cases} tests in ${tests.length} files`), claims));
 
-  out.push("### Coverage, file by file");
-  out.push("");
-  out.push("| Module | Statements | Branches | Functions | Uncovered lines |");
-  out.push("|---|---:|---:|---:|---:|");
   const rows = [...coverage.byFile.entries()].sort((a, b) => a[1].branches - b[1].branches);
+  const byFile: string[] = [];
+  byFile.push("| Module | Statements | Branches | Functions | Uncovered lines |");
+  byFile.push("|---|---:|---:|---:|---:|");
   for (const [path, c] of rows) {
-    out.push(
+    byFile.push(
       `| \`${moduleName(path)}\` | ${c.statements}% | ${c.branches}% | ${c.functions}% | ${c.uncoveredLines} |`,
     );
   }
-  out.push("");
+  byFile.push("");
+  out.push(...fold(title("Coverage, file by file", `${rows.length} modules`), byFile));
 
+  // Open, and last. It is the only section that says where to spend attention, and folding
+  // it would hide the one part of this report written to be read rather than consulted.
   out.push("### Where to look, if you look anywhere");
   out.push("");
   const weak = rows.filter(([, c]) => c.branches < 85);

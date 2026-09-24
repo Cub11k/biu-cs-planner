@@ -38,7 +38,7 @@ A Course whose Offering spans Fall and Spring as one unit (שנתי).
 _Avoid_: annual course
 
 **Group**:
-One two-digit-numbered section of an Offering, with a single Lesson Type, a lecturer and zero or more Meetings.
+One two-digit-numbered division of an Offering, with a single Lesson Type, zero or more lecturers and zero or more Meetings. Its number and its Lesson Type together identify it within an Offering — each Lesson Type is numbered from 01, so a lecture's 01 and a tirgul's 01 are two Groups — and so a re-imported part updates the Group that pair names rather than adding a second.
 _Avoid_: section, class
 
 **Lesson Type**:
@@ -46,7 +46,7 @@ The label on a Group (lecture, tirgul, lab, seminar…); every Lesson Type sched
 _Avoid_: component
 
 **Meeting**:
-A weekly recurring day and time range of a Group.
+A weekly recurring day and time range of a Group. A time is written `hh:mm`, `00:00` through `23:59`, and where `00:00` appears is what says which end of the Day is meant: as an `end` it is the end of the Day, as a `start` the beginning of it. So `22:00`–`00:00` is the evening, `00:00`–`08:00` is the night, and `00:00`–`00:00` is the whole Day. `24:00` is written nowhere — a Day's last minute is 1440 minutes in for whatever is counting, and `00:00` for whatever is reading or showing. The ruling is on issue #48. A Meeting whose end does not advance past its start occupies no time: it Clashes with nothing and is placed nowhere, so the Shoham Importer reports it as a Catalog problem and imports it exactly as it was read rather than repairing or dropping it, saying which shape it has because an end equal to its start and an end before it point at different causes. The ruling is on issue #52. An hours cell holding more than two `-`-separated fields is not one range, so it yields no Meeting and is reported with its text as it stood rather than a range being picked out of the fields. The ruling is on issue #70. A cell holding a run of whole `hh:mm - hh:mm` ranges is the one exception, and means what those ranges written one per line mean: a crawl joins a multi-line cell into a single string, and both spellings have to say the same thing, as they already do for the Semester cell. A run's ranges are found wherever they sit, and nothing but whitespace may lie between them, so a chain of times sharing their separators is no run and stays reported. The ruling is on issue #74.
 _Avoid_: session, slot, lesson
 
 **Untimed Group**:
@@ -117,6 +117,10 @@ _Avoid_: lock
 The folder holding a student's Catalogs, Requirements Files, State Files and backups.
 _Avoid_: project, profile
 
+**Launch Token**:
+The secret the server is started with and every request must carry, delivered to the page in the fragment of the URL the launcher prints. It is kept in the user config directory, never in the Workspace.
+_Avoid_: api key, secret, session
+
 **State File**:
 One student's or one scenario's personal data: Attempts, Timetables, Pins and settings.
 _Avoid_: save, profile
@@ -144,13 +148,14 @@ _Avoid_: option, draft, scenario
 **Pick**:
 The choice of one Group for one Lesson Type of an Offering within a Variant, with a snapshot of the Group's Meetings at the time of picking.
 _Avoid_: selection, registration
+_In code_: the type and schema are `GroupPick` and `groupPickSchema`, because a type named `Pick` shadows TypeScript's built-in `Pick<T, K>` for everything that imports it. The term is still Pick everywhere else, this file and `docs/` included.
 
 **Tray**:
 The Courses waiting to be scheduled in a Variant: that Semester's planned Attempts plus Courses added directly.
 _Avoid_: basket, cart
 
 **Blocked Time**:
-A student-defined weekly period in a Semester to keep free, such as work or commute.
+A student-defined weekly period in a Semester to keep free, such as work or commute. Its `start` and `end` are written the way a Meeting's are, the end of the Day included. It lies within the one Day it names and never wraps past midnight, so a night shift is two Blocked Times rather than one: `23:00`–`00:00` on one Day and `00:00`–`01:00` on the next. A screen that takes a wrapping range from a student is what splits it into those two rows — one range typed, two stored — because a span that wraps would otherwise have to be split again by every reader of it, and a reader that forgot would silently stop blocking. The ruling and what it rejected are on issue #39.
 _Avoid_: busy time, constraint
 
 **Plan Diff**:
