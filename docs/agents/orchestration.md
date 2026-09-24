@@ -39,11 +39,29 @@ recorded a file its own message described wrongly. `git stash`, `git reset`, `gi
 and `git add` are writes. A subagent that thinks of itself as a reviewer will still reach for
 them unless it is told not to.
 
+**Tell them the scratch-file rule too**, for the same reason: a reviewer writes notes and
+throwaway scripts like anyone else, and it has no way to know the scratchpad is shared. In one
+run an agent kept the rule perfectly and its two reviewers wrote unprefixed files beside it,
+because relaying the rule had not occurred to anyone.
+
 ## Ask whether the test passes for the reason you think it does
 
 ```sh
-npm run typecheck && npm test && npm run review
+npm run typecheck && npm test
 ```
+
+Add `npm run report` when your change touches what the report shows — it runs coverage and
+builds the module and call graphs, the test titles and the untested-function list.
+
+**`npm run review` is not yours to run.** It is the CI entrypoint: `tools/pr-review/main.ts`
+requires `GITHUB_REPOSITORY`, `GITHUB_TOKEN`, `PR_NUMBER` and `REVIEW_MODE`, and it posts a
+comment on the pull request. Locally it exits on the first missing variable, and with the
+variables it would post the comment this project has already decided it does not want. Two
+agents each spent budget rediscovering that in one run, which is why it is written here.
+
+When the graph checks are what you need, call them rather than the script: `moduleCycles`,
+`callCycles` and `forbiddenEdges` over `collect()`. That is the part of the review that
+judges your change, without the part that talks to GitHub.
 
 Green is not the claim. The claim is that the test would fail if the behaviour regressed, and the
 way to know is to delete the implementation and watch it fail.
