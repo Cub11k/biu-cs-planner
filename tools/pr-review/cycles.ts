@@ -80,6 +80,34 @@ export function findCycles(graph: ReadonlyMap<string, readonly string[]>): Cycle
  * A type-only import is an edge here like any other. Mutually recursive types across two
  * files are legal and harmless at run time, but they still make the pair impossible to
  * read or move apart, which is what this check is for.
+ *
+ * **A workspace importing its own package is in no graph, and that is recorded
+ * rather than guarded (#87).** A module in `core` writing
+ * `import { thing } from "@biu-cs-planner/core"` closes a real loop through `core`'s
+ * barrel, and nothing sees it: the specifier is bare, so `readModule` files it under
+ * `Module.packages` while the graph below reads `Module.imports`, and `forbiddenEdges`
+ * returns early on it by design — `core` may of course use `core`, and that rule is
+ * about direction *between* workspaces (`layering.ts`, `to === layer.workspace`).
+ * **There are zero such imports** in any of the four workspaces, and what prevents one
+ * is convention: a relative path is shorter, and it is what every intra-workspace
+ * import here writes.
+ *
+ * Writing the check turned up two reasons not to keep it:
+ *
+ * - The edge needs the importing workspace's **entry module**, and the cheap way to get
+ *   it is a hard-coded `<workspace>/src/index.ts`. That is already wrong: `web` has no
+ *   `exports` field and no `src/index.ts`, so a `web` self-import — which would not
+ *   resolve there at all — stays invisible while the check reads as complete. Honest
+ *   resolution means `packageEntries` in `tools/pr-report/collect.ts`, which reads the
+ *   entry from the manifest but is private there.
+ * - The review would then name a loop the report draws no arrow for. `drawnEdges` drops
+ *   a workspace importing its own package deliberately (#83: an arrow from a node to
+ *   the box around it), so closing this gap reopens that decision.
+ *
+ * The loop a self-import closes is a barrel one rather than a functional one: the call
+ * graph, which does resolve entries, follows such an import past the barrel to the
+ * declaration. #77's comment thread is where this was first separated from the
+ * cross-workspace case it settled.
  */
 export function moduleCycles(modules: readonly Module[]): Cycle[] {
   const known = new Set(modules.map((m) => m.path));
@@ -87,6 +115,9 @@ export function moduleCycles(modules: readonly Module[]): Cycle[] {
   for (const m of modules) {
     graph.set(
       m.path,
+      // `Module.imports` only: repo-relative paths. `m.packages` is not read, so a
+      // bare `@biu-cs-planner/<own workspace>` closes a loop this graph has no edge
+      // for — see above.
       m.imports.map((dep) => dep.specifier).filter((dep) => known.has(dep)),
     );
   }
