@@ -1,5 +1,13 @@
 import { randomBytes } from "node:crypto";
-import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -135,11 +143,14 @@ export async function rotateLaunchToken(
   await mkdir(directory, { recursive: true, mode: 0o700 });
 
   const token = freshToken();
-  // the pid keeps two rotations apart, and the leading dot marks it as not the token.
-  // Removed first rather than opened with "wx", so a temporary left by a killed run does
-  // not make rotation — the recovery command — the one thing that cannot be done.
-  const temporary = join(directory, `.tmp-${process.pid}-${TOKEN_FILE}`);
-  await rm(temporary, { force: true });
+  // the pid keeps two rotations apart, and the leading dot marks it as not the token
+  const temporary = join(directory, temporaryName(process.pid));
+  // Every temporary goes first, not just this pid's. A rotation killed between the write
+  // and the rename leaves one behind holding a token that never became the token, and
+  // nothing else would ever remove it: `launchToken` reads `token` and looks at no other
+  // name. Sweeping here also means a temporary left by a dead run cannot make rotation —
+  // the recovery command — the one thing a student cannot do.
+  await removeTemporaries(directory);
   try {
     // "wx" after the remove so the mode is the one this call asks for, not whatever an
     // existing file already carried
@@ -151,6 +162,36 @@ export async function rotateLaunchToken(
   }
 
   return { token, path, replaced };
+}
+
+/**
+ * The name a rotation writes through. Built from a fixed prefix and suffix, so the sweep
+ * below can recognise one without a pattern assembled out of anything read from disk
+ * (CLAUDE.md, "Code guardrails": data is interpreted, never executed).
+ */
+const TEMPORARY_PREFIX = ".tmp-";
+
+function temporaryName(pid: number): string {
+  return `${TEMPORARY_PREFIX}${pid}-${TOKEN_FILE}`;
+}
+
+/**
+ * Takes away every temporary a rotation has ever left in this directory.
+ *
+ * Called only after the `mkdir`, so the directory is there and a listing that fails is a
+ * real failure to report rather than a case to absorb. A name that has gone between the
+ * listing and the remove is the outcome asked for, which is what `force` covers.
+ */
+async function removeTemporaries(directory: string): Promise<void> {
+  const names = await readdir(directory);
+
+  await Promise.all(
+    names
+      .filter(
+        (name) => name.startsWith(TEMPORARY_PREFIX) && name.endsWith(`-${TOKEN_FILE}`),
+      )
+      .map((name) => rm(join(directory, name), { force: true })),
+  );
 }
 
 /**

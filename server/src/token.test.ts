@@ -207,8 +207,16 @@ it("writes the rotated token as its owner's alone, inside a directory that is to
 
   await rotateLaunchToken(nested);
 
-  expect((await stat(join(nested, "token"))).mode & 0o077).toBe(0);
-  expect((await stat(nested)).mode & 0o077).toBe(0);
+  const file = (await stat(join(nested, "token"))).mode;
+  const folder = (await stat(nested)).mode;
+
+  // 0600 in a 0700 directory, asserted from both ends: nobody else has a bit, and the
+  // owner has the bits they need. Read as a mask rather than as an exact mode because an
+  // unusual umask may take an owner bit off, and 0600 is the ceiling here, not the floor
+  expect(file & 0o077).toBe(0);
+  expect(file & 0o600).toBe(0o600);
+  expect(folder & 0o077).toBe(0);
+  expect(folder & 0o700).toBe(0o700);
 });
 
 it("leaves the file holding a token and nothing else, and no temporary beside it", async () => {
@@ -318,3 +326,48 @@ it.skipIf(!unreadableFilesArePossible)(
     }
   },
 );
+
+// inode numbers mean nothing useful on Windows, where `ino` is often 0
+const inodesAreMeaningful = process.platform !== "win32";
+
+/**
+ * The atomicity claim, pinned by the one thing a test can observe about it after the fact:
+ * a rename replaces the directory entry, so the token file is a **different file** than it
+ * was. Any implementation that opens the existing file and writes through it — `writeFile`
+ * over the target, or a copy onto it — keeps the inode, and keeps the window in which the
+ * file on disk holds a prefix of a token rather than a token.
+ *
+ * Asserting "no half-written file was left" directly would need a crash between two
+ * syscalls. This asserts the property that makes the half-written file impossible instead,
+ * and it is the assertion that fails for a rotation which is merely careful rather than
+ * atomic.
+ */
+it.skipIf(!inodesAreMeaningful)(
+  "replaces the token file rather than writing through the one that is there",
+  async () => {
+    await launchToken(config);
+    const before = await stat(join(config, "token"));
+
+    await rotateLaunchToken(config);
+
+    const after = await stat(join(config, "token"));
+    expect(after.ino).not.toBe(before.ino);
+  },
+);
+
+/**
+ * A rotation killed between the write and the rename leaves a temporary behind holding a
+ * token that never became the token. `launchToken` reads `token` and no other name, so
+ * nothing else would ever remove it: a secret would sit in the config directory for good.
+ */
+it("sweeps a temporary left behind by a rotation that never finished", async () => {
+  await launchToken(config);
+  // what a killed run leaves: the name rotation writes through, from some other pid
+  await writeFile(join(config, ".tmp-999999-token"), "left-behind-by-a-killed-run\n", {
+    mode: 0o600,
+  });
+
+  await rotateLaunchToken(config);
+
+  expect(await readdir(config)).toEqual(["token"]);
+});
