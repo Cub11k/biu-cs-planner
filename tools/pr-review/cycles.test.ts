@@ -1,19 +1,25 @@
 import { describe, expect, it } from "vitest";
 import type { CallEdge } from "../pr-report/calls.ts";
-import type { Module } from "../pr-report/surface.ts";
+import type { ImportRef, Module } from "../pr-report/surface.ts";
 import { callCycles, findCycles, moduleCycles } from "./cycles.ts";
 
 const graph = (entries: Record<string, string[]>): Map<string, string[]> =>
   new Map(Object.entries(entries));
 
-const module = (path: string, imports: string[]): Module => ({
+const ref = (specifier: string): ImportRef => ({
+  specifier,
+  typeOnly: false,
+  erasable: false,
+});
+
+const module = (path: string, imports: string[], packages: string[] = []): Module => ({
   path,
   workspace: path.split("/")[0] ?? "",
   exports: [],
   // A cycle is a cycle whichever kind of import closes it, so these are value imports
   // and the type-only case is the one `layering.test.ts` cares about.
-  imports: imports.map((specifier) => ({ specifier, typeOnly: false, erasable: false })),
-  packages: [],
+  imports: imports.map(ref),
+  packages: packages.map(ref),
 });
 
 describe("findCycles", () => {
@@ -80,6 +86,24 @@ describe("moduleCycles", () => {
 
   it("ignores imports that are not modules of this project", () => {
     expect(moduleCycles([module("core/src/plan.ts", ["zod", "node:fs"])])).toEqual([]);
+  });
+
+  // #87, and why the comment on `moduleCycles` is that ticket's deliverable rather
+  // than a check. Both halves are one dependency — a `core` module reaching back into
+  // `core`'s barrel — written two ways, and only one of them is in this graph. The
+  // relative half is here so that gutting the graph-building fails this test: an
+  // assertion that a blind spot stays blind passes against an empty function and
+  // proves nothing.
+  it("finds a barrel loop by relative path, and misses it by package name", () => {
+    const barrel = module("core/src/index.ts", ["core/src/plan.ts"]);
+
+    expect(
+      moduleCycles([barrel, module("core/src/plan.ts", ["core/src/index.ts"])]),
+    ).toEqual([["core/src/index.ts", "core/src/plan.ts", "core/src/index.ts"]]);
+
+    expect(
+      moduleCycles([barrel, module("core/src/plan.ts", [], ["@biu-cs-planner/core"])]),
+    ).toEqual([]);
   });
 });
 
