@@ -51,8 +51,15 @@ import {
  *   `ns.foo()` is a property access rather than an identifier, and a default import names
  *   nothing at the other end, since `readModule` records no default export. This repo's four
  *   workspaces write neither form.
- * - **`export * from "./x.ts"` names nothing**, so `readModule` records no name for it and a
- *   call reached only through a star barrel is unresolved. There is no such re-export here.
+ * - **`export * from "./x.ts"` carries the dependency but none of the names.** The edge is
+ *   recorded — `surface.ts` reads a plain star as a value import, which `surface.test.ts` pins,
+ *   so the module graph draws it, `layering.ts` judges it and `cycles.ts` reads it. The names
+ *   are not, because they are knowable only by reading the target module and following its own
+ *   stars. So `readModule` records no exported name for a star, and a call reached only through
+ *   a star barrel becomes an `UNRESOLVED` node rather than a dropped edge — a gap in a picture,
+ *   not a hole in a gate. No workspace writes one, and following one would need the recursion
+ *   and a loop guard; #93 weighs that, and `calls.test.ts` pins both halves, by fixture and by
+ *   canary.
  * - **A local shadow is invisible.** A `const groupKey = …` inside a function body hides an
  *   import for the length of that body, and seeing that needs a type checker rather than a
  *   syntax tree. Two modules exporting one name is the case this repo actually contains; a
