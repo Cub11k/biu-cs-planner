@@ -122,6 +122,21 @@ it("refuses a cast whole-file write of a State File before it looks at the layou
   expect(workspace.written()).toEqual([]);
 });
 
+/**
+ * The double refuses a crafted year as the real adapter does, because a use case that reached
+ * `write` with one has to fail in both places. There is no path here for it to escape along —
+ * a key is a string in a Map — which is exactly why the rule belongs to the port and not to the
+ * adapter that has a filesystem to lose (#113).
+ */
+it("refuses a Catalog whose year is a path rather than a year", async () => {
+  const workspace = memoryWorkspace({ created: true });
+  const pathAsYear = { kind: "catalog", academicYear: "../alice.state" } as unknown;
+
+  const write = workspace.write as unknown as (ref: unknown, data: unknown) => Promise<void>;
+  await expect(write(pathAsYear, CATALOG)).rejects.toThrow(/a year is a whole number/);
+  expect(workspace.written()).toEqual([]);
+});
+
 /** And the read, in the same words: content with no revision is content nothing can save. */
 it("refuses a whole-file read of a State File", async () => {
   const workspace = memoryWorkspace({ created: true });

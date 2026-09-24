@@ -18,6 +18,14 @@ import {
  * A Workspace held in memory. The use-case tests run against this so they exercise the
  * port rather than a filesystem; the real adapter is tested separately, against a real
  * temporary folder, because that is where the interesting failures live.
+ *
+ * **One answer of the port it cannot give.** A read has three: the bytes, no file, and a file
+ * that is there and cannot be read (#109). Nothing here can be unreadable — there are no
+ * bytes and no mode bits — and the double is not given a knob for it, because a knob invented
+ * for one test would be a behaviour of the double rather than of the port. A use case that
+ * needs that answer injects it (`cannotBeRead` in `edit.test.ts`), and the adapter that
+ * raises it for real is tested against a real folder. The conflict refusal is different and
+ * *is* modelled here, because a revision is something this can hold.
  */
 export type MemoryWorkspace = Workspace & {
   /** Refs written so far, in order, so a test can assert that nothing was written. */

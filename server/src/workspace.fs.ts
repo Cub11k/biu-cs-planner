@@ -59,9 +59,13 @@ class OutsideWorkspaceError extends WorkspaceRefusedError {
 /**
  * The errno codes that mean there is **no file**, as against a file that is there and cannot
  * be read. `ENOENT` is nothing at that name. `ENOTDIR` is nothing at that name either — a
- * component of the path is a plain file, so no file can exist below it. Every other code, and
- * an error carrying no code at all, is the third answer below: unreadable, not absent, which
- * is the safe way round for anything this cannot recognise (#109).
+ * component of the path is a plain file, so nothing can exist below it — and that reading of
+ * it holds because of the paths *this* module builds: `filePath` appends a suffix to a name
+ * `isStateFileName` has cleared of separators, so none of them ends in one. (A trailing
+ * separator on an existing file gives `ENOTDIR` too, and there it would mean something else.)
+ * Every other code, and an error carrying no code at all, is the third answer below:
+ * unreadable, not absent, which is the safe way round for anything this cannot recognise
+ * (#109).
  */
 const ABSENT = ["ENOENT", "ENOTDIR"];
 
@@ -90,7 +94,7 @@ const errnoOf = (error: unknown): string | undefined => {
  * that error's `basedOn`/`found` pair has nothing true to carry here — `found` would have to
  * report a revision this adapter has just said it cannot determine. "A target a Workspace will
  * not touch" is what a file it cannot read is, and it is the error `app/src/edit.ts` already
- * maps to `workspace-refused` and the page already words as picks that could not be read.
+ * maps to `workspace-refused` and the page already words as Picks that could not be read.
  */
 class UnreadableError extends WorkspaceRefusedError {
   constructor(what: string, code: string | undefined) {
@@ -131,11 +135,17 @@ const revisionOf = (bytes: Uint8Array): StateFileVersion =>
 /**
  * Absent, to this module, is not an error: the caller decides what absence means.
  *
- * Two answers here and three in `bytesOrAbsent`, and the difference is deliberate. A folder
- * that exists and cannot be `realpath`ed reports the layout as missing, and everything that
- * asks — `status`, `missingFolders`, `usablePath`, `contained` — then writes nothing and lists
- * nothing. That fails **closed**: it costs a student a listing they can fix with a mode bit
- * rather than a file, so it is not the #109 bug even though it is the same shape.
+ * Two answers here and three in `bytesOrAbsent`, and the difference is deliberate — but it is
+ * a narrower difference than it looks, so said fully. A folder that exists and cannot be
+ * `realpath`ed reports the layout as missing, and everything that asks — `status`,
+ * `missingFolders`, `usablePath`, `contained` — then refuses every write and lists nothing.
+ * **A read, though, still answers absence**: `contained` says `missing` and `read` and
+ * `readStateFile` hand back `undefined`, so a Workspace under an unreadable parent shows an
+ * empty week rather than a refusal. It is not the #109 bug, because it fails **closed** — the
+ * layout reads as missing, so the save is refused and the bytes survive — but it is the same
+ * shape, and telling a `realpath` that failed for want of a file from one that failed for want
+ * of permission would be a change to `status` and to what "not a Workspace" means, which is
+ * its own ticket rather than a line here (#109 says as much).
  */
 async function realPathOrAbsent(path: string): Promise<string | undefined> {
   try {

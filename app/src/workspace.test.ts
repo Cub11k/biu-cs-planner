@@ -81,6 +81,19 @@ it("lets a Catalog through a whole-file read or write", () => {
   expect(() => requireCatalogRef({ kind: "catalog", academicYear: 2027 })).not.toThrow();
 });
 
+it("refuses a Catalog whose year is not a whole number, which an adapter turns into a path", () => {
+  for (const academicYear of ["../alice.state", "2027/../..", 2027.5, NaN, Infinity]) {
+    expect(() => requireCatalogRef({ kind: "catalog", academicYear } as never)).toThrow(
+      WorkspaceRefusedError,
+    );
+  }
+  // and the ordinary ones still pass, including a year no Catalog would sensibly carry: the
+  // range is the API's rule, and this one is only about what can become a path
+  for (const academicYear of [2027, 0, -1, 9999]) {
+    expect(() => requireCatalogRef({ kind: "catalog", academicYear })).not.toThrow();
+  }
+});
+
 it("refuses a State File handed to a whole-file read or write", () => {
   expect(() => requireCatalogRef({ kind: "state", name: "alice" })).toThrow(WorkspaceRefusedError);
   // it names the file, and says where a State File is read and saved instead

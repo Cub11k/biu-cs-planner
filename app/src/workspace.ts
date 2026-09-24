@@ -97,8 +97,17 @@ export function requireStateFileName(name: string): void {
 
 /**
  * The other half of narrowing `read` and `write` to a `CatalogRef`, and the half a compiler
- * cannot make: one refusal, shared by both adapters and in the same words, for a State File
- * handed to a whole-file read or write (#113).
+ * cannot make: one refusal, shared by both adapters and in the same words, for anything handed
+ * to a whole-file read or write that is not really a Catalog's reference (#113).
+ *
+ * **Two ways it is not one**, and a cast is what produces either. The ref is a State File's,
+ * the case the ticket was filed for. Or it claims to be a Catalog's and its year is not a
+ * number — and that one is the same hole with a different key, because an adapter turns the
+ * year straight into a file name: a year of `"../alice.state"` builds a path back out of
+ * `catalogs/` and onto a State File at the Workspace root, which then gets overwritten whole
+ * with no revision guard, no name rule and no layout check. Measured, not reasoned: it
+ * destroyed a Pin and wrote into a folder that was not a Workspace. A year is the reason a
+ * `CatalogRef` needed no name rule, so the rule for it is that it really is a year.
  *
  * **The narrowing is type-only.** Both adapters still know how to name a State File, because
  * `readStateFile` and `saveStateFile` need them to, so a cast reaches a read that comes back
@@ -116,7 +125,21 @@ export function requireStateFileName(name: string): void {
  * against; and one rule is one thing to remember about this port rather than two.
  */
 export function requireCatalogRef(ref: WorkspaceRef): void {
-  if (ref.kind !== "state") return;
+  // Spelled as what it *requires* rather than what it refuses, so a third kind of file in a
+  // Workspace — a Requirements File ref — reaches the last line and fails to compile there,
+  // rather than passing a check named for Catalogs and being written whole without a guard.
+  if (ref.kind === "catalog") {
+    // A safe integer and nothing else: every one of those is digits with at most a leading
+    // minus, so there is no separator and no `..` for an adapter to resolve. The range a year
+    // may sensibly fall in is the API's business; a path is this rule's.
+    if (!Number.isSafeInteger(ref.academicYear)) {
+      throw new WorkspaceRefusedError(
+        `refusing a Catalog for the Academic Year ${JSON.stringify(ref.academicYear)}: ` +
+          "a year is a whole number, never a path",
+      );
+    }
+    return;
+  }
   throw new WorkspaceRefusedError(
     `refusing the State File ${JSON.stringify(ref.name)} here: a State File is read through ` +
       "readStateFile and saved through saveStateFile, which carry the revision a guarded save needs",
