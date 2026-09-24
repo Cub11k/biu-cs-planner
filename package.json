@@ -1,7 +1,7 @@
 {
   "name": "biu-cs-planner",
-  "version": "0.0.1",
-  "description": "A local course planner for Bar-Ilan University Computer Science students: a degree Plan across Semesters and a Timetable per Academic Year. Early work in progress, not yet usable.",
+  "version": "0.1.0",
+  "description": "A local course planner for Bar-Ilan University Computer Science students: build the weekly Timetable for an Academic Year, offline, in a folder you own. The degree Plan and Progress are not built yet.",
   "keywords": [
     "bar-ilan",
     "biu",
