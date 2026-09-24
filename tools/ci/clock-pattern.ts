@@ -46,23 +46,33 @@ export const CLOCK_BODY = String.raw`([01]\d|2[0-3]):[0-5]\d`;
  * Literal, and approximate on purpose. It is a text scan and not a parser, so it will
  * occasionally offer up something that is not a regex literal at all -- a pair of slashes
  * inside a block comment, a division in the middle of an expression. That costs nothing:
- * `isClockSeam` then finds no clock in it and it is dropped. What it must not do is *miss*
- * a real clock pattern, which is why the test cross-checks the count it finds against a
- * plain text search for the body.
+ * `isClockSeam` then finds no clock in it and it is dropped.
+ *
+ * Missing a literal is the expensive direction, and only half of it is testable: the test
+ * cross-checks this scan against a plain text search for the body, which catches a literal
+ * *carrying the body* that the scan walked past. A divergent literal it walks past is the
+ * half nothing can count, because there is nothing to count it against -- which is why the
+ * scan is deliberately loose and the seams, not the literals, do the judging.
  */
 const REGEX_LITERAL =
   /(?:^|[=(,:;!&|?+[{}\s>])(\/(?![*/])(?:\[(?:\\.|[^\]\\\n])*\]|\\.|[^/\\\n[])+\/[a-z]*)/gm;
 
 /**
- * Group closers and quantifiers, peeled off the end of what sits left of a colon, and group
- * openers peeled off the start of what sits right of it. All literal.
+ * What can sit between a colon and the thing that really matches the hour or the minute:
+ * group closers and quantifiers on the left, group openers on the right, and a whitespace
+ * construct on either. All literal, and peeled off before the digit matchers are asked.
  *
  * `([01]\d|2[0-3])` matches digits and `(?:background|color|border[^:]*)` does not, and the
- * `)` they end with says nothing about which. Peeling it, and any quantifier with it, asks
- * the question of the thing inside: `2[0-3]` against `border[^:]*`.
+ * `)` they both end with says nothing about which. Peeling it, and any quantifier with it,
+ * puts the question to the thing inside: `2[0-3]` against `border[^:]*`.
+ *
+ * `\s*` is peeled for the same reason and is the sharper case: a reader made lenient about
+ * whitespace -- `/^([01]\d|2[0-3])\s*:\s*[0-5]\d$/` -- is exactly the drift issues #48 and
+ * #54 are about, and it would otherwise hide behind the `\s` next to the colon.
  */
-const TRAILING_GROUPING = /(?:\)|\?|\*|\+|\{\d+(?:,\d*)?\})$/;
-const LEADING_GROUPING = /^\((?:\?:|\?=|\?!|\?<=|\?<!|\?<[A-Za-z_$][\w$]*>)?/;
+const TRAILING_NOISE = /(?:\)|\?|\*|\+|\{\d+(?:,\d*)?\}|\\s|\\t)$/;
+const LEADING_NOISE =
+  /^(?:\((?:\?:|\?=|\?!|\?<=|\?<!|\?<[A-Za-z_$][\w$]*>)?|(?:\\s|\\t)[*+?]?)/;
 
 /**
  * How a regex can say "a digit" at the very edge of where it is looked at. Literal, both
@@ -80,13 +90,13 @@ const CONSTRUCT_AT_START = /^(?:\\d|\[(?!\^)[^\]]*\d[^\]]*\])/;
 const DIGIT_AT_START = /^\d/;
 
 /**
- * Everything grouping taken off one side of a colon, so the digit matchers are asked about
- * what does the matching rather than about the bracket around it.
+ * One side of a colon with the noise taken off, so the digit matchers are asked about what
+ * does the matching rather than about the brackets and spacing around it.
  */
-const withoutGrouping = (side: string, grouping: RegExp): string => {
+const withoutNoise = (side: string, noise: RegExp): string => {
   let bare = side;
 
-  while (grouping.test(bare)) bare = bare.replace(grouping, "");
+  while (noise.test(bare)) bare = bare.replace(noise, "");
 
   return bare;
 };
@@ -102,8 +112,8 @@ const withoutGrouping = (side: string, grouping: RegExp): string => {
  * and every `(?:` are none of the three, and this repository holds all of them.
  */
 const isClockSeam = (left: string, right: string): boolean => {
-  const hour = withoutGrouping(left, TRAILING_GROUPING);
-  const minute = withoutGrouping(right, LEADING_GROUPING);
+  const hour = withoutNoise(left, TRAILING_NOISE);
+  const minute = withoutNoise(right, LEADING_NOISE);
 
   return (
     (CONSTRUCT_AT_END.test(hour) || DIGIT_AT_END.test(hour)) &&
@@ -111,6 +121,47 @@ const isClockSeam = (left: string, right: string): boolean => {
     (CONSTRUCT_AT_END.test(hour) || CONSTRUCT_AT_START.test(minute))
   );
 };
+
+/**
+ * The ways a regex can write a colon without writing one: escaped, alone in a class, or as a
+ * code point. All literal, and all replaced by a plain colon before the seams are counted, so
+ * `/^([01]\d|2[0-3])[:][0-5]\d$/` is read as the respelling it is rather than waved through.
+ *
+ * The replacement happens *after* the shared bodies are removed. A pattern that spells the
+ * body's own colon some other way is not the body, and this is what keeps it a finding
+ * instead of quietly normalising it into agreement.
+ */
+const COLON_SPELLINGS = [
+  String.raw`\:`,
+  "[:]",
+  String.raw`\u003a`,
+  String.raw`\u003A`,
+  String.raw`\u{3a}`,
+  String.raw`\u{3A}`,
+  String.raw`\x3a`,
+  String.raw`\x3A`,
+];
+
+const withPlainColons = (text: string): string =>
+  COLON_SPELLINGS.reduce((plain, spelling) => plain.split(spelling).join(":"), text);
+
+/**
+ * Lines that are prose rather than code: a `//` comment, or a line of a `/* ... *\/` block.
+ *
+ * Only whole lines, and only for *counting* the body in a file's text -- a code line is never
+ * touched, so a regex literal cannot be damaged by this. It is here because this repository
+ * documents its patterns in prose constantly, and a docstring that quotes the shared body is
+ * quoting it, not respelling it. (`tools/ci/workflows.ts` strips comments for the same reason,
+ * and names `ci.yml`'s own prose as the reason.)
+ */
+const PROSE_LINE = /^\s*(?:\/\/|\/\*|\*)/;
+
+/** A file's text with its prose lines dropped, for counting what the code itself holds. */
+export const codeOnly = (text: string): string =>
+  text
+    .split("\n")
+    .filter((line) => !PROSE_LINE.test(line))
+    .join("\n");
 
 /** How many times the shared body appears in a piece of text. A search, not a match. */
 export const bodyCount = (text: string): number => text.split(CLOCK_BODY).length - 1;
@@ -134,7 +185,7 @@ export const regexLiterals = (text: string): Literal[] =>
  * seam still standing in the remainder is a second opinion about what a clock is.
  */
 const straySeams = (literal: string): string[] => {
-  const remainder = literal.split(CLOCK_BODY).join("");
+  const remainder = withPlainColons(literal.split(CLOCK_BODY).join(""));
 
   return [...remainder]
     .map((character, at) => ({ character, at }))
@@ -142,6 +193,9 @@ const straySeams = (literal: string): string[] => {
       ({ character, at }) =>
         character === ":" && isClockSeam(remainder.slice(0, at), remainder.slice(at + 1)),
     )
+    // A dozen characters either side: enough of the neighbourhood for a reader to recognise
+    // the pattern in the failure, and `Math.max` because a negative start would slice from
+    // the end of the string and quote something from the wrong place entirely.
     .map(({ at }) => remainder.slice(Math.max(0, at - 12), at + 13));
 };
 
