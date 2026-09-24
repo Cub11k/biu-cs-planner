@@ -58,9 +58,9 @@ the rotation only takes effect when you restart.
 
 After that the old token is refused, and so is everything holding it: every bookmark you
 saved, and every tab still open on the planner. A tab that was already loaded goes on showing
-what it last read until you reload it or click something, and then says it has no launch
-token — and your picks vanish from the week, because the page cannot read them any more. They
-are safe on disk; the page simply cannot see them.
+what it last read until you reload it or click something. Then it tells you to start the app
+from a terminal, and your picks vanish from the week, because the page cannot read them any
+more. They are safe on disk; the page simply cannot see them.
 
 Start the app again and open the address it prints. If it lands on port 8900 again, the tab you
 left open starts working on its own, because both tabs share the one stored token — you may
@@ -73,9 +73,9 @@ Workspace gets synced and committed:
 
 | Where | Path |
 | --- | --- |
-| Linux, and anywhere `XDG_CONFIG_HOME` is set | `$XDG_CONFIG_HOME/biu-cs-planner/token`, or `~/.config/biu-cs-planner/token` |
+| Linux, and anywhere but Windows where `XDG_CONFIG_HOME` is set | `$XDG_CONFIG_HOME/biu-cs-planner/token`, or `~/.config/biu-cs-planner/token` |
 | macOS | `~/.config/biu-cs-planner/token` |
-| Windows | `%APPDATA%\biu-cs-planner\token` |
+| Windows | `%APPDATA%\biu-cs-planner\token` — `XDG_CONFIG_HOME` is not consulted here |
 
 Deleting that file does the same thing as the command: the next launch finds no token and
 writes a fresh one. The command is only the way to do it without going near a dotfile.

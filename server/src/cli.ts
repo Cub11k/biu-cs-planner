@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { DEFAULT_PORT, LOOPBACK_HOST } from "./config.ts";
+import type { Rotation } from "./token.ts";
 
 /**
  * What `npx biu-cs-planner` was asked to do.
@@ -55,13 +56,16 @@ Options:
 Commands:
   rotate-token        replace the launch token, for when somebody else has seen it — it
                       is printed in the URL, so a pasted bug report or a screenshot is
-                      enough. Every bookmark and every open tab stops working, which is
+                      enough. Stop the app first: a server that is up read the old token
+                      when it started and goes on accepting it until it exits. After the
+                      restart every bookmark and every open tab stops working, which is
                       the point of it and not a side effect.
 
                       The token is a file in your user config directory, never in your
                       Workspace: $XDG_CONFIG_HOME or ~/.config/biu-cs-planner/token, and
-                      %APPDATA%\\biu-cs-planner\\token on Windows. rotate-token prints the
-                      exact path; deleting that file by hand does the same thing.
+                      %APPDATA%\\biu-cs-planner\\token on Windows (where $XDG_CONFIG_HOME
+                      is not consulted). rotate-token prints the exact path; deleting that
+                      file by hand does the same thing.
 
 The server runs in the foreground on port ${DEFAULT_PORT}; if that port is taken it uses
 the next free one and says so. Stop it with Ctrl-C.`;
@@ -221,8 +225,9 @@ function command(name: string, rest: readonly string[]): Invocation {
  *     scrollback was shared, would undo the rotation it is reporting.
  *
  * The next launch prints the URL, as it always has. This says where the token is and what
- * has just stopped working — including the words the page itself will use, so the student
- * recognises the screen when they see it.
+ * has just stopped working. It describes what the page will show rather than quoting it:
+ * that string is a translation (`web/src/i18n/strings.ts`), so a Hebrew screen would not
+ * match an English quotation here, and nothing would fail if it were reworded.
  *
  * **It also says to stop a server that is still running**, and that is not politeness. A
  * running server read the token once at startup and holds it in memory; `bin.ts` builds the
@@ -231,15 +236,13 @@ function command(name: string, rest: readonly string[]): Invocation {
  * "from now on" would be telling a student they were safe while the leak was still open.
  * The rotation is only as good as the restart, and the output has to say so.
  *
- * Takes the path and not the whole `Rotation`, so the token is not in reach of this text.
+ * `Omit<Rotation, "token">` rather than `Rotation`, so the omission is in the type and not
+ * merely in the destructuring. A caller may still hand over a whole `Rotation` — TypeScript
+ * does not check excess properties on a variable, and `bin.ts` relies on nothing else — but
+ * no edit to this function can reach the token, because the parameter it is declared with
+ * does not have one.
  */
-export function rotatedNotice({
-  path,
-  replaced,
-}: {
-  path: string;
-  replaced: boolean;
-}): string {
+export function rotatedNotice({ path, replaced }: Omit<Rotation, "token">): string {
   const first = replaced
     ? "biu-cs-planner: the launch token has been replaced."
     : "biu-cs-planner: a launch token has been written.";
@@ -250,8 +253,8 @@ export function rotatedNotice({
         "and goes on accepting it until it exits.",
         "",
         "The old token is then refused, and so is everything holding it — every bookmark you",
-        'saved, and every tab still open on the planner, which will say it "has no launch',
-        'token" and show none of your picks until you open the new address.',
+        "saved, and every tab still open on the planner, which will show none of your picks",
+        "and send you back here until you open the new address.",
       ].join("\n")
     : "There was none here before, so nothing that used to work has stopped.";
 

@@ -143,6 +143,21 @@ it("puts rotate-token and where the token lives in --help, which is where people
   expect(text).toContain("APPDATA");
 });
 
+/**
+ * The usage text is read *before* rotating, so it is where the harmful reading of "every
+ * bookmark and every open tab stops working" happens: a student who does not stop the
+ * running server has not finished rotating, and that server still honours the leaked
+ * token. Pinned in both places because the first draft corrected `rotatedNotice` and left
+ * this copy of the claim behind.
+ */
+it("does not promise in --help that rotating alone is enough", () => {
+  const invocation = parseArguments(["--help"], cwd);
+  const text = invocation.kind === "help" ? invocation.text : "";
+
+  expect(text).toContain("Stop the app first");
+  expect(text).toContain("until it exits");
+});
+
 it("warns in the rotation notice that bookmarks and open tabs have stopped working", () => {
   const notice = rotatedNotice({
     path: "/home/student/.config/biu-cs-planner/token",
@@ -152,6 +167,9 @@ it("warns in the rotation notice that bookmarks and open tabs have stopped worki
   expect(notice).toContain("/home/student/.config/biu-cs-planner/token");
   expect(notice).toContain("bookmark");
   expect(notice).toContain("tab");
+  // describing what the page shows, never quoting it: that text is a translation, so an
+  // English quotation would not match the screen a Hebrew reader sees
+  expect(notice).not.toContain("has no launch token");
   // no URL: there is no port yet, and reprinting a secret into the scrollback that leaked
   // the last one would undo the rotation being reported
   expect(notice).not.toContain("http://");

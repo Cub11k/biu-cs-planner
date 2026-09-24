@@ -129,9 +129,10 @@ export type Rotation = {
  * could not authenticate with it. A rename is atomic on a POSIX filesystem, so the file is
  * either the old token or the new one and never a prefix of either.
  *
- * The old token is never read. Rotating has to work on a config directory in any state,
- * including the one `launchToken` refuses to launch from — a token file whose mode says
- * nobody may read it. Rotation is how a student gets out of that too.
+ * The old token is never read, which is what lets rotating work on the one state
+ * `launchToken` refuses to launch from: a token file whose mode says nobody may read it.
+ * Rotation is how a student gets out of that too. A config **directory** nobody may look
+ * inside is a different matter and is reported, not worked around — see `exists` below.
  */
 export async function rotateLaunchToken(
   directory: string = userConfigDirectory(),
@@ -143,13 +144,20 @@ export async function rotateLaunchToken(
   await mkdir(directory, { recursive: true, mode: 0o700 });
 
   const token = freshToken();
-  // the pid keeps two rotations apart, and the leading dot marks it as not the token
+  // the leading dot marks this as not the token; the pid only records which run wrote it
   const temporary = join(directory, temporaryName(process.pid));
   // Every temporary goes first, not just this pid's. A rotation killed between the write
   // and the rename leaves one behind holding a token that never became the token, and
   // nothing else would ever remove it: `launchToken` reads `token` and looks at no other
   // name. Sweeping here also means a temporary left by a dead run cannot make rotation —
   // the recovery command — the one thing a student cannot do.
+  //
+  // The cost is that two rotations running at once in two processes can take each other's
+  // temporary away, and the loser's `rename` then fails with ENOENT. That is the right
+  // outcome: rotating twice at the same instant is not something a student does on purpose,
+  // and one of the two failing loudly is better than both reporting a success when only one
+  // token survived. `launchToken` races on startup and has to resolve its race; this one is
+  // typed by hand.
   await removeTemporaries(directory);
   try {
     // "wx" after the remove so the mode is the one this call asks for, not whatever an
