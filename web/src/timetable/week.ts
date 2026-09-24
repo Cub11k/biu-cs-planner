@@ -86,8 +86,15 @@ export type WeekGroup = {
   lessonType: string;
   number: string;
   meetings: readonly Meeting[];
-  /** Ink rather than pencil: this Group is a Pick (docs/design.md, "Visual language"). */
-  picked: boolean;
+  /**
+   * Ink rather than pencil: this Group is a Pick (docs/design.md, "Visual language").
+   *
+   * `undefined` is **unknown**, and is not `false`: until the first Timetable answer lands
+   * the page has not read the State File, so it cannot say whether this Group is a Pick.
+   * A `false` there would let the week draw a Pick as an option and let a click decide
+   * between recording and removing on a guess (#111).
+   */
+  picked: boolean | undefined;
 };
 
 /**
@@ -133,12 +140,15 @@ export function groupKey(group: {
 export function weekGroups(input: {
   /** The Course whose Groups are on the week as options; none until one is chosen. */
   offering: Offering | undefined;
-  /** Every Pick in the Variant, whichever Course it belongs to. */
-  picks: readonly GroupPick[];
+  /**
+   * Every Pick in the Variant, whichever Course it belongs to — or `undefined` while the
+   * State File has not been read, which is not the same as a Variant with no Picks in it.
+   */
+  picks: readonly GroupPick[] | undefined;
   /** The Course as the student should read it; its number when nothing can name it. */
   nameOf: (courseNumber: string) => string;
 }): WeekGroup[] {
-  const picked: WeekGroup[] = input.picks.map((pick) => ({
+  const picked: WeekGroup[] = (input.picks ?? []).map((pick) => ({
     courseNumber: pick.courseNumber,
     courseName: input.nameOf(pick.courseNumber),
     lessonType: pick.lessonType,
@@ -149,6 +159,10 @@ export function weekGroups(input: {
 
   const already = new Set(picked.map(groupKey));
   const offering = input.offering;
+  // An option is only known *not* to be a Pick once the Picks are known. Before that the
+  // Group is on the week — it is in the Catalog, which has been read — with its pick state
+  // left unsaid rather than answered `false`.
+  const pickedIfKnown = input.picks === undefined ? undefined : false;
   const options: WeekGroup[] =
     offering === undefined
       ? []
@@ -158,10 +172,34 @@ export function weekGroups(input: {
           lessonType: group.lessonType,
           number: group.number,
           meetings: group.meetings,
-          picked: false,
+          picked: pickedIfKnown,
         }));
 
   return [...picked, ...options.filter((group) => !already.has(groupKey(group)))];
+}
+
+/**
+ * Whether this exact Group is among these Picks. Identity is the `groupKey` — the Course,
+ * the Lesson Type and the Group number together (CONTEXT.md, "Group") — so a Pick of
+ * another Group in the same slot is not this Group.
+ *
+ * Asked of the Picks rather than read off `WeekGroup.picked`, because the one caller that
+ * needs it is a click made when `picked` was still unknown: the answer that arrived
+ * afterwards is what knows, and the tile does not.
+ */
+export function isPicked(
+  picks: readonly GroupPick[],
+  group: { courseNumber: string; lessonType: string; number: string },
+): boolean {
+  const wanted = groupKey(group);
+  return picks.some(
+    (pick) =>
+      groupKey({
+        courseNumber: pick.courseNumber,
+        lessonType: pick.lessonType,
+        number: pick.groupNumber,
+      }) === wanted,
+  );
 }
 
 /**

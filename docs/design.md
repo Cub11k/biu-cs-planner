@@ -111,8 +111,11 @@ Decided in the prototype, because Pick state has to be readable at a glance acro
 - **Ink** (solid border, a thick edge and a tint in the Lesson Type's color) is a Pick.
 - **Red pen** (red border plus a diagonal wash) is a Clash.
 - **Hatching** is time already taken: Blocked Time, or a pencil option that would Clash.
+- **Not read yet** (dotted, in the pencil grey rather than a Lesson Type hue) is a Group whose Pick state nobody has read: the Catalog and the State File are asked for in parallel, so the week is drawn before the Picks are known, and drawing that as pencil would be a week affirming that nothing is picked. A click made on it is held and sent once the Picks arrive (#111).
 
-The three states need to differ in more than one property at once. Border style alone was too quiet to read. A previewed Group keeps its Clash styling, so hovering an option never makes it look safe.
+  Usually it lasts milliseconds, but it is **not** only transient: it is also what a week looks like when the State File could not be read at all, which does not resolve on its own. So it may not be drawn by dimming the tile — that composites its 11px detail line toward the paper and takes it below 3:1, and an opacity is the one colour change a token the dark scheme redefines cannot rescue. It carries no legend entry even so, because whenever it persists the notice line beside the week says in words *why* the Picks are unknown, which a swatch cannot; the legend is about Pick state, and this is about what has been read.
+
+The states need to differ in more than one property at once. Border style alone was too quiet to read. A previewed Group keeps its Clash styling, so hovering an option never makes it look safe.
 
 **Light and dark.** Every color is a CSS token, and the dark scheme redefines the tokens rather than filtering the page: the ground becomes a dark desk, "paper" a raised surface, and each Lesson Type hue is lifted until it reads on a dark tile. It follows the operating system, and an explicit choice overrides it in both directions. Component styles never hold raw color values.
 

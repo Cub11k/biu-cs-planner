@@ -9,10 +9,12 @@ import {
   recordPick,
   removePick,
   type GroupPick,
+  type StateFileVersion,
   type StateRefusal,
+  type TimetableQuery,
   type TimetableResult,
 } from "./picks.ts";
-import { clashingGroups, weekGroups, type WeekGroup } from "./week.ts";
+import { clashingGroups, isPicked, weekGroups, type WeekGroup } from "./week.ts";
 import { CoursePicker } from "./CoursePicker.tsx";
 import { WeekGrid } from "./WeekGrid.tsx";
 
@@ -24,6 +26,16 @@ const SEMESTER_STRING = {
 
 type CatalogState = { kind: "loading" } | OfferingsResult;
 type TimetableState = { kind: "loading" } | TimetableResult;
+
+/**
+ * A click waiting for the first Timetable answer, and the week it was made on.
+ *
+ * The query travels with it because the screen can be asked a different question while the
+ * click waits — another Semester is what `useReloading` shows `loading` for — and one State
+ * File holds every Semester, so its revision would happily accept a Pick saved into the
+ * wrong one. A click is answered by the week it was made on or not at all.
+ */
+type HeldClick = { group: WeekGroup; query: TimetableQuery };
 
 /**
  * Why the API served no Catalog, said in words the student can act on. A Warning nobody
@@ -140,15 +152,49 @@ export function TimetableScreen({
 
   const [selected, setSelected] = useState<string | undefined>(undefined);
   /**
-   * That the last click was refused because the file had changed, and how many times this
-   * screen has had to re-read for that reason.
+   * That a click was refused because the file had changed, and how many times this screen
+   * has had to re-read for that reason.
    *
-   * The notice stays until the next click goes through rather than until the fresh week
+   * The notice stays until the next click is *made* rather than until the fresh week
    * arrives: it is the only account the student gets of a click that did nothing, and the
    * re-read it triggers lands in milliseconds.
+   *
+   * Cleared by the click and not by a later success, because more than one save can be in
+   * flight at once — a held click draining while the student makes another — and a success
+   * that cleared this would swallow the refusal of the click beside it, leaving a refused
+   * click with no account at all. Whose refusal it was is not distinguished; that is
+   * #104's question, and one sentence for "a click was refused" is the honest floor.
    */
   const [staleSave, setStaleSave] = useState(false);
   const [rereads, setRereads] = useState(0);
+  /**
+   * Clicks made before the first Timetable answer arrived, in the order they were made.
+   *
+   * The Catalog and the Picks are asked for in parallel, so the week is clickable while the
+   * State File has not been read. A click made then cannot be sent: it has no revision to
+   * be based on, and `undefined` there is the claim that there is no State File at all —
+   * which #90's guard refuses, leaving the student told a file changed that never did.
+   *
+   * So it is held. Of the three shapes #111 weighs this is the one that keeps the click:
+   * the alternatives either drop it silently or spend a sentence saying it was dropped, and
+   * a click on a Group is a small thing to have to make twice.
+   */
+  const [held, setHeld] = useState<readonly HeldClick[]>([]);
+  /** That held clicks had to be dropped, because the file could not be read at all. */
+  const [heldLost, setHeldLost] = useState(false);
+  /** That a held click is in flight, so the drain below sends one at a time. */
+  const sending = useRef(false);
+  /**
+   * The answer a save was just refused on, held by identity.
+   *
+   * A stale refusal leaves the week on screen alone — deliberately, so the student keeps a
+   * week they can still read — and triggers a re-read. Until that re-read lands, the answer
+   * on screen carries a revision the file has already moved past, and firing the next held
+   * click at it would be sending a request that cannot succeed. So the drain waits for *any*
+   * newer answer: by identity and not by revision, because a file reverted to the revision it
+   * had is still news, and waiting for a different string would wait for ever.
+   */
+  const refusedOn = useRef<TimetableState | undefined>(undefined);
 
   const askCatalog = useCallback(
     () => fetchOfferings(api, { academicYear, semester }),
@@ -164,7 +210,13 @@ export function TimetableScreen({
     useReloading(askTimetable, workspaceChanges + rereads);
 
   const offerings = catalog.kind === "served" ? catalog.offerings : [];
-  const picks = timetable.kind === "served" ? timetable.picks : [];
+  /**
+   * The Picks, or `undefined` for *not read yet* — which is not the same as a Variant with
+   * no Picks in it. The week draws the difference and a click depends on it: an `[]` here
+   * would draw a Pick as a pencil option and let a click remove it by trying to record it
+   * (#111).
+   */
+  const picks = timetable.kind === "served" ? timetable.picks : undefined;
   const clashes = timetable.kind === "served" ? timetable.clashes : [];
   const chosen = offerings.find((offering) => offering.courseNumber === selected);
 
@@ -178,44 +230,132 @@ export function TimetableScreen({
    * Picking, and un-picking. One call per click, which is what ADR-0013 makes one undo
    * entry, and the answer carries the Variant as it stands afterwards — so the screen shows
    * what the file holds rather than what it hoped the file would hold.
+   *
+   * `basedOn` and `query` are parameters rather than read from this render: a held click is
+   * sent on the revision the *arriving* answer carries, and it belongs to the week it was
+   * made on rather than the week now on screen (`HeldClick`). The week and the revision a
+   * save claims still come from one read — that is the rule (docs/design.md, "External
+   * edits") — it is just no longer always the read on screen at the moment of the click.
+   *
+   * The answer comes back as well as being shown, because the drain has to know whether this
+   * revision was refused before it sends the next held click at the same one.
    */
-  const onPick = (group: WeekGroup): void => {
-    const query = { academicYear, semester };
-    const slot = { courseNumber: group.courseNumber, lessonType: group.lessonType };
-    // Which revision of the State File this click was made on, taken from the answer the
-    // screen is showing rather than remembered separately: the week and the revision it is
-    // have to be the same read, or a save could claim a view nobody was looking at
-    // (docs/design.md, "External edits").
-    const basedOn = timetable.kind === "served" ? timetable.version : undefined;
-    const done = group.picked
-      ? removePick(api, query, slot, basedOn)
-      : // the snapshot is taken here, off the Meetings the page is showing: a Pick carries
-        // the Group's Meetings as they stood when it was made (CONTEXT.md, "Pick")
-        recordPick(
-          api,
-          query,
-          {
-            ...slot,
-            groupNumber: group.number,
-            meetings: [...group.meetings],
-          } as GroupPick,
-          basedOn,
-        );
+  const save = useCallback(
+    (
+      group: WeekGroup,
+      remove: boolean,
+      basedOn: StateFileVersion,
+      query: TimetableQuery,
+    ): Promise<TimetableResult> => {
+      const slot = { courseNumber: group.courseNumber, lessonType: group.lessonType };
+      const done = remove
+        ? removePick(api, query, slot, basedOn)
+        : // the snapshot is taken from the Meetings the page was showing: a Pick carries the
+          // Group's Meetings as they stood when it was made (CONTEXT.md, "Pick")
+          recordPick(
+            api,
+            query,
+            {
+              ...slot,
+              groupNumber: group.number,
+              meetings: [...group.meetings],
+            } as GroupPick,
+            basedOn,
+          );
 
-    void done.then((answer) => {
-      // The file is not what this page was showing, so the click was refused rather than
-      // allowed to destroy whoever else's edit (#90). The week on screen is kept and
-      // re-read: replacing it with the refusal would blank a week the student can still
-      // see, and would throw away the revision the next click needs.
-      if (answer.kind === "refused" && answer.reason === "state-file-changed") {
-        setStaleSave(true);
-        setRereads((count) => count + 1);
-        return;
-      }
-      setStaleSave(false);
-      setTimetable(answer);
-    });
+      return done.then((answer): TimetableResult => {
+        // The file is not what this page was showing, so the click was refused rather than
+        // allowed to destroy whoever else's edit (#90). The week on screen is kept and
+        // re-read: replacing it with the refusal would blank a week the student can still
+        // see, and would throw away the revision the next click needs.
+        if (answer.kind === "refused" && answer.reason === "state-file-changed") {
+          setStaleSave(true);
+          setRereads((count) => count + 1);
+          return answer;
+        }
+        setTimetable(answer);
+        return answer;
+      });
+    },
+    [setTimetable],
+  );
+
+  const onPick = (group: WeekGroup): void => {
+    // whatever became of the last click, this one is the account the student is owed now
+    setHeldLost(false);
+    setStaleSave(false);
+    const query = { academicYear, semester };
+
+    if (timetable.kind !== "served") {
+      setHeld((waiting) => [...waiting, { group, query }]);
+      return;
+    }
+    // Only a served answer knows this, and `picked` is a `boolean` once it does. A click on
+    // ink removes the Pick; a click on pencil records one.
+    void save(group, group.picked === true, timetable.version, query);
   };
+
+  /**
+   * The held clicks, sent once there is an answer to send them on.
+   *
+   * One per run rather than a loop: each send answers with the revision the next one has to
+   * be based on, and each is its own call and so its own undo entry (ADR-0013). The answer
+   * moves both `held` and `timetable`, which is what runs this effect again for the next.
+   */
+  useEffect(() => {
+    const next = held[0];
+    if (next === undefined || sending.current) return;
+    // this revision has already been refused once; the re-read it triggered is what to wait for
+    if (refusedOn.current === timetable) return;
+
+    // The screen is being asked about another week now, so the answer this click is waiting
+    // for is never coming. It is dropped rather than sent on this week's revision, which one
+    // State File would accept for a Pick in a Semester the student has left.
+    if (next.query.academicYear !== academicYear || next.query.semester !== semester) {
+      setHeld([]);
+      setHeldLost(true);
+      return;
+    }
+
+    // the first read is still in flight, which is what the click is waiting for
+    if (timetable.kind === "loading") return;
+
+    // The file cannot be read, so there is no revision to save on and no week to reconcile
+    // against — and a click held for a file that may never arrive is worse than one lost.
+    // It is dropped, and said so: a click that vanishes without a word is the failure this
+    // ticket is about, and silence would only move it.
+    if (timetable.kind !== "served") {
+      setHeld([]);
+      setHeldLost(true);
+      return;
+    }
+
+    // This click was made on a tile that showed neither ink nor pencil, because the page had
+    // not read the file — so it asked for the Group to *be* a Pick, which is what a
+    // `mixed` toggle offers and what clicking one means. If the file already holds exactly
+    // this Pick then that is already so: there is nothing to send, and sending it anyway
+    // would write a Pick over itself and spend an undo entry doing it.
+    //
+    // This is where reconciling stops and #104 begins: nothing here re-applies an edit the
+    // server answered. A held click was never sent, and it goes out on the revision the
+    // first answer carries, so the guard has nothing to refuse it for.
+    if (isPicked(timetable.picks, next.group)) {
+      setHeld((waiting) => waiting.slice(1));
+      return;
+    }
+
+    sending.current = true;
+    const sentOn = timetable;
+    void save(next.group, false, timetable.version, next.query).then((answer) => {
+      sending.current = false;
+      // This click is spent either way. A refused one is not re-sent — that is #104 — but the
+      // rest of the queue must not be fired at the revision that refused it.
+      if (answer.kind === "refused" && answer.reason === "state-file-changed") {
+        refusedOn.current = sentOn;
+      }
+      setHeld((waiting) => waiting.slice(1));
+    });
+  }, [held, timetable, save, academicYear, semester]);
 
   // one spelling of the year on the whole screen: the header and the sidebar disagreeing
   // about 2026-27 and 2027 reads as if a different year were the one missing
@@ -255,7 +395,10 @@ export function TimetableScreen({
             <CoursePicker
               language={language}
               offerings={offerings}
-              picks={picks}
+              // an unread file shows no picked line, which is what it showed before #111;
+              // saying "this Course has nothing picked" while the file is unread is the
+              // same class of untruth as `picksNone`, and is its own ticket
+              picks={picks ?? []}
               selected={selected}
               onSelect={setSelected}
             />
@@ -267,11 +410,24 @@ export function TimetableScreen({
             {chosen === undefined
               ? t(language, "hintChoose")
               : t(language, "hintShowing", { course: courseName(chosen, language) })}
-            {picksNotice(language, timetable) === undefined ? null : (
-              <span>{picksNotice(language, timetable)}</span>
-            )}
-            {staleSave && <span>{t(language, "picksStale")}</span>}
-            {clashes.length > 0 && <span>{clashesSaid(language, clashes.length)}</span>}
+            {/* A live region, because every sentence in it is an account of something the
+                student cannot otherwise tell happened: a click held, a click dropped, a click
+                refused, a Clash found. Nothing moves focus and a `mixed` tile does not change
+                state when clicked, so without this a screen-reader user's click is silently
+                dropped — which is the failure #111 is about, for them. */}
+            <span role="status" className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              {picksNotice(language, timetable) === undefined ? null : (
+                <span>{picksNotice(language, timetable)}</span>
+              )}
+              {/* only while it is true: once the answer is served the click is being saved
+                  rather than waiting, and the ink it produces is its own account */}
+              {held.length > 0 && timetable.kind !== "served" && (
+                <span>{t(language, "picksHeld")}</span>
+              )}
+              {heldLost && <span>{t(language, "picksHeldLost")}</span>}
+              {staleSave && <span>{t(language, "picksStale")}</span>}
+              {clashes.length > 0 && <span>{clashesSaid(language, clashes.length)}</span>}
+            </span>
             <span className="ms-auto flex items-center gap-2 text-xs text-pencil">
               <span className="legend-swatch inline-block h-3 w-4 rounded-xs" />
               {t(language, "legendPencil")}

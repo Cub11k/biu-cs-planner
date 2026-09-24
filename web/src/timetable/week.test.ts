@@ -15,6 +15,7 @@ import {
   WEEK_DAYS,
   clashingGroups,
   groupKey,
+  isPicked,
   weekGroups,
   type WeekGroup,
 } from "./week.ts";
@@ -380,6 +381,27 @@ describe("what the week shows", () => {
     ]);
   });
 
+  /**
+   * #111: the Picks and the Catalog are read in parallel, so the week is drawn before the
+   * State File has been read. `false` there would be an answer nobody has — and the screen
+   * would decide between recording a Pick and removing one on it.
+   */
+  it("leaves an option's pick state unknown while the Picks have not been read", () => {
+    const shown = weekGroups({ offering, picks: undefined, nameOf });
+
+    // the Catalog has been read, so the Groups are on the week; whether they are Picks has not
+    expect(shown.map((group) => [group.number, group.picked])).toEqual([
+      ["01", undefined],
+      ["03", undefined],
+    ]);
+  });
+
+  it("answers `false` once the Picks are read, which an empty Variant is", () => {
+    const shown = weekGroups({ offering, picks: [], nameOf });
+
+    expect(shown.map((group) => group.picked)).toEqual([false, false]);
+  });
+
   it("names a picked Course by its number when the Catalog no longer names it", () => {
     const [shown] = weekGroups({ offering: undefined, picks: [PICK], nameOf });
 
@@ -394,6 +416,22 @@ describe("what the week shows", () => {
 
     expect(shown.filter((group) => group.number === "01")).toHaveLength(1);
     expect(shown.find((group) => group.number === "01")?.picked).toBe(true);
+  });
+
+  /**
+   * Asked of the Picks and not of a tile, because the one caller that needs it is a click
+   * made while `picked` was still unknown (#111): the answer that arrived afterwards knows.
+   */
+  it("finds a Group among the Picks by Course, Lesson Type and number together", () => {
+    const group = { courseNumber: "89-210", lessonType: "הרצאה", number: "02" };
+
+    expect(isPicked([PICK], group)).toBe(true);
+    // another Group filling the same slot is not this Group
+    expect(isPicked([PICK], { ...group, number: "01" })).toBe(false);
+    // nor is the same number under another Lesson Type, or another Course
+    expect(isPicked([PICK], { ...group, lessonType: "תרגיל" })).toBe(false);
+    expect(isPicked([PICK], { ...group, courseNumber: "89-110" })).toBe(false);
+    expect(isPicked([], group)).toBe(false);
   });
 
   it("keeps two Courses' lecture 01 apart, because a Group key carries its Course", () => {

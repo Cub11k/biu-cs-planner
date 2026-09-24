@@ -54,12 +54,13 @@ const week = (
   offer: Offering | undefined,
   options: {
     language?: "en" | "he";
-    picks?: readonly GroupPick[];
+    /** The Picks, or `"unread"` for the State File nobody has read yet. */
+    picks?: readonly GroupPick[] | "unread";
     clashing?: ReadonlySet<string>;
   } = {},
 ): string => {
   const language = options.language ?? "en";
-  const picks = options.picks ?? [];
+  const picks = options.picks === "unread" ? undefined : options.picks ?? [];
 
   return renderToStaticMarkup(
     createElement(WeekGrid, {
@@ -118,6 +119,25 @@ it("draws a Group nobody picked in pencil, with no ink and no red pen", () => {
   expect(markup).toContain('class="tile"');
   expect(markup).toContain('aria-pressed="false"');
   for (const forbidden of ["is-picked", "is-clashing", "hatch", "blocked"]) {
+    expect(markup).not.toContain(forbidden);
+  }
+});
+
+/**
+ * #111: before the first Timetable answer the page has not read the State File, so a Group
+ * is neither a Pick nor an option that nobody took. It is drawn as neither — and
+ * `aria-pressed="mixed"` is what a screen reader is told, because `false` there would be
+ * the affirmative claim that this Group is not picked.
+ */
+it("draws a Group whose pick state has not been read as neither ink nor pencil", () => {
+  const markup = week(offering(THREE_GROUPS), { picks: "unread" });
+
+  expect(markup).toContain("tile is-unread");
+  // `mixed` and `busy` together: partly pressed on its own would claim the Group is half a
+  // Pick, which is as untrue as `false` claiming it is none
+  expect(markup).toContain('aria-pressed="mixed"');
+  expect(markup).toContain('aria-busy="true"');
+  for (const forbidden of ['aria-pressed="false"', "is-picked", "is-clashing"]) {
     expect(markup).not.toContain(forbidden);
   }
 });
