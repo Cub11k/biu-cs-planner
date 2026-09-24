@@ -11,6 +11,7 @@
  * Fixture data is invented: 89-110 is a real BIU course number, the name and the times are
  * not, and no crawled data is committed to this repo (ADR-0006).
  */
+import { StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import "../index.css";
@@ -94,6 +95,9 @@ let changedUnderneath: boolean;
  */
 let readHeld: Promise<void> | undefined;
 
+/** Holds the next save open, so a test can look at the screen with one in flight. */
+let saveHeld: Promise<void> | undefined;
+
 /** Holds the next Timetable reads, and gives back the release. */
 function holdTheRead(): () => void {
   let release = (): void => {};
@@ -103,6 +107,19 @@ function holdTheRead(): () => void {
   readHeld = promise;
   return () => {
     readHeld = undefined;
+    release();
+  };
+}
+
+/** The same, for the saves. */
+function holdTheSaves(): () => void {
+  let release = (): void => {};
+  const promise = new Promise<void>((resolve) => {
+    release = (): void => resolve();
+  });
+  saveHeld = promise;
+  return () => {
+    saveHeld = undefined;
     release();
   };
 }
@@ -139,6 +156,7 @@ beforeEach(() => {
   version = 0;
   changedUnderneath = false;
   readHeld = undefined;
+  saveHeld = undefined;
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = input instanceof Request ? input.url : String(input);
     const { pathname } = new URL(url, location.href);
@@ -161,6 +179,7 @@ beforeEach(() => {
     }
 
     if (method === "POST" || method === "DELETE") {
+      if (saveHeld !== undefined) await saveHeld;
       const { basedOn } = body as { basedOn?: string };
       if (changedUnderneath) {
         changedUnderneath = false;
@@ -222,13 +241,20 @@ afterEach(() => {
   globalThis.fetch = realFetch;
 });
 
-/** The screen, with the Course chosen, so its Groups are on the week as options. */
-async function openWeek(): Promise<HTMLElement> {
+/**
+ * The screen, with the Course chosen, so its Groups are on the week as options.
+ *
+ * `strict` mounts it the way `main.tsx` mounts the app, which double-invokes every effect:
+ * the effect that sends a held click has to send it once and not twice, and nothing below a
+ * real mount can say whether it does.
+ */
+async function openWeek(options: { strict?: boolean } = {}): Promise<HTMLElement> {
   const mounted = document.createElement("div");
   host = mounted;
   document.body.append(mounted);
   root = createRoot(mounted);
-  root.render(<TimetableScreen language="en" onLanguage={() => {}} today={TODAY} />);
+  const screen = <TimetableScreen language="en" onLanguage={() => {}} today={TODAY} />;
+  root.render(options.strict === true ? <StrictMode>{screen}</StrictMode> : screen);
 
   const chooser = await vi.waitFor(() => {
     const found = [...mounted.querySelectorAll("button")].find((button) =>
@@ -586,4 +612,83 @@ it("drops a held click when the screen is asked about another week, and says so"
   expect(sent.filter((request) => request.method !== "GET")).toEqual([]);
   expect(mounted.textContent).not.toContain(FILE_CHANGED);
   expect(mounted.textContent).not.toContain(STILL_LOADING);
+});
+
+/**
+ * `main.tsx` wraps the app in `StrictMode`, so every *mount* effect runs twice — including the
+ * two that ask the API. This is the screen mounted the way the app mounts it, with the held
+ * click still landing exactly once.
+ *
+ * It is deliberately **not** the test of the effect that sends a held click: that one is not a
+ * mount effect, so `StrictMode` never double-invokes it. What guards it is the test below.
+ */
+it("holds and sends a click once when mounted the way the app mounts it", async () => {
+  const release = holdTheRead();
+  const mounted = await openWeek({ strict: true });
+
+  tileFor(mounted, "01").click();
+  await waitForText(mounted, STILL_LOADING);
+
+  release();
+
+  await vi.waitFor(() => {
+    if (!tileFor(mounted, "01").classList.contains("is-picked")) {
+      throw new Error("the held click never reached the file");
+    }
+  });
+  expect(sent.filter((request) => request.method === "POST")).toHaveLength(1);
+  expect(mounted.textContent).toContain("1 group picked");
+  expect(mounted.textContent).not.toContain(FILE_CHANGED);
+});
+
+/**
+ * The send is guarded against being started twice, and this is the way that can happen: the
+ * save moves the Workspace's change count, so the screen re-reads *while its own save is in
+ * flight* (#88), and the fresh answer runs this effect again with the click still held —
+ * because the click only leaves the queue when its save answers.
+ *
+ * Without the guard the Pick is recorded twice, on a revision the first save has replaced, so
+ * the second comes back as the file having changed: #111's own notice, produced by its fix.
+ */
+it("starts a held click's save once even when a fresh answer arrives mid-save", async () => {
+  const releaseRead = holdTheRead();
+  const releaseSaves = holdTheSaves();
+  const mounted = await openWeek();
+
+  tileFor(mounted, "01").click();
+  await waitForText(mounted, STILL_LOADING);
+  releaseRead();
+
+  // the held click is now in flight, and stays in flight until the saves are released
+  await vi.waitFor(() => {
+    if (!sent.some((request) => request.method === "POST")) {
+      throw new Error("the held click was never sent");
+    }
+  });
+
+  // what the watcher does to a screen whose own save moved the folder
+  root?.render(
+    <TimetableScreen
+      language="en"
+      onLanguage={() => {}}
+      today={TODAY}
+      workspaceChanges={1}
+    />,
+  );
+  await vi.waitFor(() => {
+    if (sent.filter((request) => request.method === "GET").length < 3) {
+      throw new Error("the change count moved and the screen did not re-read");
+    }
+  });
+
+  releaseSaves();
+
+  await vi.waitFor(() => {
+    if (!tileFor(mounted, "01").classList.contains("is-picked")) {
+      throw new Error("the held click never reached the file");
+    }
+  });
+  expect(sent.filter((request) => request.method === "POST")).toHaveLength(1);
+  expect(mounted.textContent).toContain("1 group picked");
+  expect(mounted.textContent).not.toContain(FILE_CHANGED);
 });
