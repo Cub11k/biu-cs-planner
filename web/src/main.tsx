@@ -30,9 +30,13 @@ applyScheme(document.documentElement, storedScheme(schemeStore()));
 //
 // What this does not move is `SchemeControl`'s own `<select>`, which reads the store once as it
 // mounts: the other tab's page turns dark while its drop-down still says what it said when that
-// tab loaded. The palette is the part a student is looking at; the word for it is one
-// `useEffect` over `onSchemeChanged` inside that component, and #146's pull request carries the
-// edit rather than making it, because the component belongs to another change in flight.
+// tab loaded. That is worse than a stale word, and the reason is the `<select>`: picking the
+// option already selected fires no `change` event, so the one value a student in that tab
+// cannot re-assert is the one the control is showing them — they have to pass through another
+// option first. The palette is still right, which is why this is a gap and not a defect.
+//
+// The fix is one `useEffect` over `onSchemeChanged` inside that component. #146 carries the
+// edit rather than making it, because the component belonged to another change in flight.
 watchScheme(window, schemeStore(), document.documentElement);
 
 createRoot(root).render(

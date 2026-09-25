@@ -16,8 +16,8 @@ import {
   applyScheme,
   asSchemeChoice,
   isScheme,
-  rememberScheme,
   onSchemeChanged,
+  rememberScheme,
   schemeStore,
   storedScheme,
   watchScheme,
@@ -361,7 +361,11 @@ const ENTRY_DOCUMENT = fileURLToPath(new URL("../index.html", import.meta.url));
 /** Every `<script>` in a document that has no `src`, with its attributes and where it sits. */
 function inlineScripts(html: string): { attributes: string; body: string; at: number }[] {
   return [...html.matchAll(/<script([^>]*)>([\s\S]*?)<\/script>/g)]
-    .map((found) => ({ attributes: found[1] ?? "", body: found[2] ?? "", at: found.index ?? -1 }))
+    .map((found) => ({
+      attributes: found[1] ?? "",
+      body: found[2] ?? "",
+      at: found.index ?? -1,
+    }))
     .filter((script) => !script.attributes.includes("src"));
 }
 

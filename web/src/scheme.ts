@@ -23,13 +23,15 @@
  *
  * Three places read that store, and they have to agree. The blocking stamp in
  * `web/index.html` runs before the first paint, `main.tsx` narrows the same key before
- * React mounts, and `watchScheme` below re-reads it when another tab writes (#146). `asSchemeChoice`
- * stays the single place a value from outside becomes a choice: the inline stamp keeps that
- * true by narrowing nothing at all, and `scheme.test.ts` fails if it starts to.
+ * React mounts, and `watchScheme` below re-reads it when another tab writes (#146).
+ * `asSchemeChoice` stays the single place a value from outside becomes a choice: the inline
+ * stamp keeps that true by narrowing nothing at all, and `scheme.test.ts` fails if it
+ * starts to.
  *
  * Everything here takes the browser and the element as arguments rather than reaching for
  * `window` or `document`, which is what lets it be tested without either.
  */
+
 /** The two schemes `index.css` has palettes for. */
 export const SCHEMES = ["light", "dark"] as const;
 

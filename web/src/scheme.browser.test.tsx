@@ -17,12 +17,12 @@
  * you edit to make it pass has stopped being one.
  */
 import { createRoot, type Root } from "react-dom/client";
-// The entry document as it is on disk, not as a dev server hands it over: `?raw` is read at
-// transform time, so nothing has injected or rewritten anything by the time a test sees it.
-import ENTRY_DOCUMENT from "../index.html?raw";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { cdp, userEvent } from "vitest/browser";
 import "./index.css";
+// The entry document as it is on disk, not as a dev server hands it over: `?raw` is read at
+// transform time, so nothing has injected or rewritten anything by the time a test sees it.
+import ENTRY_DOCUMENT from "../index.html?raw";
 import { LANGUAGES, t, type Language } from "./i18n/strings.ts";
 import {
   SCHEME_ATTRIBUTE,
@@ -385,22 +385,19 @@ it.each([
 });
 
 /**
- * The entry document itself, loaded into an iframe, which is how the two things #146 is
- * about become askable in a browser: what a page looks like before its module has run, and
- * what a second tab does when the first one chooses.
+ * The real `web/index.html`, with every external script removed, in an iframe. This is how
+ * both halves of #146 become askable in a browser: what a page looks like before its module
+ * has run, and what a second tab does when the first one chooses.
  *
  * An iframe is a second browsing context on the same origin, so it shares this page's
  * `localStorage` and the browser decides on its own which documents hear a `storage` event —
  * which is the whole point, because the fact under test is *who is not told*. A fake that
  * declined to deliver the event to the writer would be asserting its own manners.
- */
-/**
- * The real `web/index.html`, with every external script removed, in an iframe.
  *
- * Removing `script[src]` — `main.tsx` — is what holds the first paint still. The claim is about the moment before the deferred module runs, and
- * there is no asking a browser to pause one; a document served without it is that moment,
- * and nothing else in it can have set the attribute. `srcdoc` rather than navigating to the
- * URL for the same reason.
+ * Removing `script[src]` — `main.tsx` — is what holds the first paint still. The claim is
+ * about the moment before the deferred module runs, and there is no asking a browser to
+ * pause one; a document served without it is that moment, and nothing else in it can have
+ * set the attribute. `srcdoc` rather than navigating to the URL for the same reason.
  *
  * `index.css` is linked because `main.tsx` is the thing that imports it, and it is gone. An
  * attribute nothing reads is not a palette, so without the stylesheet the interesting
