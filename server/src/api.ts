@@ -3,6 +3,7 @@ import { bodyLimit } from "hono/body-limit";
 import { onlyTheLauncher } from "./guard.ts";
 import {
   createWorkspace,
+  DEFAULT_STATE_FILE,
   getOffering,
   importCrawl,
   listOfferings,
@@ -15,6 +16,7 @@ import {
   type Workspace,
   type WorkspaceChanges,
 } from "@biu-cs-planner/app";
+import { editHistories, type HistoryMove } from "./history.ts";
 import {
   CURRENT_CATALOG_SCHEMA_VERSION,
   groupPickSchema,
@@ -118,6 +120,16 @@ const savedPickSchema = z.object({ ...groupPickSchema.shape, basedOn: basedOnSch
 const savedSlotSchema = z.object({ ...pickSlotSchema.shape, basedOn: basedOnSchema });
 
 /**
+ * What an undo or a redo carries, which is the revision the page it was clicked on was
+ * showing and nothing else.
+ *
+ * No year, no Semester, no Variant and no State File. Undo restores the document (ADR-0013),
+ * so naming a part of it would be a promise this operation cannot keep — an undo of a Pick
+ * made in one Semester is not scoped to the Semester the student happens to be looking at.
+ */
+const historyStepSchema = z.object({ basedOn: basedOnSchema });
+
+/**
  * A request body, read the way the import route reads one: JSON, no dangerous key, then
  * the schema for the shape the route actually takes. It hands back the **name** of what
  * was wrong rather than a response, so the route says `c.json(...)` itself and the
@@ -165,6 +177,60 @@ function timetableRef(
 }
 
 export function createApi({ workspace, token, changes }: ApiDependencies) {
+  /**
+   * The undo and redo stacks, built here and held for as long as this server runs.
+   *
+   * Not a dependency a caller passes, and deliberately: a server built without a history
+   * would still save every edit, and the only sign would be an undo button that never lit
+   * up. Nothing about the stacks has a lifecycle outside this process either — unlike the
+   * watcher, which is injected because starting and stopping it belongs to whoever owns the
+   * process. One history per server is also what makes two tabs share one (ADR-0013):
+   * `./token.ts` is one token for all of them and there is no session to key a stack to.
+   */
+  const history = editHistories(workspace);
+
+  /**
+   * The port every editing route hands to the use case, for the State File the API works in.
+   * The same name the use cases default to, so the stack is keyed to the file being written
+   * and not to a second opinion about which file that is (`app/src/picks.ts`).
+   */
+  const into = history.of(DEFAULT_STATE_FILE);
+
+  /**
+   * One step of undo or redo, answered the way a save is: 200 with what moved, or a named
+   * 409. The two routes differ only in which direction they ask for, so they share this.
+   */
+  async function step(c: Context, move: (basedOn: string | undefined) => Promise<HistoryMove>) {
+    const body = await bodyAs(c, historyStepSchema, "not-a-history-step");
+    if (!body.ok) return c.json({ error: body.error }, 400);
+
+    const moved = await move(body.value.basedOn);
+    if (moved.kind === "refused") {
+      // `nothing-to-undo` among the reasons, and a 409 is right for it too: the request is
+      // well formed and conflicts with the state of the history. The availability travels
+      // with every answer, so a UI that asked for an undo it did not have can correct its
+      // buttons from the refusal rather than asking again.
+      return c.json(
+        {
+          reason: moved.reason,
+          canUndo: moved.canUndo,
+          canRedo: moved.canRedo,
+          warnings: moved.warnings,
+        },
+        409,
+      );
+    }
+
+    return c.json({
+      label: moved.label,
+      at: moved.at,
+      version: moved.version,
+      canUndo: moved.canUndo,
+      canRedo: moved.canRedo,
+      warnings: moved.warnings,
+    });
+  }
+
   const guarded = new Hono();
   guarded.use("/api/*", onlyTheLauncher({ token, openPaths: [HEALTH_PATH] }));
 
@@ -318,7 +384,7 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
       if (!body.ok) return c.json({ error: body.error }, 400);
 
       const { basedOn, ...pick } = body.value;
-      const result = await pickGroup(workspace, ref.at, pick, { basedOn });
+      const result = await pickGroup(workspace, ref.at, pick, { basedOn, history: into });
       if (result.kind === "refused") {
         // `state-file-changed` among the reasons, and a 409 is what it always was: the
         // student's request is well formed and conflicts with the state of the file, which
@@ -338,13 +404,46 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
       if (!body.ok) return c.json({ error: body.error }, 400);
 
       const { basedOn, ...slot } = body.value;
-      const result = await removeGroupPick(workspace, ref.at, slot, { basedOn });
+      const result = await removeGroupPick(workspace, ref.at, slot, { basedOn, history: into });
       if (result.kind === "refused") {
         return c.json({ reason: result.reason, warnings: result.warnings }, 409);
       }
 
       return c.json({ ...result.view, version: result.version, warnings: result.warnings });
-    });
+    })
+
+    /**
+     * Whether there is anything to undo or to redo, for the two buttons.
+     *
+     * A page asks after a reload, because the history outlives the page: the stacks belong to
+     * the State File and live in this process, so a reloaded tab — or a second one — finds the
+     * undo it never made still waiting (ADR-0013). Every undo and redo answer carries the same
+     * two flags, so this is the first read and not a poll.
+     */
+    .get("/api/history", (c) => c.json(history.availability(DEFAULT_STATE_FILE)))
+
+    /**
+     * Undoes the last edit, and redoes the last undone one.
+     *
+     * Domain operations, and the paths say so: no file path, no State File name and no
+     * Semester (ADR-0002, docs/design.md "API and data rules"). The answer says what moved,
+     * so the UI can say it too, and whether either direction is still available.
+     *
+     * A POST and not a PUT: neither is idempotent — the second undo in a row undoes the edit
+     * before, which is the point of a stack.
+     *
+     * Both carry the revision the page was showing, exactly as a save does, because an undo
+     * *is* a save: it goes through the same wrapper and the same external-edit guard
+     * (ADR-0013, "the save path is the undo path"). A client that leaves it out claims there
+     * is no file, which fails closed the way a forgotten revision on a Pick does.
+     */
+    .post("/api/history/undo", capped, (c) =>
+      step(c, (basedOn) => history.undo(DEFAULT_STATE_FILE, basedOn)),
+    )
+
+    .post("/api/history/redo", capped, (c) =>
+      step(c, (basedOn) => history.redo(DEFAULT_STATE_FILE, basedOn)),
+    );
 
   return api;
 }
