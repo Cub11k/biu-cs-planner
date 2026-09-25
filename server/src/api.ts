@@ -240,12 +240,36 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
       c.json({ ok: true, catalogSchemaVersion: CURRENT_CATALOG_SCHEMA_VERSION } as const),
     )
 
-    // Is this folder a Workspace yet, and what is missing if not?
+    /**
+     * Is this folder a Workspace yet, and what is missing if not?
+     *
+     * One answer and no refusal arm, which `workspaceStatus` in `app/src/setup.ts` is where the
+     * argument for lives: the layout probe behind it reports a part it cannot resolve as
+     * *missing* rather than raising, so the hole the POST below had is not open here (#141).
+     */
     .get("/api/workspace", async (c) => c.json(await workspaceStatus(workspace)))
 
-    // Creating the layout is an explicit act, which is why it is a POST and not a
-    // side effect of the GET above: nothing is written until the student asks.
-    .post("/api/workspace", capped, async (c) => c.json(await createWorkspace(workspace)))
+    /**
+     * Creating the layout is an explicit act, which is why it is a POST and not a side effect
+     * of the GET above: nothing is written until the student asks.
+     *
+     * **A refused create is the same named 409 the other write routes answer with**, and until
+     * #141 it was this file's one unnamed 500: `createWorkspace` threw, this route had no arm
+     * for it, and Hono's default handler answered with no body of this app's own. The body is
+     * the import route's to the character — `{ "reason": "workspace-refused" }` — because it is
+     * the same refusal out of the same port, and a page that can read one can read the other.
+     *
+     * A created Workspace still answers with its status and nothing wrapped around it, so the
+     * successful shape on the wire is untouched by the arm above it.
+     */
+    .post("/api/workspace", capped, async (c) => {
+      const created = await createWorkspace(workspace);
+      // A conflict with the state of the folder, exactly as an import into one that is not a
+      // Workspace is: the request is well formed and the folder will not have it.
+      if (created.kind === "refused") return c.json({ reason: created.reason }, 409);
+
+      return c.json(created.status);
+    })
 
     /**
      * How the page hears that the Workspace changed under it (docs/design.md, "Storage").
