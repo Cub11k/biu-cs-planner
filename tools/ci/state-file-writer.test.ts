@@ -153,10 +153,15 @@ describe("the State File writers in this repository", () => {
   // the rule -- but prose appearing in a file that had none is worth a reader's eye.
   it("reads the name in docstrings, a message and a pattern as the prose it is", () => {
     expect(filesOfKind("text").sort()).toEqual([
+      // Added by #88's ruling and the test helper beside it, and both looked at: the first
+      // is the watcher ruling's own prose, the second says why that helper does not call
+      // the method it names. Neither is a call.
+      "app/src/changes.test.ts",
       "app/src/workspace.test.ts",
       "app/src/workspace.ts",
       "core/src/state/file.ts",
       "server/src/workspace.fs.test.ts",
+      "server/src/workspace.fs.ts",
     ]);
   });
 
