@@ -358,6 +358,24 @@ it("stops listening when it is told to", () => {
  */
 const ENTRY_DOCUMENT = fileURLToPath(new URL("../index.html", import.meta.url));
 
+/**
+ * A source file with its comments taken out, so a scan reads code and not prose.
+ *
+ * Without this every assertion below is satisfied by a *mention*: `toContain("watchScheme(")`
+ * would pass on a call that had been commented out, and the forbidden-name scan would fail on
+ * a comment that merely said the word. Both of those are the wrong answer, and the second one
+ * is why the stamp's own comment has to be written around the words it is about.
+ *
+ * Strings are not parsed, so a `//` inside one would cut the line short. Nothing in the two
+ * files scanned here has one, and a scan that went wrong that way would fail rather than pass
+ * quietly — it only ever removes text.
+ */
+function withoutComments(source: string): string {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/[^\n]*/g, "");
+}
+
 /** Every `<script>` in a document that has no `src`, with its attributes and where it sits. */
 function inlineScripts(html: string): { attributes: string; body: string; at: number }[] {
   return [...html.matchAll(/<script([^>]*)>([\s\S]*?)<\/script>/g)]
@@ -375,18 +393,24 @@ it("stamps the scheme before the first paint without a second copy of the narrow
 
   expect(stamps).toHaveLength(1);
   const [stamp] = stamps;
-  const body = stamp?.body ?? "";
+  const body = withoutComments(stamp?.body ?? "");
 
   // It reads the key this module owns and writes the attribute this module owns, so renaming
   // either constant fails here rather than silently in a browser a student is looking at.
   expect(body).toContain(SCHEME_STORAGE_KEY);
   expect(body).toContain(SCHEME_ATTRIBUTE);
 
-  // And it names no scheme. `asSchemeChoice` is the single place a value from outside becomes
-  // a choice; the stamp cannot import it, so instead of copying the rule it narrows nothing
-  // and hands the string to `index.css`, which knows two values and treats the rest as no
-  // attribute at all. A second spelling of the rule needs a literal to compare against, and
-  // this is what fails when one appears.
+  // And it decides nothing about the value. `asSchemeChoice` is the single place a value from
+  // outside becomes a choice; the stamp cannot import it, so instead of copying the rule it
+  // narrows nothing and hands the string to `index.css`, which knows two values and treats the
+  // rest as no attribute at all.
+  //
+  // Naming the two schemes is the obvious way to copy the rule, so that is checked first —
+  // but it is not the only way, and a scan for those three words would be walked straight
+  // past by `/^(dark|light)$/` or by `"da" + "rk"`. So the real assertion is the stronger and
+  // simpler one below: **the only string literals in here are the two constants this module
+  // exports, and there is no regular expression at all.** A narrowing needs something to
+  // compare against, and there is nowhere left to put it.
   for (const name of SCHEME_CHOICES) {
     for (const quoted of [`"${name}"`, `'${name}'`, `\`${name}\``]) {
       expect(body, `${quoted} in the stamp is a second spelling of asSchemeChoice`).not.toContain(
@@ -394,6 +418,16 @@ it("stamps the scheme before the first paint without a second copy of the narrow
       );
     }
   }
+
+  const literals = (body.match(/"[^"]*"|'[^']*'|`[^`]*`/g) ?? []).map((found) =>
+    found.slice(1, -1),
+  );
+  expect([...new Set(literals)].sort()).toEqual([SCHEME_STORAGE_KEY, SCHEME_ATTRIBUTE].sort());
+
+  // No `/` at all, which is how a regex literal would have to start. The stamp has no use for
+  // one, nor for a division, so the absence is cheap to require and it is what closes the
+  // gap a name-scan alone leaves.
+  expect(body).not.toContain("/");
 });
 
 /**
@@ -406,7 +440,9 @@ it("stamps the scheme before the first paint without a second copy of the narrow
  * whole app and start polling the API, which is a different test's business.
  */
 it("starts that watcher, and narrows the stamp, from the entry module", () => {
-  const entry = readFileSync(fileURLToPath(new URL("main.tsx", import.meta.url)), "utf8");
+  const entry = withoutComments(
+    readFileSync(fileURLToPath(new URL("main.tsx", import.meta.url)), "utf8"),
+  );
 
   expect(entry).toContain("watchScheme(window");
   expect(entry).toContain("applyScheme(document.documentElement");
