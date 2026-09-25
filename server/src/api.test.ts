@@ -1212,12 +1212,13 @@ it("caps the settings body as it caps every other write", async () => {
 });
 
 /**
- * Choosing what is already chosen writes nothing: a save moves the Workspace's change count and
- * makes every open tab re-read everything it is showing, so a no-op write is noise the whole app
- * pays for. The revision is the discriminator — it is a hash of the file's bytes, so an identical
- * rewrite would leave it equal, which is why the file's own timestamp is not what is asserted.
+ * Choosing what is already chosen answers with the revision the file still holds, so the page's
+ * next change is based on something. **This does not prove that nothing was written**, and the
+ * title does not claim it: the revision is a hash of the file's bytes, so an identical rewrite
+ * would leave it equal. That nothing was written is asserted where it can be —
+ * `app/src/settings.test.ts`, against a Workspace double that counts its writes.
  */
-it("writes nothing when the preference is already what was asked for", async () => {
+it("answers an unchanged choice with the revision the file still holds", async () => {
   await post("/api/workspace", {});
   await choose({ language: "he" });
   const before = await settingsVersion();

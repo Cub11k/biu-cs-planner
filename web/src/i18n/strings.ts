@@ -109,6 +109,67 @@ const english = {
    */
   historyNotDone: "Nothing changed.",
 
+  /**
+   * The student's preferences in the State File (#115, ADR-0014): the language, and the Exam
+   * spacing that has no control yet. Three kinds of string, because they are three things:
+   *
+   * - why a change the student asked for **did not happen** — a preference is a change to a
+   *   guarded document, so it can be refused, one sentence per reason the route can give;
+   * - that a preference **could not be read** and is showing its default, which is the Warning
+   *   `core` has always raised and nothing used to show;
+   * - the **name of a preference**, which those Warnings substitute and which is not a sentence.
+   *
+   * There is nothing here for a change that worked. A language that changed flips the whole
+   * document, which is its own account; the Exam spacing has no control to report from.
+   */
+  /**
+   * The page's own view was stale — the ordinary external-edit guard (#90). Deliberately **not**
+   * `picksStale`'s wording: that sentence is about a click on a Group, and a student who used the
+   * language switch clicked no Group. It says "your preference was not changed" rather than
+   * naming the language, because the same sentence answers a change to either preference.
+   */
+  settingsStale:
+    "This page was showing an older version of your saved work, so your preference was not " +
+    "changed. The page has re-read it — try again.",
+  /** The file, or the folder, could not be read at all. Nothing was written. */
+  settingsUnwritable:
+    "The file your preferences are saved in could not be read, so your preference was not changed.",
+  /**
+   * A refusal the route named no reason for: an answer the contract has and this client cannot
+   * provoke. What is true of it is that nothing happened, and naming one of the four causes would
+   * be wrong in the other three — `historyNotDone` is the same shape for the same reason.
+   */
+  settingsNotDone: "Your preference was not changed.",
+  /**
+   * The State File could not be read at all, so there were no preferences to read out of it and
+   * the app is on its defaults. Said because otherwise a Hebrew student's app is in English and
+   * the switch is disabled with no account of either — a control that cannot be used and says
+   * nothing is the shape of failure #111 is about.
+   *
+   * It claims only what is true of both ways to get here — an unreadable file and a Workspace
+   * that would not read it — and it says "instead of them" rather than "nothing was lost",
+   * because whether anything was lost is exactly what could not be established.
+   */
+  settingsUnread: "Your saved preferences could not be read, so the app is showing its defaults instead of them.",
+  /**
+   * `core`'s `settings-unreadable` Warning, which it raises per field it could not read
+   * (`core/src/state/file.ts`). A preference silently back at its default is the one a student
+   * cannot tell from a preference they never set, so it is said — and the field is named when
+   * `core` named one, because "one of them" leaves a student nothing to go and look at.
+   *
+   * Named after a colon rather than inside the sentence, in both languages: Hebrew would have to
+   * agree with the noun substituted, and "שפה" and "מרווח בין בחינות" do not agree the same way.
+   */
+  settingsUnreadable:
+    "One of your saved preferences could not be read, so it is showing its default instead. " +
+    "Nothing else in your saved work was affected.",
+  settingsUnreadableNamed:
+    "A saved preference could not be read: {setting}. It is showing its default instead, and " +
+    "nothing else in your saved work was affected.",
+  /** The names of the two preferences, for the Warning above to substitute. */
+  settingLanguage: "language",
+  settingExamSpacing: "exam spacing",
+
   timetable: "Timetable",
   academicYear: "{first}-{second}",
   semesterFall: "Semester A",
@@ -230,6 +291,22 @@ const hebrew: Record<StringKey, string> = {
     "הדף קרא את הקובץ מחדש — נסו שוב.",
   historyUnreadable: "לא ניתן היה לקרוא את הקובץ שבו נשמרת העבודה שלכם, ולכן לא השתנה דבר.",
   historyNotDone: "לא השתנה דבר.",
+
+  settingsStale:
+    "הדף הציג גרסה ישנה יותר של העבודה השמורה, ולכן ההעדפה לא שונתה. " +
+    "הדף קרא אותה מחדש — נסו שוב.",
+  settingsUnwritable:
+    "לא ניתן היה לקרוא את הקובץ שבו נשמרות ההעדפות שלכם, ולכן ההעדפה לא שונתה.",
+  settingsNotDone: "ההעדפה לא שונתה.",
+  settingsUnread: "לא ניתן היה לקרוא את ההעדפות השמורות שלכם, ולכן היישום מציג את ברירות המחדל במקומן.",
+  settingsUnreadable:
+    "לא ניתן היה לקרוא אחת מההעדפות השמורות שלכם, ולכן היא מוצגת כברירת המחדל. " +
+    "שאר העבודה השמורה לא נפגעה.",
+  settingsUnreadableNamed:
+    "לא ניתן היה לקרוא העדפה שמורה: {setting}. היא מוצגת כברירת המחדל, " +
+    "ושאר העבודה השמורה לא נפגעה.",
+  settingLanguage: "שפה",
+  settingExamSpacing: "מרווח בין בחינות",
 
   timetable: "מערכת שעות",
   academicYear: "{first}-{second}",

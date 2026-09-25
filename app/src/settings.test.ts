@@ -186,7 +186,9 @@ it("writes nothing when the preference is already what was asked for", async () 
 
   expect(again.kind).toBe("served");
   expect(await versionOf(workspace)).toBe(before);
-  // nothing was written, so the stack has nothing to hear about either
+  // the double counts its writes, which is the direct proof: the first save is the only one
+  expect(workspace.written()).toHaveLength(1);
+  // and nothing was written, so the undo stack has nothing to hear about either
   expect(history.wrote).toEqual([]);
 });
 
