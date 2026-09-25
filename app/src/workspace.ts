@@ -283,6 +283,24 @@ export type Workspace = {
   status(): Promise<WorkspaceStatus>;
   /** Creates the layout. Called only after the student accepts. */
   create(): Promise<void>;
+  /**
+   * What the Workspace holds of one kind, empty when there is **no folder** to hold it — and
+   * `WorkspaceRefusedError` when there is something there that cannot be listed.
+   *
+   * Three answers and not two, for the reason `read` has three (#109): an empty folder and one
+   * nobody may look into are different, and answering both with `[]` tells a student "no
+   * Catalogs" when the truth is "I could not look". The first caller will be a screen whose
+   * whole job is to show them what is in their folder, so the lie would be a visible one
+   * (#129). An absent folder answers empty and so does a real folder holding nothing, because
+   * that is the same news to a student: there is none of this kind here. **What may never come
+   * back empty is a folder that could not be listed.**
+   *
+   * A folder that is not a folder at all — a plain `catalogs` file — is one of the two ways to
+   * reach that refusal, and it is deliberately *not* absence: what was named is there, and it
+   * is the wrong kind of thing. The write side refuses the same file by name
+   * (`NotAWorkspaceError`, #121), and an adapter that read it as absence here would report the
+   * Workspace ready and its Catalogs as none.
+   */
   list(kind: WorkspaceRef["kind"]): Promise<WorkspaceRef[]>;
   /**
    * Parsed JSON, or undefined when the file is not there. Never throws for absence;

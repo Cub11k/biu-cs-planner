@@ -42,6 +42,33 @@ it("forgets a file that was taken away from outside", async () => {
   expect(await workspace.readStateFile({ kind: "state", name: "alice" })).toBeUndefined();
 });
 
+/**
+ * The two answers of `list` this double owes the real adapter, now that there are three of them
+ * (#129). Empty is the answer for a folder that is not there, and the double must not have grown
+ * a refusal where the real one reports absence: a use-case test that met one here would be
+ * failing for a Workspace that is merely not set up yet.
+ *
+ * The third answer is the one this double cannot give, for the reason `MemoryWorkspace`'s doc
+ * states: reaching it needs a mode bit or a plain file standing where a folder of the layout
+ * belongs, and there is nothing here that could be either. A use case that needs it injects it,
+ * as `cannotBeRead` in `edit.test.ts` does for `readStateFile`.
+ */
+it("lists nothing, and never refuses, for a Workspace holding nothing of that kind", async () => {
+  // before the layout exists, which on a disk is the absent folder that answers `[]`
+  const fresh = memoryWorkspace();
+  await expect(fresh.list("catalog")).resolves.toEqual([]);
+  await expect(fresh.list("state")).resolves.toEqual([]);
+
+  const workspace = memoryWorkspace({ created: true });
+  await expect(workspace.list("catalog")).resolves.toEqual([]);
+  await expect(workspace.list("state")).resolves.toEqual([]);
+
+  // and one kind being there is not the other kind refusing
+  workspace.seed({ kind: "state", name: "alice" }, STATE);
+  await expect(workspace.list("catalog")).resolves.toEqual([]);
+  await expect(workspace.list("state")).resolves.toEqual([{ kind: "state", name: "alice" }]);
+});
+
 /** The same refusal the real adapter makes, so a use case cannot pass here and fail there. */
 it("refuses a State File whose name is a path rather than a name", async () => {
   const workspace = memoryWorkspace({ created: true });

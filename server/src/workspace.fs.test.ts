@@ -920,6 +920,140 @@ it("lists the State Files the Workspace holds, and nothing else at its root", as
 });
 
 /**
+ * #129, and the whole of it: `list` answered `[]` for a `readdir` that failed for any reason,
+ * so a folder nobody may look into read as one holding nothing.
+ *
+ * **This is the trigger that needs no mode bit**, so it runs everywhere rather than being
+ * skipped where the test user can read anything. `usablePath` asks whether a path resolves
+ * inside the Workspace and not what it *is*, so a `catalogs` that is a plain file is usable,
+ * counts towards the layout, and makes `status` report the Workspace **ready** (#121) — and the
+ * listing then said "no Catalogs" about a Workspace the port had just called ready. That is
+ * #109's lie in the one place a student would be looking straight at it.
+ *
+ * The refusal says which of the two it met, because the file reads perfectly well as the file
+ * it is: "cannot be read" would be untrue of it, and `ENOTDIR` alone is worth less than the
+ * sentence to whoever reads it (`UnwritableError`'s own reasoning).
+ */
+it("refuses to list Catalogs when catalogs is a plain file, rather than reporting none", async () => {
+  await mkdir(join(root, "requirements"));
+  await mkdir(join(root, ".backups"));
+  await writeFile(join(root, "catalogs"), "not a folder");
+  const workspace = fileSystemWorkspace(root);
+
+  // the setup, asserted rather than assumed: a ready Workspace is what makes the old answer a
+  // lie rather than a fair report of one that is not set up
+  expect(await workspace.status()).toEqual({ ready: true, missing: [] });
+
+  const refusal = await workspace.list("catalog").catch((error: unknown) => error);
+
+  expect(refusal).toBeInstanceOf(WorkspaceRefusedError);
+  expect((refusal as Error).message).toBe(
+    "refusing ./catalogs: it is there and is not a folder (ENOTDIR)",
+  );
+  // no absolute path in what a caller could pass on as a Warning
+  expect((refusal as Error).message).not.toContain(root);
+  // and the file is untouched, as a listing has no business changing anything
+  expect(await readFile(join(root, "catalogs"), "utf8")).toBe("not a folder");
+});
+
+/**
+ * The same mistake one level up: the Workspace root itself is a plain file, which is where a
+ * State File is listed from. `ENOTDIR` is absence for every *file* path this module builds and
+ * `ABSENT` says so; for the folder being listed it is the opposite answer, and reusing that list
+ * here is the defect this ticket's amendment warned about.
+ *
+ * **It rests on that reading alone and not on the argument the `catalogs` case makes.** There
+ * `status` reports the Workspace ready, which is what makes an empty answer a lie; here every
+ * folder of the layout is missing, so `status` reports **not ready** and the student would be
+ * offered the layout. Asserted below rather than left to be assumed either way. The refusal is
+ * still the right answer — something is at that name and it is the wrong kind of thing, so "I
+ * could not look" is true where "there are none" is not — but it is the one case in this ticket
+ * where a query on a Workspace that is not set up refuses rather than answering empty, and that
+ * is worth seeing plainly rather than glossing as the same case.
+ *
+ * The whole sentence, because the Workspace root is the one folder whose refusal cannot spell
+ * itself as a path: `path.replace(root, ".")` leaves `"."`, which names nothing, so
+ * `entriesOrAbsent` names it instead. A `toMatch` on the tail would have passed over that.
+ */
+it("refuses to list State Files when the Workspace root is a file rather than a folder", async () => {
+  const notAFolder = join(root, "workspace");
+  await writeFile(notAFolder, "not a folder");
+  const workspace = fileSystemWorkspace(notAFolder);
+
+  // not the ready Workspace the catalogs case turns on: this one has no layout at all
+  expect(await workspace.status()).toEqual({
+    ready: false,
+    missing: ["catalogs", "requirements", "backups"],
+  });
+
+  const refusal = await workspace.list("state").catch((error: unknown) => error);
+
+  expect(refusal).toBeInstanceOf(WorkspaceRefusedError);
+  expect((refusal as Error).message).toBe(
+    "refusing the Workspace root: it is there and is not a folder (ENOTDIR)",
+  );
+  // the subject of the refusal is named, and no path of any kind leaves the port
+  expect((refusal as Error).message).not.toContain(root);
+  expect((refusal as Error).message).not.toContain(notAFolder);
+});
+
+/**
+ * The other half of the ticket, and the half a fix could break: absence is still not a refusal.
+ * Two answers reach it — `usablePath`, for a folder that is not there or whose `realpath` cannot
+ * be taken, and `entriesOrAbsent`'s `ENOENT` for a folder removed between the two — and both are
+ * `[]`. A query must not become a 500 for a Workspace that is simply not set up yet.
+ */
+it("lists nothing for a Workspace with no layout, an empty one, and a root that is not there", async () => {
+  const workspace = fileSystemWorkspace(root);
+
+  // before the layout exists: the folder is absent, and the root holds no State File
+  expect(await workspace.list("catalog")).toEqual([]);
+  expect(await workspace.list("state")).toEqual([]);
+
+  await workspace.create();
+  expect(await workspace.list("catalog")).toEqual([]);
+  expect(await workspace.list("state")).toEqual([]);
+
+  const nowhere = fileSystemWorkspace(join(root, "never-created"));
+  expect(await nowhere.list("catalog")).toEqual([]);
+  expect(await nowhere.list("state")).toEqual([]);
+});
+
+/**
+ * The mode-bit shape, which is how the ticket was reported and what a student actually hits —
+ * their own `chmod`, a sync client, a backup tool. `EACCES` is the same answer as `ENOTDIR` in
+ * class and a different one in words, and this is the case that proves the **Catalogs were there
+ * all along**, which a folder that is inaccessible by being a file cannot.
+ *
+ * Skipped rather than trusted where every folder is readable regardless (root, Windows): there
+ * it would pass without proving anything, which is worse than not running. The tests above cover
+ * the refusal there, so the behaviour is never left to this flag.
+ */
+it.skipIf(!unreadableFilesArePossible)(
+  "refuses to list a folder nobody may look into, rather than reporting it empty",
+  async () => {
+    const workspace = fileSystemWorkspace(root);
+    await workspace.create();
+    await workspace.write({ kind: "catalog", academicYear: 2027 }, CATALOG);
+    await chmod(join(root, "catalogs"), 0o000);
+
+    try {
+      const refusal = await workspace.list("catalog").catch((error: unknown) => error);
+      expect(refusal).toBeInstanceOf(WorkspaceRefusedError);
+      expect((refusal as Error).message).toBe(
+        "refusing ./catalogs: it is there and cannot be read (EACCES)",
+      );
+      expect((refusal as Error).message).not.toContain(root);
+    } finally {
+      await chmod(join(root, "catalogs"), 0o700);
+    }
+
+    // the Catalog the empty answer denied, listed once the folder can be looked into again
+    expect(await workspace.list("catalog")).toEqual([{ kind: "catalog", academicYear: 2027 }]);
+  },
+);
+
+/**
  * The first ref that carries free text rather than a number, so this is where a path could be
  * smuggled in. A name is a name: the adapter builds the path and refuses anything that would
  * steer it (ADR-0003).
