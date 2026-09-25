@@ -393,6 +393,103 @@ it("ignores .backups, and still hears the folders that matter", async () => {
 });
 
 /**
+ * **The app's own writes are reported, and that is the #88 ruling rather than an oversight.**
+ * A State File save writes `.tmp-<pid>-alice.state.json` into the Workspace root, where State
+ * Files live, and renames it onto the real name; both events are news. Nothing here tries to
+ * recognise them, because the count they feed is one number `server/src/api.ts` serves to
+ * every poller, so a write hidden from the page that made it is hidden from the other tab
+ * too — for which it is exactly an external change (ADR-0013).
+ *
+ * **This is the test a future suppression breaks.** Read the ruling on `WATCHED_FOLDERS`
+ * before deleting it.
+ */
+it("reports the app's own State File save, the temporary and the rename alike", async () => {
+  const workspace = fileSystemWorkspace(root);
+  await workspace.create();
+  const watched = await watching();
+
+  const version = await workspace.saveStateFile(ALICE, firstSave(STATE));
+  expect(await within(() => watched.events() > 0)).toBe(true);
+
+  // and the overwrite, which is the shape autosave takes: a second save onto a file that is
+  // already there, guarded by the revision the first one handed back. A suppression keyed on
+  // the file not existing yet would pass the assertion above and fail this one.
+  await quiet(watched.events);
+  const afterFirstSave = watched.events();
+  await workspace.saveStateFile(ALICE, {
+    json: { ...STATE, settings: { language: "en", examSpacingDays: 4 } },
+    basedOn: version,
+  });
+  expect(await within(() => watched.events() > afterFirstSave)).toBe(true);
+});
+
+/**
+ * The same ruling for the other writer the app has today. A Catalog import writes
+ * `.tmp-<year>-<pid>.json` into `catalogs/` and renames it, and both are reported: a Catalog
+ * that has just arrived is something every open tab should be showing.
+ */
+it("reports the app's own Catalog import, the temporary and the rename alike", async () => {
+  const workspace = fileSystemWorkspace(root);
+  await workspace.create();
+  const watched = await watching();
+
+  await workspace.write({ kind: "catalog", academicYear: 2027 }, CATALOG);
+
+  expect(await within(() => watched.events() > 0)).toBe(true);
+});
+
+/**
+ * And the half the ruling may not cost: a **genuine external edit still reloads**, which is
+ * what this watcher exists for (docs/design.md, "External edits" — Dropbox, git, an editor).
+ * Only a State File *appearing* was covered above; this is one being edited in place, at the
+ * very name the app writes and while a State File the app wrote is sitting there. A fix that
+ * silenced the app's saves by name, by folder, or by "we wrote this file recently" would
+ * swallow this one, and it is the edit whose loss is a student's work.
+ */
+it("sees a State File edited from outside, at the very name the app writes", async () => {
+  const workspace = fileSystemWorkspace(root);
+  await workspace.create();
+  await workspace.saveStateFile(ALICE, firstSave(STATE));
+  const watched = await watching();
+
+  // by hand onto the real name, not through `saveStateFile`: the editor and sync-client case
+  await writeFile(
+    join(root, "alice.state.json"),
+    JSON.stringify({ ...STATE, pins: ["89-101"] }),
+    "utf8",
+  );
+
+  expect(await within(() => watched.events() > 0)).toBe(true);
+});
+
+/**
+ * The case a suppression would most plausibly get wrong, and the one to keep working: the app
+ * saves, and somebody else edits the Workspace before the folder has gone quiet. Every event
+ * is reported here and `app/src/changes.ts` collapses the burst into the one reload that
+ * re-reads both — collapsing is not swallowing. A suppression open "for the duration of the
+ * write", or for a debounce window already running, is what would lose the second edit.
+ */
+it("sees an external edit that lands while the app is saving", async () => {
+  const workspace = fileSystemWorkspace(root);
+  await workspace.create();
+  const watched = await watching();
+
+  const saving = workspace.saveStateFile(ALICE, firstSave(STATE));
+  const external = writeFile(join(root, "catalogs", "2027.json"), JSON.stringify(CATALOG), "utf8");
+  await Promise.all([saving, external]);
+
+  // both writers are in the same burst, and the burst is heard
+  expect(await within(() => watched.events() > 0)).toBe(true);
+
+  // and the external edit specifically: repeated after the folder is quiet, so the event can
+  // only be this write and not a tail of the save's two
+  await quiet(watched.events);
+  const afterTheBurst = watched.events();
+  await writeFile(join(root, "catalogs", "2027.json"), JSON.stringify({ ...CATALOG, sources: [] }), "utf8");
+  expect(await within(() => watched.events() > afterTheBurst)).toBe(true);
+});
+
+/**
  * A folder the operating system will not let it watch is one folder lost, not a server
  * down. Node and Bun refuse by throwing from `watch`; Deno does it asynchronously on the
  * watcher, which unhandled would be an uncaught error.

@@ -26,6 +26,7 @@ function manualClock(): { schedule: Schedule; settle: () => void; waiting: () =>
 }
 
 const CATALOG_2027 = { kind: "catalog" as const, academicYear: 2027 };
+const ALICE = { kind: "state" as const, name: "alice" };
 
 it("starts at nothing having changed", async () => {
   const workspace = memoryWorkspace({ created: true });
@@ -113,6 +114,45 @@ it("counts the app's own write, because a watcher cannot tell whose it was", asy
   const changes = await watchWorkspace(workspace, clock);
 
   await workspace.write(CATALOG_2027, { schemaVersion: 1 });
+  clock.settle();
+
+  expect(changes.changeCount()).toBe(1);
+  changes.stop();
+});
+
+/**
+ * The same for a State File save, which is the write autosave will make every few seconds and
+ * the one #88 was filed about. It is counted, deliberately: **the fix is that a page tolerates
+ * its own write, not that it is spared one** (see the ruling in `./changes.ts`). This counter
+ * is a single number served to every poller, so sparing the saving page would spare the other
+ * tab too, and for that tab the save is an external change (ADR-0013).
+ */
+it("counts the app's own State File save, which is the autosave case", async () => {
+  const workspace = memoryWorkspace({ created: true });
+  const clock = manualClock();
+  const changes = await watchWorkspace(workspace, clock);
+
+  await workspace.saveStateFile(ALICE, { json: { schemaVersion: 1 }, basedOn: undefined });
+  clock.settle();
+
+  expect(changes.changeCount()).toBe(1);
+  changes.stop();
+});
+
+/**
+ * A genuine external edit is never lost to the app's own write, even in the same burst. The
+ * two collapse into one reported change — one reload, which re-reads both — and one is the
+ * right answer: what must not happen is nought. This is the assertion a suppression held open
+ * "for the duration of the write", or over a debounce window already running, would fail.
+ */
+it("still reports an external edit that lands in the same burst as the app's own save", async () => {
+  const workspace = memoryWorkspace({ created: true });
+  const clock = manualClock();
+  const changes = await watchWorkspace(workspace, clock);
+
+  await workspace.saveStateFile(ALICE, { json: { schemaVersion: 1 }, basedOn: undefined });
+  // somebody else, into the same still-open window
+  workspace.seed(CATALOG_2027, { schemaVersion: 1 });
   clock.settle();
 
   expect(changes.changeCount()).toBe(1);
