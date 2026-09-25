@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 import { watch, type FSWatcher } from "node:fs";
-import { mkdir, readdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import {
   isStateFileName,
+  NotAWorkspaceError,
   requireCatalogRef,
   requireStateFileName,
   StateFileChangedError,
@@ -34,9 +35,6 @@ const DIRECTORY: Record<WorkspaceFolder, string> = {
   requirements: "requirements",
   backups: ".backups",
 };
-
-/** The refusal a write makes before the student has agreed to the layout. */
-const NOT_A_WORKSPACE = "refusing to write: the Workspace layout does not exist yet";
 
 /** Literal patterns, never built from data (ADR-0007). */
 const CATALOG_FILE = /^(\d{4})\.json$/;
@@ -104,6 +102,74 @@ class UnreadableError extends WorkspaceRefusedError {
     );
   }
 }
+
+/**
+ * A write that could not be made: the target's folder is not a folder after all, the disk is
+ * full, the filesystem is read-only, a mode bit is in the way. **The write side of #109's
+ * ruling**, which gave a read three answers and left a write with two — written, or whatever
+ * the filesystem threw, raw and out of the port. Raw is the one answer this port may not give:
+ * it is caught by nothing, so it becomes a 500, and #121 was filed because that would be the
+ * first unnamed one in `server/src/api.ts`.
+ *
+ * A `WorkspaceRefusedError`, so a caller can answer it the way every caller of this port
+ * already answers one: a Warning and never a crashed server (docs/design.md, "API and data
+ * rules"). **What reaches the student today is the `reason` and not this sentence** — the write
+ * callers, `app/src/catalog.ts` and `app/src/edit.ts`, return `workspace-refused` and drop the
+ * message, and only the read path in `app/src/queries.ts` carries one. So the errno below is
+ * for a log and for the arm that will want it, and saying otherwise here would claim something
+ * the app does not do.
+ *
+ * **Every failure and not a list of codes.** An enumeration is what #109 found the hole in:
+ * the code nobody thought of is the one that escapes. So the recognising is done on the way in
+ * — `requireLayoutFolder` names the layout mistake before a byte is written, because "catalogs
+ * is not a folder" is worth more than `ENOTDIR` to whoever reads it — and this is what is left
+ * over.
+ *
+ * **It names the ref and never the path.** The API exposes domain operations and never a file
+ * path (CLAUDE.md; docs/design.md, "API and data rules", rule 1), and a refusal's message can
+ * travel out as a Warning; a filesystem error's own message carries the absolute path, so the
+ * errno is kept and the rest is dropped. The error itself stays on `cause`, where a log can
+ * reach it and a response cannot. `describeRef` is the tool the two refusals above want too:
+ * `UnreadableError` and `OutsideWorkspaceError` word themselves with a Workspace-relative path
+ * and `requireJsonName` with an absolute one, which predates this and is its own ticket.
+ */
+class UnwritableError extends WorkspaceRefusedError {
+  constructor(what: string, error: unknown) {
+    const code = errnoOf(error);
+    super(
+      `refusing to write ${what}: it could not be written` +
+        (code === undefined ? "" : ` (${code})`),
+      { cause: error },
+    );
+  }
+}
+
+/**
+ * What a ref is, in the domain's words, for a refusal a student reads. Not the path: see
+ * `UnwritableError`.
+ */
+const describeRef = (ref: WorkspaceRef): string => {
+  switch (ref.kind) {
+    case "catalog":
+      return `the Catalog for the Academic Year ${ref.academicYear}`;
+    case "state":
+      return `the State File ${JSON.stringify(ref.name)}`;
+  }
+};
+
+/**
+ * Whether a path is a folder — following symlinks, as `usablePath` does through `realpath`, so
+ * a folder of the layout that is a symlink to a directory inside the Workspace passes both.
+ * Anything that cannot be asked is not a folder to write into, and absence is a case the
+ * caller has already answered (`contained`).
+ */
+const isDirectory = async (path: string): Promise<boolean> => {
+  try {
+    return (await stat(path)).isDirectory();
+  } catch {
+    return false;
+  }
+};
 
 /**
  * Which revision of a State File this is: a SHA-256 of its bytes, as hex.
@@ -289,8 +355,17 @@ export function fileSystemWorkspace(rootPath: string): Workspace {
       await writeFile(temporary, json, "utf8");
       await rename(temporary, target);
     } catch (error) {
-      await rm(temporary, { force: true });
-      throw error;
+      // The cleanup's own failure may not replace the refusal. `force` covers a temporary that
+      // is not there and nothing else, so a directory holding the temporary's name — which
+      // `writeFile` cannot write and `rm` without `recursive` cannot remove — threw out of this
+      // handler ahead of the refusal, raw, by a third door of #121. Found by the sweep in
+      // workspace.fs.test.ts rather than by a reading of this. What is left behind is a stray
+      // temporary, which is in no listing and whose name says which write it was of, and the
+      // failure below is the news.
+      await rm(temporary, { force: true }).catch(() => undefined);
+      // and the refusal leaves, never the filesystem's own error: raw, it is caught by nothing
+      // and becomes a 500 (#121). `UnwritableError` says why that is the wrong answer.
+      throw new UnwritableError(describeRef(ref), error);
     }
   };
 
@@ -305,6 +380,32 @@ export function fileSystemWorkspace(rootPath: string): Workspace {
   /** A folder counts towards the layout only if it is usable. */
   const usableFolder = (folder: WorkspaceFolder): Promise<string | undefined> =>
     usablePath(join(root, DIRECTORY[folder]));
+
+  /**
+   * A write lands in a folder of the layout, and that folder has to *be* one.
+   *
+   * `usablePath` asks whether a path resolves inside the Workspace, not what it is, so a
+   * `catalogs` that is a plain **file** is usable, counts towards the layout, and `status`
+   * reports the Workspace ready. The write then opened its temporary below that file and the
+   * filesystem answered `ENOTDIR` — a raw error out of a Workspace the port had just called
+   * ready, which is the second door #121 was filed for and the reachable one.
+   *
+   * Asked here rather than by narrowing `usablePath`, which is what the ticket rules out and
+   * what would break worse: a `catalogs` that is a file would then read as *missing*, the
+   * student would be offered the layout, and `create` would meet the same file again — one
+   * raw error swapped for another. The kind of a folder is a question a write asks, and this is
+   * where a write asks it.
+   */
+  const requireLayoutFolder = async (ref: WorkspaceRef): Promise<void> => {
+    const folder = folderFor(ref);
+    // `write` is the only caller and `requireCatalogRef` has already run there, so this line is
+    // unreachable today and guards a future one — `requireJsonName`'s standing, and its reason.
+    // A State File would need no check here anyway: it lives at the Workspace root, and
+    // `missingFolders` answers for that, since a root that is a file holds no folder at all.
+    if (folder === undefined) return;
+    if (await isDirectory(join(root, DIRECTORY[folder]))) return;
+    throw new NotAWorkspaceError({ folder, because: "is there and is not a folder" });
+  };
 
   /** The parts of the layout that are not there, which is what "not a Workspace" means. */
   const missingFolders = async (): Promise<WorkspaceFolder[]> => {
@@ -321,9 +422,31 @@ export function fileSystemWorkspace(rootPath: string): Workspace {
       return { ready: missing.length === 0, missing };
     },
 
+    /**
+     * Idempotent for a folder that is already there — `recursive` makes an existing directory
+     * a success — and refused, rather than raw, for a name that is there and is not one: a
+     * plain `catalogs` gives `EEXIST`, which is the same file `requireLayoutFolder` refuses a
+     * write into, met from the other side. Reachable whenever one part of the layout is a file
+     * and another is genuinely missing, because then `status` is not ready, the student is
+     * offered the layout, and accepting it lands here (#121).
+     */
     async create(): Promise<void> {
       for (const folder of WORKSPACE_LAYOUT) {
-        await mkdir(join(root, DIRECTORY[folder]), { recursive: true });
+        try {
+          await mkdir(join(root, DIRECTORY[folder]), { recursive: true });
+        } catch (error) {
+          const code = errnoOf(error);
+          // A bare `WorkspaceRefusedError` and deliberately not the shared `NotAWorkspaceError`,
+          // which is a *write*'s refusal and says so in its first three words: this is a create,
+          // and "refusing to write" would be untrue of it. The folder is in the sentence, as
+          // `requireJsonName` puts what it refused in its own. The filesystem's error stays on
+          // `cause`, where a log can reach it and a response cannot.
+          throw new WorkspaceRefusedError(
+            `refusing to create the Workspace layout: ${folder} could not be made` +
+              (code === undefined ? "" : ` (${code})`),
+            { cause: error },
+          );
+        }
       }
     },
 
@@ -381,7 +504,9 @@ export function fileSystemWorkspace(rootPath: string): Workspace {
       const check = await contained(target);
       // A Catalog's folder not being there is what makes the target missing, so that check
       // is also the one that keeps a Catalog out of a folder nobody agreed to.
-      if ("missing" in check) throw new Error(NOT_A_WORKSPACE);
+      if ("missing" in check) throw new NotAWorkspaceError();
+      // and being there without being a folder is the other way it is not one (#121)
+      await requireLayoutFolder(ref);
       // serialise first: a value that cannot be written must not reach the filesystem
       await writeAtomically(ref, check.path, JSON.stringify(data, null, 2) + "\n");
     },
@@ -420,11 +545,11 @@ export function fileSystemWorkspace(rootPath: string): Workspace {
       requireJsonName(target);
 
       const check = await contained(target);
-      if ("missing" in check) throw new Error(NOT_A_WORKSPACE);
+      if ("missing" in check) throw new NotAWorkspaceError();
       // A State File lives at the root, and a root exists whether or not the folder is a
       // Workspace, so for this one the layout is asked about outright. Nothing is written
       // into a folder the student has not agreed to (docs/design.md, "Storage").
-      if ((await missingFolders()).length > 0) throw new Error(NOT_A_WORKSPACE);
+      if ((await missingFolders()).length > 0) throw new NotAWorkspaceError();
 
       // serialise first: a value that cannot be written must not reach the filesystem
       const json = JSON.stringify(save.json, null, 2) + "\n";

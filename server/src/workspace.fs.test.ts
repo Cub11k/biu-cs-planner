@@ -12,7 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
-import { StateFileChangedError, WorkspaceRefusedError } from "@biu-cs-planner/app";
+import { NotAWorkspaceError, StateFileChangedError, WorkspaceRefusedError } from "@biu-cs-planner/app";
 import type { Workspace, WorkspaceRef } from "@biu-cs-planner/app";
 import { fileSystemWorkspace } from "./workspace.fs.ts";
 
@@ -809,9 +809,19 @@ it("cleans up its temporary when the rename it needs cannot be made", async () =
   await workspace.create();
   await mkdir(join(root, "catalogs", "2027.json"));
 
-  await expect(
-    workspace.write({ kind: "catalog", academicYear: 2027 }, CATALOG),
-  ).rejects.toThrow();
+  const refusal = await workspace
+    .write({ kind: "catalog", academicYear: 2027 }, CATALOG)
+    .catch((error: unknown) => error);
+
+  // A refusal and not the filesystem's own error, which is caught by nothing and would be an
+  // unnamed 500 (#121). It names the Catalog in the domain's words, because a message travels
+  // out as a Warning and the API exposes domain operations, never a file path.
+  expect(refusal).toBeInstanceOf(WorkspaceRefusedError);
+  expect((refusal as Error).message).toMatch(/the Catalog for the Academic Year 2027/);
+  expect((refusal as Error).message).not.toContain(root);
+  // the errno is kept, so a student is told what went wrong, and the error itself is on `cause`
+  expect((refusal as Error).message).toMatch(/\(E[A-Z]+\)/);
+  expect((refusal as Error).cause).toBeInstanceOf(Error);
 
   expect(await readdir(join(root, "catalogs"))).toEqual(["2027.json"]);
 });
@@ -824,6 +834,11 @@ it("cleans up its temporary when the rename it needs cannot be made", async () =
 it("refuses to write a State File into a folder that is not a Workspace yet", async () => {
   const workspace = fileSystemWorkspace(root);
 
+  await expect(workspace.saveStateFile(ALICE, firstSave(STATE))).rejects.toThrow(
+    NotAWorkspaceError,
+  );
+  // the sentence lives in the port now, so this adapter and the in-memory double cannot word
+  // it differently (#121)
   await expect(workspace.saveStateFile(ALICE, firstSave(STATE))).rejects.toThrow(
     /layout does not exist/,
   );
@@ -928,3 +943,202 @@ it("refuses a whole-file read of a State File, which would come back with no rev
     /refusing the State File "alice" here/,
   );
 });
+
+/**
+ * #121's reachable door, and the one the ticket was really filed for. `usablePath` asks whether
+ * a folder of the layout resolves inside the Workspace and not what it *is*, so a `catalogs`
+ * that is a plain file is usable, counts towards the layout, and makes `status` report the
+ * Workspace **ready** — and the Catalog write then opened its temporary below that file and met
+ * a raw `ENOTDIR`. A ready Workspace producing a raw filesystem error is the unnamed 500 by a
+ * different door from the unreachable one the ticket is named after.
+ */
+it("refuses a Catalog when catalogs is a file rather than a folder, and says which folder", async () => {
+  await mkdir(join(root, "requirements"));
+  await mkdir(join(root, ".backups"));
+  await writeFile(join(root, "catalogs"), "not a folder");
+  const workspace = fileSystemWorkspace(root);
+
+  // the setup, asserted rather than assumed: this is what makes the write below reachable
+  expect(await workspace.status()).toEqual({ ready: true, missing: [] });
+
+  const refusal = await workspace
+    .write({ kind: "catalog", academicYear: 2027 }, CATALOG)
+    .catch((error: unknown) => error);
+
+  expect(refusal).toBeInstanceOf(NotAWorkspaceError);
+  expect((refusal as NotAWorkspaceError).folder).toBe("catalogs");
+  expect((refusal as Error).message).toMatch(/catalogs is there and is not a folder/);
+  // refused before a byte is written, so what the student is told is the layout mistake rather
+  // than the filesystem's word for its consequence
+  expect((refusal as Error).message).not.toMatch(/ENOTDIR/);
+  // and the file it would have written below is exactly as it was
+  expect(await readFile(join(root, "catalogs"), "utf8")).toBe("not a folder");
+});
+
+/**
+ * The same file met from the other side. With one part of the layout a file and another
+ * genuinely missing, `status` is not ready, the student is offered the layout, and accepting it
+ * reaches `mkdir` — which is `EEXIST` for a name a plain file holds. Raw, that is the same
+ * unnamed 500 one function further along, so it is refused by name too (#121).
+ */
+it("refuses to create the layout when a name it needs is held by a file", async () => {
+  await writeFile(join(root, "catalogs"), "not a folder");
+  const workspace = fileSystemWorkspace(root);
+
+  expect(await workspace.status()).toEqual({ ready: false, missing: ["requirements", "backups"] });
+
+  await expect(workspace.create()).rejects.toThrow(WorkspaceRefusedError);
+  await expect(workspace.create()).rejects.toThrow(/catalogs could not be made \(EEXIST\)/);
+  // nothing half-made: the folders it had not reached are still not there
+  expect(await readdir(root)).toEqual(["catalogs"]);
+});
+
+/**
+ * The other of the two `contained` refusals in `saveStateFile`, which the test above does not
+ * reach: that one gets past `contained` — the root exists, so the file's parent resolves — and
+ * is refused by the outright layout question. This one has no root at all, so `contained` itself
+ * answers `missing`. Both were the same plain `Error` (#121).
+ */
+it("refuses a State File save when the Workspace root is not there at all", async () => {
+  const workspace = fileSystemWorkspace(join(root, "never-created"));
+
+  await expect(workspace.saveStateFile(ALICE, firstSave(STATE))).rejects.toThrow(NotAWorkspaceError);
+  // and it made no root on the way to refusing
+  expect(await readdir(root)).toEqual([]);
+});
+
+/**
+ * A write fails, and then the cleanup of its own temporary fails too. `rm` with `force` covers a
+ * temporary that is not there and nothing else, so its error used to replace the refusal and
+ * leave the port raw — the third door of #121, and the one the sweep below found rather than a
+ * reading of the code. A directory holding the temporary's name reaches it with no permission
+ * trick: `writeFile` cannot write a directory, and `rm` without `recursive` cannot remove one.
+ *
+ * What the student loses is a stray temporary, which is in no listing and whose name says which
+ * write it was of. What they gain is being told why the write failed.
+ */
+it("refuses when the cleanup of its own temporary cannot be made either", async () => {
+  const workspace = fileSystemWorkspace(root);
+  await workspace.create();
+  const temporary = join(root, "catalogs", `.tmp-${process.pid}-2027.json`);
+  await mkdir(temporary);
+
+  await expect(workspace.write({ kind: "catalog", academicYear: 2027 }, CATALOG)).rejects.toThrow(
+    WorkspaceRefusedError,
+  );
+
+  // the Catalog was not written, and the temporary that could not be cleaned up is still there
+  expect(await workspace.read({ kind: "catalog", academicYear: 2027 })).toBeUndefined();
+  expect(await readdir(join(root, "catalogs"))).toEqual([`.tmp-${process.pid}-2027.json`]);
+});
+
+/**
+ * **The property rather than one more example of it**, and #121's fourth criterion answered
+ * where these tests can answer it: every refusal this port makes is one the boundary catches by
+ * name, so nothing out of it can become an unnamed 500 in `server/src/api.ts`.
+ *
+ * A sweep over the ways a write can fail rather than a list of the ones known to fail, because
+ * the hole this closes was not a missing case in a list — it was a refusal with no type at all,
+ * and it sat in the same three functions a list would have been drawn from. An operation that
+ * *succeeds* here is not a failure of the test: several of these Workspaces are broken only for
+ * one of the three, and the claim is about what comes back when one refuses.
+ *
+ * `StateFileChangedError` is the other name the boundary knows, and none of these produces one:
+ * that refusal is about a revision, is covered where the guard is, and is a 409 by its own arm.
+ */
+const brokenWorkspaces: [string, (at: string) => Promise<string>][] = [
+  ["a folder nobody has made a Workspace", async (at) => at],
+  ["a root that is not there at all", async (at) => join(at, "never-created")],
+  [
+    "a catalogs that is a file rather than a folder",
+    async (at) => {
+      await mkdir(join(at, "requirements"));
+      await mkdir(join(at, ".backups"));
+      await writeFile(join(at, "catalogs"), "not a folder");
+      return at;
+    },
+  ],
+  [
+    "a Catalog's own name held by a directory, so the rename cannot be made",
+    async (at) => {
+      await mkdir(join(at, "catalogs", "2027.json"), { recursive: true });
+      await mkdir(join(at, "requirements"));
+      await mkdir(join(at, ".backups"));
+      return at;
+    },
+  ],
+];
+
+it.each(brokenWorkspaces)(
+  "refuses by a name the boundary knows, never with a plain Error: %s",
+  async (_what, setUp) => {
+    const workspace = fileSystemWorkspace(await setUp(root));
+
+    // `create` last, because it is the one that would repair the Workspace under the others
+    const attempts = [
+      () => workspace.write({ kind: "catalog", academicYear: 2027 }, CATALOG),
+      () => workspace.saveStateFile(ALICE, firstSave(STATE)),
+      () => workspace.create(),
+    ];
+    let refusals = 0;
+    for (const attempt of attempts) {
+      const thrown: unknown = await attempt().then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      if (thrown === undefined) continue;
+      expect(thrown).toBeInstanceOf(WorkspaceRefusedError);
+      refusals += 1;
+    }
+    // A property of what was thrown is worth nothing without something thrown: every one of
+    // these Workspaces is broken for at least one of the three, and a setup that stopped being
+    // broken would otherwise turn this into the vacuous pass #109 named.
+    expect(refusals).toBeGreaterThan(0);
+  },
+);
+
+/**
+ * The mode-bit half, out of the sweep and skipped rather than trusted, because root writes
+ * whatever the mode says and a bare `if` inside the sweep's setup made it *pass* there — a
+ * healthy Workspace, three operations that succeed, and nothing asserted. That is the vacuous
+ * pass #109 named, and it was in the test written to prevent it. `skipIf` is what the rest of
+ * this file and server/src/token.test.ts use, and it reports as skipped.
+ *
+ * Both writes, because they are the two `describeRef` words differently and the State File is
+ * the one with a student's edits behind it: a `catalogs` nothing may write into for the Catalog,
+ * and a root nothing may write into for the State File.
+ */
+it.skipIf(!unreadableFilesArePossible)(
+  "refuses by name when the Workspace is one nothing may write into",
+  async () => {
+    const workspace = fileSystemWorkspace(root);
+    await workspace.create();
+    await chmod(join(root, "catalogs"), 0o500);
+
+    const catalog = await workspace
+      .write({ kind: "catalog", academicYear: 2027 }, CATALOG)
+      .catch((error: unknown) => error);
+    expect(catalog).toBeInstanceOf(WorkspaceRefusedError);
+    expect((catalog as Error).message).toMatch(
+      /refusing to write the Catalog for the Academic Year 2027: it could not be written \(EACCES\)/,
+    );
+
+    await chmod(root, 0o500);
+    const state = await workspace
+      .saveStateFile(ALICE, firstSave(STATE))
+      .catch((error: unknown) => error);
+    expect(state).toBeInstanceOf(WorkspaceRefusedError);
+    // the State File named as a State File, which is the other half of `describeRef`
+    expect((state as Error).message).toMatch(
+      /refusing to write the State File "alice": it could not be written \(EACCES\)/,
+    );
+    // no path in what a caller could pass on as a Warning, and the filesystem's own error —
+    // which does carry the absolute path — kept where only a log can reach it
+    expect((state as Error).message).not.toContain(root);
+    expect((state as Error).cause).toBeInstanceOf(Error);
+
+    // so the temporary directory can be cleaned up after this test
+    await chmod(root, 0o700);
+    await chmod(join(root, "catalogs"), 0o700);
+  },
+);

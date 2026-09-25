@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import {
   isStateFileName,
+  NotAWorkspaceError,
   requireCatalogRef,
   requireStateFileName,
   WorkspaceRefusedError,
@@ -99,5 +100,44 @@ it("refuses a State File handed to a whole-file read or write", () => {
   // it names the file, and says where a State File is read and saved instead
   expect(() => requireCatalogRef({ kind: "state", name: "alice" })).toThrow(
     /State File "alice".*readStateFile.*saveStateFile/s,
+  );
+});
+
+/**
+ * The third refusal both adapters share, and the newest (#121). Tested here for the reason the
+ * other two are: it is one sentence, and the whole value of its being here is that neither
+ * adapter can word it differently — which is a property of this file rather than of either
+ * adapter's tests. It was a plain `Error` at three sites, two in `server/src/workspace.fs.ts`
+ * and one spelling the same words again in `app/src/workspace.memory.ts`.
+ */
+it("refuses a write into a folder that is not a Workspace, as a refusal and not a plain Error", () => {
+  const refusal = new NotAWorkspaceError();
+
+  // What makes it answerable: `app/src/edit.ts` and `app/src/catalog.ts` catch
+  // `WorkspaceRefusedError` and word it as `workspace-refused`, which `server/src/api.ts`
+  // answers with a 409. A plain `Error` is caught by nothing, which is what made this the
+  // first unnamed 500 the API would ever have had.
+  expect(refusal).toBeInstanceOf(WorkspaceRefusedError);
+  expect(refusal).toBeInstanceOf(NotAWorkspaceError);
+  expect(refusal.message).toBe("refusing to write: the Workspace layout does not exist yet");
+  expect(refusal.folder).toBeUndefined();
+});
+
+/**
+ * The second way a layout is not one: a plain file standing where a folder of it belongs, which
+ * `status` reports as ready and a write used to meet as a raw `ENOTDIR` (#121). The stem is
+ * shared and the tail is the adapter's, because "is there and is not a folder" and "could not
+ * be made" are different news about the same folder.
+ */
+it("names the part of the layout that is what is wrong, when one part is", () => {
+  const refusal = new NotAWorkspaceError({
+    folder: "catalogs",
+    because: "is there and is not a folder",
+  });
+
+  expect(refusal).toBeInstanceOf(WorkspaceRefusedError);
+  expect(refusal.folder).toBe("catalogs");
+  expect(refusal.message).toMatch(
+    /^refusing to write: the Workspace layout does not exist yet — catalogs is there and is not a folder$/,
   );
 });
