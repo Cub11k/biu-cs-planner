@@ -27,6 +27,23 @@ import {
  * needs that answer injects it (`cannotBeRead` in `edit.test.ts`), and the adapter that
  * raises it for real is tested against a real folder. The conflict refusal is different and
  * *is* modelled here, because a revision is something this can hold.
+ *
+ * **`list` has the same three answers now, and the same one of them is out of reach** (#129):
+ * what the folder holds, `[]` when there is no folder, and a refusal when there is something
+ * there that cannot be listed. The two ways the real adapter reaches that refusal are a mode
+ * bit and a plain file standing where a folder of the layout belongs, and this double has
+ * neither — `folders` is a list of which parts of the layout exist and there is nothing one of
+ * them could be the wrong *kind* of, which is already why it cannot hold the write side of the
+ * same file. So no knob, for the reason above, and the answer this double does owe the real one
+ * is the other two: **an absent folder lists empty and never refuses.**
+ *
+ * **One asymmetry worth naming rather than fixing.** `seed` puts a file in without going
+ * through the layout check, so a Catalog seeded before `create` is listed here where on a disk
+ * it could not exist at all — a file cannot sit in a folder that is not there. It is the
+ * double's own incoherent state rather than a disagreement about `list`, and closing it would
+ * mean a second copy of the real adapter's `folderFor` here, free to drift from it. Every test
+ * that lists starts from `{ created: true }`; one that seeds before creating is leaning on this
+ * and should not.
  */
 export type MemoryWorkspace = Workspace & {
   /** Refs written so far, in order, so a test can assert that nothing was written. */
@@ -148,6 +165,11 @@ export function memoryWorkspace(
     async list(kind): Promise<WorkspaceRef[]> {
       // Ordered by key, because the real adapter's listing is ordered: a test that read this
       // one in the order things were written in would pass here and not on a disk.
+      //
+      // And it never refuses: a Workspace holding nothing of this kind lists empty, which is
+      // the answer the real adapter gives for a folder that is not there. The third answer —
+      // a folder that is there and cannot be listed — is the one this double cannot hold, for
+      // the reason in `MemoryWorkspace`'s doc (#129).
       return [...files]
         .filter(([, held]) => held.ref.kind === kind)
         .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))

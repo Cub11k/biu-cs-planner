@@ -109,6 +109,12 @@ class OutsideWorkspaceError extends WorkspaceRefusedError {
  * Every other code, and an error carrying no code at all, is the third answer below:
  * unreadable, not absent, which is the safe way round for anything this cannot recognise
  * (#109).
+ *
+ * **For a *file's* path, which is every path this list is asked about.** `entriesOrAbsent` asks
+ * about a folder itself rather than a file below one, and there `ENOTDIR` is the opposite
+ * answer: what was named is there and is not a folder, which is a state of the Workspace and
+ * not absence. So this list is deliberately not shared with it, and reusing it there is the
+ * defect #129 was filed to prevent.
  */
 const ABSENT = ["ENOENT", "ENOTDIR"];
 
@@ -138,13 +144,23 @@ const errnoOf = (error: unknown): string | undefined => {
  * report a revision this adapter has just said it cannot determine. "A target a Workspace will
  * not touch" is what a file it cannot read is, and it is the error `app/src/edit.ts` already
  * maps to `workspace-refused` and the page already words as Picks that could not be read.
+ *
+ * **A folder that cannot be listed is the same answer**, which is why `because` can be said
+ * rather than assumed (#129). Listing is how a folder is read, so `EACCES` on `catalogs/` is
+ * this error with nothing added; a `catalogs` that is a plain file is this error too — there is
+ * something at that name and no listing can be had of it — but "cannot be read" would be
+ * untrue of it, since it reads perfectly well as the file it is. `UnwritableError`'s doc states
+ * the principle this follows: "catalogs is not a folder" is worth more than `ENOTDIR` to
+ * whoever reads it. The errno stays on the end of both, as `UnwritableError` keeps it, because
+ * the sentence is the news and the code is for a log.
  */
 class UnreadableError extends WorkspaceRefusedError {
-  constructor(what: string, code: string | undefined) {
-    super(
-      `refusing ${what}: it is there and cannot be read` +
-        (code === undefined ? "" : ` (${code})`),
-    );
+  constructor(
+    what: string,
+    code: string | undefined,
+    because = "it is there and cannot be read",
+  ) {
+    super(`refusing ${what}: ${because}` + (code === undefined ? "" : ` (${code})`));
   }
 }
 
@@ -352,6 +368,44 @@ export function fileSystemWorkspace(rootPath: string): Workspace {
   };
 
   /**
+   * The names in a folder, nothing when there is **no folder**, and `UnreadableError` when there
+   * is something at that name no listing can be had of. `bytesOrAbsent`'s three answers, for the
+   * one function #109 did not pass through: a `readdir` that failed for any reason at all used
+   * to answer `[]`, so a `catalogs/` the app may not list was indistinguishable from one holding
+   * nothing (#129).
+   *
+   * **`ENOENT` alone is absence here, and this is the whole of the difference from
+   * `bytesOrAbsent`.** `ABSENT` is right for the paths that one is given — a plain file part way
+   * along a *file's* path means nothing can exist below it — and wrong for this one, which names
+   * the folder itself. `ENOTDIR` here says what was named is there and is not a folder, which is
+   * a state of the Workspace and the opposite of absence: `usablePath` asks whether a path
+   * resolves inside the Workspace and not what it *is*, so a `catalogs` that is a plain file is
+   * usable, counts towards the layout, and makes `status` report the Workspace **ready** (#121).
+   * A ready Workspace answering "no Catalogs" because its `catalogs` is a file is the lie in its
+   * most visible form.
+   *
+   * Recognised from the errno rather than by asking `isDirectory` first, which is what
+   * `requireLayoutFolder` does on the write side. A write has a reason to ask in advance — it
+   * refuses before a byte is written — and a read has none: asking costs a second syscall, races
+   * the `readdir` that follows it, and would still need this handler for `EACCES`. Every code
+   * but `ENOENT` is a refusal, so the code nobody thought of fails closed, which is the way
+   * round #109 settled on.
+   */
+  const entriesOrAbsent = async (path: string): Promise<string[] | undefined> => {
+    try {
+      return await readdir(path);
+    } catch (error) {
+      const code = errnoOf(error);
+      if (code === "ENOENT") return undefined;
+      throw new UnreadableError(
+        path.replace(root, "."),
+        code,
+        code === "ENOTDIR" ? "it is there and is not a folder" : undefined,
+      );
+    }
+  };
+
+  /**
    * What a file holds: its JSON, or its text when that is not what it holds.
    *
    * **A leading UTF-8 BOM is not content**, and dropping it is the intended behaviour rather
@@ -495,16 +549,23 @@ export function fileSystemWorkspace(rootPath: string): Workspace {
       }
     },
 
+    /**
+     * Empty for a folder that is not there, and a refusal for one that is there and cannot be
+     * listed: `entriesOrAbsent` is where the two are told apart, and its doc says why `ENOTDIR`
+     * is not absence here although it is everywhere else in this module (#129).
+     *
+     * **Absence stays two answers wide**, and both are `[]`. `usablePath` already answers for a
+     * folder that is not there, or whose `realpath` cannot be taken — which is a Workspace under
+     * an unreadable parent, and `realPathOrAbsent`'s doc says why that reads as missing rather
+     * than as a refusal. `entriesOrAbsent`'s `ENOENT` is the same answer for the race: a folder
+     * removed between the `realpath` and the `readdir`.
+     */
     async list(kind): Promise<WorkspaceRef[]> {
       const folder = await usablePath(folderPath({ kind }));
       if (folder === undefined) return [];
 
-      let entries: string[];
-      try {
-        entries = await readdir(folder);
-      } catch {
-        return [];
-      }
+      const entries = await entriesOrAbsent(folder);
+      if (entries === undefined) return [];
       if (kind === "state") {
         // A State File shares the root with the layout and with whatever else the student
         // keeps there, so a name this adapter would refuse to write is not listed either —
