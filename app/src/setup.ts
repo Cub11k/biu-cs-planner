@@ -78,6 +78,12 @@ export type CreateOutcome =
  * maintainer. So the student is told that the layout could not be created and to look at the
  * folder — not *why*, because from `EEXIST` alone the app cannot tell something in the way from
  * a permission it lacks, and naming the wrong one sends them to fix what is not broken.
+ *
+ * **And it cannot promise that nothing was made**, which is the tempting second sentence and an
+ * untrue one: `create` in `server/src/workspace.fs.ts` loops the layout and does not roll back,
+ * so a refusal on the second or third part leaves the first one created. What *is* certain is
+ * that nothing already standing there was replaced. A message claiming the folder is untouched
+ * would be #111's mistake made about the one thing the student can go and check.
  */
 export async function createWorkspace(workspace: Workspace): Promise<CreateOutcome> {
   try {

@@ -108,9 +108,14 @@ it("answers a create that cannot make the layout with a named 409, not a 500", a
   expect(created.status).toBe(409);
   await expect(created.json()).resolves.toEqual({ reason: "workspace-refused" });
 
-  // nothing was made and nothing was overwritten: the folder is as the student left it, and
-  // the app has not quietly become a Workspace around a file it could not replace
+  // The file is untouched, which is the part that holds for every refused create: `create`
+  // never replaces what is already standing there.
   expect(await readFile(join(root, "catalogs"), "utf8")).toBe("not a folder");
+
+  // And nothing was made — but **because `catalogs` is first in `WORKSPACE_LAYOUT`**. `create`
+  // loops the layout with no rollback, so a refusal on a later part leaves the earlier ones
+  // created. This asserts what a refused create does *here*, not a transactional promise the
+  // adapter does not make; reorder the layout and this is the line that says so.
   const after = await get("/api/workspace");
   await expect(after.json()).resolves.toEqual({
     ready: false,
