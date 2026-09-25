@@ -66,9 +66,15 @@ const english = {
    * The file is not there — an unmounted drive, a moved folder. Nothing was written and both
    * stacks are intact, so this must not read like losing anything: it is a folder to go and
    * find, and the undo is waiting for it.
+   *
+   * "Your work" and never "your plan": CONTEXT.md keeps **Plan** for a student's Attempts
+   * across Semesters, and every edit these sentences can be shown for today is a Pick in a
+   * Timetable. A State File holds Attempts, Timetables, Pins and settings, so naming one of
+   * them would be wrong about the other three — and naming the Plan would tell a student
+   * something had happened to a part of their degree that nothing had touched.
    */
   historyFileMissing:
-    "The file your plan is saved in is not in the workspace folder right now, so nothing " +
+    "The file your work is saved in is not in the workspace folder right now, so nothing " +
     "was changed and nothing was lost. Check that the folder is still where it was — a " +
     "drive that is not mounted looks like this. Undo will work again once the file is back.",
   /**
@@ -83,19 +89,19 @@ const english = {
    * knows because the revision on disk is not the one it last wrote.
    */
   historyInvalidated:
-    "The file your plan is saved in was changed by something other than this app, so the " +
+    "The file your work is saved in was changed by something other than this app, so the " +
     "undo history was dropped rather than put an older version back over that change. " +
-    "Nothing in your plan was lost; the steps before now can no longer be undone.",
+    "Nothing you had saved was lost; the steps before now can no longer be undone.",
   /**
    * The page's own view was stale, which is the ordinary external-edit guard and not an
    * invalidation: the stacks survive, and a re-read is all it takes. Says "nothing changed"
    * rather than "nothing was undone", because the same refusal answers a redo.
    */
   historyStale:
-    "This page was showing an older version of your saved plan, so nothing changed. " +
+    "This page was showing an older version of your saved work, so nothing changed. " +
     "The page has re-read it — try again.",
   /** The file, or the folder, could not be read at all. Nothing was written. */
-  historyUnreadable: "The file your plan is saved in could not be read, so nothing changed.",
+  historyUnreadable: "The file your work is saved in could not be read, so nothing changed.",
   /**
    * A refusal the route named no reason for. The floor, and deliberately the floor: what is
    * true of it is that nothing happened, and naming one of the eight causes would be wrong
@@ -212,18 +218,17 @@ const hebrew: Record<StringKey, string> = {
   historyNothingToUndo: "אין עוד מה לבטל.",
   historyNothingToRedo: "אין מה לבצע מחדש.",
   historyFileMissing:
-    "הקובץ שבו נשמרת התוכנית שלכם אינו נמצא כרגע בתיקיית סביבת העבודה, ולכן לא שונה דבר " +
+    "הקובץ שבו נשמרת העבודה שלכם אינו נמצא כרגע בתיקיית סביבת העבודה, ולכן לא שונה דבר " +
     "ולא אבד דבר. בדקו שהתיקייה עדיין במקומה — כך זה נראה כאשר כונן אינו מחובר. " +
     "הביטול יעבוד שוב כשהקובץ יחזור.",
   historyInvalidated:
-    "הקובץ שבו נשמרת התוכנית שלכם שונה בידי משהו אחר מלבד היישום הזה, ולכן היסטוריית " +
-    "הביטול הוסרה במקום " +
-    "להחזיר גרסה ישנה מעל אותו שינוי. שום דבר בתוכנית שלכם לא אבד; את הצעדים שקדמו לכך " +
-    "לא ניתן עוד לבטל.",
+    "הקובץ שבו נשמרת העבודה שלכם שונה בידי משהו אחר מלבד היישום הזה, ולכן היסטוריית " +
+    "הביטול הוסרה במקום להחזיר גרסה ישנה מעל אותו שינוי. שום דבר ממה ששמרתם לא אבד; " +
+    "את הצעדים שקדמו לכך לא ניתן עוד לבטל.",
   historyStale:
-    "הדף הציג גרסה ישנה יותר של התוכנית השמורה, ולכן לא השתנה דבר. " +
+    "הדף הציג גרסה ישנה יותר של העבודה השמורה, ולכן לא השתנה דבר. " +
     "הדף קרא את הקובץ מחדש — נסו שוב.",
-  historyUnreadable: "לא ניתן היה לקרוא את הקובץ שבו נשמרת התוכנית שלכם, ולכן לא השתנה דבר.",
+  historyUnreadable: "לא ניתן היה לקרוא את הקובץ שבו נשמרת העבודה שלכם, ולכן לא השתנה דבר.",
   historyNotDone: "לא השתנה דבר.",
 
   timetable: "מערכת שעות",

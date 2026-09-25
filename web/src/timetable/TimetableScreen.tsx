@@ -505,7 +505,18 @@ export function TimetableScreen({
    * was stale about something they had no part in.
    */
   const stepFrom =
-    timetable.kind === "served" && !history.stepping && steppedOn !== timetable
+    timetable.kind === "served" &&
+    // A served view's revision is `string | undefined`, and `undefined` is the claim that
+    // there is no State File — which the server fails closed on. Without this the press was
+    // offered on such a view and stopped only by the server answering `canUndo: false`, which
+    // is a different fact that can disagree: another tab creates the file, this page's
+    // `/api/history` re-ask lands before its Timetable re-read, and a press then goes out on
+    // `undefined` and comes back `state-file-changed` — the student reading that their page
+    // was showing an older version of a file it had never read. That is #111 exactly, which
+    // the comments here already claimed was prevented and now is.
+    timetable.version !== undefined &&
+    !history.stepping &&
+    steppedOn !== timetable
       ? (direction: Direction): void => takeStep(direction, timetable.version, timetable)
       : undefined;
   const stepNotice = historyNotice(language, lastStep);

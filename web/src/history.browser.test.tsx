@@ -80,6 +80,12 @@ let refuseStep: { reason?: string; status?: number } | undefined;
  * answered from memory, and a second tab can empty a stack between the ask and the click.
  */
 let claimCanUndo: boolean | undefined;
+/**
+ * Makes the served view carry no revision, which is what a Workspace with no State File in it
+ * yet looks like. Not the same as an unreadable one: the view is served, it is simply based on
+ * no revision.
+ */
+let noStateFile: boolean;
 /** Holds the next step's answer open, so a test can look at the buttons mid-step. */
 let stepHeld: Promise<void> | undefined;
 /**
@@ -119,7 +125,7 @@ const view = () => ({
   variantName: "A",
   picks,
   clashes: [],
-  version: `v${version}`,
+  version: noStateFile ? undefined : `v${version}`,
   warnings: [],
 });
 
@@ -186,6 +192,7 @@ beforeEach(() => {
   claimCanUndo = undefined;
   stepHeld = undefined;
   readHeld = undefined;
+  noStateFile = false;
   localStorage.removeItem(SCHEME_STORAGE_KEY);
 
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -467,6 +474,33 @@ it("neither button can be pressed while a step is in flight", async () => {
   await vi.waitFor(() => {
     if (isPicked(mounted, "01")) throw new Error("the undo never landed");
   });
+});
+
+it("offers no press over a view with no State File, whatever the stacks say", async () => {
+  // The reachable window, and it is not hypothetical: another tab creates the file, so the
+  // server has an undo to offer, and this page's availability re-ask lands before its
+  // Timetable re-read. `basedOn: undefined` is the claim that there is no file at all, and a
+  // press sent on it comes back `state-file-changed` — the student told their page was showing
+  // an older version of a file it had never read, which is #111 in as many words.
+  //
+  // Availability and a revision are two different facts and they can disagree. The button is
+  // the conjunction, not either one.
+  noStateFile = true;
+  claimCanUndo = true;
+
+  const mounted = await openWeek();
+  await vi.waitFor(() => {
+    if (!sent.some((request) => request.pathname === "/api/history")) {
+      throw new Error("the header never asked whether there was anything to undo");
+    }
+  });
+
+  // The server's answer is yes, and the press is still not offered.
+  expect(buttonFor(mounted, "undo").disabled).toBe(true);
+  expect(buttonFor(mounted, "redo").disabled).toBe(true);
+  // …and nothing was sent, so there is no refusal for the student to read about
+  expect(sent.some((request) => request.pathname.startsWith("/api/history/"))).toBe(false);
+  expect(mounted.textContent).not.toContain(t("en", "historyStale"));
 });
 
 it("offers no second press until the week has caught up with the first", async () => {
