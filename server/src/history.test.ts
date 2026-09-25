@@ -381,3 +381,29 @@ it("keeps one history per State File, keyed by its name", async () => {
   // and alice's is where it was: a call about another State File touched nothing of hers
   expect(history.availability(ALICE)).toEqual({ canUndo: true, canRedo: false });
 });
+
+/**
+ * A State File that cannot be read is a reason to write nothing and not a reason to throw the
+ * stacks away: a half-synced file or a hand edit this build does not understand may be
+ * readable again in a moment, and the snapshots are still the ones it was built from. If the
+ * bytes that come back are somebody else's, the read after them sees a revision the history
+ * never wrote and invalidates there — it heals on the read rather than guessing here.
+ */
+it("refuses an undo while the State File cannot be read, and keeps the stacks", async () => {
+  await pick(LECTURE);
+  await pick(groupNumber(2));
+  // a hand edit, a half-written file, or a sync that stopped mid-copy
+  await writeFile(statePath(), '{"schemaVersion":99}', "utf8");
+
+  const refused = await history.undo(ALICE, undefined);
+
+  expect(refused).toMatchObject({
+    kind: "refused",
+    reason: "state-file-unreadable",
+    canUndo: true,
+    warnings: [{ kind: "schema-version-too-new", found: 99 }],
+  });
+  // nothing was written over it, and nothing of the student's history was dropped
+  expect(await bytes()).toBe('{"schemaVersion":99}');
+  expect(history.availability(ALICE)).toEqual({ canUndo: true, canRedo: false });
+});

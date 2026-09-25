@@ -648,3 +648,157 @@ it("refuses to record a Pick into a folder that is not a Workspace yet", async (
     warnings: [],
   });
 });
+
+/**
+ * Undo and redo over HTTP, which is what #73 has to be demoable as: an edit, an undo and a
+ * redo driven through the API and asserted against the file on disk.
+ *
+ * The stacks themselves — the bounds, invalidation, one history per State File — are
+ * `./history.test.ts`. What is tested here is the contract: the paths name no file, the
+ * answer says what moved and what is still available, and the revision comes back so the next
+ * click needs no re-read.
+ */
+const UNDO = "/api/history/undo";
+const REDO = "/api/history/redo";
+
+/** An undo or a redo asked for the way a page asks: on the revision it is showing. */
+const step = async (path: string) => post(path, { basedOn: await currentVersion() });
+
+it("undoes an edit and redoes it, saying each time what moved and what is left", async () => {
+  await post("/api/workspace", {});
+  await post(PICKS, LECTURE);
+  await expect((await get("/api/history")).json()).resolves.toEqual({
+    canUndo: true,
+    canRedo: false,
+  });
+
+  const undone = await step(UNDO);
+
+  expect(undone.status).toBe(200);
+  const answer = (await undone.json()) as { label: string; version?: string; at: number };
+  // the label the use case supplied, for the UI to translate — never a sentence from here
+  expect(answer.label).toBe("pick-group");
+  expect(answer.version).toBe(await currentVersion());
+  expect(answer.at).toEqual(expect.any(Number));
+  await expect((await get(TIMETABLE)).json()).resolves.toMatchObject({ picks: [] });
+  await expect((await get("/api/history")).json()).resolves.toEqual({
+    canUndo: false,
+    canRedo: true,
+  });
+
+  const redone = await step(REDO);
+
+  expect(redone.status).toBe(200);
+  await expect(redone.json()).resolves.toMatchObject({
+    label: "pick-group",
+    canUndo: true,
+    canRedo: false,
+  });
+  await expect((await get(TIMETABLE)).json()).resolves.toMatchObject({ picks: [LECTURE] });
+});
+
+/**
+ * ADR-0013: "The stack belongs to the State File, not to a browser tab … Two tabs on one file
+ * share one history, which is the truth rather than a compromise." There is nothing to key a
+ * stack to a tab by — `./token.ts` is one launch token for all of them — and this is that
+ * being a feature: the second tab can undo what the first one did.
+ */
+it("shares one history between two clients on one State File", async () => {
+  await post("/api/workspace", {});
+  // the first tab picks
+  await post(PICKS, LECTURE);
+
+  // the second tab, which has sent no edit of its own, sees the undo waiting and makes it
+  const seenBySecondTab = await get("/api/history");
+  await expect(seenBySecondTab.json()).resolves.toEqual({ canUndo: true, canRedo: false });
+  const undone = await step(UNDO);
+
+  expect(undone.status).toBe(200);
+  await expect(undone.json()).resolves.toMatchObject({ label: "pick-group" });
+  await expect((await get(TIMETABLE)).json()).resolves.toMatchObject({ picks: [] });
+});
+
+/**
+ * ADR-0013: "It does not survive a restart. The stack is in memory, and `.backups/` is the
+ * durable record." The Pick does survive — that is what a State File is for — and the undo
+ * of it does not.
+ */
+it("keeps the Pick across a restart and loses the undo of it", async () => {
+  await post("/api/workspace", {});
+  await post(PICKS, LECTURE);
+
+  restart();
+
+  await expect((await get(TIMETABLE)).json()).resolves.toMatchObject({ picks: [LECTURE] });
+  await expect((await get("/api/history")).json()).resolves.toEqual({
+    canUndo: false,
+    canRedo: false,
+  });
+  const refused = await step(UNDO);
+  expect(refused.status).toBe(409);
+  await expect(refused.json()).resolves.toEqual({
+    reason: "nothing-to-undo",
+    canUndo: false,
+    canRedo: false,
+    warnings: [],
+  });
+});
+
+/**
+ * A State File written from outside empties both stacks and nothing is written, so the change
+ * the external-edit guard exists to protect survives an undo the student asks for after
+ * reloading — the one case their own revision cannot catch, because it is current.
+ */
+it("refuses an undo after the State File changed on disk, and overwrites nothing", async () => {
+  await post("/api/workspace", {});
+  await post(PICKS, LECTURE);
+  // Dropbox, git, an editor, or another tool
+  const file = join(root, "me.state.json");
+  const fromOutside = (await readFile(file, "utf8")).replace('"01"', '"09"');
+  await writeFile(file, fromOutside, "utf8");
+
+  // the page reloads first, so the revision it sends is the current one
+  const refused = await step(UNDO);
+
+  expect(refused.status).toBe(409);
+  await expect(refused.json()).resolves.toEqual({
+    reason: "history-invalidated",
+    canUndo: false,
+    canRedo: false,
+    warnings: [],
+  });
+  expect(await readFile(file, "utf8")).toBe(fromOutside);
+});
+
+/** An undo is a save, so it is guarded on the revision the page was showing, exactly as one. */
+it("refuses an undo based on a revision the file no longer holds", async () => {
+  await post("/api/workspace", {});
+  await post(PICKS, LECTURE);
+  const stale = await currentVersion();
+  await save(PICKS, OTHER_LECTURE);
+
+  const refused = await post(UNDO, { basedOn: stale });
+
+  expect(refused.status).toBe(409);
+  await expect(refused.json()).resolves.toMatchObject({
+    reason: "state-file-changed",
+    // the history is intact: it was the caller's view that was stale, not the file
+    canUndo: true,
+  });
+  await expect((await get(TIMETABLE)).json()).resolves.toMatchObject({ picks: [OTHER_LECTURE] });
+});
+
+it("names a bad undo request as a 400, and refuses one with no launch token", async () => {
+  await post("/api/workspace", {});
+
+  const notTheShape = await post(UNDO, { basedOn: 7 });
+  expect(notTheShape.status).toBe(400);
+  await expect(notTheShape.json()).resolves.toEqual({ error: "not-a-history-step" });
+
+  const noToken = await api.request(UNDO, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  expect(noToken.status).toBe(401);
+});
