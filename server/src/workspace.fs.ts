@@ -390,6 +390,16 @@ export function fileSystemWorkspace(rootPath: string): Workspace {
    * the `readdir` that follows it, and would still need this handler for `EACCES`. Every code
    * but `ENOENT` is a refusal, so the code nobody thought of fails closed, which is the way
    * round #109 settled on.
+   *
+   * **The `ENOENT` arm is unreachable today and no test enters it**, which was measured rather
+   * than reasoned: removing it fails nothing. `usablePath` has already answered for a folder that
+   * is not there, so the only way to arrive here with `ENOENT` is a folder removed between that
+   * `realpath` and this `readdir` — a student deleting `catalogs/` while the screen loads, which
+   * no test can stage without a seam this does not have. It is kept because that student should
+   * see an empty folder rather than a refusal, and because dropping it would make the arm's
+   * absence the thing nobody remembers: `requireJsonName` and `requireLayoutFolder` in this file
+   * stand on the same ground. The coverage in a pull request report will show the line, and it is
+   * this paragraph rather than a missing case.
    */
   const entriesOrAbsent = async (path: string): Promise<string[] | undefined> => {
     try {
