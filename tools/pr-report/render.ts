@@ -463,8 +463,9 @@ export function render(report: Report): string {
     // is absent exactly like a type that does not exist. `Report` itself is such a type, so the
     // change that added this line would have been invisible in its own report.
     shapes.push(
-      `Types exported from ${dirList(testOnlyDirs)} are not here. Nothing read ${they} for ` +
-        `exported shapes, so this list says nothing about ${they} either way.`,
+      `Types exported from ${dirList(testOnlyDirs)} are not here. Nothing read ` +
+        `${one ? "that directory" : "those directories"} for exported shapes, so this list says ` +
+        `nothing about ${they} either way.`,
     );
     shapes.push("");
   }
