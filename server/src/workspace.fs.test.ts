@@ -290,9 +290,21 @@ async function observed(stimulus: () => Promise<void>, events: () => number): Pr
   return false;
 }
 
-/** A watcher on `root`, counting raw events, stopped for you when the test ends. */
-async function watching(): Promise<{ events: () => number; stop: () => void }> {
-  const workspace = fileSystemWorkspace(root);
+/**
+ * A watcher on `root`, counting raw events, stopped for you when the test ends.
+ *
+ * **Through the Workspace under test when one is passed**, and that matters for every test
+ * about the app's own writes: `server/src/serve.ts` builds one adapter and both the watcher
+ * and every write go through it, so a test watching a *second* instance of the adapter could
+ * not see an instance-local suppression even if one were added — it would pass against the
+ * very change it exists to catch. Measured, not assumed: the first draft of the tests below
+ * did watch a second instance, and a suppression deliberately introduced to break them did
+ * not. Given no Workspace it makes its own, which is enough for the external-edit cases,
+ * where nothing the app did is part of the question.
+ */
+async function watching(
+  workspace: Workspace = fileSystemWorkspace(root),
+): Promise<{ events: () => number; stop: () => void }> {
   let count = 0;
   const watcher = await workspace.watch(() => {
     count += 1;
@@ -406,7 +418,7 @@ it("ignores .backups, and still hears the folders that matter", async () => {
 it("reports the app's own State File save, the temporary and the rename alike", async () => {
   const workspace = fileSystemWorkspace(root);
   await workspace.create();
-  const watched = await watching();
+  const watched = await watching(workspace);
 
   const version = await workspace.saveStateFile(ALICE, firstSave(STATE));
   expect(await within(() => watched.events() > 0)).toBe(true);
@@ -431,7 +443,7 @@ it("reports the app's own State File save, the temporary and the rename alike", 
 it("reports the app's own Catalog import, the temporary and the rename alike", async () => {
   const workspace = fileSystemWorkspace(root);
   await workspace.create();
-  const watched = await watching();
+  const watched = await watching(workspace);
 
   await workspace.write({ kind: "catalog", academicYear: 2027 }, CATALOG);
 
@@ -450,7 +462,7 @@ it("sees a State File edited from outside, at the very name the app writes", asy
   const workspace = fileSystemWorkspace(root);
   await workspace.create();
   await workspace.saveStateFile(ALICE, firstSave(STATE));
-  const watched = await watching();
+  const watched = await watching(workspace);
 
   // by hand onto the real name, not through `saveStateFile`: the editor and sync-client case
   await writeFile(
@@ -472,7 +484,7 @@ it("sees a State File edited from outside, at the very name the app writes", asy
 it("sees an external edit that lands while the app is saving", async () => {
   const workspace = fileSystemWorkspace(root);
   await workspace.create();
-  const watched = await watching();
+  const watched = await watching(workspace);
 
   const saving = workspace.saveStateFile(ALICE, firstSave(STATE));
   const external = writeFile(join(root, "catalogs", "2027.json"), JSON.stringify(CATALOG), "utf8");
