@@ -705,17 +705,75 @@ it("undoes an edit and redoes it, saying each time what moved and what is left",
  */
 it("shares one history between two clients on one State File", async () => {
   await post("/api/workspace", {});
-  // the first tab picks
+  // the first tab picks, twice
   await post(PICKS, LECTURE);
+  await save(PICKS, CLASHING);
 
-  // the second tab, which has sent no edit of its own, sees the undo waiting and makes it
-  const seenBySecondTab = await get("/api/history");
-  await expect(seenBySecondTab.json()).resolves.toEqual({ canUndo: true, canRedo: false });
-  const undone = await step(UNDO);
+  // the second tab, which has sent no edit of its own, sees both undos waiting and makes one
+  await expect((await get("/api/history")).json()).resolves.toEqual({
+    canUndo: true,
+    canRedo: false,
+  });
+  const undoneByTheSecondTab = await step(UNDO);
 
-  expect(undone.status).toBe(200);
-  await expect(undone.json()).resolves.toMatchObject({ label: "pick-group" });
+  expect(undoneByTheSecondTab.status).toBe(200);
+  await expect(undoneByTheSecondTab.json()).resolves.toMatchObject({
+    label: "pick-group",
+    canUndo: true,
+    canRedo: true,
+  });
+
+  // the first tab sees the second one's undo: the redo it never asked for is offered to it,
+  // and taking it walks the one stack back the other way
+  await expect((await get("/api/history")).json()).resolves.toEqual({
+    canUndo: true,
+    canRedo: true,
+  });
+  const redoneByTheFirstTab = await step(REDO);
+
+  expect(redoneByTheFirstTab.status).toBe(200);
+  await expect((await get(TIMETABLE)).json()).resolves.toMatchObject({
+    picks: [LECTURE, CLASHING],
+  });
+  // and one stack, not two: the second undo is the first tab's earlier Pick, reachable from
+  // either tab, and there is nothing under it
+  await expect(step(UNDO)).resolves.toHaveProperty("status", 200);
+  await expect(step(UNDO)).resolves.toHaveProperty("status", 200);
   await expect((await get(TIMETABLE)).json()).resolves.toMatchObject({ picks: [] });
+  const nothing = await step(UNDO);
+  expect(nothing.status).toBe(409);
+  await expect(nothing.json()).resolves.toMatchObject({ reason: "nothing-to-undo" });
+});
+
+/**
+ * The same laundering `./history.test.ts` pins, over HTTP, because this is the shape that
+ * costs a student somebody else's work: Dropbox writes while the page is idle, the change
+ * poll reloads the view, they pick once more, and then they undo twice.
+ */
+it("empties the history when an edit follows a State File changed on disk", async () => {
+  await post("/api/workspace", {});
+  await post(PICKS, LECTURE);
+  const file = join(root, "me.state.json");
+  const fromOutside = (await readFile(file, "utf8")).replace('"01"', '"09"');
+  await writeFile(file, fromOutside, "utf8");
+
+  // the page reloads and picks again, which no guard refuses
+  const picked = await save(PICKS, CLASHING);
+  expect(picked.status).toBe(200);
+
+  // only that Pick is on the stack now
+  await expect((await get("/api/history")).json()).resolves.toEqual({
+    canUndo: true,
+    canRedo: false,
+  });
+  expect((await step(UNDO)).status).toBe(200);
+  // the other writer's Pick is what the undo left behind, and there is nothing under it
+  await expect((await get(TIMETABLE)).json()).resolves.toMatchObject({
+    picks: [{ ...LECTURE, groupNumber: "09" }],
+  });
+  const again = await step(UNDO);
+  expect(again.status).toBe(409);
+  await expect(again.json()).resolves.toMatchObject({ reason: "nothing-to-undo" });
 });
 
 /**

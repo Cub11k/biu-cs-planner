@@ -16,7 +16,8 @@ import {
   type Workspace,
   type WorkspaceChanges,
 } from "@biu-cs-planner/app";
-import { editHistories, type HistoryMove } from "./history.ts";
+import { editHistories } from "./history.ts";
+import type { HistoryMove } from "./history.ts";
 import {
   CURRENT_CATALOG_SCHEMA_VERSION,
   groupPickSchema,
@@ -419,6 +420,13 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
      * the State File and live in this process, so a reloaded tab — or a second one — finds the
      * undo it never made still waiting (ADR-0013). Every undo and redo answer carries the same
      * two flags, so this is the first read and not a poll.
+     *
+     * Answered from memory and never from the disk, which is why `canUndo` can be true for an
+     * undo that will then be refused as `history-invalidated`: a State File written from
+     * outside is noticed when something reads it, and a read on every one of these would put a
+     * disk touch behind a question the page asks on every reload. The student's first sign is
+     * then a click that comes back named and harmless, rather than a button that is wrong in
+     * the other direction — greyed out over a history that is perfectly good.
      */
     .get("/api/history", (c) => c.json(history.availability(DEFAULT_STATE_FILE)))
 

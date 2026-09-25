@@ -42,12 +42,21 @@ export const MAX_HISTORY_BYTES = 8 * 1024 * 1024;
 /** What the UI needs to know to enable or disable two buttons. */
 export type HistoryAvailability = { canUndo: boolean; canRedo: boolean };
 
-/** Why an undo or a redo did not happen. Every refusal an edit can make, and three more. */
+/** Why an undo or a redo did not happen. Every refusal an edit can make, and four more. */
 export type HistoryRefusal =
   | EditRefusal
   /** The stack is empty: nothing has been done yet, or everything has been undone. */
   | "nothing-to-undo"
   | "nothing-to-redo"
+  /**
+   * The State File is not there now, though this history was built on one that was: the
+   * Workspace folder sits on a drive that is not mounted, a sync has moved it, or the file was
+   * deleted. Nothing is written — an undo would *create* a file out of a snapshot, which is
+   * not what the student asked for — and the stacks are kept, because the folder may be back
+   * in a moment. A deletion that lasts is noticed the next time an edit does go through, on
+   * the revision it was based on.
+   */
+  | "state-file-missing"
   /**
    * The State File changed on disk since the history last wrote it, so both stacks were
    * thrown away and nothing was written. The values on them were based on a file that no
@@ -65,7 +74,11 @@ export type HistoryMove =
        * and this one has to read in Hebrew too.
        */
       label: string;
-      /** When the edit that was just moved happened; see `StateEdit.at`. */
+      /**
+       * When the snapshot that was just put back was captured: for an undo, when the edit
+       * itself happened; for a redo, when the undo that displaced it did. Not when the
+       * document it restores was first written — nothing records that, and nothing needs to.
+       */
       at: number;
       /** The revision the file holds now: what the caller's next save is based on. */
       version: StateFileVersion | undefined;
@@ -116,16 +129,36 @@ type Stacks = {
    * value from before that write.
    */
   version: StateFileVersion | undefined;
+  /**
+   * One undo or redo at a time, per State File.
+   *
+   * A step reads the file, awaits a write and only then moves an entry between the stacks, so
+   * two steps interleaved could each pass the empty check, each pass invalidation, and each
+   * pop an entry the other had already written — and the adapter's own guard cannot be relied
+   * on to stop the second write, because it says itself that the window between its hash and
+   * its rename is open (`./workspace.fs.ts`). A single-user app on loopback makes that
+   * unlikely rather than impossible, and the entry it would lose is the student's.
+   */
+  turn: Promise<unknown>;
 };
 
+const utf8 = new TextEncoder();
+
 /**
- * How many bytes one entry holds, as UTF-8 — the encoding the file is written in, so the
- * number means the same thing as the 8 MB does. Counted as bytes rather than as string length
- * because a Hebrew course name is one character and two bytes, and a bound that counted
- * characters would let a Hebrew plan take twice the memory an English one may.
+ * What one entry costs, as the UTF-8 byte length of its snapshot — the encoding the file is
+ * written in, so the number means the same thing as ADR-0013's 8 MB does. Bytes rather than
+ * string length because a Hebrew course name is one character and two bytes, and a bound that
+ * counted characters would let a Hebrew plan take twice the memory an English one may.
+ *
+ * **A proxy for the memory, not a measure of it.** What a stack retains is the parsed object
+ * graph, which is some multiple of its serialised size, and no runtime here will say what that
+ * multiple is. The budget is therefore a stable, portable number that moves with the size of
+ * the plan — which is the thing that actually grows — rather than an exact ceiling in heap.
+ * The label and the timestamp are left out for the same reason: a handful of bytes beside a
+ * snapshot, and counting them would suggest a precision this does not have.
  */
 const bytesOf = (edit: StateEdit): number =>
-  new TextEncoder().encode(JSON.stringify(edit.previous)).length;
+  utf8.encode(JSON.stringify(edit.previous)).length;
 
 const bytesIn = (stack: Held[]): number =>
   stack.reduce((total, held) => total + held.bytes, 0);
@@ -152,7 +185,7 @@ export function editHistories(
     const held = byStateFile.get(name);
     if (held) return held;
 
-    const fresh: Stacks = { undo: [], redo: [], version: undefined };
+    const fresh: Stacks = { undo: [], redo: [], version: undefined, turn: Promise.resolve() };
     byStateFile.set(name, fresh);
     return fresh;
   }
@@ -173,12 +206,19 @@ export function editHistories(
    */
   function bound(stack: Held[]): void {
     while (stack.length > maxEntries) stack.shift();
-    while (stack.length > 1 && bytesIn(stack) > maxBytes) stack.shift();
+
+    let bytes = bytesIn(stack);
+    while (stack.length > 1 && bytes > maxBytes) bytes -= stack.shift()!.bytes;
   }
 
-  const availability = (stacks: Stacks): HistoryAvailability => ({
-    canUndo: stacks.undo.length > 0,
-    canRedo: stacks.redo.length > 0,
+/**
+   * Reads, and never creates. `availability` is reached from a `GET`, and a lookup that
+   * inserted would let an authenticated caller grow the map a key at a time on the day a
+   * request can name a State File — which is a memory sink reachable by asking a question.
+   */
+  const availability = (stacks: Stacks | undefined): HistoryAvailability => ({
+    canUndo: (stacks?.undo.length ?? 0) > 0,
+    canRedo: (stacks?.redo.length ?? 0) > 0,
   });
 
   const refused = (
@@ -193,12 +233,12 @@ export function editHistories(
    * on the other. Writing them as one function is not a saving — it is the reason redo cannot
    * drift from undo, which is the bug an inverse per direction would invite.
    */
-  async function move(
+  async function step(
     name: string,
+    stacks: Stacks,
     direction: "undo" | "redo",
     basedOn: StateFileVersion | undefined,
   ): Promise<HistoryMove> {
-    const stacks = stacksFor(name);
     const from = direction === "undo" ? stacks.undo : stacks.redo;
     const onto = direction === "undo" ? stacks.redo : stacks.undo;
 
@@ -215,6 +255,15 @@ export function editHistories(
     // stacks away. The file may be readable again in a moment, and the snapshots are still
     // the ones it was built from.
     if ("refused" in loaded) return refused(loaded.refused, stacks, loaded.warnings);
+
+    // Absence is not a refusal — an absent State File reads as an empty one, based on no
+    // revision — and it is not a changed file either, so it must not take the branch below.
+    // An unmounted drive, a sync moving the folder and a deleted file all arrive here, and
+    // none of them is a reason to write a snapshot into a file that is not there or to cost
+    // the student a history the folder coming back would make good again.
+    if (loaded.version === undefined && stacks.version !== undefined) {
+      return refused("state-file-missing", stacks, loaded.warnings);
+    }
 
     // Invalidation (ADR-0013): the file is not the one these snapshots came from. Dropbox,
     // git, an editor or another tool wrote it, and putting a snapshot back would overwrite
@@ -267,6 +316,22 @@ export function editHistories(
     };
   }
 
+  /**
+   * One step at a time per State File. The queue is the `Stacks` itself, so two State Files
+   * never wait on each other, and a step that rejects does not poison the queue behind it —
+   * the chain is continued from a swallowed copy while the caller still sees the rejection.
+   */
+  function move(
+    name: string,
+    direction: "undo" | "redo",
+    basedOn: StateFileVersion | undefined,
+  ): Promise<HistoryMove> {
+    const stacks = stacksFor(name);
+    const taken = stacks.turn.then(() => step(name, stacks, direction, basedOn));
+    stacks.turn = taken.catch(() => undefined);
+    return taken;
+  }
+
   return {
     of(name) {
       const stacks = stacksFor(name);
@@ -278,12 +343,24 @@ export function editHistories(
           // the document it would be redone onto is not the one it was undone from.
           stacks.redo.length = 0;
         },
-        wrote(version) {
+        wrote({ basedOn, version }) {
+          // The file this edit was based on is not the one this history last wrote, so
+          // somebody else wrote it in between: Dropbox, git, an editor, another tool. Every
+          // snapshot already held predates their change, and an undo down to one would put
+          // their work back out of the file — so they go, and this edit's own entry, which
+          // *is* based on what they wrote, is pushed onto the empty stack straight after.
+          //
+          // This is the only moment it can be seen. An edit based on the changed file goes
+          // through, so nothing further along is refused and nothing else compares the two.
+          if (basedOn !== stacks.version) {
+            stacks.undo.length = 0;
+            stacks.redo.length = 0;
+          }
           stacks.version = version;
         },
       };
     },
-    availability: (name) => availability(stacksFor(name)),
+    availability: (name) => availability(byStateFile.get(name)),
     undo: (name, basedOn) => move(name, "undo", basedOn),
     redo: (name, basedOn) => move(name, "redo", basedOn),
   };

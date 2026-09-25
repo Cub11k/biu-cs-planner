@@ -166,7 +166,7 @@ it("refuses to write over a State File it could not read, rather than losing it"
 it("hands the previous value and the edit's label to the undo history", async () => {
   const workspace = ready();
   const history: StateEdit[] = [];
-  const into = { push: (edit: StateEdit) => void history.push(edit) };
+  const into = { push: (edit: StateEdit) => void history.push(edit), wrote: () => {} };
 
   await pick(workspace, FALL_2027, LECTURE, { history: into });
   await pick(workspace, FALL_2027, CLASHING, { history: into });

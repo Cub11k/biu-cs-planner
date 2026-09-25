@@ -82,16 +82,25 @@ export type EditHistory = {
   /** An edit worth undoing. Called once per save, after the write and never before it. */
   push(edit: StateEdit): void;
   /**
-   * The revision the file holds now, after any save — **including one with nothing to
-   * undo**. A stack that only heard about undoable edits would still believe the revision
-   * before a `settings` save, and would then read the file, see a revision it did not
-   * write, and throw the student's undo history away as though Dropbox had been in
-   * (`server/src/history.ts`, "invalidation").
+   * What a save did to the file, called for **every** save — including one with nothing to
+   * undo. Both revisions, because a stack needs both and for different reasons:
    *
-   * Optional because a caller that only wants the entries — a test collecting labels — has
-   * no revision to keep. The stacks are not optional about implementing it.
+   *   - `version`, the one the file holds now. A stack that only heard about undoable edits
+   *     would still believe the revision before a `settings` save, and would then read the
+   *     file, see a revision it did not write, and throw a student's undo history away as
+   *     though Dropbox had been in.
+   *   - `basedOn`, the one this save found there. When it is not the revision the stack last
+   *     wrote, somebody else wrote the file between that save and this one, and every
+   *     snapshot already on the stack predates their change. This is the **only** moment
+   *     that can be noticed: an edit based on the changed file goes through, so a stack told
+   *     only the new revision would believe itself current and hand back a value from before
+   *     the change on the next undo but one.
+   *
+   * Required, and with no default, for the same reason `basedOn` is required on an edit: an
+   * implementation that does not hear this cannot tell its own writes from anyone else's, and
+   * the failure is silent and destructive rather than merely inert.
    */
-  wrote?(version: StateFileVersion): void;
+  wrote(save: { basedOn: StateFileVersion | undefined; version: StateFileVersion }): void;
 };
 
 /**
@@ -315,9 +324,10 @@ export async function editStateFile(
     throw error;
   }
 
-  // The revision first, and on every save: the stack has to believe what the file holds
-  // even when this edit left it nothing to undo.
-  options.history?.wrote?.(version);
+  // Both revisions first, and on every save: the revision this edit found is how a stack
+  // learns that somebody else wrote the file since its last one, and the revision it wrote is
+  // what the stack has to believe next — even when this edit left it nothing to undo.
+  options.history?.wrote({ basedOn: loaded.version, version });
 
   // pushed after the write and never before it: an edit that failed to save did not happen,
   // and an undo of it would write back a value the file never held

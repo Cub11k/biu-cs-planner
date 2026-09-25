@@ -224,7 +224,7 @@ it("keeps the last entries by bytes, dropping the oldest and never the only one"
  * snapshot pushed here is the document that is already on disk: each undo writes the same
  * bytes back, which leaves the revision where it was and the next undo just as valid.
  */
-const entryHolding = async (previous: StateEdit["previous"]): Promise<StateEdit> => ({
+const entryHolding = (previous: StateEdit["previous"]): StateEdit => ({
   label: "pick-group",
   at: Date.now(),
   previous,
@@ -238,7 +238,7 @@ const documentOnDisk = async (): Promise<StateEdit["previous"]> => {
 
 it("holds the last hundred edits and no more", async () => {
   await pick(LECTURE);
-  const entry = await entryHolding(await documentOnDisk());
+  const entry = entryHolding(await documentOnDisk());
   const into = history.of(ALICE);
   // a hundred and one on top of the one real edit, so the bound is crossed twice over
   for (let n = 0; n <= MAX_HISTORY_ENTRIES; n += 1) into.push(entry);
@@ -254,7 +254,7 @@ it("drops entries sooner than a hundred once a stack passes eight megabytes", as
   const held = await documentOnDisk();
   // one Pin carrying a megabyte of opaque Requirement id: the Progress engine never resolves
   // it here, and it makes one entry cost a measurable share of the budget
-  const heavy = await entryHolding({
+  const heavy = entryHolding({
     ...held,
     pins: [{ courseNumber: "89-110", requirementId: "x".repeat(1024 * 1024) }],
   });
@@ -406,4 +406,102 @@ it("refuses an undo while the State File cannot be read, and keeps the stacks", 
   // nothing was written over it, and nothing of the student's history was dropped
   expect(await bytes()).toBe('{"schemaVersion":99}');
   expect(history.availability(ALICE)).toEqual({ canUndo: true, canRedo: false });
+});
+
+/**
+ * The laundering the invalidation check on its own does not catch, and the reason the port
+ * hears the revision each save was *based on*.
+ *
+ * An edit made after somebody else wrote the file goes through — its `basedOn` is the changed
+ * file, so no guard refuses it — and it moves the revision to one this history did write. A
+ * stack told only that would believe itself current, and the undo after the next one would put
+ * back a snapshot from before the other writer's change and take their work out of the file.
+ * The entries from before the change go at the moment the edit is reported, not at the moment
+ * an undo asks.
+ */
+it("empties both stacks when an edit follows a change made on disk", async () => {
+  await pick(LECTURE);
+  // Dropbox, git, an editor, or another tool, while the page sat idle
+  const fromOutside = (await bytes()).replace('"01"', '"09"');
+  await writeFile(statePath(), fromOutside, "utf8");
+
+  // the page reloads and the student picks once more, which is not refused by anything
+  await pick(groupNumber(2));
+
+  // only that last Pick can be taken back: the entry from before the change is gone, not
+  // merely unreachable
+  expect(history.availability(ALICE)).toEqual({ canUndo: true, canRedo: false });
+  const undone = await undo();
+  expect(undone).toMatchObject({ kind: "moved", canUndo: false });
+  // and it went back to what the other writer left, never to before them
+  expect(await bytes()).toBe(fromOutside);
+  await expect(undo()).resolves.toMatchObject({ kind: "refused", reason: "nothing-to-undo" });
+});
+
+/**
+ * A State File that is not there is neither a refusal nor a changed file: it reads as an empty
+ * one based on no revision, and it must take neither of the branches either of those would.
+ * An unmounted drive, a sync moving the folder and a deleted file all arrive here, and none of
+ * them is a reason to write a snapshot into a file that is not there — or to cost the student
+ * a history that the folder coming back makes good again.
+ */
+it("refuses while the State File is not there, keeps the stacks, and creates nothing", async () => {
+  await pick(LECTURE);
+  await pick(groupNumber(2));
+  const held = await bytes();
+  // the drive is not mounted, the sync moved the folder, or the file was deleted
+  await rm(statePath());
+
+  const refused = await history.undo(ALICE, undefined);
+
+  expect(refused).toMatchObject({
+    kind: "refused",
+    reason: "state-file-missing",
+    canUndo: true,
+    canRedo: false,
+  });
+  // nothing was written where the file used to be
+  await expect(bytes()).rejects.toThrow();
+
+  // and when the folder is back, the undo the student asked for is still there to be made
+  await writeFile(statePath(), held, "utf8");
+  await expect(undo()).resolves.toMatchObject({ kind: "moved", label: "pick-group" });
+});
+
+/**
+ * One step at a time per State File, and a step that threw does not wedge the ones behind it.
+ *
+ * The serialisation itself cannot be observed from out here: two undos raced against each
+ * other are refused by the wrapper's own guard whether they were queued or not, because the
+ * second carries the revision the first replaced. What *is* observable is the queue surviving
+ * a rejection — if the chain were continued from the rejected promise rather than a swallowed
+ * copy, one failed read would refuse every undo for the life of the process.
+ */
+it("keeps taking steps after one of them threw", async () => {
+  let breakTheNextRead = false;
+  const flaky: Workspace = {
+    ...workspace,
+    readStateFile: (ref) => {
+      if (!breakTheNextRead) return workspace.readStateFile(ref);
+      breakTheNextRead = false;
+      // not a WorkspaceRefusedError: failing hardware, not a refusal the app has a word for
+      return Promise.reject(new Error("the disk let go mid-read"));
+    },
+  };
+  const over = editHistories(flaky);
+  await editStateFile(
+    flaky,
+    ALICE,
+    { label: "pick-group", apply: (state) => recordPick(state, FALL_2027_A, LECTURE) },
+    { basedOn: undefined, history: over.of(ALICE) },
+  );
+
+  breakTheNextRead = true;
+  await expect(over.undo(ALICE, await currentVersion())).rejects.toThrow("the disk let go");
+
+  // the entry is still there, and the step behind the failed one runs
+  await expect(over.undo(ALICE, await currentVersion())).resolves.toMatchObject({
+    kind: "moved",
+    label: "pick-group",
+  });
 });

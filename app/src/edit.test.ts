@@ -158,7 +158,9 @@ it("refuses a save based on no file when the file is already there", async () =>
 it("pushes nothing onto the undo history when a save is refused", async () => {
   const workspace = ready();
   const history: StateEdit[] = [];
-  const into = { push: (edit: StateEdit) => void history.push(edit) };
+  // `wrote` is not what this test is about, but it is not optional: a stack that cannot hear
+  // what a save did cannot tell its own writes from anyone else's
+  const into = { push: (edit: StateEdit) => void history.push(edit), wrote: () => {} };
   await editStateFile(workspace, ALICE, picking(LECTURE), { basedOn: undefined });
 
   await editStateFile(workspace, ALICE, picking({ ...LECTURE, groupNumber: "02" }), {
@@ -242,10 +244,10 @@ it("leaves the settings a student changed alone when an earlier snapshot goes ba
 it("keeps a settings edit off the stack while still reporting the revision it wrote", async () => {
   const workspace = ready();
   const pushed: StateEdit[] = [];
-  const wrote: (string | undefined)[] = [];
+  const wrote: { basedOn: string | undefined; version: string }[] = [];
   const into = {
     push: (edit: StateEdit) => void pushed.push(edit),
-    wrote: (version: string) => void wrote.push(version),
+    wrote: (save: { basedOn: string | undefined; version: string }) => void wrote.push(save),
   };
   const picked = await editStateFile(workspace, ALICE, picking(LECTURE), {
     basedOn: undefined,
@@ -261,8 +263,12 @@ it("keeps a settings edit off the stack while still reporting the revision it wr
   expect(settings.kind).toBe("saved");
   // one entry, for the Pick, and none for the language
   expect(pushed.map((edit) => edit.label)).toEqual(["pick-group"]);
-  // but both revisions, in the order they were written
-  expect(wrote).toEqual([picked.version, await versionOf(workspace)]);
+  // but both saves, each carrying the revision it found and the revision it wrote — which is
+  // what lets a stack tell its own writes from a change made behind its back
+  expect(wrote).toEqual([
+    { basedOn: undefined, version: picked.version },
+    { basedOn: picked.version, version: await versionOf(workspace) },
+  ]);
 });
 
 /** An entry says when, for a UI that wants to name what it is about to undo. */
