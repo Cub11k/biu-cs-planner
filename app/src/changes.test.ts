@@ -140,12 +140,16 @@ it("counts the app's own State File save, which is the autosave case", async () 
 });
 
 /**
- * A genuine external edit is never lost to the app's own write, even in the same burst. The
- * two collapse into one reported change — one reload, which re-reads both — and one is the
- * right answer: what must not happen is nought. This is the assertion a suppression held open
- * "for the duration of the write", or over a debounce window already running, would fail.
+ * The app's own save and somebody else's edit in one burst are one reported change — one
+ * reload, which re-reads both, because collapsing is not swallowing.
+ *
+ * **What this cannot prove, and the next test can.** One is what a working counter reports and
+ * also what a counter that heard only one of the two would report, so this asserts the
+ * collapsing and not that both were heard. A single number is not separable that way; the
+ * discriminating question is whether an external edit is still counted *after* the app has
+ * written, which is the test below.
  */
-it("still reports an external edit that lands in the same burst as the app's own save", async () => {
+it("collapses the app's own save and an external edit into one change", async () => {
   const workspace = memoryWorkspace({ created: true });
   const clock = manualClock();
   const changes = await watchWorkspace(workspace, clock);
@@ -156,6 +160,33 @@ it("still reports an external edit that lands in the same burst as the app's own
   clock.settle();
 
   expect(changes.changeCount()).toBe(1);
+  changes.stop();
+});
+
+/**
+ * **A genuine external edit is never lost to the app having written.** The app saves, that
+ * burst settles, and somebody else's edit moves the count *again* — two changes, not one.
+ *
+ * This is the discriminating one, and the failure it guards is a suppression that latches:
+ * anything that decides "the app is the writer here" and keeps deciding it, or whose window
+ * outlives the write that opened it, reports one change instead of two and the student's own
+ * editor, Dropbox or git goes unheard. Unlike the test above, the two events are in separate
+ * bursts, so the count can say which of them it missed.
+ */
+it("counts an external edit that follows the app's own save, as a second change", async () => {
+  const workspace = memoryWorkspace({ created: true });
+  const clock = manualClock();
+  const changes = await watchWorkspace(workspace, clock);
+
+  await workspace.saveStateFile(ALICE, { json: { schemaVersion: 1 }, basedOn: undefined });
+  clock.settle();
+  expect(changes.changeCount()).toBe(1);
+
+  // and now somebody else, in a burst of their own
+  workspace.seed(CATALOG_2027, { schemaVersion: 1 });
+  clock.settle();
+
+  expect(changes.changeCount()).toBe(2);
   changes.stop();
 });
 

@@ -346,6 +346,9 @@ export type Workspace = {
    * external change (ADR-0013). `./changes.ts` carries the ruling and why the page rather
    * than this port is what was changed. Telling one writer from another is the save guard's
    * job, and it does it from content.
+   *
+   * **Binds #80, #67 and #73**, the three tickets that write through this port: none may add
+   * suppression to an implementation of it.
    */
   watch(onChange: WorkspaceChanged): Promise<WorkspaceWatcher>;
 };
