@@ -371,14 +371,14 @@ export function fileSystemWorkspace(rootPath: string): Workspace {
    * nothing (#129).
    *
    * **`ENOENT` alone is absence here, and that is the whole of the difference from
-   * `bytesOrAbsent` in what counts as absent.** `ABSENT` is right for the paths that one is given — a plain file part way
-   * along a *file's* path means nothing can exist below it — and wrong for this one, which names
-   * the folder itself. `ENOTDIR` here says what was named is there and is not a folder, which is
-   * a state of the Workspace and the opposite of absence: `usablePath` asks whether a path
-   * resolves inside the Workspace and not what it *is*, so a `catalogs` that is a plain file is
-   * usable, counts towards the layout, and makes `status` report the Workspace **ready** (#121).
-   * A ready Workspace answering "no Catalogs" because its `catalogs` is a file is the lie in its
-   * most visible form.
+   * `bytesOrAbsent` in what counts as absent.** `ABSENT` is right for the paths that one is
+   * given — a plain file part way along a *file's* path means nothing can exist below it — and
+   * wrong for this one, which names the folder itself. `ENOTDIR` here says what was named is
+   * there and is not a folder, which is a state of the Workspace and the opposite of absence:
+   * `usablePath` asks whether a path resolves inside the Workspace and not what it *is*, so a
+   * `catalogs` that is a plain file is usable, counts towards the layout, and makes `status`
+   * report the Workspace **ready** (#121). A ready Workspace answering "no Catalogs" because its
+   * `catalogs` is a file is the lie in its most visible form.
    *
    * Recognised from the errno rather than by asking `isDirectory` first, which is what
    * `requireLayoutFolder` does on the write side. A write has a reason to ask in advance — it
@@ -411,7 +411,9 @@ export function fileSystemWorkspace(rootPath: string): Workspace {
       const code = errnoOf(error);
       if (code === "ENOENT") return undefined;
       const what = path === root ? "the Workspace root" : path.replace(root, ".");
-      if (code === "ENOTDIR") throw new UnreadableError(what, code, "it is there and is not a folder");
+      if (code === "ENOTDIR") {
+        throw new UnreadableError(what, code, "it is there and is not a folder");
+      }
       throw new UnreadableError(what, code);
     }
   };
