@@ -365,7 +365,8 @@ export function render(report: Report): string {
   // What the report does hold about those areas, in the one phrase four sentences want. An area
   // with no test file at all gets the blunt version rather than "0 test titles in 0 files".
   const whatItHas = titlesOnly.length
-    ? `**${countOf(titlesOnlyTotals)} tests in ${titlesOnly.length} files, their titles and nothing more**`
+    ? `**${countOf(titlesOnlyTotals)} tests in ${titlesOnly.length} files, their titles and ` +
+      "nothing more**"
     : "**no test file at all**";
   const out: string[] = [];
 
@@ -412,8 +413,8 @@ export function render(report: Report): string {
   if (anyTestOnly) {
     out.push(
       titlesOnly.length
-        ? `| Of those, titles only | ${countOf(titlesOnlyTotals)} in ${titlesOnly.length} files under ` +
-            `${dirList(testOnlyDirs)} — no graph, no coverage |`
+        ? `| Of those, titles only | ${countOf(titlesOnlyTotals)} in ${titlesOnly.length} ` +
+            `files under ${dirList(testOnlyDirs)} — no graph, no coverage |`
         : `| Titles only | ${dirList(testOnlyDirs)} — no test file, no graph, no coverage |`,
     );
   }

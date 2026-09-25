@@ -123,7 +123,8 @@ export function readTestRun(resultsPath: string, root: string): TestRun {
     const { name, assertionResults } = entry as { name?: unknown; assertionResults?: unknown };
     if (typeof name !== "string" || !Array.isArray(assertionResults)) continue;
     // A file run by two projects arrives as two entries, so they add rather than replace.
-    byFile.set(relative(root, name), (byFile.get(relative(root, name)) ?? 0) + assertionResults.length);
+    const path = relative(root, name);
+    byFile.set(path, (byFile.get(path) ?? 0) + assertionResults.length);
   }
 
   let tests = 0;

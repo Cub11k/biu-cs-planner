@@ -815,8 +815,10 @@ describe("the number a reviewer reads as tests", () => {
   /** The summary table, which is the part read at a glance and where the row lives. */
   const summary = (markdown: string): string => markdown.slice(0, markdown.indexOf("<details>"));
 
-  it("says the count is read from the source, rather than leaving `Tests` to be read as a run's", () => {
-    const markdown = render(report({ tests: [file("core/src/a.test.ts", parameterised("handles %s", 4))] }));
+  it("says the count is read from the source, not leaving `Tests` to be read as a run's", () => {
+    const markdown = render(
+      report({ tests: [file("core/src/a.test.ts", parameterised("handles %s", 4))] }),
+    );
 
     expect(summary(markdown)).toContain("| Tests | 4 in 1 files, counted from the source |");
   });
@@ -824,7 +826,9 @@ describe("the number a reviewer reads as tests", () => {
   it("counts a parameterised entry's rows, and says on the entry that it is one", () => {
     // The entry list is 1 bullet under a total of 4, which is exactly the arithmetic that
     // produced this ticket: a reader counting bullets and taking the answer for the tests.
-    const markdown = render(report({ tests: [file("core/src/a.test.ts", parameterised("handles %s", 4))] }));
+    const markdown = render(
+      report({ tests: [file("core/src/a.test.ts", parameterised("handles %s", 4))] }),
+    );
 
     expect(markdown).toContain("**core/src/a.test.ts** — 4 tests");
     expect(markdown).toContain("- handles %s — **4 cases**, one per row of its table");
@@ -918,7 +922,10 @@ describe("the number a reviewer reads as tests", () => {
     // finds fewer is the report wrong about a file, and only the second is worth a reader's
     // attention. Reported the other way round, every unread table would read as a defect.
     const above = render(
-      report({ tests: [file("core/src/a.test.ts", floor("handles %s"))], run: ran({ "core/src/a.test.ts": 9 }) }),
+      report({
+        tests: [file("core/src/a.test.ts", floor("handles %s"))],
+        run: ran({ "core/src/a.test.ts": 9 }),
+      }),
     );
     const below = render(
       report({
