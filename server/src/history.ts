@@ -211,10 +211,16 @@ export function editHistories(
     while (stack.length > 1 && bytes > maxBytes) bytes -= stack.shift()!.bytes;
   }
 
-/**
-   * Reads, and never creates. `availability` is reached from a `GET`, and a lookup that
-   * inserted would let an authenticated caller grow the map a key at a time on the day a
-   * request can name a State File — which is a memory sink reachable by asking a question.
+  /**
+   * **`stacksFor` is the only thing that inserts, and only `of` calls it.** Everything a
+   * request reaches — the availability a `GET` asks for, the step a `POST` asks for — takes
+   * the map as it finds it, because a lookup that inserted would let a caller grow it a key
+   * at a time on the day a request can name a State File: a memory sink reachable by asking
+   * a question. `of` inserting is right, and is not that: it is called once per State File at
+   * wiring time, for a file that is about to be written.
+   *
+   * Absent and empty are the same answer here, which is why this takes `undefined` rather
+   * than making its callers check.
    */
   const availability = (stacks: Stacks | undefined): HistoryAvailability => ({
     canUndo: (stacks?.undo.length ?? 0) > 0,
@@ -223,7 +229,7 @@ export function editHistories(
 
   const refused = (
     reason: HistoryRefusal,
-    stacks: Stacks,
+    stacks: Stacks | undefined,
     warnings: StateFileWarning[],
   ): HistoryMove => ({ kind: "refused", reason, warnings, ...availability(stacks) });
 
@@ -295,6 +301,10 @@ export function editHistories(
     }
 
     from.pop();
+    // `saved` and `unchanged` are one branch on purpose, so there is no path here that no
+    // test can enter. `restoring` builds a fresh object, so `unchanged` cannot arrive today;
+    // if it ever did it would mean the file already held this snapshot, and every line below
+    // would still be right — `outcome.version` is the revision the file holds either way.
     // What the other direction now puts back: the document as it stood before this step,
     // under the same label — so redoing an undone `pick-group` is a `pick-group` again.
     const displaced: StateEdit = {
@@ -326,7 +336,14 @@ export function editHistories(
     direction: "undo" | "redo",
     basedOn: StateFileVersion | undefined,
   ): Promise<HistoryMove> {
-    const stacks = stacksFor(name);
+    const stacks = byStateFile.get(name);
+    // A State File with no history has nothing to undo, and asking about it is no reason to
+    // start one — see `availability` above for why this does not reach for `stacksFor`.
+    if (stacks === undefined) {
+      const nothing = direction === "undo" ? "nothing-to-undo" : "nothing-to-redo";
+      return Promise.resolve(refused(nothing, undefined, []));
+    }
+
     const taken = stacks.turn.then(() => step(name, stacks, direction, basedOn));
     stacks.turn = taken.catch(() => undefined);
     return taken;
