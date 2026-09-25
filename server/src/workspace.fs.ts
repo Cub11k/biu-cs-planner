@@ -51,11 +51,14 @@ const STATE_FILE = /^(.+)\.state\.json$/;
  *
  * ## This watcher reports the app's own writes on purpose (#88)
  *
- * Everything the app writes lands in a watched folder. A Catalog import writes
- * `.tmp-<year>-<pid>.json` into `catalogs/` and renames it; a State File save writes
- * `.tmp-<pid>-<name>.state.json` into the **root**, where State Files live, and renames it.
- * All four events are reported, and once autosave exists that is a reported change every few
- * seconds of editing, each one caused by the page that will be told about it.
+ * Everything the app writes into a watched folder is reported. A Catalog import writes
+ * `.tmp-<pid>-<year>.json` into `catalogs/` and renames it; a State File save writes
+ * `.tmp-<pid>-<name>.state.json` into the **root**, where State Files live, and renames it —
+ * `temporaryPath` below is the one that builds both, pid first and the real name after. All
+ * four events are reported, and once autosave exists that is a reported change every few
+ * seconds of editing, each one caused by the page that will be told about it. (#88's body
+ * writes the Catalog temporary as `.tmp-<year>-<pid>.json`, which is the two halves the other
+ * way round; the code is what this follows.)
  *
  * **That is correct and nothing here suppresses it.** The folder really did change, and a
  * count that said otherwise would be lying about the one thing it carries. The harm was never
@@ -80,9 +83,13 @@ const STATE_FILE = /^(.+)\.state\.json$/;
  * SHA-256 of the bytes is exact; a filesystem event carries no author and never will. Do not
  * try to recover one here.
  *
- * **Binds #80, #67 and #73** — the first save from the UI, backups and undo, all of which
- * write into a watched folder. None of them may add suppression, and each must leave the page
- * able to tolerate its own write.
+ * **Binds #80, #67 and #73.** #80 and #73 write into a watched folder — the first save from
+ * the UI, and an undo, which goes through the same guarded save. #67 is the other way round
+ * and is bound for that reason: its snapshots go into `.backups/`, where nothing is watched,
+ * so they move no count and may not be made to by watching that folder — and a *restore*
+ * writes a State File into the root, which is watched and is reported like any other save.
+ * None of the three may add suppression, and each must leave the page able to tolerate its
+ * own write.
  */
 const WATCHED_FOLDERS: WorkspaceFolder[] = ["catalogs", "requirements"];
 

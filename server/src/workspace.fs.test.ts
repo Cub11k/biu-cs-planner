@@ -407,7 +407,8 @@ it("ignores .backups, and still hears the folders that matter", async () => {
 /**
  * **The app's own writes are reported, and that is the #88 ruling rather than an oversight.**
  * A State File save writes `.tmp-<pid>-alice.state.json` into the Workspace root, where State
- * Files live, and renames it onto the real name; both events are news. Nothing here tries to
+ * Files live, and renames it onto the real name; both events are news. (A Catalog import is
+ * the same shape one folder down: `.tmp-<pid>-2027.json`, pid first and the real name after.) Nothing here tries to
  * recognise them, because the count they feed is one number `server/src/api.ts` serves to
  * every poller, so a write hidden from the page that made it is hidden from the other tab
  * too — for which it is exactly an external change (ADR-0013).
@@ -437,7 +438,7 @@ it("reports the app's own State File save, the temporary and the rename alike", 
 
 /**
  * The same ruling for the other writer the app has today. A Catalog import writes
- * `.tmp-<year>-<pid>.json` into `catalogs/` and renames it, and both are reported: a Catalog
+ * `.tmp-<pid>-<year>.json` into `catalogs/` and renames it, and both are reported: a Catalog
  * that has just arrived is something every open tab should be showing.
  */
 it("reports the app's own Catalog import, the temporary and the rename alike", async () => {
@@ -497,7 +498,11 @@ it("sees an external edit that lands while the app is saving", async () => {
   // only be this write and not a tail of the save's two
   await quiet(watched.events);
   const afterTheBurst = watched.events();
-  await writeFile(join(root, "catalogs", "2027.json"), JSON.stringify({ ...CATALOG, sources: [] }), "utf8");
+  await writeFile(
+    join(root, "catalogs", "2027.json"),
+    JSON.stringify({ ...CATALOG, sources: [] }),
+    "utf8",
+  );
   expect(await within(() => watched.events() > afterTheBurst)).toBe(true);
 });
 

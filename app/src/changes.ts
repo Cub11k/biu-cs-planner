@@ -20,9 +20,11 @@ import type { Workspace, WorkspaceWatcher } from "./workspace.ts";
  * ## The app's own writes are counted, and this is the reason (#88)
  *
  * A watcher cannot tell whose write it saw, and **this does not try to**. Every write the app
- * makes — a Catalog import, an autosave, a backup rotation, an undo — lands in a watched
- * folder and moves this counter, exactly as an editor's write does. The folder changed; the
- * count says so; that is all it says.
+ * makes into a watched folder — a Catalog import, an autosave, an undo, a restore from a
+ * backup — moves this counter, exactly as an editor's write does. The folder changed; the
+ * count says so; that is all it says. (A backup *snapshot* is the exception, and not by
+ * suppression: it is written into `.backups/`, which the adapter does not watch at all,
+ * because nothing in it is ever shown.)
  *
  * **This counter is why suppression cannot live below it.** There is one of it per server and
  * `server/src/api.ts` serves the same number to every poller, with no per-connection state on
@@ -37,7 +39,8 @@ import type { Workspace, WorkspaceWatcher } from "./workspace.ts";
  * resetting, so a change it caused itself costs one loopback request and nothing visible
  * (`web/src/timetable/TimetableScreen.tsx`). Whose write it was, where it genuinely matters,
  * is answered from content by the save guard — the revision a save was based on — and by the
- * undo stacks in `server/src/history.ts`, never from an event.
+ * undo stacks in `server/src/history.ts` — `EditHistory.wrote` in `./edit.ts` is the port
+ * they hear it through — never from an event.
  *
  * **Binds #80, #67 and #73**, all of which save: none may add suppression here or below.
  */
