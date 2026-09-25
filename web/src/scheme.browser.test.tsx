@@ -634,8 +634,8 @@ describe("a second tab on the same origin", () => {
   });
 
   it("stops following once its watcher is stopped", async () => {
-    // The stop function is what a component would use. It is not used in `main.tsx`, where
-    // the listener lives as long as the page, so this is the only place it is exercised.
+    // The stop function is what a component would use. `main.tsx` does not, because there the
+    // listener lives as long as the page, so this is the only place it is exercised.
     await operatingSystem("light");
     const second = await entryDocument();
     const view = second.defaultView;
@@ -648,12 +648,14 @@ describe("a second tab on the same origin", () => {
     });
 
     stop();
-    rememberScheme(schemeStore(), "light");
 
-    // Nothing to wait for, so the wait is for the other tab to hear it instead: a second
-    // watched document proves the event was delivered, and the stopped one stayed put.
+    // A third tab, opened while the store already says dark, so its stamp puts dark on it and
+    // the change below can only reach it through the event. That is what makes the assertion
+    // about the stopped tab mean anything: the event was delivered, and it was ignored there.
     const third = await entryDocument();
+    expect(third.documentElement.getAttribute(SCHEME_ATTRIBUTE)).toBe("dark");
     watchIn(third, third.documentElement);
+
     rememberScheme(schemeStore(), "light");
     await vi.waitFor(() => {
       expect(third.documentElement.getAttribute(SCHEME_ATTRIBUTE)).toBe("light");
