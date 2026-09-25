@@ -1,5 +1,6 @@
 import type { StateFileSave, StateFileVersion } from "@biu-cs-planner/core";
 import {
+  NotAWorkspaceError,
   requireCatalogRef,
   requireStateFileName,
   StateFileChangedError,
@@ -98,11 +99,20 @@ export function memoryWorkspace(
    * the refusal the real adapter makes and in the order it makes it: before it looks at what
    * the file holds. A double that asked in the other order would answer a save into a folder
    * that is not a Workspace with a conflict.
+   *
+   * `NotAWorkspaceError` from the port, so this refusal is the real adapter's own and not a
+   * copy of its sentence: it was a plain `Error` spelling the same words out again here, which
+   * is a refusal nothing catches by name and a wording free to drift from the one a student
+   * actually meets (#121).
+   *
+   * **The other way a layout is not one, this double cannot hold**: a plain file standing where
+   * a folder of the layout belongs, which the real adapter refuses with the same error naming
+   * the folder. There is nothing here a `WorkspaceFolder` could be the wrong kind of, and the
+   * double is not given a knob for it for the reason it is given none for an unreadable file —
+   * a knob invented for one test is a behaviour of the double rather than of the port.
    */
   const requireLayout = (): void => {
-    if (folders.length < WORKSPACE_LAYOUT.length) {
-      throw new Error("refusing to write: the Workspace layout does not exist yet");
-    }
+    if (folders.length < WORKSPACE_LAYOUT.length) throw new NotAWorkspaceError();
   };
 
   /**

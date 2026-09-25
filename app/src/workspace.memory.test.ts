@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { memoryWorkspace } from "./workspace.memory.ts";
-import { StateFileChangedError, WorkspaceRefusedError } from "./workspace.ts";
+import { NotAWorkspaceError, StateFileChangedError, WorkspaceRefusedError } from "./workspace.ts";
 
 /** A save based on no file, which is the claim that the file is not there yet. */
 const firstSave = (data: unknown) => ({ json: data as Record<string, unknown>, basedOn: undefined });
@@ -148,13 +148,30 @@ it("refuses a whole-file read of a State File", async () => {
   await expect(read(alice)).rejects.toThrow(/refusing the State File "alice" here/);
 });
 
-/** The real adapter refuses this, and a double that did not would prove a save that fails. */
+/**
+ * The real adapter refuses this, and a double that did not would prove a save that fails.
+ *
+ * `NotAWorkspaceError` from the port, and both writes, because this was a plain `Error` with
+ * the sentence spelled out here a second time: nothing caught it by name, and a wording a
+ * student reads was free to drift from the adapter's (#121).
+ */
 it("refuses a write before the layout exists", async () => {
   const workspace = memoryWorkspace();
+  const alice = { kind: "state", name: "alice" } as const;
 
-  await expect(
-    workspace.saveStateFile({ kind: "state", name: "alice" }, firstSave(STATE)),
-  ).rejects.toThrow(/layout does not exist/);
+  await expect(workspace.saveStateFile(alice, firstSave(STATE))).rejects.toThrow(NotAWorkspaceError);
+  await expect(workspace.saveStateFile(alice, firstSave(STATE))).rejects.toThrow(
+    /layout does not exist/,
+  );
+  // and a Catalog, the other write, which goes through the same check
+  await expect(workspace.write({ kind: "catalog", academicYear: 2027 }, CATALOG)).rejects.toThrow(
+    NotAWorkspaceError,
+  );
+  // the type every caller of this port already catches, so the refusal is a Warning and never
+  // a crashed server (docs/design.md, "API and data rules")
+  await expect(workspace.write({ kind: "catalog", academicYear: 2027 }, CATALOG)).rejects.toThrow(
+    WorkspaceRefusedError,
+  );
   expect(workspace.written()).toEqual([]);
 });
 

@@ -37,6 +37,7 @@ export {
 } from "./changes.ts";
 export {
   isStateFileName,
+  NotAWorkspaceError,
   requireCatalogRef,
   requireStateFileName,
   StateFileChangedError,

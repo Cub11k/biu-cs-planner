@@ -147,6 +147,55 @@ export function requireCatalogRef(ref: WorkspaceRef): void {
 }
 
 /**
+ * A write into a folder that is not a Workspace: the layout is not there yet, or something
+ * that is not a folder stands where a folder of the layout belongs.
+ *
+ * **One refusal shared by both adapters**, as `requireStateFileName` is, and for the same
+ * reason: it was two plain `Error`s in `server/src/workspace.fs.ts` and a third copy of the
+ * same sentence as a literal in `app/src/workspace.memory.ts`, so the two adapters could
+ * drift apart on the wording of a refusal a caller reads, and neither copy was a type
+ * anything could catch by name (#121).
+ *
+ * **A `WorkspaceRefusedError` and not a kind of its own.** That error means a target a
+ * Workspace will not touch, and a folder nobody has agreed to make a Workspace is exactly
+ * that: the request names a file the Workspace has no place to put, which is a mistake in the
+ * request and not a fact about the file. `StateFileChangedError`'s doc already draws the line
+ * this side of itself — "the same class of refusal as a folder that is not a Workspace yet" —
+ * and the boundary needs no new arm for this: `app/src/edit.ts` and `app/src/catalog.ts`
+ * already catch `WorkspaceRefusedError` and word it as `workspace-refused`, which
+ * `server/src/api.ts` answers with a 409. A kind of its own would have to be added to every
+ * one of those to be answered at all, and until it was it would be the unnamed 500 this
+ * subclass exists to remove.
+ *
+ * **It is a subclass anyway, rather than the base error with a message**, so that a test can
+ * say which refusal it got and a future caller can tell "not a Workspace" from a name that is
+ * a path without reading the sentence. `name` is deliberately left as the base class's, as
+ * `OutsideWorkspaceError` and `UnreadableError` leave it: the name is the category a boundary
+ * reports, and there is exactly one of those.
+ */
+export class NotAWorkspaceError extends WorkspaceRefusedError {
+  /**
+   * The part of the layout that is what is wrong, when one part is; `undefined` when the
+   * answer is the layout as a whole, which is what a folder nobody has created yet gives.
+   */
+  readonly folder: WorkspaceFolder | undefined;
+
+  /**
+   * `because` says what is wrong with that one folder, in the adapter's own words: a plain
+   * file where the folder belongs is not the same news as a folder that could not be made,
+   * and a shared sentence that covered both would have to be vague enough to be useless. The
+   * *stem* is what is shared, and it is here.
+   */
+  constructor(part?: { folder: WorkspaceFolder; because: string }) {
+    super(
+      "refusing to write: the Workspace layout does not exist yet" +
+        (part === undefined ? "" : ` — ${part.folder} ${part.because}`),
+    );
+    this.folder = part?.folder;
+  }
+}
+
+/**
  * What a State File holds, and which revision that content is.
  *
  * The version is produced by whatever read the file, because that is the only thing that
