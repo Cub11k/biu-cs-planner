@@ -958,19 +958,43 @@ it("refuses to list Catalogs when catalogs is a plain file, rather than reportin
 
 /**
  * The same mistake one level up: the Workspace root itself is a plain file, which is where a
- * State File would be listed from. `ENOTDIR` is absence for every *file* path this module
- * builds and `ABSENT` says so; for the folder being listed it is the opposite answer, and
- * reusing that list here is the defect this ticket's amendment warned about.
+ * State File is listed from. `ENOTDIR` is absence for every *file* path this module builds and
+ * `ABSENT` says so; for the folder being listed it is the opposite answer, and reusing that list
+ * here is the defect this ticket's amendment warned about.
+ *
+ * **It rests on that reading alone and not on the argument the `catalogs` case makes.** There
+ * `status` reports the Workspace ready, which is what makes an empty answer a lie; here every
+ * folder of the layout is missing, so `status` reports **not ready** and the student would be
+ * offered the layout. Asserted below rather than left to be assumed either way. The refusal is
+ * still the right answer — something is at that name and it is the wrong kind of thing, so "I
+ * could not look" is true where "there are none" is not — but it is the one case in this ticket
+ * where a query on a Workspace that is not set up refuses rather than answering empty, and that
+ * is worth seeing plainly rather than glossing as the same case.
+ *
+ * The whole sentence, because the Workspace root is the one folder whose refusal cannot spell
+ * itself as a path: `path.replace(root, ".")` leaves `"."`, which names nothing, so
+ * `entriesOrAbsent` names it instead. A `toMatch` on the tail would have passed over that.
  */
 it("refuses to list State Files when the Workspace root is a file rather than a folder", async () => {
   const notAFolder = join(root, "workspace");
   await writeFile(notAFolder, "not a folder");
   const workspace = fileSystemWorkspace(notAFolder);
 
+  // not the ready Workspace the catalogs case turns on: this one has no layout at all
+  expect(await workspace.status()).toEqual({
+    ready: false,
+    missing: ["catalogs", "requirements", "backups"],
+  });
+
   const refusal = await workspace.list("state").catch((error: unknown) => error);
 
   expect(refusal).toBeInstanceOf(WorkspaceRefusedError);
-  expect((refusal as Error).message).toMatch(/is there and is not a folder \(ENOTDIR\)/);
+  expect((refusal as Error).message).toBe(
+    "refusing the Workspace root: it is there and is not a folder (ENOTDIR)",
+  );
+  // the subject of the refusal is named, and no path of any kind leaves the port
+  expect((refusal as Error).message).not.toContain(root);
+  expect((refusal as Error).message).not.toContain(notAFolder);
 });
 
 /**

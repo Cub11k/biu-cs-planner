@@ -291,7 +291,9 @@ export type Workspace = {
    * nobody may look into are different, and answering both with `[]` tells a student "no
    * Catalogs" when the truth is "I could not look". The first caller will be a screen whose
    * whole job is to show them what is in their folder, so the lie would be a visible one
-   * (#129). **Only an absent folder may come back empty.**
+   * (#129). An absent folder answers empty and so does a real folder holding nothing, because
+   * that is the same news to a student: there is none of this kind here. **What may never come
+   * back empty is a folder that could not be listed.**
    *
    * A folder that is not a folder at all — a plain `catalogs` file — is one of the two ways to
    * reach that refusal, and it is deliberately *not* absence: what was named is there, and it

@@ -155,11 +155,7 @@ const errnoOf = (error: unknown): string | undefined => {
  * the sentence is the news and the code is for a log.
  */
 class UnreadableError extends WorkspaceRefusedError {
-  constructor(
-    what: string,
-    code: string | undefined,
-    because = "it is there and cannot be read",
-  ) {
+  constructor(what: string, code: string | undefined, because = "it is there and cannot be read") {
     super(`refusing ${what}: ${because}` + (code === undefined ? "" : ` (${code})`));
   }
 }
@@ -374,8 +370,8 @@ export function fileSystemWorkspace(rootPath: string): Workspace {
    * to answer `[]`, so a `catalogs/` the app may not list was indistinguishable from one holding
    * nothing (#129).
    *
-   * **`ENOENT` alone is absence here, and this is the whole of the difference from
-   * `bytesOrAbsent`.** `ABSENT` is right for the paths that one is given — a plain file part way
+   * **`ENOENT` alone is absence here, and that is the whole of the difference from
+   * `bytesOrAbsent` in what counts as absent.** `ABSENT` is right for the paths that one is given — a plain file part way
    * along a *file's* path means nothing can exist below it — and wrong for this one, which names
    * the folder itself. `ENOTDIR` here says what was named is there and is not a folder, which is
    * a state of the Workspace and the opposite of absence: `usablePath` asks whether a path
@@ -400,6 +396,13 @@ export function fileSystemWorkspace(rootPath: string): Workspace {
    * absence the thing nobody remembers: `requireJsonName` and `requireLayoutFolder` in this file
    * stand on the same ground. The coverage in a pull request report will show the line, and it is
    * this paragraph rather than a missing case.
+   *
+   * **The Workspace root is named rather than spelled as a path.** It is the folder a State File
+   * is listed from, so it reaches this too, and `path.replace(root, ".")` turns it into `"."` — a
+   * refusal whose subject is a single dot, which names nothing to whoever reads it. Every other
+   * path here is below the root and still reads as `./catalogs`. `UnwritableError`'s doc calls
+   * the Workspace-relative wording a wart wanting `describeRef` and makes it its own ticket; this
+   * is only its degenerate case, fixed where it appears rather than left to say nothing.
    */
   const entriesOrAbsent = async (path: string): Promise<string[] | undefined> => {
     try {
@@ -407,11 +410,9 @@ export function fileSystemWorkspace(rootPath: string): Workspace {
     } catch (error) {
       const code = errnoOf(error);
       if (code === "ENOENT") return undefined;
-      throw new UnreadableError(
-        path.replace(root, "."),
-        code,
-        code === "ENOTDIR" ? "it is there and is not a folder" : undefined,
-      );
+      const what = path === root ? "the Workspace root" : path.replace(root, ".");
+      if (code === "ENOTDIR") throw new UnreadableError(what, code, "it is there and is not a folder");
+      throw new UnreadableError(what, code);
     }
   };
 
