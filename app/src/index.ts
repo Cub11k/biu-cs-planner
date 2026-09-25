@@ -22,6 +22,14 @@ export {
   type StateSnapshot,
 } from "./edit.ts";
 export {
+  choosing,
+  readSettings,
+  setSettings,
+  type SettingsChange,
+  type SettingsOptions,
+  type SettingsResult,
+} from "./settings.ts";
+export {
   DEFAULT_STATE_FILE,
   pickGroup,
   readTimetable,
