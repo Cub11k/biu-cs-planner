@@ -28,10 +28,11 @@ applyScheme(document.documentElement, storedScheme(schemeStore()));
 // tab on this origin re-stamps this one without a reload (#146). The listener is meant to
 // live as long as the page, so the stop function it returns is not kept.
 //
-// What this does not move is `SchemeControl`'s own `<select>`, which reads the store once as
-// it mounts: the other tab's page turns dark while its drop-down still says what it said when
-// that tab loaded. The palette is the part a student is looking at, and the control's word for
-// it is left to the change that owns that component — #146's pull request carries the edit.
+// What this does not move is `SchemeControl`'s own `<select>`, which reads the store once as it
+// mounts: the other tab's page turns dark while its drop-down still says what it said when that
+// tab loaded. The palette is the part a student is looking at; the word for it is one
+// `useEffect` over `onSchemeChanged` inside that component, and #146's pull request carries the
+// edit rather than making it, because the component belongs to another change in flight.
 watchScheme(window, schemeStore(), document.documentElement);
 
 createRoot(root).render(
