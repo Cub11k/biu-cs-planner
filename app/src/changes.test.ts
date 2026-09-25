@@ -1,6 +1,8 @@
 import { expect, it } from "vitest";
 import { DEFAULT_SETTLE_MS, watchWorkspace, type Schedule } from "./changes.ts";
 import { memoryWorkspace } from "./workspace.memory.ts";
+import { editStateFile } from "./edit.ts";
+import type { Workspace } from "./workspace.ts";
 
 /**
  * The settling is asserted against a clock the test holds, not the machine's: `settle()`
@@ -26,7 +28,27 @@ function manualClock(): { schedule: Schedule; settle: () => void; waiting: () =>
 }
 
 const CATALOG_2027 = { kind: "catalog" as const, academicYear: 2027 };
-const ALICE = { kind: "state" as const, name: "alice" };
+
+const PIN = { courseNumber: "83112", requirementId: "core" };
+
+/**
+ * The app's own State File save, made the way production makes one: through `editStateFile`,
+ * which is the only path that writes a State File (`CLAUDE.md`, "Code guardrails", enforced by
+ * `tools/ci/state-file-writer.test.ts`). Calling `workspace.saveStateFile` from here would be a
+ * second write path, and it would also weaken what these tests claim — "the app's own write" is
+ * the write the app actually makes, and the events the counter has to count are that path's.
+ */
+async function saveThroughTheApp(workspace: Workspace): Promise<void> {
+  const outcome = await editStateFile(
+    workspace,
+    "alice",
+    { label: "pin-course", apply: (state) => ({ ...state, pins: [...state.pins, PIN] }) },
+    { basedOn: undefined },
+  );
+  // A save that did not happen would leave the counts below proving nothing.
+  expect(outcome.kind).toBe("saved");
+}
+
 
 it("starts at nothing having changed", async () => {
   const workspace = memoryWorkspace({ created: true });
@@ -132,7 +154,7 @@ it("counts the app's own State File save, which is the autosave case", async () 
   const clock = manualClock();
   const changes = await watchWorkspace(workspace, clock);
 
-  await workspace.saveStateFile(ALICE, { json: { schemaVersion: 1 }, basedOn: undefined });
+  await saveThroughTheApp(workspace);
   clock.settle();
 
   expect(changes.changeCount()).toBe(1);
@@ -154,7 +176,7 @@ it("collapses the app's own save and an external edit into one change", async ()
   const clock = manualClock();
   const changes = await watchWorkspace(workspace, clock);
 
-  await workspace.saveStateFile(ALICE, { json: { schemaVersion: 1 }, basedOn: undefined });
+  await saveThroughTheApp(workspace);
   // somebody else, into the same still-open window
   workspace.seed(CATALOG_2027, { schemaVersion: 1 });
   clock.settle();
@@ -178,7 +200,7 @@ it("counts an external edit that follows the app's own save, as a second change"
   const clock = manualClock();
   const changes = await watchWorkspace(workspace, clock);
 
-  await workspace.saveStateFile(ALICE, { json: { schemaVersion: 1 }, basedOn: undefined });
+  await saveThroughTheApp(workspace);
   clock.settle();
   expect(changes.changeCount()).toBe(1);
 
