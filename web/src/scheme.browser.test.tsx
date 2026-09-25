@@ -411,7 +411,10 @@ it.each([
  *
  * With `store: "blocked"` the document gets a store that throws on every access, ahead of the
  * stamp — a browser in a mode where the store is switched off. That is the stamp's own `catch`
- * under test rather than a stand-in for it.
+ * under test rather than a stand-in for it. The same script records any uncaught error onto
+ * `<html>`, because a stamp with no `catch` leaves exactly the same *page* as one with it: no
+ * attribute either way, since the throw happens on the line that would have set it. What the
+ * `catch` is worth is that nothing is thrown at all, and that has to be looked at directly.
  */
 async function entryDocument({
   stamp = true,
@@ -424,7 +427,10 @@ async function entryDocument({
 
   if (store === "blocked") {
     const block = parsed.createElement("script");
-    block.textContent = `Object.defineProperty(window, "localStorage", {
+    block.textContent = `window.addEventListener("error", (failure) => {
+      document.documentElement.dataset.stampError = String(failure.message);
+    });
+    Object.defineProperty(window, "localStorage", {
       get() {
         throw new Error("the store is switched off");
       },
@@ -529,8 +535,10 @@ describe("the first paint, before any module has run", () => {
 
     expect(blocked.documentElement.hasAttribute(SCHEME_ATTRIBUTE)).toBe(false);
     expect(palette(blocked.documentElement)).toEqual(systemDark);
-    // …and the document is a document, not a parse that stopped at a thrown error.
     expect(blocked.getElementById("root")).not.toBeNull();
+    // And it threw nothing on the way. Without this line the `catch` could be deleted and no
+    // assertion here would move, because the page a throw leaves is the same page.
+    expect(blocked.documentElement.dataset["stampError"]).toBeUndefined();
   });
 
   it("paints the machine's scheme with no script at all, which is JavaScript switched off", async () => {
