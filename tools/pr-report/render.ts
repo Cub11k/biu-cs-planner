@@ -11,11 +11,37 @@ export type Report = {
   edges: CallEdge[];
   /** Modules the coverage run did not measure at all. */
   unmeasured: string[];
+  /**
+   * Directories `collect` read test titles out of and described no other way: no module in
+   * either graph, no row in the coverage table. `TEST_ONLY_DIRS` in `tools/pr-report/collect.ts`
+   * says which and why.
+   *
+   * It is here so that the report can **say** so. An area left out silently reads as an area
+   * with nothing in it, and a reviewer sent to this report before a `tools/` diff (`CLAUDE.md`)
+   * read "no tests" where the truth was "not measured" (#123). Every sentence `render` builds
+   * from this field exists to stop one specific reading, so an empty list produces none of
+   * them rather than a paragraph about nothing.
+   */
+  testOnlyDirs: string[];
 };
 
 const id = (s: string): string => s.replace(/[^A-Za-z0-9]/g, "_");
 const esc = (s: string): string => s.replace(/"/g, "'").replace(/\|/g, "\\|");
 const bar = (n: number): string => "█".repeat(Math.round(n / 10)).padEnd(10, "░");
+
+/**
+ * Whether a repo-relative path lies in one of the directories only test titles were read from.
+ *
+ * Matched a whole segment at a time rather than by `startsWith` alone, so `tools` does not claim
+ * a `toolsmith/` nobody put in the list. The comparison lives here, in the one place that asks
+ * the question, rather than each caller re-deriving a prefix rule.
+ */
+const inTestOnly = (path: string, dirs: readonly string[]): boolean =>
+  dirs.some((dir) => path === dir || path.startsWith(`${dir}/`));
+
+/** The directories as a reader names them: one `tools/`, or a list where there are several. */
+const dirList = (dirs: readonly string[]): string =>
+  dirs.map((dir) => `\`${dir}/\``).join(", ");
 
 /**
  * One arrow, ready to draw.
@@ -235,8 +261,14 @@ function fold(summary: string, body: readonly string[]): string[] {
 const title = (text: string, size: string): string => `<strong>${text}</strong> — ${size}`;
 
 export function render(report: Report): string {
-  const { modules, tests, coverage, edges, unmeasured } = report;
+  const { modules, tests, coverage, edges, unmeasured, testOnlyDirs } = report;
   const cases = tests.reduce((n, t) => n + t.cases.length, 0);
+  // The test files whose directory the rest of this report says nothing about. Counted once,
+  // here, because four separate places need to know whether there are any: a row in the
+  // summary, a sentence under it, a marker beside each such file's titles, and a line in the
+  // section that says where to look.
+  const titlesOnly = tests.filter((t) => inTestOnly(t.path, testOnlyDirs));
+  const titlesOnlyCases = titlesOnly.reduce((n, t) => n + t.cases.length, 0);
   const out: string[] = [];
 
   out.push("## What this change is, without reading it");
@@ -254,6 +286,14 @@ export function render(report: Report): string {
   out.push("|---|---|");
   out.push(`| Modules | ${modules.length} across ${new Set(modules.map((m) => m.workspace)).size} workspaces |`);
   out.push(`| Tests | ${cases} in ${tests.length} files |`);
+  // Named in the summary rather than only inside the fold, because it qualifies every number
+  // under it: the tests counted above are not all the tests this report can say anything about.
+  if (titlesOnly.length) {
+    out.push(
+      `| Of those, titles only | ${titlesOnlyCases} in ${titlesOnly.length} files under ` +
+        `${dirList(testOnlyDirs)} — no graph, no coverage |`,
+    );
+  }
   if (t) {
     out.push(`| Statements | \`${bar(t.statements)}\` ${t.statements}% |`);
     out.push(`| Branches | \`${bar(t.branches)}\` ${t.branches}% |`);
@@ -265,6 +305,26 @@ export function render(report: Report): string {
   out.push(`| Functions never executed by a test | ${coverage.deadFunctions.length} |`);
   if (unmeasured.length) out.push(`| Modules with no coverage at all | ${unmeasured.length} |`);
   out.push("");
+
+  // The scope of everything else, stated where the numbers are read rather than left to be
+  // worked out from which paths happen to appear. This is the sentence #123 asked for: the
+  // report is told to be read *before* the diff, so its silence about an area is read as a
+  // statement about that area, and it was making one that was not true.
+  if (titlesOnly.length) {
+    // Singular or plural from the list of directories, which is the subject of the sentence.
+    const one = testOnlyDirs.length === 1;
+    out.push(
+      `Both graphs and every coverage number here describe the workspaces counted above. ` +
+        `${dirList(testOnlyDirs)} ${one ? "is" : "are"} in neither graph and in no coverage row: ` +
+        `a module graph of the tooling says nothing about the app, and \`vitest.config.ts\` ` +
+        `leaves it out of coverage deliberately. What ${one ? "it does" : "they do"} have is ` +
+        `**${titlesOnlyCases} test titles in ${titlesOnly.length} files**, listed below and marked ` +
+        `where they appear — so read nothing here as a claim that ${dirList(testOnlyDirs)} ` +
+        `${one ? "has" : "have"} no tests, or that ${one ? "its" : "their"} code did not run. ` +
+        `${one ? "It is" : "They are"} not measured, which is a different thing.`,
+    );
+    out.push("");
+  }
 
   const drawn = drawnEdges(modules);
   const erased = drawn.filter((d) => d.kind.erasable).length;
@@ -387,16 +447,40 @@ export function render(report: Report): string {
   const claims: string[] = [];
   claims.push("Test titles, verbatim. This is the specification the change is held to.");
   claims.push("");
+  if (titlesOnly.length) {
+    claims.push(
+      `A file marked **titles only** is one from ${dirList(testOnlyDirs)}: its titles are read ` +
+        `from the source like every other file's, and the graphs and the coverage table above ` +
+        `describe it not at all. The titles are the whole of what this report knows about it, ` +
+        `which is more than the nothing it used to say (#123).`,
+    );
+    claims.push("");
+  }
   for (const file of tests) {
     if (!file.cases.length) continue;
-    claims.push(`**${file.path}** — ${file.cases.length} tests`);
+    // Marked on the file rather than gathered into a section of their own, because this is
+    // where a reviewer of a `tools/` change arrives looking for its file by name, and a
+    // heading elsewhere is a thing to be scrolled past instead of read.
+    const only = inTestOnly(file.path, testOnlyDirs)
+      ? " — **titles only**, not graphed or measured"
+      : "";
+    claims.push(`**${file.path}** — ${file.cases.length} tests${only}`);
     claims.push("");
     for (const c of file.cases) {
       claims.push(`- ${c.suite.length ? `*${c.suite.join(" › ")}* — ` : ""}${c.title}`);
     }
     claims.push("");
   }
-  out.push(...fold(title("What the tests claim the code does", `${cases} tests in ${tests.length} files`), claims));
+  out.push(
+    ...fold(
+      title(
+        "What the tests claim the code does",
+        `${cases} tests in ${tests.length} files` +
+          (titlesOnly.length ? `, ${titlesOnlyCases} of them titles only` : ""),
+      ),
+      claims,
+    ),
+  );
 
   const rows = [...coverage.byFile.entries()].sort((a, b) => a[1].branches - b[1].branches);
   const byFile: string[] = [];
@@ -408,6 +492,15 @@ export function render(report: Report): string {
     );
   }
   byFile.push("");
+  if (titlesOnly.length) {
+    // Inside this fold as well as above it: a reader who opens only this one and scans for a
+    // path would otherwise take the absence of a row for a row of zeroes.
+    byFile.push(
+      `No row is missing here because it is uncovered. ${dirList(testOnlyDirs)} has none because ` +
+        `it is outside \`vitest.config.ts\`'s coverage \`include\`, which is deliberate.`,
+    );
+    byFile.push("");
+  }
   out.push(...fold(title("Coverage, file by file", `${rows.length} modules`), byFile));
 
   // Open, and last. It is the only section that says where to spend attention, and folding
@@ -418,7 +511,15 @@ export function render(report: Report): string {
   const dead = coverage.deadFunctions;
 
   if (!weak.length && !dead.length && !unmeasured.length) {
-    out.push("Nothing stands out: every function ran, and no file is below 85% branch coverage.");
+    // "Every function ran" is true of the functions that were measured, and the sentence has to
+    // say which those are when some of the repository is not among them — otherwise the one line
+    // here written to be read is the one that makes the claim #123 is about.
+    out.push(
+      titlesOnly.length
+        ? "Nothing stands out among the modules measured: every function of them ran, and no " +
+            "file is below 85% branch coverage."
+        : "Nothing stands out: every function ran, and no file is below 85% branch coverage.",
+    );
     out.push("");
   }
   if (dead.length) {
@@ -441,6 +542,19 @@ export function render(report: Report): string {
     out.push("Modules the test run does not measure at all:");
     out.push("");
     for (const p of unmeasured) out.push(`- \`${p}\``);
+    out.push("");
+  }
+  // Kept out of the list above, which is for modules that *should* have been measured and were
+  // not. This is the other kind — not measured by choice — and running the two together would
+  // turn a decision into a finding and a finding into noise.
+  if (titlesOnly.length) {
+    out.push(
+      `Nothing above says anything about ${dirList(testOnlyDirs)}, in either direction: no ` +
+        `coverage number and no graph covers it. What it has is ` +
+        `**${titlesOnlyCases} test titles in ${titlesOnly.length} files**, in the fold above, each ` +
+        `marked *titles only* — read those instead, and read the diff, which for ` +
+        `${dirList(testOnlyDirs)} this report does not replace.`,
+    );
     out.push("");
   }
   out.push(
