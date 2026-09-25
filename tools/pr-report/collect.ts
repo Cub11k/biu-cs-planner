@@ -12,8 +12,35 @@ import { readTestFile } from "./tests.ts";
  * graphs: the report renders them, and the PR review (`tools/pr-review`) checks them for
  * cycles. Deriving them twice would let the two disagree.
  */
-/** The four workspaces. Exported because the review states what it walked. */
+/**
+ * The four workspaces: the product code, and the whole of what the module graph, the call
+ * graph and the coverage table describe. Exported because the review states what it walked.
+ */
 export const SOURCE_DIRS = ["core/src", "app/src", "server/src", "web/src"];
+
+/**
+ * Directories whose **test titles** the report lists and whose **source** it describes no
+ * other way: no module in either graph, no row in the coverage table.
+ *
+ * `tools/` holds the checks that guard the guardrails — `tools/ci/workflows.test.ts` fails the
+ * build on an install without `--ignore-scripts`, on a workflow that declares no
+ * `permissions:` and on a write scope outside its short list, and `tools/ci/clock-pattern.ts`
+ * enforces one clock body across the repository (#89) — and not one of their titles reached the
+ * report `CLAUDE.md` sends a reviewer to *before* the diff. Two agents found that independently
+ * on 2026-09-24 while working on unrelated tickets (#123).
+ *
+ * **Titles, and deliberately not the rest.** A module graph of the report generator tells a
+ * reviewer of the app nothing, which is the scoping `SOURCE_DIRS` exists for; and coverage stays
+ * as `vitest.config.ts` has it, whose `include` names `{core,app,server,web}/src` and nothing
+ * else, because #123 is explicit that the exclusion is deliberate and should stay. What replaces
+ * the silence is not a measurement but a sentence: `render` names every directory in this list
+ * wherever its absence would otherwise read as an absence of tests rather than of measurement.
+ *
+ * Every entry is a repo-relative directory, matched whole. `render` compares by path segment,
+ * so `tools` never matches a `toolsmith/` that is not in the list.
+ */
+export const TEST_ONLY_DIRS = ["tools"];
+
 const SKIP = new Set(["node_modules", "dist", "__fixtures__", "coverage"]);
 
 function walk(dir: string): string[] {
@@ -116,9 +143,31 @@ function exportedNames(modules: readonly Module[]): Map<string, ExportedNames> {
  * review can run the graph checks without paying for a test run.
  */
 export function collect(root: string): Report {
+  const isTest = (f: string): boolean => /\.test\.tsx?$/.test(f);
+
   const files = SOURCE_DIRS.flatMap((d) => walk(join(root, d)));
-  const sourceFiles = files.filter((f) => !/\.test\.tsx?$/.test(f));
-  const testFiles = files.filter((f) => /\.test\.tsx?$/.test(f));
+  const sourceFiles = files.filter((f) => !isTest(f));
+
+  // Test files from both lists, in one sorted list rather than two fields. The graphs and the
+  // coverage are about `SOURCE_DIRS`; the titles are about everything that has any, and every
+  // reader of `tests` wants all of them. Splitting them would mean every such reader
+  // remembering to read the second field, which is the shape of the bug in #77 — one field
+  // going unread in one place — and `render` is told which directories are titles-only
+  // through `Report.testOnlyDirs` instead. `forbiddenEdges` is unaffected either way: it
+  // looks a path's first segment up in `LAYERS` and a `tools/` test matches no layer, so it
+  // was already skipping what it is handed here.
+  //
+  // Through a `Set`, because the two lists are independent constants and nothing stops an entry
+  // of one lying inside the other. `tools` and `core/src` do not overlap today; if they ever did,
+  // a file read twice would be two entries with the same path, every one of its titles counted
+  // twice, and a summary whose total no test run agrees with. Deduplicating by path costs one
+  // wrapper and removes the failure mode rather than relying on the two lists staying disjoint.
+  const testFiles = [
+    ...new Set([
+      ...files.filter(isTest),
+      ...TEST_ONLY_DIRS.flatMap((d) => walk(join(root, d))).filter(isTest),
+    ]),
+  ];
 
   const modules = sourceFiles
     .map((f) => readModule(f, root))
@@ -144,5 +193,5 @@ export function collect(root: string): Report {
     ? modules.filter((m) => !coverage.byFile.has(m.path)).map((m) => m.path)
     : [];
 
-  return { modules, tests, coverage, edges, unmeasured };
+  return { modules, tests, coverage, edges, unmeasured, testOnlyDirs: TEST_ONLY_DIRS };
 }

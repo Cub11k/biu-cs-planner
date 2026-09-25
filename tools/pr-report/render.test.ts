@@ -107,6 +107,10 @@ function report(over: Partial<Report> = {}): Report {
     },
     edges: [{ from: "core/src/a.ts#one", to: "core/src/b.ts#two" }],
     unmeasured: [],
+    // Empty by default, so every test above this line describes the report as it is when the
+    // whole of what it read is also the whole of what it measured. The ones that pass a value
+    // are testing what it says when that stops being true.
+    testOnlyDirs: [],
     ...over,
   };
 }
@@ -429,12 +433,196 @@ describe("the report comment", () => {
       coverage: { available: false, byFile: new Map(), deadFunctions: [] },
       edges: [],
       unmeasured: [],
+      testOnlyDirs: [],
     });
 
     expect(empty).toContain("| Coverage | not available — no coverage run |");
     expect(empty).toContain("0 modules, 0 imports");
     expect(empty).toContain("Nothing stands out");
     expect(folds(empty)).toHaveLength(5);
+  });
+});
+
+/**
+ * An area the report read test titles out of and described no other way. `collect` puts `tools/`
+ * here; what is asserted below is not that `tools/` in particular is handled but that an
+ * unmeasured area is never presented as an empty one — which is the criterion #123 states, and
+ * the one that fails silently, because a report that says nothing looks exactly like a report
+ * about code that has nothing.
+ */
+describe("a directory only test titles were read from", () => {
+  /** Two `tools/` test files beside a measured one, which is this repo's own shape. */
+  const withTools = (over: Partial<Report> = {}): Report =>
+    report({
+      tests: [
+        { path: "core/src/a.test.ts", cases: [{ title: "works", suite: [] }], targets: [] },
+        {
+          path: "tools/ci/workflows.test.ts",
+          cases: [
+            { title: "fails an install without --ignore-scripts", suite: ["workflows"] },
+            { title: "fails a workflow with no permissions block", suite: ["workflows"] },
+          ],
+          targets: [],
+        },
+        {
+          path: "tools/ci/clock-pattern.test.ts",
+          cases: [{ title: "fails a second clock body", suite: [] }],
+          targets: [],
+        },
+      ],
+      testOnlyDirs: ["tools"],
+      ...over,
+    });
+
+  it("lists its test titles, so a change in it has a specification to be read against", () => {
+    // The acceptance criterion in one assertion: a reviewer of a `tools/` change can see from
+    // the report alone whether it has tests. Before #123 the titles were in no section of it.
+    const markdown = render(withTools());
+
+    expect(markdown).toContain("**tools/ci/workflows.test.ts** — 2 tests");
+    expect(markdown).toContain("fails an install without --ignore-scripts");
+    expect(markdown).toContain("fails a second clock body");
+  });
+
+  it("marks each such file, so its titles are not read as a measurement", () => {
+    const markdown = render(withTools());
+
+    expect(markdown).toContain(
+      "**tools/ci/workflows.test.ts** — 2 tests — **titles only**, not graphed or measured",
+    );
+    // And the measured file beside it carries no such mark.
+    expect(markdown).toContain("**core/src/a.test.ts** — 1 tests\n");
+  });
+
+  it("says in the summary, above every fold, what the graphs and the numbers do not cover", () => {
+    const markdown = render(withTools());
+    const beforeFolds = markdown.slice(0, markdown.indexOf("<details>"));
+
+    expect(beforeFolds).toContain("| Of those, titles only | 3 in 2 files under `tools/`");
+    expect(beforeFolds).toContain(
+      "`tools/` is in neither graph, in no exported-type list and in no coverage row",
+    );
+    // The distinction the whole ticket is about, in the words that make it: not measured is
+    // not the same as has no tests.
+    expect(beforeFolds).toContain("It is not measured, which is a different thing");
+  });
+
+  it("counts the titles-only tests apart on the fold that holds them", () => {
+    const summaries = folds(render(withTools())).map((f) => f.summary).join("\n");
+
+    expect(summaries).toContain("4 tests in 3 files, 3 of them titles only");
+  });
+
+  it("does not call the tree clean when part of it was never looked at", () => {
+    // Everything measured is perfect, so the open section reaches its one-line verdict. That
+    // line is the last thing a reviewer reads, and unqualified it says the repository is fine
+    // on the strength of a run that never entered `tools/`.
+    const markdown = render(withTools());
+    const verdict = markdown.slice(markdown.indexOf("### Where to look"));
+
+    expect(verdict).toContain("Nothing stands out among the modules measured");
+    expect(verdict).not.toContain("Nothing stands out: every function ran");
+    expect(verdict).toContain("Nothing above says anything about `tools/`");
+    expect(verdict).toContain("3 test titles in 2 files");
+  });
+
+  it("explains inside the coverage fold why a path has no row there", () => {
+    // A reader who opens only this fold and searches for a path finds nothing, and the absence
+    // of a row reads like a row of zeroes.
+    const coverageFold = folds(render(withTools()))[4]?.body ?? "";
+
+    expect(coverageFold).toContain("No row is missing here because it is uncovered");
+    expect(coverageFold).toContain("`tools/`");
+  });
+
+  it("keeps it out of the modules the coverage run failed to measure", () => {
+    // Two different facts with one wrong name between them. `unmeasured` is for a module that
+    // should have been covered and was not, which is a finding; a titles-only directory is a
+    // decision. Listing the second among the first would make every report carry a permanent
+    // complaint about a thing nobody intends to change.
+    //
+    // Asserted with a real `unmeasured` entry present, so the list is rendered and its contents
+    // are what is being checked. Against an empty `unmeasured` the headings would be absent
+    // whatever the implementation did, and the test would pass without asking anything.
+    const markdown = render(withTools({ unmeasured: ["core/src/b.ts"] }));
+    const verdict = markdown.slice(markdown.indexOf("### Where to look"));
+
+    expect(markdown).toContain("| Modules with no coverage at all | 1 |");
+    expect(verdict).toContain("Modules the test run does not measure at all");
+    expect(verdict).toContain("- `core/src/b.ts`");
+    // The decision, named separately and in its own sentence.
+    expect(verdict).not.toContain("- `tools`");
+    expect(verdict).not.toContain("- `tools/`");
+    expect(verdict).toContain("Nothing above says anything about `tools/`");
+  });
+
+  it("says so even when the area declared unmeasured holds no test file at all", () => {
+    // The case that forced scope and counts apart. Gating every sentence on the test files
+    // *found* meant a declared directory with none produced total silence — no row, no scope
+    // sentence, and "Nothing stands out: every function ran" as the last line read. That is
+    // #123's failure mode restored in the one case where it is worst: not measured *and*
+    // untested, reported as a clean tree.
+    const markdown = render(report({ tests: [], testOnlyDirs: ["tools"] }));
+    const verdict = markdown.slice(markdown.indexOf("### Where to look"));
+
+    expect(markdown).toContain("| Titles only | `tools/` — no test file, no graph, no coverage |");
+    expect(markdown).toContain("What it does have is **no test file at all**");
+    expect(verdict).toContain("Nothing stands out among the modules measured");
+    expect(verdict).not.toContain("Nothing stands out: every function ran");
+    expect(verdict).toContain("**no test file at all**");
+  });
+
+  it("says the exported types do not cover it either", () => {
+    // The fold built from `modules`, which the first draft of this left silent: a type exported
+    // from a titles-only directory is absent exactly like a type that does not exist. `Report`
+    // in `render.ts` is such a type, so this report was blind to its own shape.
+    const typesFold = folds(render(withTools()))[2]?.body ?? "";
+
+    expect(typesFold).toContain("Types exported from `tools/` are not here");
+    // And the scope line above every fold enumerates it, rather than the graphs and coverage only.
+    expect(render(withTools())).toContain("in no exported-type list");
+  });
+
+  it("reads as a list when more than one area is declared", () => {
+    // Every sentence switches number on the directory list, which is its subject. Two entries
+    // used to leave two of them reading "`a/`, `b/` has none because it is outside …".
+    const markdown = render(withTools({ testOnlyDirs: ["tools", "scripts"] }));
+
+    expect(markdown).toContain("`tools/`, `scripts/` are in neither graph");
+    expect(markdown).toContain("What they do have is");
+    expect(markdown).toContain("`tools/`, `scripts/` have none because they are outside");
+    expect(markdown).not.toContain("are in neither graph, in no exported-type list and in no coverage row: a module graph of the tooling says nothing about the app, and `vitest.config.ts` leaves it out of coverage deliberately. What it does");
+  });
+
+  it("says none of it when everything read was also measured", () => {
+    // The default fixture has no such directory. Every sentence above exists to stop one
+    // reading, and with nothing to explain they would be a paragraph about nothing.
+    const markdown = render(report());
+
+    expect(markdown).not.toContain("titles only");
+    expect(markdown).not.toContain("No row is missing here");
+    expect(markdown).toContain("Nothing stands out: every function ran");
+  });
+
+  it("matches a directory by whole segments, not by the letters it starts with", () => {
+    // `tools` is in the list and `toolsmith` is not, so the marker has to fall on exactly one of
+    // the two. A plain `startsWith` would mark both and quietly stop measuring a workspace.
+    const markdown = render(
+      withTools({
+        tests: [
+          { path: "tools/ci/a.test.ts", cases: [{ title: "in tools", suite: [] }], targets: [] },
+          {
+            path: "toolsmith/src/a.test.ts",
+            cases: [{ title: "not in tools", suite: [] }],
+            targets: [],
+          },
+        ],
+      }),
+    );
+
+    expect(markdown).toContain("**tools/ci/a.test.ts** — 1 tests — **titles only**");
+    expect(markdown).toContain("**toolsmith/src/a.test.ts** — 1 tests\n");
+    expect(markdown).toContain("| Of those, titles only | 1 in 1 files under `tools/`");
   });
 });
 
