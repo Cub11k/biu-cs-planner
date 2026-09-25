@@ -126,8 +126,8 @@ One student's or one scenario's personal data: Attempts, Timetables, Pins and se
 _Avoid_: save, profile
 
 **Device Preference**:
-A display preference belonging to the browser and the screen a student is sitting at rather than to their Plan: kept in that browser's own store, per origin, and never in a State File. The colour scheme choice is the only one today. The preferences that belong to the person or the document — language and Exam spacing — are a State File's settings instead. The rule that places each one is ADR-0014, and it was ruled on issue #114. A Launch Token is kept in the same store and is not a Device Preference.
-_Avoid_: setting, theme, local setting
+A display preference belonging to the browser and the screen a student is sitting at rather than to their Plan: kept in that browser's own store, per origin, and never in a State File, whose settings hold the preferences that belong to the person or the document instead. Which side a given preference falls on is ADR-0014, and the ruling is on issue #114. A copy of the Launch Token is kept in the same store and is not a Device Preference.
+_Avoid_: theme, browser setting, local setting
 
 **Attempt**:
 One instance of a student taking a Course in a Semester, with a status (planned, registered, passed, failed, exempt, credited) and an optional grade.
