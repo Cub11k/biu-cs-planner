@@ -15,6 +15,7 @@ import {
   type TimetableResult,
 } from "./picks.ts";
 import { clashingGroups, isPicked, weekGroups, type WeekGroup } from "./week.ts";
+import { SchemeControl } from "../SchemeControl.tsx";
 import { CoursePicker } from "./CoursePicker.tsx";
 import { WeekGrid } from "./WeekGrid.tsx";
 
@@ -368,10 +369,16 @@ export function TimetableScreen({
         <span className="text-sm text-pencil">
           {t(language, SEMESTER_STRING[semester])} · {yearLabel}
         </span>
+        {/*
+          The two preferences the header carries, at the end side of the row — `ms-auto` on
+          the first of them, so the pair sits at the right in English and at the left in
+          Hebrew without a second rule (CLAUDE.md: direction-neutral classes only).
+        */}
+        <SchemeControl language={language} />
         <button
           type="button"
           onClick={() => onLanguage(language === "en" ? "he" : "en")}
-          className="ms-auto rounded-sm border border-rule bg-paper px-3 py-1 text-sm text-ink-soft"
+          className="rounded-sm border border-rule bg-paper px-3 py-1 text-sm text-ink-soft"
         >
           {t(language, "otherLanguage")}
         </button>

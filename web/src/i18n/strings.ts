@@ -21,6 +21,16 @@ const english = {
   /** The other language, named in itself: the switch says where it takes you. */
   otherLanguage: "עברית",
 
+  /**
+   * Light and dark. Three named states and not a two-way switch, because "no choice" is
+   * one of them: a student who has chosen dark and changes their mind needs a way to hand
+   * the decision back to the operating system, and a toggle offers none (#114).
+   */
+  schemeLabel: "Colour scheme",
+  schemeSystem: "System",
+  schemeLight: "Light",
+  schemeDark: "Dark",
+
   timetable: "Timetable",
   academicYear: "{first}-{second}",
   semesterFall: "Semester A",
@@ -107,6 +117,11 @@ const hebrew: Record<StringKey, string> = {
   apiUnreachable: "ה-API אינו זמין",
 
   otherLanguage: "English",
+
+  schemeLabel: "ערכת צבעים",
+  schemeSystem: "לפי המערכת",
+  schemeLight: "בהיר",
+  schemeDark: "כהה",
 
   timetable: "מערכת שעות",
   academicYear: "{first}-{second}",

@@ -3,7 +3,8 @@
 /**
  * The palette lives here and nowhere else. Every colour is a token, the dark scheme
  * redefines the tokens rather than filtering the page, and it follows the operating
- * system (docs/design.md, "Light and dark"). No component holds a raw colour value.
+ * system unless a student has chosen otherwise (docs/design.md, "Light and dark"). No
+ * component holds a raw colour value.
  *
  * The hues are the ones the prototype settled on: a light desk with paper on it, and in
  * the dark a dark desk with a raised surface, each Lesson Type lifted until it reads on
@@ -28,27 +29,99 @@
   /* Red pen: a Clash, and the one hue that means the same thing wherever it appears. */
   --red-pen: #b3261e;
 
+  /**
+   * The dark palette's values, defined once and used by the two rules below.
+   *
+   * They are named rather than written into those rules because "an explicit choice
+   * overrides the operating system in both directions" needs the dark tokens assigned in
+   * two places — once inside the media query and once outside it — and CSS has no way to
+   * put one declaration block behind both conditions. Two copies of the *values* would be
+   * two palettes drifting apart the first time a hue was tuned; two copies of the
+   * *assignments* cannot drift, because there is only one place a hue is written.
+   *
+   * Nothing reads a `--dark-*` token directly. `scheme.browser.test.tsx` holds the
+   * invariant: every token under an explicit dark choice equals the same token under a
+   * dark operating system with no choice made.
+   */
+  --dark-desk: #0e141b;
+  --dark-paper: #161e27;
+  --dark-ink: #dbe6f2;
+  --dark-ink-soft: #a3b4c7;
+  --dark-pencil: #6e8093;
+  --dark-rule: #2c3744;
+  --dark-rule-soft: #212b36;
+  --dark-hint: #141d26;
+
+  --dark-lesson-lecture: #7fa8d8;
+  --dark-lesson-tirgul: #46b3a2;
+  --dark-lesson-lab: #d3a45c;
+  --dark-lesson-other: #a093e0;
+
+  --dark-red-pen: #f2857c;
+
+  /**
+   * No choice made: the browser is told both schemes are available, so the operating
+   * system decides this page's form controls and scrollbars as well as its tokens. The
+   * two rules below narrow it to the one that was chosen, which is what makes a native
+   * `<select>` drop-down dark on a light machine when dark was asked for.
+   */
   color-scheme: light dark;
 }
 
+/**
+ * The operating system's half. `:not([data-theme="light"])` is the guard that makes an
+ * explicit **light** choice win here: without it a light choice would have no way to beat
+ * a dark machine, because a media query cannot be switched off from inside the document
+ * (#114). An unrecognised `data-theme` value is not a choice, so it still lands here.
+ */
 @media (prefers-color-scheme: dark) {
-  :root {
-    --desk: #0e141b;
-    --paper: #161e27;
-    --ink: #dbe6f2;
-    --ink-soft: #a3b4c7;
-    --pencil: #6e8093;
-    --rule: #2c3744;
-    --rule-soft: #212b36;
-    --hint: #141d26;
+  :root:not([data-theme="light"]) {
+    --desk: var(--dark-desk);
+    --paper: var(--dark-paper);
+    --ink: var(--dark-ink);
+    --ink-soft: var(--dark-ink-soft);
+    --pencil: var(--dark-pencil);
+    --rule: var(--dark-rule);
+    --rule-soft: var(--dark-rule-soft);
+    --hint: var(--dark-hint);
 
-    --lesson-lecture: #7fa8d8;
-    --lesson-tirgul: #46b3a2;
-    --lesson-lab: #d3a45c;
-    --lesson-other: #a093e0;
+    --lesson-lecture: var(--dark-lesson-lecture);
+    --lesson-tirgul: var(--dark-lesson-tirgul);
+    --lesson-lab: var(--dark-lesson-lab);
+    --lesson-other: var(--dark-lesson-other);
 
-    --red-pen: #f2857c;
+    --red-pen: var(--dark-red-pen);
   }
+}
+
+/**
+ * The other direction: an explicit dark choice, which has to redefine the tokens outside
+ * the media query because on a light machine the query never opens. `scheme.ts` writes
+ * only these two attribute values, and removing the attribute is what "no choice" is.
+ */
+:root[data-theme="dark"] {
+  --desk: var(--dark-desk);
+  --paper: var(--dark-paper);
+  --ink: var(--dark-ink);
+  --ink-soft: var(--dark-ink-soft);
+  --pencil: var(--dark-pencil);
+  --rule: var(--dark-rule);
+  --rule-soft: var(--dark-rule-soft);
+  --hint: var(--dark-hint);
+
+  --lesson-lecture: var(--dark-lesson-lecture);
+  --lesson-tirgul: var(--dark-lesson-tirgul);
+  --lesson-lab: var(--dark-lesson-lab);
+  --lesson-other: var(--dark-lesson-other);
+
+  --red-pen: var(--dark-red-pen);
+
+  color-scheme: dark;
+}
+
+/* An explicit light choice keeps the light tokens of `:root`; only the scheme narrows. */
+:root[data-theme="light"] {
+  color-scheme: light;
 }
 
 /* The Tailwind utilities point at the tokens above, so `bg-paper` follows the scheme. */

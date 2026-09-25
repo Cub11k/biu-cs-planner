@@ -137,7 +137,11 @@ async function openWeek(language: Language): Promise<HTMLElement> {
   return mounted;
 }
 
-/** Emulates the media feature the dark scheme keys off. There is no `data-theme` stamp. */
+/**
+ * Emulates the media feature the dark scheme keys off. Nothing here stamps a
+ * `data-theme`, so these assertions are about the operating system's half of the
+ * scheme; an explicit choice overriding it is `../scheme.browser.test.tsx` (#114).
+ */
 async function colorScheme(scheme: "light" | "dark"): Promise<void> {
   const session = await cdp();
   await session.send("Emulation.setEmulatedMedia", {
