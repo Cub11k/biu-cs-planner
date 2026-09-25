@@ -131,9 +131,22 @@ const english = {
   settingsStale:
     "This page was showing an older version of your saved work, so your preference was not " +
     "changed. The page has re-read it — try again.",
-  /** The file, or the folder, could not be read at all. Nothing was written. */
-  settingsUnwritable:
+  /** The State File is there and this build could not read it. Nothing was written. */
+  settingsFileUnreadable:
     "The file your preferences are saved in could not be read, so your preference was not changed.",
+  /**
+   * The Workspace refused the file — and this one must **not** say "could not be read", because
+   * `workspace-refused` is raised for a failed *write* as well as a failed read (`app/src/edit.ts`).
+   * On a read-only folder or a full disk the read succeeded and the save did not, so naming the
+   * read would be a false account of what went wrong. It names both and claims neither.
+   *
+   * `picksUnreadable` and `historyUnreadable` do name the read for this same reason code, which is
+   * the precedent and is wrong in the same way; narrowing that is a change to what the domain
+   * reports and belongs in its own ticket.
+   */
+  settingsFileRefused:
+    "The file your preferences are saved in could not be read or written, so your preference was " +
+    "not changed.",
   /**
    * A refusal the route named no reason for: an answer the contract has and this client cannot
    * provoke. What is true of it is that nothing happened, and naming one of the four causes would
@@ -150,7 +163,16 @@ const english = {
    * that would not read it — and it says "instead of them" rather than "nothing was lost",
    * because whether anything was lost is exactly what could not be established.
    */
-  settingsUnread: "Your saved preferences could not be read, so the app is showing its defaults instead of them.",
+  settingsUnread:
+    "Your saved preferences could not be read, so the app is showing its defaults instead of them.",
+  /**
+   * …and the same failure on a page that **had** already read them. It must be a second sentence
+   * rather than the one above: a student reading Hebrew whose file was corrupted a moment ago is
+   * not looking at defaults, and telling them they are would be a claim the page can see is false.
+   */
+  settingsUnreread:
+    "Your saved preferences could not be read just now, so what is on screen is the last version " +
+    "this page read.",
   /**
    * `core`'s `settings-unreadable` Warning, which it raises per field it could not read
    * (`core/src/state/file.ts`). A preference silently back at its default is the one a student
@@ -295,10 +317,14 @@ const hebrew: Record<StringKey, string> = {
   settingsStale:
     "הדף הציג גרסה ישנה יותר של העבודה השמורה, ולכן ההעדפה לא שונתה. " +
     "הדף קרא אותה מחדש — נסו שוב.",
-  settingsUnwritable:
+  settingsFileUnreadable:
     "לא ניתן היה לקרוא את הקובץ שבו נשמרות ההעדפות שלכם, ולכן ההעדפה לא שונתה.",
+  settingsFileRefused:
+    "לא ניתן היה לקרוא או לכתוב את הקובץ שבו נשמרות ההעדפות שלכם, ולכן ההעדפה לא שונתה.",
   settingsNotDone: "ההעדפה לא שונתה.",
   settingsUnread: "לא ניתן היה לקרוא את ההעדפות השמורות שלכם, ולכן היישום מציג את ברירות המחדל במקומן.",
+  settingsUnreread:
+    "לא ניתן היה לקרוא את ההעדפות השמורות שלכם כרגע, ולכן מוצגת הגרסה האחרונה שהדף קרא.",
   settingsUnreadable:
     "לא ניתן היה לקרוא אחת מההעדפות השמורות שלכם, ולכן היא מוצגת כברירת המחדל. " +
     "שאר העבודה השמורה לא נפגעה.",

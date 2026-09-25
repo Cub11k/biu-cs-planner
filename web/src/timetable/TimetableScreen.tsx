@@ -22,7 +22,12 @@ import {
   type HistoryStep,
 } from "../history.ts";
 import { HistoryControls } from "../HistoryControls.tsx";
-import type { SettingsNotice, SettingsRefusal, SettingsWarning } from "../settings.ts";
+import type {
+  SettingsNotice,
+  SettingsRefusal,
+  SettingsUnread,
+  SettingsWarning,
+} from "../settings.ts";
 import { SchemeControl } from "../SchemeControl.tsx";
 import { CoursePicker } from "./CoursePicker.tsx";
 import { WeekGrid } from "./WeekGrid.tsx";
@@ -104,9 +109,9 @@ const HISTORY_REFUSAL_STRING = {
  */
 const SETTINGS_REFUSAL_STRING = {
   "workspace-not-ready": "picksNotSaved",
-  "state-file-unreadable": "settingsUnwritable",
+  "state-file-unreadable": "settingsFileUnreadable",
   "state-file-changed": "settingsStale",
-  "workspace-refused": "settingsUnwritable",
+  "workspace-refused": "settingsFileRefused",
 } as const satisfies Record<NonNullable<SettingsRefusal>, StringKey>;
 
 /**
@@ -208,11 +213,12 @@ export type TimetableScreenProps = {
    */
   settingsWarnings?: readonly SettingsWarning[];
   /**
-   * That the preferences could not be read at all, so the language on screen is the schema's
-   * default rather than the student's choice — and the switch beside it is disabled. Without this
-   * the app is in English for a Hebrew student with no account of either (`../settings.ts`).
+   * That the preferences could not be read, and which of the two things that means: `"never"` —
+   * the language on screen is the schema's default and the switch beside it is disabled; `"again"`
+   * — it is the last version this page read. Two sentences, because the first would be false in
+   * the second case (`../settings.ts`).
    */
-  settingsUnread?: boolean;
+  settingsUnread?: SettingsUnread | undefined;
   /** Taken as an argument so the screen can be opened on any date, and tested. */
   today?: Date;
   /**
@@ -238,7 +244,7 @@ export function TimetableScreen({
   onLanguage,
   settingsNotice,
   settingsWarnings = [],
-  settingsUnread = false,
+  settingsUnread,
   today = new Date(),
   workspaceChanges = 0,
 }: TimetableScreenProps): React.JSX.Element {
@@ -683,7 +689,11 @@ export function TimetableScreen({
               {settingsSaid(language, settingsNotice) === undefined ? null : (
                 <span>{settingsSaid(language, settingsNotice)}</span>
               )}
-              {settingsUnread && <span>{t(language, "settingsUnread")}</span>}
+              {settingsUnread === undefined ? null : (
+                <span>
+                  {t(language, settingsUnread === "never" ? "settingsUnread" : "settingsUnreread")}
+                </span>
+              )}
               {unreadableSettings(settingsWarnings).map((warning) => (
                 <span key={warning.field ?? "all"}>{settingSaid(language, warning)}</span>
               ))}

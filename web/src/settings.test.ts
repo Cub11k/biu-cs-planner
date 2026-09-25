@@ -171,3 +171,44 @@ it("reads a request that never arrived as the server not being there", async () 
   expect(await fetchSettings(api)).toEqual({ kind: "unreachable" });
   expect(await saveSettings(api, { language: "he" }, VERSION)).toEqual({ kind: "unreachable" });
 });
+
+/**
+ * A response whose body is not JSON, which is **not** a hypothetical contract problem.
+ *
+ * In development `web/vite.config.ts` proxies `/api` to the server, and Vite answers with an HTML
+ * 500 page when the target refuses the connection — so "the server is not running" arrives as a
+ * response with an unparseable body rather than as a failed request. An unmatched `/api/...` path
+ * is hono's plain-text 404 (`server/src/ui.ts`), which a bundle newer than its server produces.
+ *
+ * It used to make both functions **reject**, which escaped both callers in `useSettings`: `saving`
+ * was never cleared and the language switch stayed disabled and silent for the life of the page.
+ */
+it.each([
+  { what: "an HTML error page, as Vite's proxy answers with", body: "<h1>500</h1>", status: 500 },
+  { what: "hono's plain-text 404", body: "Not Found", status: 404 },
+  { what: "hono's plain-text 500", body: "Internal Server Error", status: 500 },
+  { what: "a 200 whose body is not JSON at all", body: "<html>", status: 200 },
+])("reads $what as an answer with nothing to go on, rather than rejecting", async (answer) => {
+  const { api } = client(
+    () => new Response(answer.body, { status: answer.status, headers: { "content-type": "text/html" } }),
+  );
+
+  // resolves, and resolves to the floor: nothing here to act on, and no cause invented
+  await expect(fetchSettings(api)).resolves.toEqual({
+    kind: "refused",
+    reason: undefined,
+    warnings: [],
+  });
+  await expect(saveSettings(api, { language: "he" }, VERSION)).resolves.toEqual({
+    kind: "refused",
+    reason: undefined,
+    warnings: [],
+  });
+});
+
+/** A 401 is still the guard's, read before the body is touched at all. */
+it("reads a 401 with an unparseable body as this page having no launch token", async () => {
+  const { api } = client(() => new Response("<h1>401</h1>", { status: 401 }));
+
+  expect(await fetchSettings(api)).toEqual({ kind: "unauthorized" });
+});

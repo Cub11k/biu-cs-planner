@@ -68,8 +68,12 @@ export type SettingsVersion = ServedSettings["version"];
 
 /** The preferences to change, and only those. A field not named is a field left alone. */
 export type SettingsChange = {
+  /**
+   * The translation files' set and not the contract's: the page can only ask for a language it has
+   * strings for, and `languageOf` is what narrows an answer to the same set.
+   */
   language?: Language;
-  examSpacingDays?: number;
+  examSpacingDays?: ServedSettings["examSpacingDays"];
 };
 
 export type SettingsResult =
@@ -82,7 +86,7 @@ export type SettingsResult =
        * `./scheme.ts` gives every way of not knowing that same one answer.
        */
       language: Language | undefined;
-      examSpacingDays: number;
+      examSpacingDays: ServedSettings["examSpacingDays"];
       version: SettingsVersion;
       warnings: SettingsWarning[];
     }
@@ -108,35 +112,71 @@ export const FIRST_PAINT_LANGUAGE: Language = "en";
 const languageOf = (served: string): Language | undefined =>
   LANGUAGES.find((known) => known === served);
 
+/**
+ * A body that is not JSON at all, which is an answer rather than a crash.
+ *
+ * **This is not hypothetical and it is not only a contract problem.** In development
+ * `web/vite.config.ts` proxies `/api` to the server, and Vite answers with an HTML 500 page when
+ * the target refuses the connection — so "the server is not running" arrives here as a response
+ * with an unparseable body rather than as a failed request. An unmatched `/api/...` path is
+ * hono's plain-text 404 (`server/src/ui.ts`), and a bundle newer than the server it is talking to
+ * produces exactly that.
+ *
+ * Letting `json()` reject was the first version of this module and it was a real bug: the
+ * rejection escaped both callers, so `saving` was never cleared and the language switch stayed
+ * disabled and silent for the life of the page. `useHistory` clears `stepping` in a `finally` for
+ * the same reason; this module does both — it clears the flag *and* turns the body into an answer,
+ * because a disabled control with no sentence is the failure #111 is about.
+ */
+const UNREADABLE = Symbol("a body this module cannot read");
+
+const bodyOf = async (answer: { json(): Promise<unknown> }): Promise<unknown> => {
+  try {
+    return await answer.json();
+  } catch {
+    return UNREADABLE;
+  }
+};
+
+/**
+ * An answer whose body says nothing this module can act on. The floor, and deliberately the
+ * floor: what is true of it is that there is nothing here to go on, and it reads as `refused` with
+ * no reason — which the screen says as "nothing changed" for a write and "could not be read" for a
+ * read, both of which are what the student needs to hear.
+ */
+const nothingToGoOn = (): SettingsResult => ({ kind: "refused", reason: undefined, warnings: [] });
+
 /** Every answer read the same way, so one place decides what each status means. */
 async function read(answer: Response & { ok: boolean; status: number }): Promise<SettingsResult> {
-  if (!answer.ok) {
-    // widened deliberately: the launch token guard rejects before the route runs, so 401 is not
-    // among the answers the contract knows about
-    const status: number = answer.status;
-    if (status === UNAUTHORIZED) return { kind: "unauthorized" };
+  // widened deliberately: the launch token guard rejects before the route runs, so 401 is not
+  // among the answers the contract knows about
+  const status: number = answer.status;
+  if (status === UNAUTHORIZED) return { kind: "unauthorized" };
 
-    const refused = (await answer.json()) as {
-      reason?: SettingsRefusal;
-      warnings?: SettingsWarning[];
-    };
+  const body = await bodyOf(answer);
+  if (body === UNREADABLE) return nothingToGoOn();
+
+  if (!answer.ok) {
+    const refused = body as { reason?: SettingsRefusal; warnings?: SettingsWarning[] };
     return { kind: "refused", reason: refused.reason, warnings: refused.warnings ?? [] };
   }
 
-  const body = (await answer.json()) as ServedSettings;
+  const served = body as ServedSettings;
   return {
     kind: "served",
-    language: languageOf(body.language),
-    examSpacingDays: body.examSpacingDays,
-    version: body.version,
-    warnings: body.warnings,
+    language: languageOf(served.language),
+    examSpacingDays: served.examSpacingDays,
+    version: served.version,
+    warnings: served.warnings,
   };
 }
 
 /**
  * Sends one request and reads the answer **outside** the catch: only the request failing is the
  * server not being there. An answer this module cannot make sense of is a contract problem, and
- * calling it "unreachable" would send the student to look at a server that answered them.
+ * calling it "unreachable" would send the student to look at a server that answered them — so a
+ * body that is not JSON comes back as `refused` with no reason (see `bodyOf`) rather than as
+ * either a rejection or a lie about where the server is.
  */
 async function ask(
   send: () => Promise<Response & { ok: boolean; status: number }>,
@@ -216,16 +256,25 @@ export type SettingsUse = {
   /** What the last change did, when it did nothing. Retired by the next one. */
   notice: SettingsNotice | undefined;
   /**
-   * That the last read was **refused**, so these are the schema's defaults and not the student's
-   * preferences.
+   * That the last read was **refused**, and which of the two things that means.
    *
    * A separate flag from `notice` because it is about a different moment: `notice` answers for a
-   * change the student asked for, and this answers for a page that never had their preferences to
-   * begin with. False for an unauthorized or unreachable answer, which the screen already says
-   * once from the Catalog — two sentences about one dead server is noise.
+   * change the student asked for, and this answers for a page that could not get their preferences.
+   * `undefined` for an unauthorized or unreachable answer too, which the screen already says once
+   * from the Catalog — two sentences about one dead server is noise.
+   *
+   *   - `"never"` — this page has never had them, so what is on screen **is** the schema's
+   *     defaults.
+   *   - `"again"` — it had them and a later read was refused, so what is on screen is the last
+   *     version it read. Distinguished because the sentence for `"never"` would be **false** here:
+   *     a student reading Hebrew whose file was corrupted a moment ago is not looking at defaults,
+   *     and telling them they are is the kind of untruth #111 is about.
    */
-  unread: boolean;
+  unread: SettingsUnread | undefined;
 };
+
+/** Which of the two things a refused read means; see `SettingsUse.unread`. */
+export type SettingsUnread = "never" | "again";
 
 /** What the page knows about the preferences: only ever set from an answer that carried them. */
 type Known = { language: Language; version: SettingsVersion; warnings: SettingsWarning[] };
@@ -242,7 +291,23 @@ export function useSettings(options: UseSettingsOptions = {}): SettingsUse {
   const { client = api, changes = 0 } = options;
   const [known, setKnown] = useState<Known | undefined>(undefined);
   const [notice, setNotice] = useState<SettingsNotice | undefined>(undefined);
-  const [unread, setUnread] = useState(false);
+  /** That the last read came back refused. Which sentence that owes is decided at return. */
+  const [readRefused, setReadRefused] = useState(false);
+  /**
+   * The answer a change was refused on, held by identity, so no second change goes out on a
+   * revision the file has already moved past.
+   *
+   * `settingsStale` tells the student the page has re-read and to try again, and until #115's
+   * reviewer found it that sentence was true only eventually: `saving` was already false, so a
+   * student who followed the instruction before the re-read landed sent the same spent revision and
+   * read the same sentence again. `TimetableScreen`'s `steppedOn` gates a press the same way and
+   * for the same reason.
+   *
+   * By identity and not by revision, because a file reverted to the revision it had is still news
+   * and waiting for a different string would wait for ever. Any newer answer releases it, because
+   * `show` always builds a new object.
+   */
+  const [refusedOn, setRefusedOn] = useState<Known | undefined>(undefined);
   const [saving, setSaving] = useState(false);
   /** Ask again, for a refusal whose whole remedy is a fresher revision. */
   const [asks, setAsks] = useState(0);
@@ -268,7 +333,7 @@ export function useSettings(options: UseSettingsOptions = {}): SettingsUse {
     // no `catch` here: a rejection would be a bug in the client, not an answer.
     void fetchSettings(client).then((fresh) => {
       if (shown.current !== mine) return;
-      setUnread(fresh.kind === "refused");
+      setReadRefused(fresh.kind === "refused");
       if (fresh.kind !== "served") return;
       show(fresh);
     });
@@ -280,27 +345,39 @@ export function useSettings(options: UseSettingsOptions = {}): SettingsUse {
   }, [client, changes, asks]);
 
   const choose =
-    known === undefined || saving
+    // Nothing read yet, a change in flight, or a change already refused on this very answer and
+    // the re-read it asked for still on its way. All three are "the control cannot be honoured".
+    known === undefined || saving || refusedOn === known
       ? undefined
       : (change: SettingsChange): void => {
           // whatever the last change was told, this one is the account owed now
           setNotice(undefined);
           setSaving(true);
-          void saveSettings(client, change, known.version).then((fresh) => {
-            setSaving(false);
-            if (fresh.kind === "served") {
-              // an answer from the write itself is the newest there is, by definition
-              shown.current += 1;
-              show(fresh);
-              return;
-            }
-            setNotice(fresh.kind === "refused" ? { kind: "refused", reason: fresh.reason } : fresh);
-            // The file is not what this page read, so the revision in hand is spent and the
-            // remedy is a fresher one. Only this reason: nothing else is mended by asking again.
-            if (fresh.kind === "refused" && fresh.reason === "state-file-changed") {
-              setAsks((count) => count + 1);
-            }
-          });
+          void saveSettings(client, change, known.version)
+            .then((fresh) => {
+              if (fresh.kind === "served") {
+                // an answer from the write itself is the newest there is, by definition
+                shown.current += 1;
+                show(fresh);
+                return;
+              }
+              setNotice(
+                fresh.kind === "refused" ? { kind: "refused", reason: fresh.reason } : fresh,
+              );
+              // The file is not what this page read, so the revision in hand is spent and the
+              // remedy is a fresher one. Only this reason: nothing else is mended by asking again,
+              // and holding the switch shut over a refusal with no answer coming would disable it
+              // until something else happened to re-render.
+              if (fresh.kind === "refused" && fresh.reason === "state-file-changed") {
+                setRefusedOn(known);
+                setAsks((count) => count + 1);
+              }
+            })
+            // In a `finally` and not in the `then`: an answer this module could not read used to
+            // reject, leaving this flag set and the switch dead and silent for the life of the
+            // page. `bodyOf` now makes that an answer rather than a rejection, and this is the
+            // belt as well — `useHistory.step` clears `stepping` the same way.
+            .finally(() => setSaving(false));
         };
 
   return {
@@ -308,6 +385,9 @@ export function useSettings(options: UseSettingsOptions = {}): SettingsUse {
     warnings: known?.warnings ?? [],
     choose,
     notice,
-    unread,
+    // Computed here rather than stored, so it reads the `known` of this render: a refused read
+    // means two different things depending on whether this page ever had the preferences, and a
+    // flag set inside the effect would have been deciding that from a stale closure.
+    unread: readRefused ? (known === undefined ? "never" : "again") : undefined,
   };
 }
