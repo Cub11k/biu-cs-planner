@@ -253,9 +253,12 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
      * Creating the layout is an explicit act, which is why it is a POST and not a side effect
      * of the GET above: nothing is written until the student asks.
      *
-     * **A refused create is the same named 409 the other write routes answer with**, and until
-     * #141 it was this file's one unnamed 500: `createWorkspace` threw, this route had no arm
-     * for it, and Hono's default handler answered with no body of this app's own. The body is
+     * **A refused create is the same named 409 the other write routes answer with.** Until #141
+     * this route was an unnamed 500: `createWorkspace` threw, the route had no arm for it, and
+     * Hono's default handler answered with no body of this app's own. It was the only such route
+     * anyone had found, and the property "this file has no unnamed 500 path" is load-bearing for
+     * #90's and #109's arguments — but that property is an argument made route by route and not
+     * something a test asserts over all of them, so this comment claims only its own. The body is
      * the import route's to the character — `{ "reason": "workspace-refused" }` — because it is
      * the same refusal out of the same port, and a page that can read one can read the other.
      *

@@ -26,9 +26,14 @@ export async function workspaceStatus(workspace: Workspace): Promise<WorkspaceSt
 }
 
 /**
- * Why the layout was not created. One reason, because the port makes one refusal here:
- * `create` turns everything the filesystem can answer `mkdir` with into a single
- * `WorkspaceRefusedError` naming the folder it got stuck on.
+ * Why the layout was not created. One reason, because there is one class to catch: `create` in
+ * `server/src/workspace.fs.ts` turns everything the filesystem can answer `mkdir` with into a
+ * single `WorkspaceRefusedError` naming the folder it got stuck on.
+ *
+ * That is the adapter's doing and **not a promise the port makes** — `Workspace.create` in
+ * `./workspace.ts` documents only that it creates the layout, in visible contrast to `read` a
+ * few lines below it, which documents its refusal. So what is caught is the base class, and any
+ * adapter's refusal, present or future, lands on this one word rather than on a 500.
  *
  * **The same word `app/src/catalog.ts` and `app/src/edit.ts` use for the same caught class**,
  * rather than a reason of this use case's own. `server/src/api.ts` already answers
@@ -41,9 +46,10 @@ export type CreateRefusal = "workspace-refused";
 
 /**
  * What creating the layout did. Shaped as `app/src/edit.ts`'s `EditOutcome` is — a `kind`, and
- * a `reason` when refused — rather than as a third spelling: `server/src/api.ts` reads
- * `result.kind === "refused"` on three routes already, so this route joins them instead of
- * teaching the file a fourth discriminant (#141).
+ * a `reason` when refused — rather than as a third spelling. `server/src/api.ts` already answers
+ * a `kind === "refused"` with a named 409 on five routes: the Timetable read and the two Pick
+ * writes directly, and undo and redo through the shared `step`. This route becomes the sixth,
+ * rather than a second discriminant in one file (#141).
  *
  * `status` rides on the success arm so the route answers exactly what it answered before — a
  * created Workspace is still `{ ready: true, missing: [] }` on the wire — and no caller has to
@@ -73,9 +79,15 @@ export type CreateOutcome =
  * lesson from the other side: the refusal must not claim the app knows something it does not.
  *
  * And what it does claim is deliberately thin. The adapter knows which folder it got stuck on
- * and the errno it got, and neither travels: the errno stays on the error's `cause`, where a
- * log can reach it and a response cannot, and the folder is in a sentence written for a
- * maintainer. So the student is told that the layout could not be created and to look at the
+ * and the errno it got, and neither travels: the errno is on the error's `cause` and the folder
+ * is in a sentence written for a maintainer, and a response carries neither.
+ *
+ * **Said plainly, because it is a cost and not a free choice**: nothing logs them either. There
+ * is no request logging in `server/src`, and until this arm existed Hono's default handler
+ * `console.error`d the refusal on its way to the 500, so the terminal the student launched from
+ * did print the folder and the `cause`. Answering the refusal properly takes that away. The 409
+ * is still the right answer — a page cannot act on a terminal — but a debug log for caught
+ * refusals is a real thing this app now lacks, and it is a ticket rather than a line here. So the student is told that the layout could not be created and to look at the
  * folder — not *why*, because from `EEXIST` alone the app cannot tell something in the way from
  * a permission it lacks, and naming the wrong one sends them to fix what is not broken.
  *

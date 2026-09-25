@@ -87,9 +87,12 @@ it("reports a folder that is not a Workspace, and creates it only when asked", a
  * folder and a full disk arrive at the same arm, and are what a `skipIf` would be needed for.
  *
  * Asserted through the routes rather than at the port, because the claim is about what a page
- * receives — and both halves of #141's fourth point are here too: the GET before the POST is
- * the same layout probe answering 200, and the file's bytes after it are the proof that a
- * refused create wrote nothing.
+ * receives, and the GET either side of the POST is #141's fourth point: the same layout probe,
+ * answering 200 before and after a refusal.
+ *
+ * The file's bytes afterwards prove that a refused create **replaced** nothing. They do not
+ * prove that nothing was *made* — `create` has no rollback — and the comment on the assertion
+ * below says exactly how far that second claim reaches.
  */
 it("answers a create that cannot make the layout with a named 409, not a 500", async () => {
   await writeFile(join(root, "catalogs"), "not a folder");
