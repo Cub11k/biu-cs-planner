@@ -105,8 +105,8 @@ request and no note, which cost more to reconstruct than the ticket had cost to 
 
 ## Merging is the orchestrator's part, and it can break a live agent
 
-Everything above is addressed to the agent. This is not: it is for whoever dispatches the run and
-merges what comes back.
+Most of what is above is addressed to the agent. This section is not: it is for whoever dispatches
+the run and merges what comes back.
 
 - **Do not merge an agent's pull request until that agent has reported.** A green pull request is
   not a finished agent: its reviewers may still be running, and a review can change the diff.
@@ -114,23 +114,26 @@ merges what comes back.
   merge deleted **silently recreates it**, leaving a branch behind with no pull request attached,
   and post-merge cleanup removes the worktree the agent is standing in, so its next command fails
   in a directory that is gone. On 2026-09-24 #101 was merged mid-review; its agent found out when
-  a `cd` failed, and spent a large part of its budget confirming what had landed, cherry-picking
-  the rest onto a fresh branch, opening a second pull request, and deleting the branch its own push
-  had resurrected. Waiting costs a few minutes. If a pull request has to be merged early, or a
-  worktree removed under a live agent, **tell the agent first** — it cannot see either happen.
+  a `cd` failed, and spent a large part of its budget reconstructing what had landed, re-opening
+  the rest as a second pull request, and deleting the branch its own push had resurrected. Waiting
+  costs a few minutes. **Do not remove a worktree under a live agent** either, for the same reason;
+  and if a pull request has to be merged early or a worktree taken away regardless, **tell the
+  agent first**, because it cannot see either happen.
 - **Verify between merges, not after the batch.** Pull requests are verified against the base they
   branched from, never against each other, so a batch that is green one by one can be red merged.
   `MERGEABLE` means there was no textual conflict and nothing more. Run
-  `npm run typecheck && npm test` on the integration branch after **each** merge, and expect a
-  **check** added by one pull request to be what another's new tests trip — a new guardrail's whole
-  job is to notice code it has never seen. On 2026-09-25 five green pull requests produced a red
-  `dev`, because one of them added the rule that another's tests broke. Predict the test count
-  before merging, from each branch's own measurement, and check it afterwards: it is the cheapest
-  signal that a merge lost or gained something nobody meant.
-- **Clean up in the order that works: remove the worktree, then delete the branch.**
-  `gh pr merge --delete-branch` tries the local branch first, fails while a worktree still holds
-  it, and aborts before deleting the remote — so the remote branch survives and the flag reports
-  nothing unusual. #116's was still there afterwards. Verify with `git ls-remote`.
+  `npm run typecheck && npm test` on `dev` after **each** merge, and expect a check added by one
+  pull request to be what another's new tests trip — a new guardrail's whole job is to notice code
+  it has never seen. On 2026-09-25 five green pull requests produced a red `dev`, because one of
+  them added the rule that another's tests broke.
+- **Predict both counts before merging, and check them after** — test files and tests, summed from
+  each branch's own measurement. That batch reached its predicted total exactly, which is what made
+  it obvious the three failures were a collision rather than a lost test file. It is the cheapest
+  signal there is that a merge lost or gained something nobody meant.
+- **`gh pr merge --delete-branch` can leave the remote branch behind.** It tries the local branch
+  first, fails while a worktree still holds it, and aborts before deleting the remote, so the flag
+  reports nothing unusual — #116's was still there afterwards. Clean up in the order that works:
+  remove the worktree, then delete the branch, and verify with `git ls-remote`.
 
 ## What stays in the dispatch brief
 
@@ -140,9 +143,9 @@ the session doing the dispatching.
 
 **What must not stay there is anything that will be true of the next run too.** A brief is
 rewritten every run and read once, under load: the `git checkout -- <file>` hazard above was
-warned about in prose in two consecutive briefs and three agents hit it anyway. A briefing is not
-a substitute for this file. If a run learns something the next run needs, it belongs here, and the
-pull request that learned it is the cheapest place to propose the line.
+warned about in prose in the brief for the run after it was first hit, and an agent hit it anyway.
+A briefing is not a substitute for this file. If a run learns something the next run needs, it
+belongs here, and the pull request that learned it is the cheapest place to propose the line.
 
 ## Rules that live elsewhere, and are not repeated here
 
