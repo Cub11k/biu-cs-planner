@@ -146,6 +146,16 @@ function holdTheSaves(): () => void {
   };
 }
 
+/**
+ * How many times the Timetable itself has been read. Counted apart from every other GET,
+ * because the header asks `/api/history` as it mounts and after each save: a plain GET count
+ * would let one of those answer a claim about the screen re-reading the week.
+ */
+const timetableReads = (): number =>
+  sent.filter(
+    (request) => request.method === "GET" && request.pathname.startsWith("/api/timetable"),
+  ).length;
+
 /** One of the fixture's Groups as a Pick, the way a State File on disk would hold it. */
 function pickOf(groupNumber: string, lessonType = "הרצאה"): GroupPick {
   const group = OFFERING.groups.find(
@@ -191,6 +201,10 @@ beforeEach(() => {
     sent.push({ method, pathname, body });
 
     if (pathname === "/api/workspace/changes") return json({ changeCount: 0 });
+    // The header asks this as it mounts and after every save. Nothing here is about undo —
+    // `../history.browser.test.tsx` is — but a fake that answered it with a Catalog would
+    // leave the two buttons reading a body that is not an answer to their question.
+    if (pathname === "/api/history") return json({ canUndo: picks.length > 0, canRedo: false });
     if (!pathname.startsWith("/api/timetable")) return json({ offerings: [OFFERING] });
     // only the read is held: a save the screen decides to send still goes through at once,
     // so a test can tell "nothing was sent" from "something was sent and is waiting"
@@ -424,7 +438,9 @@ it("says a click was not saved when the file changed under the page, and keeps t
   await vi.waitFor(() => {
     if (!tileFor(mounted, "01").classList.contains("is-picked")) throw new Error("not picked");
   });
-  const readsBefore = sent.filter((request) => request.method === "GET").length;
+  // the Timetable's own reads: the header asks `/api/history` on its own schedule, and a
+  // count that included those could be satisfied by one of them rather than by the re-read
+  const readsBefore = timetableReads();
 
   changedUnderneath = true;
   tileFor(mounted, "03", "Tirgul").click();
@@ -438,7 +454,7 @@ it("says a click was not saved when the file changed under the page, and keeps t
   expect(tileFor(mounted, "01").classList.contains("is-picked")).toBe(true);
   expect(mounted.textContent).toContain("1 group picked");
   // and the screen re-read, so what it shows is the file rather than its own memory of it
-  expect(sent.filter((request) => request.method === "GET").length).toBeGreaterThan(readsBefore);
+  expect(timetableReads()).toBeGreaterThan(readsBefore);
 
   // The notice is the account of *that* click, so the next click is what retires it — not a
   // later success, which may be another click's answer entirely (#111).
@@ -763,7 +779,10 @@ it("starts a held click's save once even when a fresh answer arrives mid-save", 
     />,
   );
   await vi.waitFor(() => {
-    if (sent.filter((request) => request.method === "GET").length < 3) {
+    // two: the read this screen made as it mounted, and the one the moved count asked for.
+    // Three was the number while every GET was counted together, and one of those three was
+    // the Catalog's — which is exactly why this now counts the Timetable's own.
+    if (timetableReads() < 2) {
       throw new Error("the change count moved and the screen did not re-read");
     }
   });

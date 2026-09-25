@@ -83,9 +83,13 @@ beforeEach(() => {
     // the screen asks two routes as it opens: the Catalog, and the Picks it has to draw.
     // This fixture picks nothing, so the week here is pencil throughout.
     const { pathname } = new URL(url, location.href);
-    const body = pathname.startsWith("/api/timetable")
-      ? { variantName: "A", picks: [], clashes: [], warnings: [] }
-      : { offerings: [OFFERING] };
+    const body =
+      pathname === "/api/history"
+        ? // the header's two buttons ask this; nothing here is about them
+          { canUndo: false, canRedo: false }
+        : pathname.startsWith("/api/timetable")
+          ? { variantName: "A", picks: [], clashes: [], warnings: [] }
+          : { offerings: [OFFERING] };
 
     return new Response(JSON.stringify(body), {
       status: 200,

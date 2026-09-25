@@ -15,6 +15,13 @@ import {
   type TimetableResult,
 } from "./picks.ts";
 import { clashingGroups, isPicked, weekGroups, type WeekGroup } from "./week.ts";
+import {
+  useHistory,
+  type Direction,
+  type HistoryRefusal,
+  type HistoryStep,
+} from "../history.ts";
+import { HistoryControls } from "../HistoryControls.tsx";
 import { SchemeControl } from "../SchemeControl.tsx";
 import { CoursePicker } from "./CoursePicker.tsx";
 import { WeekGrid } from "./WeekGrid.tsx";
@@ -60,6 +67,38 @@ const REFUSAL_STRING = {
   "state-file-changed": "picksStale",
   "workspace-refused": "picksUnreadable",
 } as const satisfies Record<NonNullable<StateRefusal>, StringKey>;
+
+/**
+ * Why an undo or a redo did nothing, in words the student can act on. Exhaustive against the
+ * contract, so a reason added to `server/src/history.ts` is a compile error here rather than
+ * a refusal the student never hears about.
+ *
+ * Four of the eight are the edit refusals an undo inherits by going through the same save
+ * path (ADR-0013), and three of those four get their own sentence rather than the Pick's:
+ * `picksStale` is an account of a click that was not saved, and a student who pressed Undo
+ * did not click a Group. `workspace-not-ready` is the exception — "this folder is not a
+ * workspace yet, so nothing can be saved in it" is the whole truth for either.
+ */
+const HISTORY_REFUSAL_STRING = {
+  "nothing-to-undo": "historyNothingToUndo",
+  "nothing-to-redo": "historyNothingToRedo",
+  "state-file-missing": "historyFileMissing",
+  "history-invalidated": "historyInvalidated",
+  "state-file-changed": "historyStale",
+  "state-file-unreadable": "historyUnreadable",
+  "workspace-refused": "historyUnreadable",
+  "workspace-not-ready": "picksNotSaved",
+} as const satisfies Record<NonNullable<HistoryRefusal>, StringKey>;
+
+/**
+ * The name of an edit, from the label the API answers with. A `Map` and not a record, because
+ * the contract types `label` as a `string`: a newer server may send a label this build has no
+ * name for, and `editUnknown` is what is true of every one of them.
+ */
+const EDIT_LABEL_STRING = new Map<string, StringKey>([
+  ["pick-group", "editPickGroup"],
+  ["remove-pick", "editRemovePick"],
+]);
 
 /** Absence is not a fault: the year simply has no Catalog yet, and one can be imported. */
 const isAbsence = (warnings: readonly CatalogWarning[]): boolean =>
@@ -169,6 +208,19 @@ export function TimetableScreen({
   const [staleSave, setStaleSave] = useState(false);
   const [rereads, setRereads] = useState(0);
   /**
+   * The undo or redo this page last took, and which way it went.
+   *
+   * The direction is kept because the answer does not carry it: a 200 says what moved and a
+   * 409 says why nothing did, and neither says which button was pressed. "Undid picking a
+   * group" and "Redid picking a group" are the same answer read two ways.
+   *
+   * Retired by the next step or the next click, exactly as `staleSave` is, and for the same
+   * reason: it is the only account the student gets of what a press did.
+   */
+  const [lastStep, setLastStep] = useState<
+    { direction: Direction; answer: HistoryStep } | undefined
+  >(undefined);
+  /**
    * Clicks made before the first Timetable answer arrived, in the order they were made.
    *
    * The Catalog and the Picks are asked for in parallel, so the week is clickable while the
@@ -196,6 +248,17 @@ export function TimetableScreen({
    * had is still news, and waiting for a different string would wait for ever.
    */
   const refusedOn = useRef<TimetableState | undefined>(undefined);
+
+  /**
+   * Whether undo and redo are available, and the steps themselves.
+   *
+   * Keyed on the change count, so another tab's edit moves these buttons as well as this
+   * week: the stacks belong to the State File and live in the server process, not in this
+   * page (ADR-0013). Nothing here counts this page's own edits — that count would be wrong
+   * about a reloaded tab from the moment it loaded.
+   */
+  const history = useHistory({ changes: workspaceChanges });
+  const askHistory = history.ask;
 
   const askCatalog = useCallback(
     () => fetchOfferings(api, { academicYear, semester }),
@@ -275,16 +338,57 @@ export function TimetableScreen({
           return answer;
         }
         setTimetable(answer);
+        // An edit makes an undo available and empties the redo stack, and a save's answer
+        // does not carry the two flags. The change count reports it a poll later, which is
+        // seconds of a greyed-out button the student has already earned — so it is asked for
+        // here, and the poll's own answer is then the same one.
+        if (answer.kind === "served") askHistory();
         return answer;
       });
     },
-    [setTimetable],
+    [setTimetable, askHistory],
   );
+
+  /**
+   * One press of undo or redo.
+   *
+   * `basedOn` is the revision on screen, exactly as a save's is: an undo *is* a save and goes
+   * through the same external-edit guard (ADR-0013). Which is why no press is offered before
+   * the State File has been read — `undefined` there is the claim that there is no file, and
+   * #111 is the ticket about what that claim looks like to a student who caused none of it.
+   *
+   * **What the week shows afterwards is a direct re-read, not the change count.** Two reasons
+   * rather than a preference: the answer carries the new revision but not the Variant, so
+   * there is nothing in it to draw; and the poll is up to `DEFAULT_EVERY_MS` away, which is
+   * seconds of a week that disagrees with the file after the student's own press. A second tab
+   * sees it the other way round — the write moves the Workspace change count and that tab
+   * re-reads within the interval, which is what it already does for every edit this one makes.
+   */
+  const takeStep = (direction: Direction, basedOn: StateFileVersion): void => {
+    // whatever the last click or press was told, this press is the account owed now
+    setStaleSave(false);
+    setHeldLost(false);
+    setLastStep(undefined);
+
+    void history.step(direction, basedOn).then((answer) => {
+      setLastStep({ direction, answer });
+      // A move changed the file, and the two stale reasons both mean the page is showing
+      // something the file has moved past — `history-invalidated` by definition, since the
+      // revision the server compared was not the one it wrote. Only these three: an absent
+      // or unreadable file has nothing newer to fetch, and blanking a week the student can
+      // still read would cost them it for nothing.
+      const stale =
+        answer.kind === "refused" &&
+        (answer.reason === "state-file-changed" || answer.reason === "history-invalidated");
+      if (answer.kind === "moved" || stale) setRereads((count) => count + 1);
+    });
+  };
 
   const onPick = (group: WeekGroup): void => {
     // whatever became of the last click, this one is the account the student is owed now
     setHeldLost(false);
     setStaleSave(false);
+    setLastStep(undefined);
     const query = { academicYear, semester };
 
     if (timetable.kind !== "served") {
@@ -358,6 +462,18 @@ export function TimetableScreen({
     });
   }, [held, timetable, save, academicYear, semester]);
 
+  /**
+   * How a press is made, or `undefined` for *not now*. There has to be a revision on screen
+   * to step from, and no step already in flight: a second press sent on a revision the first
+   * has moved past comes back `state-file-changed`, which would tell the student their page
+   * was stale about something they had no part in.
+   */
+  const stepFrom =
+    timetable.kind === "served" && !history.stepping
+      ? (direction: Direction): void => takeStep(direction, timetable.version)
+      : undefined;
+  const stepNotice = historyNotice(language, lastStep);
+
   // one spelling of the year on the whole screen: the header and the sidebar disagreeing
   // about 2026-27 and 2027 reads as if a different year were the one missing
   const yearLabel = t(language, "academicYear", academicYearSpan(academicYear));
@@ -369,6 +485,22 @@ export function TimetableScreen({
         <span className="text-sm text-pencil">
           {t(language, SEMESTER_STRING[semester])} · {yearLabel}
         </span>
+        {/*
+          Undo and redo, before the two preferences: they act on the document this header sits
+          over, where the scheme and the language are about the page. `SchemeControl`'s
+          `ms-auto` still pushes the preferences to the end side of the row.
+
+          Availability is `GET /api/history`'s answer and not a count kept here, conjoined
+          with the two things only this screen knows: that there is a revision to step from,
+          and that no step is in flight.
+        */}
+        <HistoryControls
+          language={language}
+          canUndo={stepFrom !== undefined && history.available?.canUndo === true}
+          canRedo={stepFrom !== undefined && history.available?.canRedo === true}
+          onUndo={() => stepFrom?.("undo")}
+          onRedo={() => stepFrom?.("redo")}
+        />
         {/*
           The two preferences the header carries, at the end side of the row — `ms-auto` on
           the first of them, so the pair sits at the right in English and at the left in
@@ -433,6 +565,8 @@ export function TimetableScreen({
               )}
               {heldLost && <span>{t(language, "picksHeldLost")}</span>}
               {staleSave && <span>{t(language, "picksStale")}</span>}
+              {/* what the last press of undo or redo did, or why it did nothing */}
+              {stepNotice === undefined ? null : <span>{stepNotice}</span>}
               {clashes.length > 0 && <span>{clashesSaid(language, clashes.length)}</span>}
             </span>
             <span className="ms-auto flex items-center gap-2 text-xs text-pencil">
@@ -486,6 +620,40 @@ function picksNotice(language: Language, timetable: TimetableState): string | un
       );
     case "served":
       return picksSaid(language, timetable.picks.length);
+  }
+}
+
+/**
+ * What the screen says about the undo or redo it last took, and nothing when it has taken
+ * none.
+ *
+ * Every branch is a key into the translation files. The API's `label` is a key too — the
+ * server says so itself — so it is looked up and never shown: `pick-group` is not a sentence
+ * in either language, and a component that printed it would be inventing a string here.
+ */
+function historyNotice(
+  language: Language,
+  last: { direction: Direction; answer: HistoryStep } | undefined,
+): string | undefined {
+  if (last === undefined) return undefined;
+  const { direction, answer } = last;
+
+  switch (answer.kind) {
+    case "moved":
+      return t(language, direction === "undo" ? "undoneEdit" : "redoneEdit", {
+        edit: t(language, EDIT_LABEL_STRING.get(answer.label) ?? "editUnknown"),
+      });
+    case "refused":
+      // A refusal with no reason on it is an answer the contract has and this client cannot
+      // provoke — a 400 on a body it does not send. What is true of it is that nothing
+      // happened, and that is all it says rather than naming a cause it does not know.
+      return answer.reason === undefined
+        ? t(language, "historyNotDone")
+        : t(language, HISTORY_REFUSAL_STRING[answer.reason]);
+    case "unauthorized":
+      return t(language, "catalogUnauthorized");
+    case "unreachable":
+      return t(language, "apiUnreachable");
   }
 }
 

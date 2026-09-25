@@ -78,6 +78,8 @@ beforeEach(() => {
       polls += 1;
       return json({ changeCount });
     }
+    // answered before the fall-through, which counts Catalog asks: the header asks this one
+    if (pathname === "/api/history") return json({ canUndo: false, canRedo: false });
     if (pathname.startsWith("/api/timetable")) {
       // nothing is picked in this fixture: what is under test here is the Catalog
       return json({ variantName: "A", picks: [], clashes: [], warnings: [] });

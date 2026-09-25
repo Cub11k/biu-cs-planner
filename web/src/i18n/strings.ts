@@ -31,6 +31,78 @@ const english = {
   schemeLight: "Light",
   schemeDark: "Dark",
 
+  /**
+   * Undo and redo (#144, ADR-0013). Three kinds of string, and they are three because they
+   * are three different things:
+   *
+   * - the **buttons**, which say what will happen if you press them;
+   * - the **name of an edit**, which is what the API's `label` is a key for — `pick-group`
+   *   is not a sentence, and "picking a group" is not a button;
+   * - the **refusals**, one per reason the route can give.
+   */
+  undo: "Undo",
+  redo: "Redo",
+  /** What just happened, with the name of the edit substituted into it. */
+  undoneEdit: "Undid {edit}.",
+  redoneEdit: "Redid {edit}.",
+  /** The two labels `app/src/picks.ts` attaches to an edit, as the name of the thing done. */
+  editPickGroup: "picking a group",
+  editRemovePick: "removing a pick",
+  /**
+   * A label this build has no name for. The API types `label` as a `string`, so a server
+   * newer than this page can send one — and "an edit" is true of every label there will
+   * ever be, where guessing at the key's own text would not be.
+   */
+  editUnknown: "an edit",
+
+  /**
+   * Why the undo or the redo did not happen. The two empty stacks are ordinarily prevented
+   * by a disabled button rather than explained here, and are still said because a second
+   * tab can empty a stack between this page asking and this page clicking.
+   */
+  historyNothingToUndo: "There is nothing left to undo.",
+  historyNothingToRedo: "There is nothing to redo.",
+  /**
+   * The file is not there — an unmounted drive, a moved folder. Nothing was written and both
+   * stacks are intact, so this must not read like losing anything: it is a folder to go and
+   * find, and the undo is waiting for it.
+   */
+  historyFileMissing:
+    "The file your plan is saved in is not in the workspace folder right now, so nothing " +
+    "was changed and nothing was lost. Check that the folder is still where it was — a " +
+    "drive that is not mounted looks like this. Undo will work again once the file is back.",
+  /**
+   * Somebody else wrote the file, so every snapshot predates their change and the history
+   * was thrown away rather than silently revert their work (ADR-0013). The student has lost
+   * the ability to undo and has to be told, without being alarmed about data that is fine.
+   *
+   * Deliberately **not** `picksStale`'s wording. That sentence — "the file changed since
+   * this page read it" — is a claim about what this page read, and #111 is the ticket about
+   * showing it when the page had simply not read the file yet. What is true here is
+   * narrower and is all that is said: the file was changed from outside, which the server
+   * knows because the revision on disk is not the one it last wrote.
+   */
+  historyInvalidated:
+    "The file your plan is saved in was changed outside this page, so the undo history was " +
+    "dropped rather than put an older version back over that change. Nothing in your plan " +
+    "was lost; the steps before now can no longer be undone.",
+  /**
+   * The page's own view was stale, which is the ordinary external-edit guard and not an
+   * invalidation: the stacks survive, and a re-read is all it takes. Says "nothing changed"
+   * rather than "nothing was undone", because the same refusal answers a redo.
+   */
+  historyStale:
+    "This page was showing an older version of your saved plan, so nothing changed. " +
+    "The page has re-read it — try again.",
+  /** The file, or the folder, could not be read at all. Nothing was written. */
+  historyUnreadable: "The file your plan is saved in could not be read, so nothing changed.",
+  /**
+   * A refusal the route named no reason for. The floor, and deliberately the floor: what is
+   * true of it is that nothing happened, and naming one of the eight causes would be wrong
+   * in the other seven. `picksHeldLost` is the same shape for the same reason.
+   */
+  historyNotDone: "Nothing changed.",
+
   timetable: "Timetable",
   academicYear: "{first}-{second}",
   semesterFall: "Semester A",
@@ -122,6 +194,30 @@ const hebrew: Record<StringKey, string> = {
   schemeSystem: "לפי הגדרות המערכת",
   schemeLight: "בהיר",
   schemeDark: "כהה",
+
+  undo: "בטל",
+  redo: "בצע שוב",
+  undoneEdit: "הפעולה בוטלה: {edit}.",
+  redoneEdit: "הפעולה בוצעה מחדש: {edit}.",
+  editPickGroup: "בחירת קבוצה",
+  editRemovePick: "הסרת בחירה",
+  editUnknown: "עריכה",
+
+  historyNothingToUndo: "אין עוד מה לבטל.",
+  historyNothingToRedo: "אין מה לבצע מחדש.",
+  historyFileMissing:
+    "הקובץ שבו נשמרת התוכנית שלכם אינו נמצא כרגע בתיקיית סביבת העבודה, ולכן לא שונה דבר " +
+    "ולא אבד דבר. בדקו שהתיקייה עדיין במקומה — כך זה נראה כאשר כונן אינו מחובר. " +
+    "הביטול יעבוד שוב כשהקובץ יחזור.",
+  historyInvalidated:
+    "הקובץ שבו נשמרת התוכנית שלכם שונה מחוץ לדף הזה, ולכן היסטוריית הביטול הוסרה במקום " +
+    "להחזיר גרסה ישנה מעל אותו שינוי. שום דבר בתוכנית שלכם לא אבד; את הצעדים שקדמו לכך " +
+    "לא ניתן עוד לבטל.",
+  historyStale:
+    "הדף הציג גרסה ישנה יותר של התוכנית השמורה, ולכן לא השתנה דבר. " +
+    "הדף קרא את הקובץ מחדש — נסו שוב.",
+  historyUnreadable: "לא ניתן היה לקרוא את הקובץ שבו נשמרת התוכנית שלכם, ולכן לא השתנה דבר.",
+  historyNotDone: "לא השתנה דבר.",
 
   timetable: "מערכת שעות",
   academicYear: "{first}-{second}",
