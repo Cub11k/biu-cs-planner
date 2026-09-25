@@ -23,7 +23,7 @@
  *
  * Three places read that store, and they have to agree. The blocking stamp in
  * `web/index.html` runs before the first paint, `main.tsx` narrows the same key before
- * React mounts, and `watchScheme` below re-reads it when another tab writes. `asSchemeChoice`
+ * React mounts, and `watchScheme` below re-reads it when another tab writes (#146). `asSchemeChoice`
  * stays the single place a value from outside becomes a choice: the inline stamp keeps that
  * true by narrowing nothing at all, and `scheme.test.ts` fails if it starts to.
  *
@@ -190,9 +190,30 @@ export function watchScheme(
   browser: SchemeBrowser,
   element: SchemeElement,
 ): () => void {
+  return onSchemeChanged(watching, browser, (choice) => applyScheme(element, choice));
+}
+
+/**
+ * The same event, handed to something that is not the document.
+ *
+ * `watchScheme` covers the page, which is what a student is looking at, and it is all
+ * `main.tsx` needs. A control showing the choice *as a word* is the other consumer: its
+ * `<select>` reads the store once as it mounts, so after another tab chooses, the page it
+ * sits on is dark and its own value still says what it said. That is one `useEffect` away —
+ * `onSchemeChanged(window, schemeStore(), setChoice)` — and it is separated out so that the
+ * component needs no adapter standing in for an element it is not.
+ *
+ * Both go through the same guard and the same re-read, so two subscribers cannot end up with
+ * two answers, and the tab that wrote the value is told nothing by either.
+ */
+export function onSchemeChanged(
+  watching: SchemeChangeTarget,
+  browser: SchemeBrowser,
+  changed: (choice: SchemeChoice) => void,
+): () => void {
   const follow = (event: SchemeChange): void => {
     if (event.key !== null && event.key !== SCHEME_STORAGE_KEY) return;
-    applyScheme(element, storedScheme(browser));
+    changed(storedScheme(browser));
   };
   watching.addEventListener("storage", follow);
   return () => watching.removeEventListener("storage", follow);

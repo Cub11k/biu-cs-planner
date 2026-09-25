@@ -17,6 +17,7 @@ import {
   asSchemeChoice,
   isScheme,
   rememberScheme,
+  onSchemeChanged,
   schemeStore,
   storedScheme,
   watchScheme,
@@ -306,6 +307,27 @@ it("leaves a working page when the store stopped answering after the page loaded
   applyScheme(stamp, "dark");
   expect(() => other.changed(SCHEME_STORAGE_KEY)).not.toThrow();
   expect(attributes.has(SCHEME_ATTRIBUTE)).toBe(false);
+});
+
+it("hands the same answer to something that is not the document", () => {
+  // What a control showing the choice as a word subscribes to, so that its `<select>` follows
+  // another tab instead of staying on the value it mounted with. Same guard, same re-read: two
+  // subscribers to one event cannot end up with two answers.
+  const { browser, held } = storage();
+  const seen: SchemeChoice[] = [];
+  const other = tab();
+  const stop = onSchemeChanged(other.watching, browser, (choice) => void seen.push(choice));
+
+  held.set(SCHEME_STORAGE_KEY, "dark");
+  other.changed(SCHEME_STORAGE_KEY);
+  held.delete(SCHEME_STORAGE_KEY);
+  other.changed(null);
+  other.changed("biu-cs-planner.token");
+  stop();
+  held.set(SCHEME_STORAGE_KEY, "light");
+  other.changed(SCHEME_STORAGE_KEY);
+
+  expect(seen).toEqual(["dark", "system"]);
 });
 
 it("stops listening when it is told to", () => {
