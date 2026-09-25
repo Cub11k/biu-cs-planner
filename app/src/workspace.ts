@@ -338,6 +338,17 @@ export type Workspace = {
    * Raw events, not one per change: an editor saving a file emits several and a clone
    * emits a burst. Collapsing them belongs one layer up, in `watchWorkspace`, so that
    * both adapters get the same collapsing and a test can drive a burst without a disk.
+   *
+   * **Every event, whoever caused it — this port's own writes included (#88).** An
+   * implementation may not filter out the events its `write` and `saveStateFile` cause:
+   * the count they feed is one number shared by every poller, so a write hidden from the
+   * page that made it is hidden from the other tab too, for which that write is exactly an
+   * external change (ADR-0013). `./changes.ts` carries the ruling and why the page rather
+   * than this port is what was changed. Telling one writer from another is the save guard's
+   * job, and it does it from content.
+   *
+   * **Binds #80, #67 and #73**, the three tickets that write through this port: none may add
+   * suppression to an implementation of it.
    */
   watch(onChange: WorkspaceChanged): Promise<WorkspaceWatcher>;
 };

@@ -16,6 +16,33 @@ import type { Workspace, WorkspaceWatcher } from "./workspace.ts";
  *
  * The collapsing lives here rather than in either adapter, so that both get it and a test
  * can drive a burst through the in-memory Workspace without a disk and without a clock.
+ *
+ * ## The app's own writes are counted, and this is the reason (#88)
+ *
+ * A watcher cannot tell whose write it saw, and **this does not try to**. Every write the app
+ * makes into a watched folder — a Catalog import, an autosave, an undo, a restore from a
+ * backup — moves this counter, exactly as an editor's write does. The folder changed; the
+ * count says so; that is all it says. (A backup *snapshot* is the exception, and not by
+ * suppression: it is written into `.backups/`, which the adapter does not watch at all,
+ * because nothing in it is ever shown.)
+ *
+ * **This counter is why suppression cannot live below it.** There is one of it per server and
+ * `server/src/api.ts` serves the same number to every poller, with no per-connection state on
+ * that path. So there is no such thing as hiding a write from the page that made it: an
+ * adapter that dropped the event its own write caused would drop it for every page, and two
+ * tabs on one document are in scope (ADR-0013). One tab's save is the other tab's external
+ * change, and the other tab has to hear it. Making this per-connection is not the fix either —
+ * it would need a session concept the server does not have, and would still be wrong for the
+ * CLI or anything else that writes without polling.
+ *
+ * **What was fixed instead is the harm.** A page re-fetches and reconciles rather than
+ * resetting, so a change it caused itself costs one loopback request and nothing visible
+ * (`web/src/timetable/TimetableScreen.tsx`). Whose write it was, where it genuinely matters,
+ * is answered from content by the save guard — the revision a save was based on — and by the
+ * undo stacks in `server/src/history.ts` — `EditHistory.wrote` in `./edit.ts` is the port
+ * they hear it through — never from an event.
+ *
+ * **Binds #80, #67 and #73**, all of which save: none may add suppression here or below.
  */
 
 /** How long the folder has to go quiet before one change is reported. */
@@ -47,6 +74,10 @@ export type WorkspaceChanges = {
    * A count and deliberately not a version. `schemaVersion` on a file and the file version
    * a save carries (docs/design.md, "External edits") are both versions of one file; this
    * is neither, and naming it one would invite a save to compare against it.
+   *
+   * **Every burst, whoever caused it**, the app's own saves included — see the ruling above.
+   * A poller that has just written the Workspace itself will see this move, and is expected
+   * to tolerate that rather than to be spared it.
    */
   changeCount(): number;
   /** Stops watching. Idempotent, and leaves no timer and no watcher behind. */

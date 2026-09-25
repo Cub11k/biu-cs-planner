@@ -290,9 +290,26 @@ async function observed(stimulus: () => Promise<void>, events: () => number): Pr
   return false;
 }
 
-/** A watcher on `root`, counting raw events, stopped for you when the test ends. */
-async function watching(): Promise<{ events: () => number; stop: () => void }> {
-  const workspace = fileSystemWorkspace(root);
+/**
+ * A watcher on `root`, counting raw events, stopped for you when the test ends.
+ *
+ * **Through the Workspace under test when one is passed**, and that matters for every test
+ * about the app's own writes: `server/src/serve.ts` builds one adapter and both the watcher
+ * and every write go through it, so a test watching a *second* instance of the adapter could
+ * not see an instance-local suppression even if one were added — it would pass against the
+ * very change it exists to catch. Measured, not assumed: the first draft of the tests below
+ * did watch a second instance, and a suppression deliberately introduced to break them did
+ * not.
+ *
+ * **Pass the Workspace whenever the app writes anything in the test at all**, not only when
+ * the app's write is the thing under assertion: an external-edit test that first saves through
+ * the adapter is testing a suppression's reach, and watching a second instance would hide it.
+ * The default is for the tests where nothing goes through the adapter — a file dropped in by
+ * hand, a folder appearing, a chmod — and it is a convenience, not a recommendation.
+ */
+async function watching(
+  workspace: Workspace = fileSystemWorkspace(root),
+): Promise<{ events: () => number; stop: () => void }> {
   let count = 0;
   const watcher = await workspace.watch(() => {
     count += 1;
@@ -390,6 +407,142 @@ it("ignores .backups, and still hears the folders that matter", async () => {
   // above is `.backups` being left out and not a watcher that does nothing
   await writeFile(join(root, "catalogs", "2027.json"), JSON.stringify(CATALOG), "utf8");
   expect(await within(() => watched.events() > 0)).toBe(true);
+});
+
+/**
+ * **The app's own writes are reported, and that is the #88 ruling rather than an oversight.**
+ * A State File save writes `.tmp-<pid>-alice.state.json` into the Workspace root, where State
+ * Files live, and renames it onto the real name. Nothing here tries to recognise either event,
+ * because the count they feed is one number `server/src/api.ts` serves to every poller, so a
+ * write hidden from the page that made it is hidden from the other tab too — for which it is
+ * exactly an external change (ADR-0013).
+ *
+ * **What this asserts is that a save is reported at all**, which is deliberately weaker than
+ * the ruling's full claim and is as strong as this port can be made. `Workspace.watch` hands
+ * its callback nothing — no event kind, no filename — so a test on this side of the port
+ * cannot say *which* of a save's events it heard, and cannot distinguish the temporary from
+ * the rename. Option 2 in #88, "suppress the temporaries and let the rename through", is
+ * therefore ruled out by argument and not by this test: the rename onto the real name is
+ * indistinguishable from an editor saving that file, which is the whole reason the option
+ * fails. A test that wanted to separate them would need the port to carry a filename, and
+ * giving it one so the app could recognise its own writes is the thing the ruling forbids.
+ *
+ * **This is the test a suppression of the app's own writes breaks.** Read the ruling on
+ * `WATCHED_FOLDERS` before deleting it.
+ */
+it("reports the app's own State File save, the first one and the overwrite alike", async () => {
+  const workspace = fileSystemWorkspace(root);
+  await workspace.create();
+  const watched = await watching(workspace);
+  // `create` made three folders a moment ago; drained first, so what follows can only be the
+  // save. Without this a trailing `mkdir` event would satisfy the assertion on its own.
+  await quiet(watched.events);
+  const beforeSaving = watched.events();
+
+  const version = await workspace.saveStateFile(ALICE, firstSave(STATE));
+  expect(await within(() => watched.events() > beforeSaving)).toBe(true);
+
+  // and the overwrite, which is the shape autosave takes: a second save onto a file that is
+  // already there, guarded by the revision the first one handed back. A suppression keyed on
+  // the file not existing yet would pass the assertion above and fail this one.
+  await quiet(watched.events);
+  const afterFirstSave = watched.events();
+  await workspace.saveStateFile(ALICE, {
+    json: { ...STATE, settings: { language: "en", examSpacingDays: 4 } },
+    basedOn: version,
+  });
+  expect(await within(() => watched.events() > afterFirstSave)).toBe(true);
+});
+
+/**
+ * The same ruling for the other writer the app has today. A Catalog import writes
+ * `.tmp-<pid>-<year>.json` into `catalogs/` and renames it, and the import is reported: a
+ * Catalog that has just arrived is something every open tab should be showing. As above, what
+ * is asserted is that the import is heard and not which of its two events did it.
+ */
+it("reports the app's own Catalog import", async () => {
+  const workspace = fileSystemWorkspace(root);
+  await workspace.create();
+  const watched = await watching(workspace);
+  await quiet(watched.events);
+  const beforeImporting = watched.events();
+
+  await workspace.write({ kind: "catalog", academicYear: 2027 }, CATALOG);
+
+  expect(await within(() => watched.events() > beforeImporting)).toBe(true);
+});
+
+/**
+ * And the half the ruling may not cost: a **genuine external edit still reloads**, which is
+ * what this watcher exists for (docs/design.md, "External edits" — Dropbox, git, an editor).
+ * Only a State File *appearing* was covered above; this is one being edited in place, at the
+ * very name the app writes and just after the app wrote it. A fix that silenced the app's
+ * saves by name, by folder, or by "we wrote this file recently" would swallow this one, and
+ * it is the edit whose loss is a student's work.
+ *
+ * **Measured, not supposed.** The precise version of #88's option 1 — a set of the filenames a
+ * write is about to touch, held for the write plus the grace its asynchronous events need —
+ * fails exactly here, because the name a student's editor writes is the same name the app
+ * writes. That is the trap the ticket predicted in words.
+ */
+it("sees a State File edited from outside, at the very name the app writes", async () => {
+  const workspace = fileSystemWorkspace(root);
+  await workspace.create();
+  await workspace.saveStateFile(ALICE, firstSave(STATE));
+  const watched = await watching(workspace);
+  // the app's own save is drained before the outside edit, so the event below is attributable
+  // to that edit and not to a tail of the save that preceded it
+  await quiet(watched.events);
+  const beforeTheOutsideEdit = watched.events();
+
+  // by hand onto the real name, not through `saveStateFile`: the editor and sync-client case
+  await writeFile(
+    join(root, "alice.state.json"),
+    JSON.stringify({ ...STATE, pins: ["89-101"] }),
+    "utf8",
+  );
+
+  expect(await within(() => watched.events() > beforeTheOutsideEdit)).toBe(true);
+});
+
+/**
+ * The case a suppression would most plausibly get wrong: the app saves and somebody else
+ * writes the Workspace at the same moment, so the two are one burst that
+ * `app/src/changes.ts` collapses into a single reload — which re-reads both, because
+ * collapsing is not swallowing.
+ *
+ * **What is asserted here, exactly.** That the concurrent pair is heard, and that the watcher
+ * is still hearing the folder afterwards — the second assertion drains the pair first, so its
+ * event is attributable to the edit that caused it. What *cannot* be asserted on this side of
+ * the port is that the external event of the pair was the one heard: two events collapsed into
+ * "something happened" are not separable by a callback that carries no argument, and a count
+ * of one is what both a working watcher and a watcher that lost one of the two would report.
+ * That is not a gap in the test so much as the shape of the port, and it is the reason the
+ * assertion below is about the folder still being live rather than about the pair.
+ */
+it("hears a save and an outside write that land together, and keeps hearing the folder", async () => {
+  const workspace = fileSystemWorkspace(root);
+  await workspace.create();
+  const watched = await watching(workspace);
+  await quiet(watched.events);
+  const beforeTheBurst = watched.events();
+
+  const saving = workspace.saveStateFile(ALICE, firstSave(STATE));
+  const external = writeFile(join(root, "catalogs", "2027.json"), JSON.stringify(CATALOG), "utf8");
+  await Promise.all([saving, external]);
+
+  expect(await within(() => watched.events() > beforeTheBurst)).toBe(true);
+
+  // and an outside edit after the pair is still heard: a suppression that latched on the save,
+  // or whose window outlived it, would stop here
+  await quiet(watched.events);
+  const afterTheBurst = watched.events();
+  await writeFile(
+    join(root, "catalogs", "2027.json"),
+    JSON.stringify({ ...CATALOG, sources: [] }),
+    "utf8",
+  );
+  expect(await within(() => watched.events() > afterTheBurst)).toBe(true);
 });
 
 /**

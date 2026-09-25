@@ -45,6 +45,51 @@ const STATE_FILE = /^(.+)\.state\.json$/;
  * because a rotating snapshot is written only by the app and nothing in it is ever shown —
  * so a backup is not news, and watching it would turn every future autosave's snapshot into
  * a page reload (docs/design.md, "Storage").
+ *
+ * **`.backups` is the only exclusion, and it is not the start of a list.** Read the ruling
+ * below before adding a second one.
+ *
+ * ## This watcher reports the app's own writes on purpose (#88)
+ *
+ * Everything the app writes into a watched folder is reported. A Catalog import writes
+ * `.tmp-<pid>-<year>.json` into `catalogs/` and renames it; a State File save writes
+ * `.tmp-<pid>-<name>.state.json` into the **root**, where State Files live, and renames it —
+ * `temporaryPath` below is the one that builds both, pid first and the real name after. All
+ * four events are reported, and once autosave exists that is a reported change every few
+ * seconds of editing, each one caused by the page that will be told about it. (#88's body
+ * writes the Catalog temporary as `.tmp-<year>-<pid>.json`, which is the two halves the other
+ * way round; the code is what this follows.)
+ *
+ * **That is correct and nothing here suppresses it.** The folder really did change, and a
+ * count that said otherwise would be lying about the one thing it carries. The harm was never
+ * that the count moves — it was that a page reloading discarded what the student was doing —
+ * so the fix is in `web`, which re-fetches and reconciles rather than resetting
+ * (`web/src/timetable/TimetableScreen.tsx`, `useReloading`). A page's own write costs it one
+ * loopback request and nothing visible.
+ *
+ * **Why not suppress here, which is the obvious shape.** Because the count is *global*:
+ * `app/src/changes.ts` keeps one counter and `server/src/api.ts` serves it to every poller,
+ * with no per-connection state anywhere on that path. An adapter that swallowed the event its
+ * own write caused would swallow it for every page — and **two tabs on one document are in
+ * scope** (ADR-0013: one undo history, one save guard, one document). Tab A's save *is* tab
+ * B's external change. Suppression here would hide it from B, which is a worse defect than
+ * the one it fixes: the reload this watcher exists for, silently gone. Suppressing only the
+ * temporaries does not help either — the rename onto the real name is the event that matters,
+ * and it looks exactly like an editor saving that file.
+ *
+ * **Whose write it was is the save guard's question, and it is answered from content.**
+ * `saveStateFile` below compares the revision a save was based on against the revision on
+ * disk, and `server/src/history.ts` keeps the revision it last wrote for the same reason. A
+ * SHA-256 of the bytes is exact; a filesystem event carries no author and never will. Do not
+ * try to recover one here.
+ *
+ * **Binds #80, #67 and #73.** #80 and #73 write into a watched folder — the first save from
+ * the UI, and an undo, which goes through the same guarded save. #67 is the other way round
+ * and is bound for that reason: its snapshots go into `.backups/`, where nothing is watched,
+ * so they move no count and may not be made to by watching that folder — and a *restore*
+ * writes a State File into the root, which is watched and is reported like any other save.
+ * None of the three may add suppression, and each must leave the page able to tolerate its
+ * own write.
  */
 const WATCHED_FOLDERS: WorkspaceFolder[] = ["catalogs", "requirements"];
 
