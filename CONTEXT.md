@@ -118,7 +118,7 @@ The folder holding a student's Catalogs, Requirements Files, State Files and bac
 _Avoid_: project, profile
 
 **Launch Token**:
-The secret the server is started with and every request must carry, delivered to the page in the fragment of the URL the launcher prints. It is kept in the user config directory, never in the Workspace: one per installation, stable across restarts so a bookmark keeps working, and replaced only by `biu-cs-planner rotate-token`. Replacing the file is the whole of the revocation — nothing expires a Launch Token and nothing keeps a list of retired ones — and a server that is already running keeps accepting the retired one until it is restarted.
+The secret the server is started with and every request must carry, delivered to the page in the fragment of the URL the launcher prints. It is kept in the user config directory, never in the Workspace: one per installation, stable across restarts so a bookmark keeps working, and replaced by `biu-cs-planner rotate-token`, or by deleting the file, which the next launch replaces with a fresh one. Replacing the file is the whole of the revocation — nothing expires a Launch Token and nothing keeps a list of retired ones — and a server that is already running keeps accepting the retired one until it is restarted.
 _Avoid_: api key, secret, session
 
 **State File**:
