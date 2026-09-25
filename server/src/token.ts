@@ -16,8 +16,11 @@ import { join } from "node:path";
  * from every other process and website that can reach the port (ADR-0004).
  *
  * It lives in the user config directory and never in the Workspace, which the student
- * may sync to Dropbox or commit to git. It is stable across restarts, so the URL the
- * launcher prints stays a working bookmark (docs/design.md, "Authentication").
+ * may sync to Dropbox or commit to git: one token per user account on the machine, because
+ * that path is the OS config directory and nothing in it names an installation — two
+ * installations for one user share the token, and a second OS user gets their own. It is
+ * stable across restarts, so the URL the launcher prints stays a working bookmark
+ * (docs/design.md, "Authentication").
  *
  * Stability is also what makes a leak permanent: the launcher prints the token in a URL,
  * and that URL is what a student pastes into a bug report or leaves in a screenshot. So
@@ -34,7 +37,8 @@ const TOKEN_BYTES = 32;
 /**
  * What a token may look like. Anything else on disk is not a token we wrote, so it is
  * replaced rather than trusted: a half-written file must not become a token that the
- * page then fails to authenticate with, for the rest of the installation's life.
+ * page then fails to authenticate with for as long as the file stands — and nothing
+ * expires it, so that is until a rotation or a delete.
  *
  * The page applies the same expression to what the fragment hands it, and has its own
  * copy because `web` may not import server code (CLAUDE.md, "Code guardrails"). Widening
@@ -62,8 +66,8 @@ export function userConfigDirectory(
 }
 
 /**
- * The token for this installation: the stored one if there is one, a fresh one written
- * to disk otherwise.
+ * The token for this user account on the machine: the stored one if there is one, a fresh
+ * one written to disk otherwise.
  *
  * Two servers starting at the same moment would otherwise each write their own and one
  * would win, leaving the other holding a token nothing accepts. The create is exclusive,
@@ -125,7 +129,7 @@ export type Rotation = {
  * target truncates first, so an interrupted rotation could leave a file holding 40 of a
  * token's 43 characters — a string `TOKEN_PATTERN` still accepts, because its floor is 40
  * and it cannot tell a prefix from a token. The next launch would trust that prefix, and go
- * on trusting it for the life of the installation while the page it handed a real token to
+ * on trusting it for as long as the file stood, while the page it handed a real token to
  * could not authenticate with it. A rename is atomic on a POSIX filesystem, so the file is
  * either the old token or the new one and never a prefix of either.
  *
