@@ -156,9 +156,17 @@ export function collect(root: string): Report {
   // through `Report.testOnlyDirs` instead. `forbiddenEdges` is unaffected either way: it
   // looks a path's first segment up in `LAYERS` and a `tools/` test matches no layer, so it
   // was already skipping what it is handed here.
+  //
+  // Through a `Set`, because the two lists are independent constants and nothing stops an entry
+  // of one lying inside the other. `tools` and `core/src` do not overlap today; if they ever did,
+  // a file read twice would be two entries with the same path, every one of its titles counted
+  // twice, and a summary whose total no test run agrees with. Deduplicating by path costs one
+  // wrapper and removes the failure mode rather than relying on the two lists staying disjoint.
   const testFiles = [
-    ...files.filter(isTest),
-    ...TEST_ONLY_DIRS.flatMap((d) => walk(join(root, d))).filter(isTest),
+    ...new Set([
+      ...files.filter(isTest),
+      ...TEST_ONLY_DIRS.flatMap((d) => walk(join(root, d))).filter(isTest),
+    ]),
   ];
 
   const modules = sourceFiles

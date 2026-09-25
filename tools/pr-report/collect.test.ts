@@ -16,11 +16,24 @@ const ROOT = resolve(import.meta.dirname, "../..");
  * fixture tests for as long as the fixtures were the only thing anyone asked.
  */
 
-/** Every test file actually on disk under a directory, as the tree spells it. */
+/**
+ * Every test file actually on disk under a directory, as the tree spells it.
+ *
+ * `SKIP` is repeated from `collect.ts` rather than left out, and that repetition is the point of
+ * this comment. `walk` skips `node_modules`, `dist`, `__fixtures__` and `coverage`; a plain
+ * recursive read does not, so a `__fixtures__` holding a `.test.ts` — and `core/src/shoham`
+ * already has a `__fixtures__`, so the pattern exists here — would make this test fail with a
+ * message that reads like a scope bug in `collect` when it is only a difference between two
+ * walks. If `SKIP` gains a name, this list needs it too.
+ */
+const SKIP = ["node_modules", "dist", "__fixtures__", "coverage"];
+
 const testFilesUnder = (dir: string): string[] =>
   readdirSync(join(ROOT, dir), { recursive: true, encoding: "utf8" })
+    .map((entry) => entry.replaceAll("\\", "/"))
     .filter((entry) => /\.test\.tsx?$/.test(entry))
-    .map((entry) => `${dir}/${entry}`.replaceAll("\\", "/"))
+    .filter((entry) => !entry.split("/").some((segment) => SKIP.includes(segment)))
+    .map((entry) => `${dir}/${entry}`)
     .sort();
 
 describe("what the report is derived from", () => {
@@ -59,8 +72,17 @@ describe("what the report is derived from", () => {
 
     expect(derived.modules.map((m) => m.path).filter(inTools)).toEqual([]);
     expect(derived.edges.filter((e) => inTools(e.from) || inTools(e.to))).toEqual([]);
-    expect([...derived.coverage.byFile.keys()].filter(inTools)).toEqual([]);
-    expect(derived.unmeasured.filter(inTools)).toEqual([]);
+
+    // The coverage halves are only worth anything once a coverage run exists on disk: without
+    // `coverage/coverage-summary.json` the map is empty and `unmeasured` is `[]`, so both would
+    // pass for the wrong reason under a bare `npm run test:node`. Guarded so that the assertion
+    // is made where it means something — after `npm run report`, which is what CI runs — and
+    // skipped, visibly, where it would not be.
+    if (derived.coverage.available) {
+      expect(derived.coverage.byFile.size).toBeGreaterThan(0);
+      expect([...derived.coverage.byFile.keys()].filter(inTools)).toEqual([]);
+      expect(derived.unmeasured.filter(inTools)).toEqual([]);
+    }
   });
 
   it("tells the renderer which directories it read nothing but titles from", () => {
@@ -78,6 +100,8 @@ describe("what the report is derived from", () => {
 
     expect(markdown).toContain("tools/ci/workflows.test.ts");
     expect(markdown).toContain("**titles only**, not graphed or measured");
-    expect(markdown).toContain("`tools/` is in neither graph and in no coverage row");
+    expect(markdown).toContain(
+      "`tools/` is in neither graph, in no exported-type list and in no coverage row",
+    );
   });
 });

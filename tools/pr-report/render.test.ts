@@ -499,7 +499,9 @@ describe("a directory only test titles were read from", () => {
     const beforeFolds = markdown.slice(0, markdown.indexOf("<details>"));
 
     expect(beforeFolds).toContain("| Of those, titles only | 3 in 2 files under `tools/`");
-    expect(beforeFolds).toContain("`tools/` is in neither graph and in no coverage row");
+    expect(beforeFolds).toContain(
+      "`tools/` is in neither graph, in no exported-type list and in no coverage row",
+    );
     // The distinction the whole ticket is about, in the words that make it: not measured is
     // not the same as has no tests.
     expect(beforeFolds).toContain("It is not measured, which is a different thing");
@@ -538,10 +540,58 @@ describe("a directory only test titles were read from", () => {
     // should have been covered and was not, which is a finding; a titles-only directory is a
     // decision. Listing the second among the first would make every report carry a permanent
     // complaint about a thing nobody intends to change.
-    const markdown = render(withTools());
+    //
+    // Asserted with a real `unmeasured` entry present, so the list is rendered and its contents
+    // are what is being checked. Against an empty `unmeasured` the headings would be absent
+    // whatever the implementation did, and the test would pass without asking anything.
+    const markdown = render(withTools({ unmeasured: ["core/src/b.ts"] }));
+    const verdict = markdown.slice(markdown.indexOf("### Where to look"));
 
-    expect(markdown).not.toContain("| Modules with no coverage at all |");
-    expect(markdown).not.toContain("Modules the test run does not measure at all");
+    expect(markdown).toContain("| Modules with no coverage at all | 1 |");
+    expect(verdict).toContain("Modules the test run does not measure at all");
+    expect(verdict).toContain("- `core/src/b.ts`");
+    // The decision, named separately and in its own sentence.
+    expect(verdict).not.toContain("- `tools`");
+    expect(verdict).not.toContain("- `tools/`");
+    expect(verdict).toContain("Nothing above says anything about `tools/`");
+  });
+
+  it("says so even when the area declared unmeasured holds no test file at all", () => {
+    // The case that forced scope and counts apart. Gating every sentence on the test files
+    // *found* meant a declared directory with none produced total silence — no row, no scope
+    // sentence, and "Nothing stands out: every function ran" as the last line read. That is
+    // #123's failure mode restored in the one case where it is worst: not measured *and*
+    // untested, reported as a clean tree.
+    const markdown = render(report({ tests: [], testOnlyDirs: ["tools"] }));
+    const verdict = markdown.slice(markdown.indexOf("### Where to look"));
+
+    expect(markdown).toContain("| Titles only | `tools/` — no test file, no graph, no coverage |");
+    expect(markdown).toContain("What it does have is **no test file at all**");
+    expect(verdict).toContain("Nothing stands out among the modules measured");
+    expect(verdict).not.toContain("Nothing stands out: every function ran");
+    expect(verdict).toContain("**no test file at all**");
+  });
+
+  it("says the exported types do not cover it either", () => {
+    // The fold built from `modules`, which the first draft of this left silent: a type exported
+    // from a titles-only directory is absent exactly like a type that does not exist. `Report`
+    // in `render.ts` is such a type, so this report was blind to its own shape.
+    const typesFold = folds(render(withTools()))[2]?.body ?? "";
+
+    expect(typesFold).toContain("Types exported from `tools/` are not here");
+    // And the scope line above every fold enumerates it, rather than the graphs and coverage only.
+    expect(render(withTools())).toContain("in no exported-type list");
+  });
+
+  it("reads as a list when more than one area is declared", () => {
+    // Every sentence switches number on the directory list, which is its subject. Two entries
+    // used to leave two of them reading "`a/`, `b/` has none because it is outside …".
+    const markdown = render(withTools({ testOnlyDirs: ["tools", "scripts"] }));
+
+    expect(markdown).toContain("`tools/`, `scripts/` are in neither graph");
+    expect(markdown).toContain("What they do have is");
+    expect(markdown).toContain("`tools/`, `scripts/` have none because they are outside");
+    expect(markdown).not.toContain("are in neither graph, in no exported-type list and in no coverage row: a module graph of the tooling says nothing about the app, and `vitest.config.ts` leaves it out of coverage deliberately. What it does");
   });
 
   it("says none of it when everything read was also measured", () => {
