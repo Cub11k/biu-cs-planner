@@ -12,12 +12,17 @@ The skills speak in terms of five canonical triage roles. This file maps those r
 
 When a skill mentions a role (e.g. "apply the AFK-ready triage label"), use the corresponding label string from this table.
 
-Edit the right-hand column to match whatever vocabulary you actually use.
+## All five exist on GitHub
 
-## Not yet created on GitHub
+`gh label list` shows all five in this repo's label set, and every ticket in the tracker carries
+one of them. Nothing here is a setup step, and the vocabulary is settled: the strings in the table
+are the ones already applied to live issues, so editing this column alone would leave the file
+naming a label no issue carries.
 
-Only `wontfix` exists in the repo's label set (it ships with every new GitHub repo). The other
-four still need creating before `/triage` can apply them:
+The four that do not ship with a new GitHub repo were created with the commands below, kept only as
+the record of the description and colour each label carries. Do not run them — `gh label create`
+fails on a name that already exists, which reads as a broken setup rather than as a label that is
+already there.
 
 ```sh
 gh label create needs-triage    --description "Maintainer needs to evaluate this issue"  --color FBCA04
