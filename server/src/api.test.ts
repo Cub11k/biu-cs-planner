@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
@@ -71,6 +71,94 @@ it("reports a folder that is not a Workspace, and creates it only when asked", a
   const created = await post("/api/workspace", {});
   expect(created.status).toBe(200);
   await expect(created.json()).resolves.toEqual({ ready: true, missing: [] });
+});
+
+/**
+ * #141, and the answer to the **first thing a student ever does with the app**.
+ *
+ * `create` cannot make a folder whose name a plain file already holds — `mkdir` answers
+ * `EEXIST` — and until #141 nothing caught that: `createWorkspace` threw, the route had no arm,
+ * and Hono's default handler answered a 500 with no body of this app's own. Measured on `dev`
+ * at `8284a25` before the fix, this exact request was `500 Internal Server Error`.
+ *
+ * **Reachable with no permission trick**, which is why this is the case the ticket names: one
+ * part of the layout is a plain file and another is genuinely missing, so `status` reports
+ * not-ready, the student is offered the layout, and accepting it lands on the file. A read-only
+ * folder and a full disk arrive at the same arm, and are what a `skipIf` would be needed for.
+ *
+ * Asserted through the routes rather than at the port, because the claim is about what a page
+ * receives, and the GET either side of the POST is #141's fourth point: the same layout probe,
+ * answering 200 before and after a refusal.
+ *
+ * The file's bytes afterwards prove that a refused create **replaced** nothing. They do not
+ * prove that nothing was *made* — `create` has no rollback — and the comment on the assertion
+ * below says exactly how far that second claim reaches.
+ */
+it("answers a create that cannot make the layout with a named 409, not a 500", async () => {
+  await writeFile(join(root, "catalogs"), "not a folder");
+
+  // the setup asserted rather than assumed: a Workspace this is offered the layout for, which
+  // is what makes the create below the thing a student actually clicks
+  const before = await get("/api/workspace");
+  expect(before.status).toBe(200);
+  await expect(before.json()).resolves.toEqual({
+    ready: false,
+    missing: ["requirements", "backups"],
+  });
+
+  const created = await post("/api/workspace", {});
+
+  expect(created.status).toBe(409);
+  await expect(created.json()).resolves.toEqual({ reason: "workspace-refused" });
+
+  // The file is untouched, which is the part that holds for every refused create: `create`
+  // never replaces what is already standing there.
+  expect(await readFile(join(root, "catalogs"), "utf8")).toBe("not a folder");
+
+  // And nothing was made — but **because `catalogs` is first in `WORKSPACE_LAYOUT`**. `create`
+  // loops the layout with no rollback, so a refusal on a later part leaves the earlier ones
+  // created. This asserts what a refused create does *here*, not a transactional promise the
+  // adapter does not make; reorder the layout and this is the line that says so.
+  const after = await get("/api/workspace");
+  await expect(after.json()).resolves.toEqual({
+    ready: false,
+    missing: ["requirements", "backups"],
+  });
+});
+
+/**
+ * #130, and the api-level half of #121, whose comment on #130 wrote this test out with the
+ * numbers measured rather than predicted.
+ *
+ * A Workspace can be **ready** and still be one a write cannot land in: `usablePath` asks
+ * whether each folder of the layout resolves inside the Workspace and not what it is, so a
+ * `catalogs` that is a plain file passes and `status` says ready. The write used to meet a raw
+ * `ENOTDIR` under that file, which is a 500 — the one answer this API has no arm for. Asserted
+ * through the routes rather than at the port, because the claim is about what a page receives,
+ * and `server/src/workspace.fs.test.ts`'s sweep deliberately cannot make it: the backstop it
+ * added wraps the `ENOTDIR` into a refusal too, so the sweep proves "nothing leaves untyped"
+ * and not "this guard exists".
+ *
+ * It needs no permission trick either, so it runs everywhere rather than skipping visibly.
+ */
+it("answers a Catalog write into a ready Workspace whose catalogs is a file with a 409", async () => {
+  await mkdir(join(root, "requirements"));
+  await mkdir(join(root, ".backups"));
+  await writeFile(join(root, "catalogs"), "not a folder");
+
+  // the setup asserted rather than assumed: this is what makes the import below reachable
+  const status = await get("/api/workspace");
+  expect(status.status).toBe(200);
+  await expect(status.json()).resolves.toEqual({ ready: true, missing: [] });
+
+  const imported = await post("/api/catalog/2027/import", CRAWL);
+
+  expect(imported.status).toBe(409);
+  await expect(imported.json()).resolves.toEqual({ reason: "workspace-refused" });
+
+  // and the file it would have written below is exactly as it was: the bytes, not just the
+  // status code
+  expect(await readFile(join(root, "catalogs"), "utf8")).toBe("not a folder");
 });
 
 it("imports a Raw Crawl and then answers questions about the year", async () => {
