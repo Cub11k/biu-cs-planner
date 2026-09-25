@@ -370,6 +370,22 @@ it("stamps the scheme before the first paint without a second copy of the narrow
   }
 });
 
+/**
+ * The entry module, read as source for the one thing no other test can see.
+ *
+ * Every assertion about `watchScheme` above and in `scheme.browser.test.tsx` starts the
+ * watcher itself, because that is the only way to point it at a second document. So all of
+ * them would still pass with the call taken out of `main.tsx` — a watcher nothing starts is
+ * not a fix, and this is the line that says so. Importing the module instead would mount the
+ * whole app and start polling the API, which is a different test's business.
+ */
+it("starts that watcher, and narrows the stamp, from the entry module", () => {
+  const entry = readFileSync(fileURLToPath(new URL("main.tsx", import.meta.url)), "utf8");
+
+  expect(entry).toContain("watchScheme(window");
+  expect(entry).toContain("applyScheme(document.documentElement");
+});
+
 it("runs that stamp ahead of the paint it exists to beat", () => {
   const html = readFileSync(ENTRY_DOCUMENT, "utf8");
   const [stamp] = inlineScripts(html);
