@@ -5,7 +5,7 @@ import {
   type StateFileVersion,
 } from "@biu-cs-planner/core";
 import { expect, it } from "vitest";
-import { editStateFile, type StateEdit } from "./edit.ts";
+import { editStateFile, type EditHistory, type StateEdit } from "./edit.ts";
 import { DEFAULT_STATE_FILE } from "./picks.ts";
 import { choosing, readSettings, setSettings } from "./settings.ts";
 import { memoryWorkspace, type MemoryWorkspace } from "./workspace.memory.ts";
@@ -41,10 +41,10 @@ const versionOf = async (workspace: MemoryWorkspace): Promise<StateFileVersion |
   (await workspace.readStateFile(REF))?.version;
 
 /** What the file holds, read straight off the port rather than through the use case. */
-async function stored(workspace: MemoryWorkspace): Promise<Record<string, unknown>> {
+async function stored(workspace: MemoryWorkspace): Promise<unknown> {
   const file = await workspace.readStateFile(REF);
   if (file === undefined) throw new Error("there is no State File");
-  return file.data as Record<string, unknown>;
+  return file.data;
 }
 
 /** The settings the use case serves, or a failure naming what came back instead. */
@@ -58,14 +58,16 @@ async function served(workspace: MemoryWorkspace): Promise<{
   return { ...result.settings, version: result.version };
 }
 
-/** A collecting history, so what a settings save tells the undo stack can be looked at. */
-function watchedHistory(): {
-  pushed: StateEdit[];
-  wrote: { basedOn: StateFileVersion | undefined; version: StateFileVersion }[];
-  port: { push(edit: StateEdit): void; wrote(save: { basedOn: StateFileVersion | undefined; version: StateFileVersion }): void };
-} {
+/** What a save told the stack, which is both revisions and never one of them. */
+type Wrote = { basedOn: StateFileVersion | undefined; version: StateFileVersion };
+
+/**
+ * A collecting history. `port` is the real `EditHistory` and not a shape of this test's own, so a
+ * change to what the wrapper reports is a compile error here rather than a test that keeps passing.
+ */
+function watchedHistory(): { pushed: StateEdit[]; wrote: Wrote[]; port: EditHistory } {
   const pushed: StateEdit[] = [];
-  const wrote: { basedOn: StateFileVersion | undefined; version: StateFileVersion }[] = [];
+  const wrote: Wrote[] = [];
   return {
     pushed,
     wrote,
@@ -319,7 +321,7 @@ it("refuses to set a preference in a State File it cannot read", async () => {
   const refused = await setSettings(workspace, { language: "he" }, { ...AT, basedOn: undefined });
 
   expect(refused).toMatchObject({ kind: "refused", reason: "state-file-unreadable" });
-  expect(await stored(workspace)).toEqual("not a State File" as unknown as Record<string, unknown>);
+  expect(await stored(workspace)).toEqual("not a State File");
 });
 
 /** The pure edit on its own, which is the part `editStateFile` reads for two decisions. */

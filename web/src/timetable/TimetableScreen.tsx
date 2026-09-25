@@ -119,6 +119,13 @@ const SETTINGS_REFUSAL_STRING = {
  * and not a record, because `field` is a `string` on the wire: `core` names whatever field of
  * `settingsSchema` it could not read, and a newer server may name one this build has no word for.
  */
+/**
+ * One `settings-unreadable` Warning, derived from the contract rather than written out: the shape
+ * was spelled by hand in three places, which compiled only because it happened to match `core`'s
+ * member — a renamed sibling field would not have been caught.
+ */
+type UnreadableSetting = Extract<SettingsWarning, { kind: "settings-unreadable" }>;
+
 const SETTING_NAME_STRING = new Map<string, StringKey>([
   ["language", "settingLanguage"],
   ["examSpacingDays", "settingExamSpacing"],
@@ -219,6 +226,17 @@ export type TimetableScreenProps = {
    * the second case (`../settings.ts`).
    */
   settingsUnread?: SettingsUnread | undefined;
+  /**
+   * Called when this screen has written the State File, so whatever else on the page is holding a
+   * revision can stop holding a spent one.
+   *
+   * There are two writers on one page now — a Pick here and a preference in the header — and each
+   * holds the revision it read. The Workspace poll reconciles them up to `DEFAULT_EVERY_MS` later,
+   * which is seconds in which the other writer's save is refused `state-file-changed` and the
+   * student is told their page was stale about something they caused themselves. This is the same
+   * remedy `askHistory` already is for the undo buttons, and it is called from beside it.
+   */
+  onEdited?: (() => void) | undefined;
   /** Taken as an argument so the screen can be opened on any date, and tested. */
   today?: Date;
   /**
@@ -245,6 +263,7 @@ export function TimetableScreen({
   settingsNotice,
   settingsWarnings = [],
   settingsUnread,
+  onEdited,
   today = new Date(),
   workspaceChanges = 0,
 }: TimetableScreenProps): React.JSX.Element {
@@ -424,11 +443,17 @@ export function TimetableScreen({
         // does not carry the two flags. The change count reports it a poll later, which is
         // seconds of a greyed-out button the student has already earned — so it is asked for
         // here, and the poll's own answer is then the same one.
-        if (answer.kind === "served") askHistory();
+        //
+        // `onEdited` is the same argument for the same reason: this write moved the file's
+        // revision, and the header's language switch is holding its own.
+        if (answer.kind === "served") {
+          askHistory();
+          onEdited?.();
+        }
         return answer;
       });
     },
-    [setTimetable, askHistory],
+    [setTimetable, askHistory, onEdited],
   );
 
   /**
@@ -472,6 +497,8 @@ export function TimetableScreen({
         (answer.reason === "state-file-changed" || answer.reason === "history-invalidated");
       if (answer.kind === "moved" || stale) {
         setRereads((count) => count + 1);
+        // an undo is a save (ADR-0013), so it moved the revision the header is holding too
+        if (answer.kind === "moved") onEdited?.();
         return;
       }
       // Nothing was written, so the revision on screen is still the file's and no answer is
@@ -820,12 +847,9 @@ function settingsSaid(language: Language, notice: SettingsNotice | undefined): s
  * this ticket narrowed rather than closed, and each of them is about a part of the document this
  * line is not showing.
  */
-function unreadableSettings(
-  warnings: readonly SettingsWarning[],
-): { kind: "settings-unreadable"; field?: string }[] {
+function unreadableSettings(warnings: readonly SettingsWarning[]): UnreadableSetting[] {
   return warnings.filter(
-    (warning): warning is { kind: "settings-unreadable"; field?: string } =>
-      warning.kind === "settings-unreadable",
+    (warning): warning is UnreadableSetting => warning.kind === "settings-unreadable",
   );
 }
 
@@ -836,10 +860,7 @@ function unreadableSettings(
  * key: `examSpacingDays` is not a word in either language, and a component that showed it would be
  * inventing a string outside the translation files.
  */
-function settingSaid(
-  language: Language,
-  warning: { kind: "settings-unreadable"; field?: string },
-): string {
+function settingSaid(language: Language, warning: UnreadableSetting): string {
   const name = warning.field === undefined ? undefined : SETTING_NAME_STRING.get(warning.field);
   return name === undefined
     ? t(language, "settingsUnreadable")

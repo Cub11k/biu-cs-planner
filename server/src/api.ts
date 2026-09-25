@@ -148,7 +148,7 @@ const savedSlotSchema = z.object({ ...pickSlotSchema.shape, basedOn: basedOnSche
  * A body naming no field at all is well formed and changes nothing, which the domain answers as
  * an unchanged save.
  */
-const savedSettingsSchema = z.object({
+export const savedSettingsSchema = z.object({
   language: settingsSchema.shape.language.unwrap().optional(),
   examSpacingDays: settingsSchema.shape.examSpacingDays.unwrap().optional(),
   basedOn: basedOnSchema,

@@ -121,8 +121,9 @@ const english = {
    *
    * There is nothing here for a change that worked. A language that changed flips the whole
    * document, which is its own account; the Exam spacing has no control to report from.
-   */
-  /**
+   *
+   * ---
+   *
    * The page's own view was stale — the ordinary external-edit guard (#90). Deliberately **not**
    * `picksStale`'s wording: that sentence is about a click on a Group, and a student who used the
    * language switch clicked no Group. It says "your preference was not changed" rather than
@@ -164,7 +165,8 @@ const english = {
    * because whether anything was lost is exactly what could not be established.
    */
   settingsUnread:
-    "Your saved preferences could not be read, so the app is showing its defaults instead of them.",
+    "Your saved preferences could not be read, so the app is showing its defaults instead of " +
+    "them.",
   /**
    * …and the same failure on a page that **had** already read them. It must be a second sentence
    * rather than the one above: a student reading Hebrew whose file was corrupted a moment ago is
@@ -182,9 +184,15 @@ const english = {
    * Named after a colon rather than inside the sentence, in both languages: Hebrew would have to
    * agree with the noun substituted, and "שפה" and "מרווח בין בחינות" do not agree the same way.
    */
+  /**
+   * …and the same Warning with **no** field on it, which `core` raises when the whole `settings`
+   * value was not an object — its own comment says "absent `field` means all of them". So this is
+   * deliberately plural: it used to read "One of your saved preferences", which was false in the
+   * one case it exists for, and is also the fallback for a field this build has no word for.
+   */
   settingsUnreadable:
-    "One of your saved preferences could not be read, so it is showing its default instead. " +
-    "Nothing else in your saved work was affected.",
+    "Some of your saved preferences could not be read, so they are showing their defaults " +
+    "instead. Nothing else in your saved work was affected.",
   settingsUnreadableNamed:
     "A saved preference could not be read: {setting}. It is showing its default instead, and " +
     "nothing else in your saved work was affected.",
@@ -322,11 +330,13 @@ const hebrew: Record<StringKey, string> = {
   settingsFileRefused:
     "לא ניתן היה לקרוא או לכתוב את הקובץ שבו נשמרות ההעדפות שלכם, ולכן ההעדפה לא שונתה.",
   settingsNotDone: "ההעדפה לא שונתה.",
-  settingsUnread: "לא ניתן היה לקרוא את ההעדפות השמורות שלכם, ולכן היישום מציג את ברירות המחדל במקומן.",
+  settingsUnread:
+    "לא ניתן היה לקרוא את ההעדפות השמורות שלכם, ולכן היישום מציג את ברירות המחדל " +
+    "במקומן.",
   settingsUnreread:
     "לא ניתן היה לקרוא את ההעדפות השמורות שלכם כרגע, ולכן מוצגת הגרסה האחרונה שהדף קרא.",
   settingsUnreadable:
-    "לא ניתן היה לקרוא אחת מההעדפות השמורות שלכם, ולכן היא מוצגת כברירת המחדל. " +
+    "לא ניתן היה לקרוא חלק מההעדפות השמורות שלכם, ולכן הן מוצגות כברירת המחדל. " +
     "שאר העבודה השמורה לא נפגעה.",
   settingsUnreadableNamed:
     "לא ניתן היה לקרוא העדפה שמורה: {setting}. היא מוצגת כברירת המחדל, " +

@@ -57,12 +57,16 @@ let version: number;
 let hasFile: boolean;
 /** Warnings the settings are read with, as `core` would raise them. */
 let warnings: { kind: string; field?: string }[];
+/** The Picks the fake's State File holds, so a click on a Group is a real write. */
+let picks: unknown[];
 /** Makes the next change refuse with this reason, the way a 409 arrives. */
 let refuseChange: { reason?: string; status?: number } | undefined;
 /** Makes every read refuse: the State File is there and this build cannot read it. */
 let refuseRead: string | undefined;
 /** Holds the settings GET open, so a test can look at the switch before an answer exists. */
 let settingsHeld: Promise<void> | undefined;
+/** The Workspace's change count, which moving is how the page hears the folder changed. */
+let changeCount: number;
 /** Every request the fake was sent. */
 let sent: Array<{ method: string; pathname: string; body: unknown }>;
 
@@ -118,9 +122,11 @@ beforeEach(() => {
   version = 1;
   hasFile = true;
   warnings = [];
+  picks = [];
   refuseChange = undefined;
   refuseRead = undefined;
   settingsHeld = undefined;
+  changeCount = 0;
   sent = [];
   // The baseline every assertion below is measured against. A student's browser may open on
   // anything, and a test that did not set this could pass with the flip never happening.
@@ -143,10 +149,20 @@ beforeEach(() => {
       if (refuseRead !== undefined) return conflict({ reason: refuseRead, warnings: [] });
       return json(settings());
     }
-    if (pathname === "/api/workspace/changes") return json({ changeCount: 0 });
+    if (pathname === "/api/workspace/changes") return json({ changeCount });
     if (pathname === "/api/history") return json({ canUndo: false, canRedo: false });
     if (pathname.startsWith("/api/timetable")) {
-      return json({ variantName: "A", picks: [], clashes: [], version: `v${version}`, warnings: [] });
+      // A Pick is a write like any other, so it moves the revision — which is the whole point of
+      // the reverse-direction test below: the header's language switch is holding the old one.
+      if (method === "POST") {
+        const { basedOn, ...pick } = (body ?? {}) as Record<string, unknown>;
+        if (basedOn !== `v${version}`) {
+          return conflict({ reason: "state-file-changed", warnings: [] });
+        }
+        picks = [...picks, pick];
+        version += 1;
+      }
+      return json({ variantName: "A", picks, clashes: [], version: `v${version}`, warnings: [] });
     }
     return json({ offerings: [OFFERING] });
   }) as typeof fetch;
@@ -185,8 +201,11 @@ function switchFor(mounted: HTMLElement): HTMLButtonElement {
 const said = (mounted: HTMLElement): string =>
   [...mounted.querySelectorAll("[role=status]")].map((node) => node.textContent ?? "").join(" ");
 
-/** Waits until the settings have been read, which is when the switch can be used. */
-async function readSettings(mounted: HTMLElement): Promise<void> {
+/**
+ * Waits until the switch can be used, which is when the settings have been read. Not named
+ * `readSettings` — that is the `app` use case, and a helper that waits is not one that reads.
+ */
+async function settingsReady(mounted: HTMLElement): Promise<void> {
   await vi.waitFor(() => {
     if (switchFor(mounted).disabled) throw new Error("the settings have not been read yet");
   });
@@ -226,7 +245,7 @@ it("opens in the language the State File holds, flipping a document that was Eng
  */
 it("keeps a language across a reload, which is the whole of what #115 is about", async () => {
   const first = mount();
-  await readSettings(first);
+  await settingsReady(first);
   expect([ROOT.lang, ROOT.dir]).toEqual(["en", "ltr"]);
 
   switchFor(first).click();
@@ -257,7 +276,7 @@ it("keeps a language across a reload, which is the whole of what #115 is about",
  */
 it("sends the change on the revision it read, naming only the language", async () => {
   const mounted = mount();
-  await readSettings(mounted);
+  await settingsReady(mounted);
 
   switchFor(mounted).click();
 
@@ -276,7 +295,7 @@ it("sends the change on the revision it read, naming only the language", async (
  */
 it("says something true when the change is refused, and not the Pick's sentence", async () => {
   const mounted = mount();
-  await readSettings(mounted);
+  await settingsReady(mounted);
   refuseChange = { reason: "state-file-changed" };
 
   switchFor(mounted).click();
@@ -296,7 +315,7 @@ it("says something true when the change is refused, and not the Pick's sentence"
  */
 it("reads the settings again after a refusal about the file having changed", async () => {
   const mounted = mount();
-  await readSettings(mounted);
+  await settingsReady(mounted);
   const before = settingsAsked();
   refuseChange = { reason: "state-file-changed" };
 
@@ -357,7 +376,7 @@ it("offers no switch until the settings have been read", async () => {
   expect(changesSent()).toEqual([]);
 
   release();
-  await readSettings(mounted);
+  await settingsReady(mounted);
   expect(switchFor(mounted).disabled).toBe(false);
 });
 
@@ -367,7 +386,7 @@ it.each(["en", "he"] as const)("says the other language's name in %s", async (fr
 
   const mounted = mount();
 
-  await readSettings(mounted);
+  await settingsReady(mounted);
   expect(switchFor(mounted).textContent).toBe(t(from, "otherLanguage"));
 });
 
@@ -390,26 +409,181 @@ it("says the preferences could not be read, rather than showing defaults in sile
 });
 
 /**
- * …and it stops saying so once a read succeeds. A sentence about a file that could not be read,
- * left on screen over a page that has since read it, is a claim the page no longer has.
+ * …and it stops saying so once a read succeeds, **in the same page**.
+ *
+ * This used to remount, which could not fail for the reason the title named: a fresh mount has said
+ * nothing yet, so the assertion passed whether or not anything retired the sentence. The folder
+ * coming back is the Workspace change count moving, which is the one pipe the page has for news
+ * about the disk — so the wait is the real poll interval (`DEFAULT_EVERY_MS` in `./changes.ts`).
  */
-it("stops saying the preferences are unread once a read succeeds", async () => {
+it("stops saying the preferences are unread once a read succeeds, without a reload", async () => {
   refuseRead = "state-file-unreadable";
   const mounted = mount();
   await vi.waitFor(() => {
     expect(said(mounted)).toContain(t("en", "settingsUnread"));
   });
 
-  // the folder comes back — an unmounted drive, a file put back — and the page asks again
+  // the folder comes back — an unmounted drive, a file put back — and the watcher's count moves
   refuseRead = undefined;
   language = "he";
-  root?.unmount();
-  root = undefined;
-  mount();
+  changeCount = 1;
+
+  await vi.waitFor(
+    () => {
+      expect([ROOT.lang, ROOT.dir]).toEqual(["he", "rtl"]);
+      expect(said(mounted)).not.toContain(t("he", "settingsUnread"));
+      expect(said(mounted)).not.toContain(t("en", "settingsUnread"));
+    },
+    { timeout: 8000, interval: 100 },
+  );
+});
+
+/**
+ * A read refused **after** a successful one says something different, and the difference matters: a
+ * student reading Hebrew whose file was corrupted a moment ago is not looking at defaults, and
+ * `settingsUnread` would tell them they are.
+ */
+it("says the last version was kept when a later read is refused, not that defaults are shown", async () => {
+  language = "he";
+  const mounted = mount();
+  await settingsReady(mounted);
+  await vi.waitFor(() => {
+    expect([ROOT.lang, ROOT.dir]).toEqual(["he", "rtl"]);
+  });
+
+  // an editor corrupts the file under the page, and the count moves
+  refuseRead = "state-file-unreadable";
+  changeCount = 1;
+
+  await vi.waitFor(
+    () => {
+      expect(said(mounted)).toContain(t("he", "settingsUnreread"));
+    },
+    { timeout: 8000, interval: 100 },
+  );
+  // and it does not claim defaults are on screen, because Hebrew still is
+  expect(said(mounted)).not.toContain(t("he", "settingsUnread"));
+  expect([ROOT.lang, ROOT.dir]).toEqual(["he", "rtl"]);
+});
+
+/**
+ * A refusal the route named no reason for — a 400 on a body this client does not send. The floor:
+ * nothing happened, and no cause is named, because naming one of the four would be wrong in the
+ * other three (finding 7 of #160's review: this arm and its sentence were rendered by no test).
+ */
+it("says nothing changed for a refusal that names no reason", async () => {
+  const mounted = mount();
+  await settingsReady(mounted);
+  refuseChange = {};
+
+  switchFor(mounted).click();
+
+  await vi.waitFor(() => {
+    expect(said(mounted)).toContain(t("en", "settingsNotDone"));
+  });
+  expect([ROOT.lang, ROOT.dir]).toEqual(["en", "ltr"]);
+});
+
+/**
+ * **The switch is not offered again until the re-read has landed.** `settingsStale` tells the
+ * student the page has re-read and to try again; until #160's review found it, `saving` was already
+ * false when that sentence appeared, so following it before the re-read landed sent the same spent
+ * revision and produced the same sentence.
+ */
+it("does not offer the switch again until the re-read a refusal asked for has landed", async () => {
+  const mounted = mount();
+  await settingsReady(mounted);
+  // Held *before* the click, which is the whole point: the re-read the refusal asks for is the
+  // thing the next press has to wait for, so a hold set afterwards would have let it land first.
+  const [held, release] = hold();
+  settingsHeld = held;
+  refuseChange = { reason: "state-file-changed" };
+
+  switchFor(mounted).click();
+
+  await vi.waitFor(() => {
+    expect(said(mounted)).toContain(t("en", "settingsStale"));
+  });
+  // the sentence says the page has re-read and to try again; until it has, there is nothing to try
+  expect(switchFor(mounted).disabled).toBe(true);
+
+  settingsHeld = undefined;
+  release();
+  await settingsReady(mounted);
+  expect(switchFor(mounted).disabled).toBe(false);
+});
+
+/**
+ * **A preference change and a Pick are two writers on one page**, and each holds the revision it
+ * read. Before #160's review the screen learned a settings write only from the 2-second poll, so a
+ * language switch followed by a click on a Group was refused `state-file-changed` — and the student
+ * read "your click was not saved" for a staleness their own switch had caused.
+ *
+ * Asserted as the revision the screen sends: after a change, the next Timetable read carries the
+ * revision the change wrote, without the change count having moved.
+ */
+it("re-reads the week at once after a preference change, so the next click is not refused", async () => {
+  const mounted = mount();
+  await settingsReady(mounted);
+  const readsBefore = sent.filter((r) => r.pathname.startsWith("/api/timetable")).length;
+
+  switchFor(mounted).click();
 
   await vi.waitFor(() => {
     expect([ROOT.lang, ROOT.dir]).toEqual(["he", "rtl"]);
   });
-  expect(said(host!)).not.toContain(t("en", "settingsUnread"));
-  expect(said(host!)).not.toContain(t("he", "settingsUnread"));
+  // the poll has not moved — `changeCount` is still 0 — so a re-read here is the page's own doing
+  await vi.waitFor(() => {
+    expect(
+      sent.filter((r) => r.pathname.startsWith("/api/timetable")).length,
+    ).toBeGreaterThan(readsBefore);
+  });
+  expect(changeCount).toBe(0);
+});
+
+/**
+ * …and the same fix pointing the other way. **A Pick moves the revision the header is holding**, so
+ * without `onEdited` a student who picked a Group and then used the language switch inside the poll
+ * interval was refused `state-file-changed` — told their page was showing an older version because
+ * of a click they had just made themselves.
+ *
+ * Driven through a real click on a real tile, because the claim is that the two writers on this page
+ * stay in step and a spy on the callback would only say the wiring exists.
+ */
+it("re-reads the preferences at once after a Pick, so the next language switch is not refused", async () => {
+  const mounted = mount();
+  await settingsReady(mounted);
+
+  // choose the fixture's Course, which puts its Group on the week
+  const chooser = await vi.waitFor(() => {
+    const found = [...mounted.querySelectorAll("button")].find((button) =>
+      button.textContent?.includes(OFFERING.courseNumber),
+    );
+    if (found === undefined) throw new Error("the Catalog served no Course to choose");
+    return found;
+  });
+  chooser.click();
+  const tile = await vi.waitFor(() => {
+    const found = mounted.querySelector<HTMLElement>(".day-column .tile");
+    if (found === null) throw new Error("choosing the Course put no Meeting on the week");
+    return found;
+  });
+
+  tile.click();
+
+  // the Pick landed and moved the revision
+  await vi.waitFor(() => {
+    expect(picks).toHaveLength(1);
+  });
+  expect(version).toBe(2);
+
+  // …and the switch still works, on the revision the Pick wrote, with the poll never having moved
+  await settingsReady(mounted);
+  switchFor(mounted).click();
+
+  await vi.waitFor(() => {
+    expect([ROOT.lang, ROOT.dir]).toEqual(["he", "rtl"]);
+  });
+  expect(changesSent()).toEqual([{ language: "he", basedOn: "v2" }]);
+  expect(changeCount).toBe(0);
 });

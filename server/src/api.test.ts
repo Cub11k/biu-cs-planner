@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { settingsSchema } from "@biu-cs-planner/core";
-import { createApi } from "./api.ts";
+import { createApi, savedSettingsSchema } from "./api.ts";
 import { fileSystemWorkspace } from "./workspace.fs.ts";
 
 let root: string;
@@ -1237,6 +1237,12 @@ it("answers an unchanged choice with the revision the file still holds", async (
  * says so. If it fails: add the field to `savedSettingsSchema` in `./api.ts`, unwrapping its
  * default the way the two beside it do, and give it a test above.
  */
-it("accepts every preference the State File schema holds, and no route-only extra", async () => {
-  expect(Object.keys(settingsSchema.shape)).toEqual(["language", "examSpacingDays"]);
+it("accepts every preference the State File schema holds, and no route-only extra", () => {
+  // The property the docstring promises, asserted rather than pinned: the body's fields are exactly
+  // the State File's, plus the revision every write carries. An earlier version of this test pinned
+  // `settingsSchema`'s keys instead, which caught a new preference but said nothing at all about the
+  // route — the second half of this title was asserted nowhere.
+  const body = Object.keys(savedSettingsSchema.shape).filter((field) => field !== "basedOn");
+
+  expect(body).toEqual(Object.keys(settingsSchema.shape));
 });

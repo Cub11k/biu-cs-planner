@@ -32,7 +32,7 @@
  *     would overwrite a deliberate English choice with Hebrew. Making that distinction expressible
  *     is a change to `core`'s schema and belongs in its own ticket.
  */
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api.ts";
 import type { ApiClient } from "./changes.ts";
 import { LANGUAGES, type Language } from "./i18n/strings.ts";
@@ -271,6 +271,28 @@ export type SettingsUse = {
    *     and telling them they are is the kind of untruth #111 is about.
    */
   unread: SettingsUnread | undefined;
+  /**
+   * How many changes this page has made that were saved.
+   *
+   * **The State File has two writers on one page now, and this is how they stay in step.** A
+   * preference change moves the file's revision, and `TimetableScreen` holds its own revision for
+   * every Pick and every undo — refreshed only by the Workspace poll, up to `DEFAULT_EVERY_MS`
+   * away. Without this, switching language and then clicking a Group inside that window was
+   * refused `state-file-changed`, and the student read "your click was not saved" for a staleness
+   * their own language switch had caused. `App` adds this to the change count it hands the screen,
+   * so the screen re-reads at once — which is what `TimetableScreen` already does for the undo
+   * buttons after a save rather than waiting for the poll.
+   */
+  writes: number;
+  /**
+   * Ask for the preferences again, now.
+   *
+   * The other direction of the same problem: a Pick moves the revision this hook is holding, so
+   * whatever saves a Pick calls this rather than leaving the next language switch to be refused for
+   * the next two seconds. `useHistory.ask` exists for exactly this reason and is called from the
+   * same place.
+   */
+  ask: () => void;
 };
 
 /** Which of the two things a refused read means; see `SettingsUse.unread`. */
@@ -308,11 +330,16 @@ export function useSettings(options: UseSettingsOptions = {}): SettingsUse {
    * `show` always builds a new object.
    */
   const [refusedOn, setRefusedOn] = useState<Known | undefined>(undefined);
+  /** How many changes this page has saved; see `SettingsUse.writes`. */
+  const [writes, setWrites] = useState(0);
   const [saving, setSaving] = useState(false);
   /** Ask again, for a refusal whose whole remedy is a fresher revision. */
   const [asks, setAsks] = useState(0);
   /** Which answer the page is showing. Every source of one moves it. */
   const shown = useRef(0);
+
+  /** Ask again, now, rather than at the next poll. Stable, so a caller may memoise on it. */
+  const ask = useCallback(() => setAsks((count) => count + 1), []);
 
   /**
    * A served answer, whoever it came from. The language is kept when the answer names one this
@@ -359,6 +386,9 @@ export function useSettings(options: UseSettingsOptions = {}): SettingsUse {
                 // an answer from the write itself is the newest there is, by definition
                 shown.current += 1;
                 show(fresh);
+                // This write moved the file's revision, and the screen is holding its own for the
+                // next Pick. Counted so `App` can tell it at once instead of a poll later.
+                setWrites((count) => count + 1);
                 return;
               }
               setNotice(
@@ -389,5 +419,7 @@ export function useSettings(options: UseSettingsOptions = {}): SettingsUse {
     // means two different things depending on whether this page ever had the preferences, and a
     // flag set inside the effect would have been deciding that from a stale closure.
     unread: readRefused ? (known === undefined ? "never" : "again") : undefined,
+    writes,
+    ask,
   };
 }

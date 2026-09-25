@@ -45,7 +45,13 @@ export function App(): React.JSX.Element {
       settingsNotice={settings.notice}
       settingsWarnings={settings.warnings}
       settingsUnread={settings.unread}
-      workspaceChanges={workspaceChanges}
+      // A preference change writes the State File, so the screen's revision is spent the moment one
+      // lands — and the poll would tell it up to `DEFAULT_EVERY_MS` later, which is seconds in which
+      // a click on a Group comes back `state-file-changed` and the student reads that their click
+      // was not saved because of a language switch they made themselves. Counted in here so the
+      // screen re-reads at once. `onEdited` is the same fix pointing the other way.
+      workspaceChanges={workspaceChanges + settings.writes}
+      onEdited={settings.ask}
     />
   );
 }

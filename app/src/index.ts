@@ -21,8 +21,9 @@ export {
   type StateFileLoad,
   type StateSnapshot,
 } from "./edit.ts";
+// `choosing` is the pure edit and stays off the package surface: nothing outside `app` applies it,
+// and `./settings.ts` is where its own tests and `./edit.test.ts` import it from.
 export {
-  choosing,
   readSettings,
   setSettings,
   type SettingsChange,
