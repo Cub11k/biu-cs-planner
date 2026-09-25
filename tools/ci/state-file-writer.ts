@@ -46,20 +46,73 @@
  * honest ways out: go through `editStateFile` like production does, or -- if the point really
  * is the port -- write it beside the adapter, where the exemption already applies.
  *
- * **Where it stops seeing.** It is a text scan, not a type checker.
+ * ## How the source is read, and why it is a lexer rather than a line filter
  *
- * - It judges the *name*. A file that reached under the port and wrote the file itself with
+ * A first version of this file filtered whole prose lines out *before* judging, the way
+ * `clock-pattern.ts`'s `PROSE_LINE` does. That was a mis-copy, and the precedent says so in
+ * its own words: there the filter is confined to `codeOnly()` and is "only for **counting**
+ * the body in a file's text -- a code line is never touched". Put on the judging path it
+ * touches code lines, by deleting them: `/* fast path *\/ await workspace.saveStateFile(…)`
+ * begins with `/*`, so the whole line -- comment and call alike -- vanished, and the suite
+ * stayed green. That is not an adversarial spelling. `/* c8 ignore next *\/` in front of a
+ * call produces it by accident.
+ *
+ * So `maskSource` is a small lexer instead. It walks a file once, carrying its state from
+ * line to line, and blanks everything that is not code: line comments, block comments across
+ * however many lines, string literals, the literal chunks of a template, and regex literals.
+ * Indices are preserved, so an occurrence can be looked up in the line and in its masked
+ * twin at once. A template's `${…}` substitutions are *code* and stay readable, because
+ * `` `rev ${(await workspace.saveStateFile(ref, save)).value}` `` is a call and blanking the
+ * whole template hid it.
+ *
+ * Two consequences worth stating, because both were holes before:
+ *
+ * - **A regex literal may only start where an expression may.** The test is the last
+ *   *non-whitespace* character before the slash, not merely the character before it. With
+ *   whitespace alone accepted, `const x = a / b, v = await workspace.saveStateFile(…), y = c / d;`
+ *   read the two divisions as one regex and blanked the call between them. Erring the other
+ *   way -- reading a real pattern as a division -- leaves code visible, which costs a
+ *   mis-read pattern and never a missed call.
+ * - **A string whose whole contents is the method name is not prose.** Prose names the
+ *   method inside a sentence; `"saveStateFile"` alone is the name being handed about as data,
+ *   which is how `workspace[ "saveStateFile" ]`, `Reflect.get(workspace, "saveStateFile")`
+ *   and `const KEY = "saveStateFile"` all reach the port without writing a dot. Each is a
+ *   finding. The two real prose mentions this repository holds -- an error message in
+ *   `app/src/workspace.ts` and the pattern `app/src/workspace.test.ts` asserts it with -- name
+ *   it inside something longer and stay quiet.
+ *
+ * ## Where it stops seeing
+ *
+ * It is a text scan, not a type checker, and these are the limits rather than a claim there
+ * are none.
+ *
+ * - It judges the **name**. A file that reached under the port and wrote the file itself with
  *   `node:fs` is a second write path this cannot see; `app/src/workspace.ts` narrows `write`
  *   away from State Files to make that hard, and nothing here adds to it.
+ * - **A name that is never spelled is never found**: `workspace["save" + "StateFile"]`, a
+ *   unicode escape in the identifier (`saveStateFile`), or the string built at runtime.
+ *   No name scan can see these, and no check in this repository can; they are written down
+ *   here so that nobody reads the list above as exhaustive.
  * - A method *named* `saveStateFile` on some object that is not a Workspace reads as an
- *   implementation and is waved through -- and so, in turn, is a test beside it. Reaching a
- *   second write path that way means writing a whole adapter first, which is not the hurried
- *   shortcut the rule exists to stop.
- * - Prose lines are dropped, so a mention in a docstring is a mention. A block comment whose
- *   continuation lines do not start with `*` is not recognised as prose, exactly as in
- *   `clock-pattern.ts`; this repository writes neither.
- * - A construct left open at the end of a line makes that line `"unreadable"`, which is a
- *   finding rather than a shrug. A check that goes quiet when it is unsure guards nothing.
+ *   implementation and is waved through. Reaching a second write path that way means writing
+ *   a whole adapter first, which is not the hurried shortcut the rule exists to stop -- and
+ *   the repository-wide test pins the implementors by exact name, so a new one fails the
+ *   suite and has to be argued for rather than quietly widening the exemption to its sibling
+ *   test.
+ * - **A bare call whose parameter list does not close on its own line**, written at the
+ *   margin, is read as a wrapped signature and so as an implementation. Closing it needs a
+ *   parser. It takes a destructured binding to set up, which is itself a finding, so the
+ *   remaining path is narrow and deliberate.
+ * - A *definition* of a function by this name outside an object body -- `export function
+ *   saveStateFile(…)` -- is reported as a reach, and the sentence it gets says "calls", which
+ *   is the wrong verb for the right verdict. A second function by that name is worth a
+ *   reviewer's attention either way.
+ * - **A spy is a finding.** `expect(workspace.saveStateFile).toHaveBeenCalled()` in a test
+ *   that is not an adapter's takes the method without calling it, so it is reported. That is
+ *   the false positive this check prefers to the hole, on the same reasoning
+ *   `clock-pattern.ts` gives for reading a `file:line:column` parse as a clock: a check that
+ *   stays quiet whenever it is unsure guards nothing. `app/src/edit.test.ts` observes writes
+ *   through the memory adapter instead, which is the shape that does not trip it.
  *
  * Nothing here is executed, compiled, or built from what it reads
  * ([ADR-0007](../../docs/adr/0007-requirements-are-interpreted-data.md)). Every pattern below
@@ -84,8 +137,12 @@ export const WRITER = "app/src/edit.ts";
  */
 export const SOURCE_DIRS = ["core/src", "app/src", "server/src", "web/src"];
 
-/** Files this scan reads. `.tsx` included, since `web` writes components. */
-export const SOURCE_EXTENSIONS = [".ts", ".tsx"];
+/**
+ * Files this scan reads. `.tsx` because `web` writes components, `.mts` and `.cts` because
+ * they are TypeScript this repository could hold tomorrow and a tree nobody scans is a tree
+ * where the rule does not apply.
+ */
+export const SOURCE_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts"];
 
 /**
  * The rule, in the words a reader needs when a finding names their line -- what it is, why it
@@ -105,13 +162,15 @@ export const RULE =
  * - `"declaration"` -- the port's own signature, `saveStateFile(ref: …): Promise<…>;`.
  * - `"implementation"` -- an adapter's method body, `async saveStateFile(ref: …) {`.
  * - `"call"` -- the method being called: through the port, as a bare name a destructuring
- *   bound, or through a computed `workspace["saveStateFile"]`.
- * - `"reference"` -- the method taken without being called, `const save = workspace.saveStateFile`.
- *   Judged exactly like a call: a reference handed elsewhere is a call somewhere else.
- * - `"text"` -- the name inside a string or a regex literal, which is prose in a message or a
- *   pattern a test asserts with. Never a finding.
- * - `"unreadable"` -- a line the masker could not finish reading, because a quote, a template
- *   or a comment was still open at the end of it. A finding, because it is not a pass.
+ *   bound, or through a computed `workspace["saveStateFile"](…)`.
+ * - `"reference"` -- the method reached without being called there: taken as a value, bound
+ *   by a destructuring, or named as a bare string handed to something else. Judged exactly
+ *   like a call, because a reference is a call somewhere else.
+ * - `"text"` -- the name inside a longer string or a regex literal, which is prose in a
+ *   message or a pattern a test asserts with. Never a finding.
+ * - `"unreadable"` -- a line the lexer could not finish: a quote left open at the end of it,
+ *   or a shape at the margin that is neither a definition nor a call. A finding, because it
+ *   is not a pass.
  */
 export type MentionKind =
   | "declaration"
@@ -132,41 +191,52 @@ export type Mention = {
   kind: MentionKind;
 };
 
-/**
- * Lines that are prose rather than code: a `//` comment, or a line of a `/* … *\/` block.
- * Whole lines only. `clock-pattern.ts` draws the same line for the same reason -- this
- * repository documents its rules in prose constantly, and a docstring naming the method is
- * naming it, not calling it.
- */
-const PROSE_LINE = /^\s*(?:\/\/|\/\*|\*)/;
-
-/**
- * What a regex literal may follow. Literal, and the same idea as `clock-pattern.ts`'s
- * prefix set: it keeps a division from being read as the start of a pattern, which is what
- * lets `/State File "alice".*saveStateFile/s` in `app/src/workspace.test.ts` be masked as
- * the pattern it is while `(a + b) / c` is left alone.
- */
-const BEFORE_REGEX = /[=(,:;!&|?+[{}<>~*%^\-\s]$/;
-
 /** The character masked text is filled with. Not a letter, so no name can survive in it. */
 const FILL = "~";
 
-/** A line with its strings, templates, regex literals and comments blanked out. */
+/**
+ * What a regex literal may follow, tested against the last non-whitespace character before
+ * the slash. Literal. An identifier, a digit, a `)` or a `]` ends an expression, so a slash
+ * after one is a division; everything here is a position where a value may begin.
+ */
+const BEFORE_REGEX = /[=(,:;!&|?+[{}>~*%^\-]$/;
+
+/**
+ * The keywords a regex literal may follow directly, which `BEFORE_REGEX` cannot see because
+ * they end in a letter. Literal, and matched against the text before the slash.
+ */
+const BEFORE_REGEX_KEYWORD =
+  /\b(?:return|typeof|case|in|of|new|delete|void|yield|await|do|else)\s*$/;
+
+/** One string or template chunk found on a line, so its whole contents can be judged. */
+type Quoted = { from: number; to: number; contents: string };
+
+/** One line with everything that is not code blanked out, and the quotes it held. */
 export type Masked = {
   /** The line, same length, with every non-code span replaced by `FILL`. */
   text: string;
-  /** True when a quote, template or block comment was still open at the end of the line. */
+  /** True when a single- or double-quoted string was left open at the end of the line. */
   unterminated: boolean;
+  /** Every string literal and template chunk the line held, with its contents. */
+  quotes: Quoted[];
 };
 
-/** Is a regex literal allowed to start at `at`, given the code seen before it? */
-const regexMayStart = (line: string, at: number): boolean =>
-  at === 0 || BEFORE_REGEX.test(line.slice(0, at));
+/**
+ * Where the lexer is between lines: inside a block comment, and how deep into templates and
+ * their `${…}` substitutions.
+ *
+ * A frame is either code -- counting its own braces, so a `}` can be told from the one that
+ * closes a substitution -- or the literal part of a template.
+ */
+type Frame = { kind: "code"; braces: number } | { kind: "template" };
+type Carry = { stack: Frame[]; inBlockComment: boolean };
+
+const freshCarry = (): Carry => ({ stack: [{ kind: "code", braces: 0 }], inBlockComment: false });
 
 /**
- * Where the span opened at `from` by `closer` ends, honouring backslash escapes and -- for a
- * regex -- a character class, whose `/` does not close the pattern. `-1` when it never closes
- * on this line.
+ * Where a quoted span opened at `from` ends, honouring backslash escapes and -- for a regex
+ * -- a character class, whose `/` does not close the pattern. `-1` when it never closes on
+ * this line.
  */
 const spanEnd = (line: string, from: number, closer: string, classes: boolean): number => {
   let inClass = false;
@@ -186,73 +256,161 @@ const spanEnd = (line: string, from: number, closer: string, classes: boolean): 
   return -1;
 };
 
-/**
- * One source line with everything that is not code blanked out, indices preserved so an
- * occurrence can be looked up in both at once.
- *
- * Per line, and that is the whole of why `"unreadable"` exists: a template literal or a
- * block comment that spans lines cannot be read by a line scanner, so rather than guess, the
- * line says it could not be read and any occurrence on it becomes a finding. This repository
- * has none today.
- */
-export function maskCode(line: string): Masked {
+/** May a regex literal start at `at`, given the code before it on this line? */
+const regexMayStart = (masked: string, at: number): boolean => {
+  const before = masked.slice(0, at);
+  const bare = before.trimEnd();
+
+  return bare === "" || BEFORE_REGEX.test(bare) || BEFORE_REGEX_KEYWORD.test(bare);
+};
+
+/** One line masked, and the lexer state the next line starts in. */
+function maskLine(line: string, carry: Carry): { masked: Masked; carry: Carry } {
   const out = [...line];
+  const quotes: Quoted[] = [];
+  let inBlockComment = carry.inBlockComment;
+  const stack: Frame[] = carry.stack.map((frame) => ({ ...frame }));
+  let unterminated = false;
+
   const blank = (from: number, to: number): void => {
-    for (let at = from; at <= to && at < out.length; at += 1) out[at] = FILL;
+    for (let at = from; at <= to; at += 1) out[at] = FILL;
   };
+  const done = (): { masked: Masked; carry: Carry } => ({
+    masked: { text: out.join(""), unterminated, quotes },
+    carry: { stack, inBlockComment },
+  });
 
   let at = 0;
 
   while (at < line.length) {
+    if (inBlockComment) {
+      const close = line.indexOf("*/", at);
+
+      if (close === -1) {
+        blank(at, line.length - 1);
+        return done();
+      }
+      blank(at, close + 1);
+      inBlockComment = false;
+      at = close + 2;
+      continue;
+    }
+
+    const frame = stack[stack.length - 1] ?? { kind: "code", braces: 0 };
+
+    if (frame.kind === "template") {
+      const character = line[at];
+
+      if (character === "\\") {
+        blank(at, Math.min(at + 1, line.length - 1));
+        at += 2;
+        continue;
+      }
+      if (character === "`") {
+        // The delimiter stays; the chunk before it was blanked as it was walked.
+        stack.pop();
+        at += 1;
+        continue;
+      }
+      if (character === "$" && line[at + 1] === "{") {
+        // A substitution is code, and the one place a call can hide inside a template.
+        stack.push({ kind: "code", braces: 0 });
+        at += 2;
+        continue;
+      }
+      blank(at, at);
+      at += 1;
+      continue;
+    }
+
     const character = line[at];
     const next = line[at + 1];
 
     if (character === "/" && next === "/") {
       blank(at, line.length - 1);
-      return { text: out.join(""), unterminated: false };
+      return done();
     }
     if (character === "/" && next === "*") {
       const close = line.indexOf("*/", at + 2);
 
       if (close === -1) {
         blank(at, line.length - 1);
-        return { text: out.join(""), unterminated: true };
+        inBlockComment = true;
+        return done();
       }
       blank(at, close + 1);
       at = close + 2;
       continue;
     }
-    if (character === '"' || character === "'" || character === "`") {
+    if (character === '"' || character === "'") {
       const close = spanEnd(line, at + 1, character, false);
 
       if (close === -1) {
+        // Not legal in a compiling program, so it is a line this scan declines to judge.
         blank(at, line.length - 1);
-        return { text: out.join(""), unterminated: true };
+        unterminated = true;
+        return done();
       }
-      // The quotes themselves stay: only what they hold is not code.
+      quotes.push({ from: at, to: close, contents: line.slice(at + 1, close) });
       blank(at + 1, close - 1);
       at = close + 1;
       continue;
     }
-    if (character === "/" && regexMayStart(line, at)) {
-      const close = spanEnd(line, at + 1, "/", true);
+    if (character === "`") {
+      // A template's chunks are blanked as they are walked, and recorded when it closes on
+      // this line, which is the case that matters: `workspace[`saveStateFile`]`.
+      const close = spanEnd(line, at + 1, "`", false);
 
-      if (close !== -1) {
+      if (close !== -1 && !line.slice(at + 1, close).includes("${")) {
+        quotes.push({ from: at, to: close, contents: line.slice(at + 1, close) });
         blank(at + 1, close - 1);
         at = close + 1;
         continue;
       }
-      // Not a regex after all -- a lone division, or a path in code. Read on.
+      stack.push({ kind: "template" });
+      at += 1;
+      continue;
+    }
+    if (character === "{") {
+      if (frame.kind === "code") frame.braces += 1;
+      at += 1;
+      continue;
+    }
+    if (character === "}") {
+      if (frame.kind === "code" && frame.braces > 0) frame.braces -= 1;
+      else if (stack.length > 1) stack.pop();
+      at += 1;
+      continue;
+    }
+    if (character === "/" && regexMayStart(out.join(""), at)) {
+      const close = spanEnd(line, at + 1, "/", true);
+
+      if (close !== -1) {
+        quotes.push({ from: at, to: close, contents: line.slice(at + 1, close) });
+        blank(at + 1, close - 1);
+        at = close + 1;
+        continue;
+      }
+      // Not a regex after all -- a lone division. Read on.
     }
     at += 1;
   }
 
-  return { text: out.join(""), unterminated: false };
+  return done();
 }
 
-/** The name sitting in a quote that a `[` opens: `workspace["saveStateFile"](…)`. Literal. */
-const COMPUTED_ACCESS = ['["', "['", "[`"];
-const COMPUTED_CLOSE = ['"]', "']", "`]"];
+/** A whole file masked, one entry per line, the lexer carrying its state between them. */
+export function maskSource(source: string): Masked[] {
+  let carry = freshCarry();
+
+  return source.split("\n").map((line) => {
+    const read = maskLine(line, carry);
+
+    carry = read.carry;
+
+    return read.masked;
+  });
+}
 
 /** Call-shaped: the name is immediately applied. Literal. */
 const APPLIED = /^\s*\(/;
@@ -260,6 +418,51 @@ const APPLIED = /^\s*\(/;
 const THROUGH_A_DOT = /(?:\?)?\.$/;
 /** Nothing but indentation, and perhaps `async`, before the name: a member being defined. */
 const DEFINES_A_MEMBER = /^\s*(?:async\s+)?$/;
+/**
+ * What sits between a member's parameter list and its body: an optional return type, then the
+ * `{` that opens it. Literal, and the rest of the line is not looked at, so a whole method
+ * written on one line is read as the method it is.
+ *
+ * This is what tells a definition from a bare call at the margin.
+ * `saveStateFile(ref, save).then(() => {` ends in `{` too, and a scan that asked only about
+ * the last character read it as an adapter -- which also let its sibling test call the port.
+ */
+const OPENS_A_BODY = /^\s*(?::[^;{]*)?\{/;
+/**
+ * What ends a signature rather than opening a body: a return type, then the `;`. Literal.
+ *
+ * The return type is **required**, and that is the whole point of the pattern. Without it,
+ * `saveStateFile(ref, save);` at the margin -- a bare call on a destructured binding -- reads
+ * as the port's own declaration and escapes. This repository compiles under `strict`, so a
+ * method signature always states what it returns; a bare call never does.
+ */
+const ENDS_A_SIGNATURE = /^\s*:[^;{]*;\s*$/;
+/**
+ * A member given as a property rather than as a method: `saveStateFile: async (ref, save) =>`.
+ * Both adapters use method shorthand today, so nothing in the repository takes this form --
+ * but a stub or a fake naturally would, and reading it as a *finding* would have made the next
+ * object-literal adapter fight the check. Literal.
+ */
+const NAMES_A_PROPERTY = /^\s*:/;
+/** A bracket opening a computed access, ignoring whitespace. Literal. */
+const OPENS_A_BRACKET = /\[\s*$/;
+/** A bracket closing one and applying what it found, ignoring whitespace. Literal. */
+const CLOSES_AND_APPLIES = /^\s*\]\s*\(/;
+
+/** Where the parameter list opened at `from` closes on this line, or -1. */
+const parenEnd = (masked: string, from: number): number => {
+  let depth = 0;
+
+  for (let at = from; at < masked.length; at += 1) {
+    if (masked[at] === "(") depth += 1;
+    else if (masked[at] === ")") {
+      depth -= 1;
+      if (depth === 0) return at;
+    }
+  }
+
+  return -1;
+};
 
 /** What the name at `at` in `line` is, given the line's masked twin. */
 function classify(line: string, masked: Masked, at: number): MentionKind {
@@ -270,25 +473,47 @@ function classify(line: string, masked: Masked, at: number): MentionKind {
   const isCode = masked.text.slice(at, at + METHOD.length) === METHOD;
 
   if (!isCode) {
-    // Inside a quote or a pattern. Prose in a message, unless a bracket makes it an access.
-    const computed = COMPUTED_ACCESS.some(
-      (open, which) => before.endsWith(open) && after.startsWith(COMPUTED_CLOSE[which] ?? ""),
-    );
+    const holding = masked.quotes.find((quote) => quote.from < at && at < quote.to);
 
-    return computed ? "call" : "text";
+    // Named inside something longer: prose in a message, or a pattern a test asserts with.
+    if (holding?.contents !== METHOD) return "text";
+
+    // The name alone, as data. `workspace["saveStateFile"](…)` is a call; every other way of
+    // handing the bare name about is a reach that becomes a call elsewhere.
+    const bracketed =
+      OPENS_A_BRACKET.test(line.slice(0, holding.from)) &&
+      CLOSES_AND_APPLIES.test(line.slice(holding.to + 1));
+
+    return bracketed ? "call" : "reference";
   }
-  // Taken rather than called. `const save = workspace.saveStateFile;` is a call elsewhere.
-  if (!APPLIED.test(after)) return "reference";
+  const atTheMargin = DEFINES_A_MEMBER.test(before);
+
+  if (!APPLIED.test(after)) {
+    // A property, in an object literal or in a type: `saveStateFile: async (ref, save) => {`.
+    // A signature ends in `;`; anything else at the margin is a value, so a definition.
+    if (atTheMargin && NAMES_A_PROPERTY.test(after)) {
+      return line.trimEnd().endsWith(";") ? "declaration" : "implementation";
+    }
+
+    // Taken rather than called. `const save = workspace.saveStateFile;` is a call elsewhere.
+    return "reference";
+  }
   if (THROUGH_A_DOT.test(before)) return "call";
-  if (DEFINES_A_MEMBER.test(before)) {
-    const ends = line.trimEnd();
+  if (atTheMargin) {
+    const opened = masked.text.indexOf("(", at + METHOD.length);
+    const closed = parenEnd(masked.text, opened);
 
-    if (ends.endsWith("{")) return "implementation";
-    if (ends.endsWith(";")) return "declaration";
+    // A parameter list left open is a signature wrapped over several lines.
+    if (closed === -1) return "implementation";
 
-    // Call-shaped, at the start of a line, ending in neither: not a shape this repository
-    // writes, so it is not waved through.
-    return "unreadable";
+    const rest = line.slice(closed + 1);
+
+    if (OPENS_A_BODY.test(rest)) return "implementation";
+    if (ENDS_A_SIGNATURE.test(rest)) return "declaration";
+
+    // Call-shaped at the margin, and neither a body nor a signature follows it: a bare call
+    // on a binding something else made.
+    return "call";
   }
 
   // A bare name being applied -- what a destructuring of the port would leave behind.
@@ -297,27 +522,35 @@ function classify(line: string, masked: Masked, at: number): MentionKind {
 
 /** Every occurrence of the method name in one file's source, in the order they appear. */
 export function mentions(file: string, source: string): Mention[] {
-  return source.split("\n").flatMap((line, index) => {
-    if (!line.includes(METHOD) || PROSE_LINE.test(line)) return [];
+  const masked = maskSource(source);
 
-    const masked = maskCode(line);
+  return source.split("\n").flatMap((line, index) => {
+    if (!line.includes(METHOD)) return [];
+
+    const twin = masked[index];
+
+    if (twin === undefined) return [];
+
     const found: Mention[] = [];
 
     for (let at = line.indexOf(METHOD); at !== -1; at = line.indexOf(METHOD, at + 1)) {
-      found.push({
-        file,
-        line: index + 1,
-        text: line.trim(),
-        kind: classify(line, masked, at),
-      });
+      found.push({ file, line: index + 1, text: line.trim(), kind: classify(line, twin, at) });
     }
 
     return found;
   });
 }
 
+/**
+ * How many times the name appears in a file's text at all, prose included. The independent
+ * count `clock-pattern.ts` cross-checks its scan against, and the reason this file has one:
+ * every occurrence the source holds has to be an occurrence the scan looked at, or the scan
+ * is walking past something. A search, not a match.
+ */
+export const nameCount = (source: string): number => source.split(METHOD).length - 1;
+
 /** Whether a name is a test file, by the spelling this project's suite picks up. */
-const TEST_FILE = /\.test\.(tsx?)$/;
+const TEST_FILE = /\.test\.(tsx?|mts|cts)$/;
 
 /**
  * The module a test file is a test of -- `server/src/workspace.fs.test.ts` is a test of
@@ -330,9 +563,10 @@ export function moduleUnderTest(file: string): string | undefined {
 }
 
 /** Every file that implements the method: the port's adapters, found rather than listed. */
-export const implementors = (all: readonly Mention[]): string[] => [
-  ...new Set(all.filter((mention) => mention.kind === "implementation").map((m) => m.file)),
-];
+export const implementors = (all: readonly Mention[]): string[] =>
+  [
+    ...new Set(all.filter((mention) => mention.kind === "implementation").map((m) => m.file)),
+  ].sort();
 
 /**
  * May this file call the method? The wrapper may, and so may the test of a module that
@@ -370,6 +604,9 @@ export function secondWriters(all: readonly Mention[]): Finding[] {
     .sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line);
 }
 
+/** The rule as a sentence of its own, for a message that has to start one. */
+const Rule = `${RULE.charAt(0).toUpperCase()}${RULE.slice(1)}`;
+
 /**
  * One finding as a sentence: the line, what it is, what to do instead, and the rule. A
  * reader should never have to work out why their line is wrong, and the three kinds have
@@ -381,28 +618,28 @@ export const explain = (finding: Finding): string => {
 
   if (finding.kind === "unreadable") {
     return (
-      `${at}\n  This line names \`${METHOD}\` and could not be read: a quote, a template or a ` +
-      `comment was still open at the end of it, so the scan cannot tell a call from a ` +
-      `mention. Put the mention on a prose line of its own, or the code on one line, rather ` +
-      `than leaving the question open — ${RULE}.`
+      `${at}\n  This line names \`${METHOD}\` and could not be read: a quote was left open at ` +
+      `the end of it, or the name sits at the margin in a shape that is neither a definition ` +
+      `nor a call, so the scan cannot tell one from the other. Rewrite the line rather than ` +
+      `leaving the question open — ${RULE}.`
     );
   }
-  if (moduleUnderTest(finding.file) !== undefined) {
+
+  const subject = moduleUnderTest(finding.file);
+
+  if (subject !== undefined) {
     return (
       `${at}\n  A test reaches \`${METHOD}\` here, and \`*.test.ts\` is not waved through: ` +
-      `only the test of a module that implements the port may exercise it, and ` +
-      `\`${moduleUnderTest(finding.file) ?? ""}\` does not. Save through \`editStateFile\` as ` +
-      `production does, or — if the port itself is the subject — put the test beside the ` +
-      `adapter it tests. ${RULE.charAt(0).toUpperCase()}${RULE.slice(1)}.`
+      `only the test of a module that implements the port may exercise it, and \`${subject}\` ` +
+      `does not. Save through \`editStateFile\` as production does, or — if the port itself is ` +
+      `the subject — put the test beside the adapter it tests. ${Rule}.`
     );
   }
 
   const reached =
     finding.kind === "reference"
-      ? `takes \`${METHOD}\` without calling it, which is a call wherever it is handed to`
+      ? `reaches \`${METHOD}\` without calling it there, which is a call wherever it is handed to`
       : `calls \`${METHOD}\` directly`;
 
-  return (
-    `${at}\n  \`${finding.file}\` ${reached}, and only \`${WRITER}\` may: ${RULE}.`
-  );
+  return `${at}\n  \`${finding.file}\` ${reached}, and only \`${WRITER}\` may: ${RULE}.`;
 };
