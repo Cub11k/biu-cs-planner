@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { collect } from "./collect.ts";
 import { render, type Report } from "./render.ts";
+import type { TestCase } from "./tests.ts";
 import { packageWorkspace, type ImportKind, type Module } from "./surface.ts";
 
 const ROOT = resolve(import.meta.dirname, "../..");
@@ -19,6 +20,20 @@ const coverageOf = (branches: number) => ({
   functions: 90,
   lines: 90,
   uncoveredLines: 3,
+});
+
+/**
+ * One ordinary entry: one title, one test.
+ *
+ * Named rather than written out, because the field that makes it one test is the whole subject
+ * of #140 and a fixture that sets it inline reads as noise. A parameterised entry is written
+ * out in full at the tests that are about one.
+ */
+const entry = (title: string, suite: string[] = []): TestCase => ({
+  title,
+  suite,
+  tests: 1,
+  atLeast: false,
 });
 
 /** `ImportKind`'s three states, named as `surface.ts` and `surface.test.ts` name them. */
@@ -98,7 +113,7 @@ function report(over: Partial<Report> = {}): Report {
       },
       leaf("core/src/b.ts"),
     ],
-    tests: [{ path: "core/src/a.test.ts", cases: [{ title: "works", suite: [] }], targets: [] }],
+    tests: [{ path: "core/src/a.test.ts", cases: [entry("works")], targets: [] }],
     coverage: {
       available: true,
       total: coverageOf(91),
@@ -407,7 +422,9 @@ describe("the report comment", () => {
     const firstFold = markdown.indexOf("<details>");
 
     expect(markdown.slice(0, firstFold)).toContain("| Modules | 2 across 1 workspaces |");
-    expect(markdown.slice(0, firstFold)).toContain("| Tests | 1 in 1 files |");
+    expect(markdown.slice(0, firstFold)).toContain(
+      "| Tests | 1 in 1 files, counted from the source |",
+    );
   });
 
   it("keeps where-to-look out of a fold, and last", () => {
@@ -455,18 +472,18 @@ describe("a directory only test titles were read from", () => {
   const withTools = (over: Partial<Report> = {}): Report =>
     report({
       tests: [
-        { path: "core/src/a.test.ts", cases: [{ title: "works", suite: [] }], targets: [] },
+        { path: "core/src/a.test.ts", cases: [entry("works")], targets: [] },
         {
           path: "tools/ci/workflows.test.ts",
           cases: [
-            { title: "fails an install without --ignore-scripts", suite: ["workflows"] },
-            { title: "fails a workflow with no permissions block", suite: ["workflows"] },
+            entry("fails an install without --ignore-scripts", ["workflows"]),
+            entry("fails a workflow with no permissions block", ["workflows"]),
           ],
           targets: [],
         },
         {
           path: "tools/ci/clock-pattern.test.ts",
-          cases: [{ title: "fails a second clock body", suite: [] }],
+          cases: [entry("fails a second clock body")],
           targets: [],
         },
       ],
@@ -523,7 +540,9 @@ describe("a directory only test titles were read from", () => {
     expect(verdict).toContain("Nothing stands out among the modules measured");
     expect(verdict).not.toContain("Nothing stands out: every function ran");
     expect(verdict).toContain("Nothing above says anything about `tools/`");
-    expect(verdict).toContain("3 test titles in 2 files");
+    // "tests", not "test titles": the number counts what the run collects, and for `tools/`
+    // the titles are still the whole of what the report knows about them (#136, #140).
+    expect(verdict).toContain("3 tests in 2 files, their titles and nothing more");
   });
 
   it("explains inside the coverage fold why a path has no row there", () => {
@@ -610,10 +629,10 @@ describe("a directory only test titles were read from", () => {
     const markdown = render(
       withTools({
         tests: [
-          { path: "tools/ci/a.test.ts", cases: [{ title: "in tools", suite: [] }], targets: [] },
+          { path: "tools/ci/a.test.ts", cases: [entry("in tools")], targets: [] },
           {
             path: "toolsmith/src/a.test.ts",
-            cases: [{ title: "not in tools", suite: [] }],
+            cases: [entry("not in tools")],
             targets: [],
           },
         ],

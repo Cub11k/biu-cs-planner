@@ -50,7 +50,7 @@
     "dev:web": "npm run dev --workspace web",
     "build": "npm run build --workspaces --if-present && npm run build:package",
     "build:package": "node tools/package/main.ts",
-    "coverage": "vitest run --project node --coverage",
+    "coverage": "vitest run --project node --coverage --reporter=default --reporter=json --outputFile.json=coverage/test-results.json",
     "report": "npm run coverage --silent && node tools/pr-report/main.ts",
     "review": "node tools/pr-review/main.ts"
   },

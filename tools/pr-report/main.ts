@@ -1,6 +1,7 @@
 import { writeFileSync, appendFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { collect } from "./collect.ts";
+import { readTestRun } from "./coverage.ts";
 import { render } from "./render.ts";
 
 /**
@@ -15,7 +16,19 @@ import { render } from "./render.ts";
  */
 const ROOT = resolve(import.meta.dirname, "../..");
 
-const markdown = render(collect(ROOT));
+/**
+ * The two sources the report opens by claiming, joined here and nowhere else.
+ *
+ * `collect` reads the source, and it is shared with `tools/pr-review`, which wants the graphs
+ * and runs no tests at all. The count a real run collected is wanted by this page alone, so it
+ * is read here rather than added to what `collect` returns: the review would carry a field it
+ * has no run to fill. `npm run coverage` leaves the file behind; a report built without one
+ * still renders, and says that nothing checks its count (#140).
+ */
+const markdown = render({
+  ...collect(ROOT),
+  run: readTestRun(join(ROOT, "coverage/test-results.json"), ROOT),
+});
 
 if (process.argv.includes("--stdout")) {
   console.log(markdown);
