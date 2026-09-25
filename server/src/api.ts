@@ -8,8 +8,10 @@ import {
   importCrawl,
   listOfferings,
   pickGroup,
+  readSettings,
   readTimetable,
   removeGroupPick,
+  setSettings,
   workspaceStatus,
   type QueryWarning,
   type TimetableRef,
@@ -23,6 +25,7 @@ import {
   groupPickSchema,
   rawCrawlSchema,
   semesterSchema,
+  settingsSchema,
 } from "@biu-cs-planner/core";
 import { z } from "zod";
 
@@ -119,6 +122,37 @@ const savedPickSchema = z.object({ ...groupPickSchema.shape, basedOn: basedOnSch
 
 /** The slot to clear, and the revision the page that sends it was based on. */
 const savedSlotSchema = z.object({ ...pickSlotSchema.shape, basedOn: basedOnSchema });
+
+/**
+ * A change to the student's preferences: the fields being set, and the revision the page that
+ * sends it was based on.
+ *
+ * **Every field optional**, which is what makes this a PATCH rather than a PUT. A body carries
+ * the preferences it means to change and says nothing about the others, so the one control that
+ * exists today — the language switch — cannot reset the Exam spacing by not mentioning it. A
+ * whole-object write from a page that knows about one preference would do exactly that, with
+ * whatever value it happened to have read, or the schema's default if it had read none.
+ *
+ * Each field's *type* comes from `core`'s own `settingsSchema`, so a value this route accepts
+ * cannot be one the State File would then reject. Each is named here rather than derived, and
+ * `./api.test.ts` carries a canary that fails when `settingsSchema` gains a field, because the
+ * alternative is a preference the file holds that no route can set.
+ *
+ * **`settingsSchema.partial()` is not what this is, and the difference is a bug.** `.partial()`
+ * leaves each field's `.default()` in place, so a body naming only the language parses as that
+ * language *and* the default Exam spacing — and this route would silently reset the preference it
+ * was not asked about. Measured on zod 4.6.5: `settingsSchema.partial().parse({})` is
+ * `{ language: "en", examSpacingDays: 3 }`. Unwrapping the default before making the field
+ * optional is what leaves an unmentioned field absent.
+ *
+ * A body naming no field at all is well formed and changes nothing, which the domain answers as
+ * an unchanged save.
+ */
+const savedSettingsSchema = z.object({
+  language: settingsSchema.shape.language.unwrap().optional(),
+  examSpacingDays: settingsSchema.shape.examSpacingDays.unwrap().optional(),
+  basedOn: basedOnSchema,
+});
 
 /**
  * What an undo or a redo carries, which is the revision the page it was clicked on was
@@ -478,7 +512,64 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
 
     .post("/api/history/redo", capped, (c) =>
       step(c, (basedOn) => history.redo(DEFAULT_STATE_FILE, basedOn)),
-    );
+    )
+
+    /**
+     * The student's preferences: the language the UI is in, and the Exam spacing a Warning is
+     * raised below (`docs/design.md`, "Workspace"; ADR-0014).
+     *
+     * Domain operations and no file path, as everywhere: no State File is named, exactly as the
+     * history routes name none (ADR-0002). The Warnings travel with the answer and are the
+     * reason this is not just the two values — `core/src/state/file.ts` reads the settings one
+     * field at a time and raises `settings-unreadable` naming the field it could not read, and a
+     * preference silently back at its default is the one a student cannot tell from a preference
+     * they never set.
+     *
+     * `version` is the revision these settings were read from, and what a change made on them
+     * has to be based on. Absent when there is no State File yet, which is the claim a first
+     * save carries.
+     */
+    .get("/api/settings", async (c) => {
+      const result = await readSettings(workspace);
+      if (result.kind === "refused") {
+        return c.json({ reason: result.reason, warnings: result.warnings }, 409);
+      }
+
+      return c.json({ ...result.settings, version: result.version, warnings: result.warnings });
+    })
+
+    /**
+     * Sets the preferences the body names, and answers with the settings as the file holds them
+     * afterwards — the same shape the GET answers, so a page that can read one can read the
+     * other.
+     *
+     * **A PATCH and not a PUT**, because the body is the fields being changed rather than the
+     * whole of the settings; `savedSettingsSchema` carries the argument.
+     *
+     * A refusal is the same named 409 the Pick routes answer with, and `state-file-changed` is
+     * among the reasons: writing a preference is writing the State File, so somebody else's edit
+     * between the read the page was showing and this save refuses it rather than overwriting
+     * their work (#90). Whatever offered the control owes the student an account of that.
+     *
+     * `into` is passed for the same reason a Pick passes it, and **not** so that a preference can
+     * be undone — ADR-0013 keeps settings off the stack and `app/src/edit.ts` enforces that
+     * structurally. It is passed because the stack has to hear the revision every save wrote: a
+     * settings save it had not heard about would leave it believing the revision before, and the
+     * next undo would read a file carrying a revision the stack never wrote and throw the
+     * student's whole history away as though something outside the app had been in.
+     */
+    .patch("/api/settings", capped, async (c) => {
+      const body = await bodyAs(c, savedSettingsSchema, "not-settings");
+      if (!body.ok) return c.json({ error: body.error }, 400);
+
+      const { basedOn, ...change } = body.value;
+      const result = await setSettings(workspace, change, { basedOn, history: into });
+      if (result.kind === "refused") {
+        return c.json({ reason: result.reason, warnings: result.warnings }, 409);
+      }
+
+      return c.json({ ...result.settings, version: result.version, warnings: result.warnings });
+    });
 
   return api;
 }

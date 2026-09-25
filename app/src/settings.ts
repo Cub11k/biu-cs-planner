@@ -72,7 +72,7 @@ export type SettingsResult =
  * carry whatever `examSpacingDays` that page happened to have read, or the default if it had
  * read none.
  */
-export type SettingsChange = Partial<Settings>;
+export type SettingsChange = { [K in keyof Settings]?: Settings[K] | undefined };
 
 export type SettingsOptions = {
   /** The revision the view being edited was read from; see `EditOptions.basedOn`. */
@@ -96,18 +96,19 @@ const SETTING_KEYS = Object.keys(settingsSchema.shape) as (keyof Settings)[];
 /**
  * The change with the fields it does not mention removed.
  *
- * `Partial<Settings>` allows an explicit `undefined`, and spreading one over the current
- * settings would put `undefined` where a value belongs — a State File the schema then rejects,
- * from a caller that meant "leave this alone". JSON has no `undefined`, so nothing over the
- * API can produce one; a caller inside the process can, and a value the schema would reject
- * must not depend on that.
+ * `SettingsChange` allows an explicit `undefined` and the return type does not, which is this
+ * function's whole job spelled as a type. Spreading an explicit `undefined` over the current
+ * settings would put it where a value belongs — a State File the schema then rejects, from a
+ * caller that meant "leave this alone". It is allowed in because that is what `z.object().
+ * partial()` produces at the API boundary and what a caller inside the process naturally
+ * writes; it is not allowed through.
  */
-function named(change: SettingsChange): SettingsChange {
+function named(change: SettingsChange): Partial<Settings> {
   const named: Record<string, unknown> = {};
   for (const key of SETTING_KEYS) {
     if (change[key] !== undefined) named[key] = change[key];
   }
-  return named as SettingsChange;
+  return named as Partial<Settings>;
 }
 
 /** Whether two sets of settings say the same thing, field by field over the schema's fields. */
