@@ -17,6 +17,9 @@
  * you edit to make it pass has stopped being one.
  */
 import { createRoot, type Root } from "react-dom/client";
+// The entry document as it is on disk, not as a dev server hands it over: `?raw` is read at
+// transform time, so nothing has injected or rewritten anything by the time a test sees it.
+import ENTRY_DOCUMENT from "../index.html?raw";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { cdp, userEvent } from "vitest/browser";
 import "./index.css";
@@ -26,7 +29,12 @@ import {
   SCHEME_CHOICES,
   SCHEME_STORAGE_KEY,
   applyScheme,
+  rememberScheme,
+  schemeStore,
+  storedScheme,
+  watchScheme,
   type SchemeChoice,
+  type SchemeElement,
 } from "./scheme.ts";
 import { SchemeControl } from "./SchemeControl.tsx";
 
@@ -50,15 +58,27 @@ async function operatingSystem(scheme: "light" | "dark"): Promise<void> {
  * added to the palette later is covered without anyone remembering to add it here — the
  * failure mode of a hand-written list is that it silently stops being the palette.
  */
-function darkTokenNames(): string[] {
-  return [...getComputedStyle(ROOT)].filter((name) => name.startsWith("--dark-"));
+function darkTokenNames(root: Element = ROOT): string[] {
+  return [...resolved(root)].filter((name) => name.startsWith("--dark-"));
 }
 
-/** Every token the scheme changes, as this document currently resolves it. */
-function palette(): Record<string, string> {
-  const computed = getComputedStyle(ROOT);
+/**
+ * An element's resolved style, from its own window.
+ *
+ * Parameterised because half of what is under test lives in a second document — a `<html>`
+ * in an iframe — and `getComputedStyle` has to be that document's own.
+ */
+function resolved(root: Element): CSSStyleDeclaration {
+  const view = root.ownerDocument.defaultView;
+  if (view === null) throw new Error("that element's document has no window");
+  return view.getComputedStyle(root);
+}
+
+/** Every token the scheme changes, as a document currently resolves it. */
+function palette(root: Element = ROOT): Record<string, string> {
+  const computed = resolved(root);
   return Object.fromEntries(
-    darkTokenNames().map((dark) => {
+    darkTokenNames(root).map((dark) => {
       const token = dark.replace("--dark-", "--");
       return [token, computed.getPropertyValue(token).trim()];
     }),
@@ -91,12 +111,17 @@ beforeAll(async () => {
 
 let host: HTMLElement | undefined;
 let root: Root | undefined;
+/** The second tabs a test opened, and the watchers it started, both torn down after it. */
+const frames: HTMLIFrameElement[] = [];
+const stops: (() => void)[] = [];
 
 beforeEach(() => {
   localStorage.removeItem(SCHEME_STORAGE_KEY);
 });
 
 afterEach(async () => {
+  for (const stop of stops.splice(0)) stop();
+  for (const frame of frames.splice(0)) frame.remove();
   root?.unmount();
   host?.remove();
   root = undefined;
@@ -357,4 +382,283 @@ it.each([
   expect(ring.outlineWidth).toBe("2px");
   expect(ring.outlineColor).toBe(asRgb((ink === "dark" ? systemDark : systemLight)["--ink"] ?? ""));
 });
+});
+
+/**
+ * The entry document itself, loaded into an iframe, which is how the two things #146 is
+ * about become askable in a browser: what a page looks like before its module has run, and
+ * what a second tab does when the first one chooses.
+ *
+ * An iframe is a second browsing context on the same origin, so it shares this page's
+ * `localStorage` and the browser decides on its own which documents hear a `storage` event —
+ * which is the whole point, because the fact under test is *who is not told*. A fake that
+ * declined to deliver the event to the writer would be asserting its own manners.
+ */
+/**
+ * The real `web/index.html`, with every external script removed, in an iframe.
+ *
+ * Removing `script[src]` — `main.tsx` — is what holds the first paint still. The claim is about the moment before the deferred module runs, and
+ * there is no asking a browser to pause one; a document served without it is that moment,
+ * and nothing else in it can have set the attribute. `srcdoc` rather than navigating to the
+ * URL for the same reason.
+ *
+ * `index.css` is linked because `main.tsx` is the thing that imports it, and it is gone. An
+ * attribute nothing reads is not a palette, so without the stylesheet the interesting
+ * assertion — the tokens resolve dark before the first paint — could not be made at all.
+ *
+ * With `stamp: false` the inline script goes too, which gives every test its own control:
+ * the same document, the same store, the same machine, and the one line removed.
+ *
+ * With `store: "blocked"` the document gets a store that throws on every access, ahead of the
+ * stamp — a browser in a mode where the store is switched off. That is the stamp's own `catch`
+ * under test rather than a stand-in for it.
+ */
+async function entryDocument({
+  stamp = true,
+  store = "working",
+}: { stamp?: boolean; store?: "working" | "blocked" } = {}): Promise<Document> {
+  const parsed = new DOMParser().parseFromString(ENTRY_DOCUMENT, "text/html");
+
+  for (const external of parsed.querySelectorAll("script[src]")) external.remove();
+  if (!stamp) for (const inline of parsed.querySelectorAll("script")) inline.remove();
+
+  if (store === "blocked") {
+    const block = parsed.createElement("script");
+    block.textContent = `Object.defineProperty(window, "localStorage", {
+      get() {
+        throw new Error("the store is switched off");
+      },
+    });`;
+    parsed.head.prepend(block);
+  }
+
+  const styles = parsed.createElement("link");
+  styles.rel = "stylesheet";
+  styles.href = "/web/src/index.css";
+  parsed.head.append(styles);
+
+  const frame = document.createElement("iframe");
+  frames.push(frame);
+  frame.srcdoc = `<!doctype html>${parsed.documentElement.outerHTML}`;
+  document.body.append(frame);
+  await new Promise((resolve) => frame.addEventListener("load", resolve, { once: true }));
+
+  const loaded = frame.contentDocument;
+  if (loaded === null) throw new Error("the entry document did not load");
+  return loaded;
+}
+
+/** Starts a watcher inside another document, on that document's own window and store. */
+function watchIn(document: Document, element: SchemeElement): void {
+  const view = document.defaultView;
+  if (view === null) throw new Error("that document has no window");
+  stops.push(watchScheme(view, { localStorage: view.localStorage }, element));
+}
+
+describe("the first paint, before any module has run", () => {
+  it("is the remembered dark scheme on a light machine, and the stamp is what makes it so", async () => {
+    localStorage.setItem(SCHEME_STORAGE_KEY, "dark");
+    await operatingSystem("light");
+
+    const stamped = await entryDocument();
+    expect(stamped.documentElement.getAttribute(SCHEME_ATTRIBUTE)).toBe("dark");
+    expect(palette(stamped.documentElement)).toEqual(systemDark);
+
+    // The control, and the reason this test means anything: a first-paint assertion passes
+    // very easily because the page happened to already be in the scheme it asserted. Same
+    // document, same store, same machine, with the stamp taken out — and it is light.
+    const bare = await entryDocument({ stamp: false });
+    expect(bare.documentElement.hasAttribute(SCHEME_ATTRIBUTE)).toBe(false);
+    expect(palette(bare.documentElement)).toEqual(systemLight);
+  });
+
+  it("is the remembered light scheme on a dark machine, the direction a media query cannot do", async () => {
+    localStorage.setItem(SCHEME_STORAGE_KEY, "light");
+    await operatingSystem("dark");
+
+    const stamped = await entryDocument();
+    expect(stamped.documentElement.getAttribute(SCHEME_ATTRIBUTE)).toBe("light");
+    expect(palette(stamped.documentElement)).toEqual(systemLight);
+
+    const bare = await entryDocument({ stamp: false });
+    expect(palette(bare.documentElement)).toEqual(systemDark);
+  });
+
+  it("follows the machine with nothing remembered, in both directions", async () => {
+    // The third state at the earliest moment it exists. A stamp that wrote something for a
+    // browser it had never been told about would be a third palette, which is what the
+    // no-choice state is deliberately not.
+    await operatingSystem("light");
+    const light = await entryDocument();
+    expect(light.documentElement.hasAttribute(SCHEME_ATTRIBUTE)).toBe(false);
+    expect(palette(light.documentElement)).toEqual(systemLight);
+
+    await operatingSystem("dark");
+    const dark = await entryDocument();
+    expect(dark.documentElement.hasAttribute(SCHEME_ATTRIBUTE)).toBe(false);
+    expect(palette(dark.documentElement)).toEqual(systemDark);
+  });
+
+  it("leaves a stored value it does not recognise to the stylesheet, and the module clears it", async () => {
+    // The stamp narrows nothing, on purpose: `asSchemeChoice` is the only narrowing and the
+    // stamp cannot import it. So an unrecognised value does reach the attribute, and the
+    // stylesheet is what makes that harmless — it matches two values and treats the rest as
+    // no attribute at all. A student on a dark machine still sees a dark page.
+    localStorage.setItem(SCHEME_STORAGE_KEY, "solarized");
+    await operatingSystem("dark");
+
+    const stamped = await entryDocument();
+    expect(stamped.documentElement.getAttribute(SCHEME_ATTRIBUTE)).toBe("solarized");
+    expect(palette(stamped.documentElement)).toEqual(systemDark);
+
+    // …and then the narrowing catches up. This is `main.tsx`'s line, run against that
+    // document: the value the stylesheet ignored is gone from the document as well.
+    applyScheme(stamped.documentElement, storedScheme(schemeStore()));
+    expect(stamped.documentElement.hasAttribute(SCHEME_ATTRIBUTE)).toBe(false);
+    expect(palette(stamped.documentElement)).toEqual(systemDark);
+  });
+
+  it("paints the machine's scheme when the store throws instead of answering", async () => {
+    // A browser with the store switched off, which is the one case where the stamp is a line
+    // that can throw *before* anything at all has rendered. It has to leave a working page,
+    // and the page it leaves is the operating system's.
+    localStorage.setItem(SCHEME_STORAGE_KEY, "light");
+    await operatingSystem("dark");
+
+    const blocked = await entryDocument({ store: "blocked" });
+
+    expect(blocked.documentElement.hasAttribute(SCHEME_ATTRIBUTE)).toBe(false);
+    expect(palette(blocked.documentElement)).toEqual(systemDark);
+    // …and the document is a document, not a parse that stopped at a thrown error.
+    expect(blocked.getElementById("root")).not.toBeNull();
+  });
+
+  it("paints the machine's scheme with no script at all, which is JavaScript switched off", async () => {
+    // Before the stamp runs, or where it never will: the same page every student had before
+    // there was a choice, and no control on it to change the scheme.
+    localStorage.setItem(SCHEME_STORAGE_KEY, "light");
+    await operatingSystem("dark");
+    const bare = await entryDocument({ stamp: false });
+
+    expect(bare.documentElement.hasAttribute(SCHEME_ATTRIBUTE)).toBe(false);
+    expect(palette(bare.documentElement)).toEqual(systemDark);
+  });
+});
+
+describe("a second tab on the same origin", () => {
+  it("follows a choice made in another tab, without a reload", async () => {
+    await operatingSystem("light");
+    const second = await entryDocument();
+    watchIn(second, second.documentElement);
+
+    // The choice is made here, in this document, exactly the way the control makes it.
+    // Nothing reaches into the other one.
+    rememberScheme(schemeStore(), "dark");
+
+    await vi.waitFor(() => {
+      expect(second.documentElement.getAttribute(SCHEME_ATTRIBUTE)).toBe("dark");
+    });
+    expect(palette(second.documentElement)).toEqual(systemDark);
+
+    // And back to the machine, which is the third state arriving through the event: the key
+    // going away has to reach the other tab too, not just a new value.
+    rememberScheme(schemeStore(), "system");
+    await vi.waitFor(() => {
+      expect(second.documentElement.hasAttribute(SCHEME_ATTRIBUTE)).toBe(false);
+    });
+    expect(palette(second.documentElement)).toEqual(systemLight);
+  });
+
+  it("does not tell the tab that made the choice, so nothing is applied twice", async () => {
+    // A `storage` event is not delivered to the document that wrote the value. That is what
+    // makes a double-apply impossible rather than merely unlikely, and it is the browser's
+    // fact, so it is asked where a browser answers.
+    await operatingSystem("light");
+
+    // A watcher in *this* document, aimed at a throwaway element, so that "it never fired"
+    // is something an assertion can see.
+    const writer = document.createElement("div");
+    watchIn(document, writer);
+
+    const second = await entryDocument();
+    watchIn(second, second.documentElement);
+
+    rememberScheme(schemeStore(), "dark");
+
+    await vi.waitFor(() => {
+      expect(second.documentElement.getAttribute(SCHEME_ATTRIBUTE)).toBe("dark");
+    });
+    // The other tab has heard, so the event has landed everywhere it is going to. This tab's
+    // watcher was never called: same store, same key, same moment. The tab holding the
+    // control applies its choice once, through the control.
+    expect(writer.hasAttribute(SCHEME_ATTRIBUTE)).toBe(false);
+  });
+
+  it("narrows what arrives, so an unrecognised value hands the decision back", async () => {
+    await operatingSystem("light");
+    const second = await entryDocument();
+    watchIn(second, second.documentElement);
+
+    rememberScheme(schemeStore(), "dark");
+    await vi.waitFor(() => {
+      expect(second.documentElement.getAttribute(SCHEME_ATTRIBUTE)).toBe("dark");
+    });
+
+    // Something the app never wrote — devtools, or another build's idea of this key. The
+    // watcher re-reads through `storedScheme`, so it is no choice at all rather than an
+    // attribute the stylesheet has to go on ignoring.
+    localStorage.setItem(SCHEME_STORAGE_KEY, "solarized");
+    await vi.waitFor(() => {
+      expect(second.documentElement.hasAttribute(SCHEME_ATTRIBUTE)).toBe(false);
+    });
+    expect(palette(second.documentElement)).toEqual(systemLight);
+  });
+
+  it("goes back to the machine when the store is emptied under it", async () => {
+    // `localStorage.clear()` reports no key at all, because every key changed. A browser
+    // reset or a devtools clear leaves the page following the operating system, which is the
+    // state that is never wrong, rather than a scheme nothing in the store agrees with.
+    localStorage.setItem(SCHEME_STORAGE_KEY, "light");
+    await operatingSystem("dark");
+
+    const second = await entryDocument();
+    expect(second.documentElement.getAttribute(SCHEME_ATTRIBUTE)).toBe("light");
+    watchIn(second, second.documentElement);
+
+    localStorage.clear();
+
+    await vi.waitFor(() => {
+      expect(second.documentElement.hasAttribute(SCHEME_ATTRIBUTE)).toBe(false);
+    });
+    expect(palette(second.documentElement)).toEqual(systemDark);
+  });
+
+  it("stops following once its watcher is stopped", async () => {
+    // The stop function is what a component would use. It is not used in `main.tsx`, where
+    // the listener lives as long as the page, so this is the only place it is exercised.
+    await operatingSystem("light");
+    const second = await entryDocument();
+    const view = second.defaultView;
+    if (view === null) throw new Error("that document has no window");
+    const stop = watchScheme(view, { localStorage: view.localStorage }, second.documentElement);
+
+    rememberScheme(schemeStore(), "dark");
+    await vi.waitFor(() => {
+      expect(second.documentElement.getAttribute(SCHEME_ATTRIBUTE)).toBe("dark");
+    });
+
+    stop();
+    rememberScheme(schemeStore(), "light");
+
+    // Nothing to wait for, so the wait is for the other tab to hear it instead: a second
+    // watched document proves the event was delivered, and the stopped one stayed put.
+    const third = await entryDocument();
+    watchIn(third, third.documentElement);
+    rememberScheme(schemeStore(), "light");
+    await vi.waitFor(() => {
+      expect(third.documentElement.getAttribute(SCHEME_ATTRIBUTE)).toBe("light");
+    });
+
+    expect(second.documentElement.getAttribute(SCHEME_ATTRIBUTE)).toBe("dark");
+  });
 });

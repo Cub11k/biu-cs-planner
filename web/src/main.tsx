@@ -2,7 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App.tsx";
 import { claimToken } from "./api.ts";
-import { applyScheme, schemeStore, storedScheme } from "./scheme.ts";
+import { applyScheme, schemeStore, storedScheme, watchScheme } from "./scheme.ts";
 import "./index.css";
 
 const root = document.getElementById("root");
@@ -12,16 +12,27 @@ if (!root) throw new Error("missing #root");
 // of the URL fragment and into storage, and the URL is left the way a bookmark wants it.
 claimToken();
 
-// And before React mounts: the remembered scheme goes onto `<html>`, so a student who chose
-// light on a dark machine does not watch the page change colour as the first render lands.
-// `SchemeControl` reads the same answer, so it agrees with what is already there rather than
-// correcting it.
+// And before React mounts: the remembered scheme, narrowed, onto `<html>`.
 //
-// Not *before the first paint*, which is a stronger claim than this can make: a module script
-// is deferred, so the browser may already have painted `body` in the machine's scheme by the
-// time this line runs. Closing that last gap needs a blocking inline script in `index.html`,
-// which is a different file and a different change.
+// `index.html`'s blocking stamp has already put the same key's value there, before the first
+// paint, so this is not what stops a student seeing a flash — that happened earlier and in a
+// file a module could not reach. What this line adds is the narrowing: the stamp copies the
+// stored string as it found it and leaves `index.css` to recognise it, and `storedScheme` is
+// where a string no palette matches becomes no choice at all. So this normally rewrites the
+// value that is already on the element, and the one case it changes is a store holding
+// something the app never wrote. `SchemeControl` reads the same answer, so it agrees with
+// what is there rather than correcting it.
 applyScheme(document.documentElement, storedScheme(schemeStore()));
+
+// From here the tab follows the store rather than its memory of it: a choice made in another
+// tab on this origin re-stamps this one without a reload (#146). The listener is meant to
+// live as long as the page, so the stop function it returns is not kept.
+//
+// What this does not move is `SchemeControl`'s own `<select>`, which reads the store once as
+// it mounts: the other tab's page turns dark while its drop-down still says what it said when
+// that tab loaded. The palette is the part a student is looking at, and the control's word for
+// it is left to the change that owns that component — #146's pull request carries the edit.
+watchScheme(window, schemeStore(), document.documentElement);
 
 createRoot(root).render(
   <StrictMode>

@@ -4,6 +4,48 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>BIU CS Planner</title>
+    <script>
+      /*
+       * The remembered scheme, stamped before the first paint (#146).
+       *
+       * This has to be here and it has to block. `src/main.tsx` is a module script and so
+       * deferred: by the time it runs the browser may already have painted the page in
+       * whatever the machine says, which a student who chose against their machine sees as
+       * a flash of the scheme they did not choose, on every load. A classic script in
+       * `<head>` runs before any of that, which no module can.
+       *
+       * **It narrows nothing, deliberately.** `asSchemeChoice` in `src/scheme.ts` is the
+       * single place a stored string becomes a choice, which #114's review made it; a copy
+       * of that rule here would be a second one to keep in step, and there is no importing
+       * the first, because a module cannot block. So the stored string goes onto the
+       * attribute as it was found, and the stylesheet is left to be the thing that
+       * recognises it: `src/index.css` gives a palette to two values and treats every other
+       * value exactly as it treats a missing attribute, which `src/scheme.browser.test.tsx`
+       * asserts. A moment later `main.tsx` reads the same key through `storedScheme` and
+       * writes the attribute narrowed, so a value no palette matched is gone from the
+       * document as well as ignored in it.
+       *
+       * `setAttribute` puts the value in an attribute and nowhere else: nothing here
+       * evaluates it, parses it, or builds a pattern out of it (ADR-0007).
+       * `src/scheme.test.ts` reads this file and fails if the key or the attribute name
+       * stops matching the module's, or if a scheme name is ever spelled in here.
+       *
+       * With JavaScript switched off, or before it has run, the page is the operating
+       * system's scheme and carries no control to change it — the same page every student
+       * had before #114, and the same one a blocked store gives.
+       *
+       * When the strict CSP that `server/src/ui.ts` defers finally lands, this one script
+       * is what its `script-src` has to allow, by hash or by nonce.
+       */
+      try {
+        const remembered = localStorage.getItem("biu-cs-planner.scheme");
+        if (remembered !== null) {
+          document.documentElement.setAttribute("data-theme", remembered);
+        }
+      } catch {
+        /* private mode, or the store switched off: no choice to apply, so the machine decides */
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>
