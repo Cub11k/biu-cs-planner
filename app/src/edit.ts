@@ -22,19 +22,100 @@ import { StateFileChangedError, WorkspaceRefusedError, type Workspace } from "./
  */
 
 /**
- * What #73 pushes onto its undo stack: the State File as it stood before one edit, and the
- * label the use case gave that edit. Produced here on every save and handed both to the
- * caller and to `history`, so the stack that ticket adds has somewhere to hang without any
- * use case changing.
+ * The part of a State File an undo restores: the whole document **except** `settings`.
+ *
+ * ADR-0013: "One stack covers the document, minus settings. Language and exam spacing are
+ * preferences that the control which set them can set back, and folding them in would let
+ * undoing a Pick flip the UI language." That exclusion is spelled as a type rather than as a
+ * habit, so a snapshot cannot carry a preference for a later restore to put back: an entry
+ * that does not hold `settings` cannot overwrite them, whoever writes the next use case.
+ *
+ * The fields come from `stateSchema` rather than being listed here, so a field added to a
+ * State File is on the stack from the day it exists. Forgetting to add one would be silent —
+ * the edit would save and the undo would leave that field where the edit put it.
+ */
+export type StateSnapshot = Omit<State, "settings">;
+
+/** Everything a snapshot holds, which is every part of the document but `settings`. */
+const SNAPSHOT_KEYS = Object.keys(stateSchema.shape).filter(
+  (key) => key !== "settings",
+) as (keyof StateSnapshot)[];
+
+/** The document as it stands, minus the preferences an undo must not move. */
+export function snapshotOf(state: State): StateSnapshot {
+  const snapshot: Record<string, unknown> = {};
+  for (const key of SNAPSHOT_KEYS) snapshot[key] = state[key];
+  return snapshot as StateSnapshot;
+}
+
+/**
+ * Did this edit move anything an undo would restore?
+ *
+ * Reference equality per field, which is exactly the question and not an approximation of
+ * it: a pure edit returns `{ ...state, settings: next }` when it sets a preference, so every
+ * other field of the result *is* the field it was handed. An edit that rebuilt a field
+ * identically would be counted as having moved it — the conservative direction, costing one
+ * undo entry rather than losing one.
+ */
+const movedOutsideSettings = (previous: State, next: State): boolean =>
+  SNAPSHOT_KEYS.some((key) => next[key] !== previous[key]);
+
+/**
+ * One entry on the undo stack (#73): the State File as it stood before one edit, the label
+ * the use case gave that edit, and when it happened.
+ *
+ * `at` is a wall-clock reading, for a UI that wants to say how long ago — never a version
+ * and never compared against a file. What identifies a revision is `StateFileVersion`, which
+ * the Workspace adapter produces from the bytes.
  *
  * The bounds ADR-0013 sets — the last 100 edits, dropped sooner past 8 MB, in memory and
- * gone on restart — belong to the stack and not to this, which is why there is no stack
- * here yet: this owes the entries, and #73 owes what holds them.
+ * gone on restart — belong to the stack rather than to this: this is one entry, and
+ * `server/src/history.ts` is what holds them and how many.
  */
-export type StateEdit = { label: string; previous: State };
+export type StateEdit = { label: string; at: number; previous: StateSnapshot };
 
-/** Where the entries go. A port, so #73 decides what holds them and how many. */
-export type EditHistory = { push(edit: StateEdit): void };
+/**
+ * Where the entries go. A port, so `server/src/history.ts` decides what holds them and how
+ * many, and so a test can collect them.
+ */
+export type EditHistory = {
+  /** An edit worth undoing. Called once per save, after the write and never before it. */
+  push(edit: StateEdit): void;
+  /**
+   * What a save did to the file, called for **every** save — including one with nothing to
+   * undo. Both revisions, because a stack needs both and for different reasons:
+   *
+   *   - `version`, the one the file holds now. A stack that only heard about undoable edits
+   *     would still believe the revision before a `settings` save, and would then read the
+   *     file, see a revision it did not write, and throw a student's undo history away as
+   *     though Dropbox had been in.
+   *   - `basedOn`, the one this save found there. When it is not the revision the stack last
+   *     wrote, somebody else wrote the file between that save and this one, and every
+   *     snapshot already on the stack predates their change. This is the **only** moment
+   *     that can be noticed: an edit based on the changed file goes through, so a stack told
+   *     only the new revision would believe itself current and hand back a value from before
+   *     the change on the next undo but one.
+   *
+   * Required, and with no default, for the same reason `basedOn` is required on an edit: an
+   * implementation that does not hear this cannot tell its own writes from anyone else's, and
+   * the failure is silent and destructive rather than merely inert.
+   */
+  wrote(save: { basedOn: StateFileVersion | undefined; version: StateFileVersion }): void;
+};
+
+/**
+ * An edit that puts an earlier snapshot back: undo and redo, both of which are an ordinary
+ * edit through `editStateFile` and not a path of their own (ADR-0013, "the save path is the
+ * undo path").
+ *
+ * The current `settings` survive it. They are not on the stack to be restored, and reading
+ * them off the document being replaced is what keeps an undo of a Pick from flipping the UI
+ * language back.
+ */
+export const restoring = (label: string, snapshot: StateSnapshot): StateEditing => ({
+  label,
+  apply: (current) => ({ ...snapshot, settings: current.settings }),
+});
 
 /** What one edit does, and what an undo of it would be called. */
 export type StateEditing = {
@@ -69,9 +150,11 @@ export type EditRefusal =
   | "state-file-unreadable"
   /**
    * The file is not the revision this edit was based on: another tab, Dropbox, git or an
-   * editor wrote it in between, and overwriting it would destroy that writer's work. The
-   * one refusal in the app that is not a Warning, and `StateFileChangedError` in
-   * `./workspace.ts` says why.
+   * editor wrote it in between, and overwriting it would destroy that writer's work. Not a
+   * Warning, as none of the refusals in this union is: a Warning travels back with an edit
+   * that went through, and this edit must not go through — by the time it had, the other
+   * writer's work would be gone. `StateFileChangedError` in `./workspace.ts` says why it is
+   * the one refusal that exists for that reason.
    */
   | "state-file-changed"
   | "workspace-refused";
@@ -82,6 +165,11 @@ export type EditOutcome =
       kind: "saved";
       state: State;
       version: StateFileVersion;
+      /**
+       * What an undo of this save would restore, and what it would be called. Produced for
+       * every save, including a `settings` one the stack does not take — the caller asked for
+       * one edit and is told what it did, and what the history keeps is the history's rule.
+       */
       edit: StateEdit;
       warnings: StateFileWarning[];
     }
@@ -236,10 +324,17 @@ export async function editStateFile(
     throw error;
   }
 
+  // Both revisions first, and on every save: the revision this edit found is how a stack
+  // learns that somebody else wrote the file since its last one, and the revision it wrote is
+  // what the stack has to believe next — even when this edit left it nothing to undo.
+  options.history?.wrote({ basedOn: loaded.version, version });
+
   // pushed after the write and never before it: an edit that failed to save did not happen,
   // and an undo of it would write back a value the file never held
-  const edit: StateEdit = { label: editing.label, previous };
-  options.history?.push(edit);
+  const edit: StateEdit = { label: editing.label, at: Date.now(), previous: snapshotOf(previous) };
+  // An edit that only set a preference is not on the stack: ADR-0013 keeps `settings` off
+  // it, and an entry for one would undo to a document identical but for the language.
+  if (movedOutsideSettings(previous, next)) options.history?.push(edit);
 
   return { kind: "saved", state: next, version, edit, warnings: loaded.warnings };
 }

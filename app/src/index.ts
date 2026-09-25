@@ -10,6 +10,8 @@ export {
 export {
   editStateFile,
   readStateFile,
+  restoring,
+  snapshotOf,
   type EditHistory,
   type EditOptions,
   type EditOutcome,
@@ -17,6 +19,7 @@ export {
   type StateEdit,
   type StateEditing,
   type StateFileLoad,
+  type StateSnapshot,
 } from "./edit.ts";
 export {
   DEFAULT_STATE_FILE,

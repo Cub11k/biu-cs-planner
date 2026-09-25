@@ -1,6 +1,12 @@
 import { recordPick, type GroupPick, type State } from "@biu-cs-planner/core";
 import { expect, it } from "vitest";
-import { editStateFile, readStateFile, type StateEdit, type StateEditing } from "./edit.ts";
+import {
+  editStateFile,
+  readStateFile,
+  restoring,
+  type StateEdit,
+  type StateEditing,
+} from "./edit.ts";
 import { memoryWorkspace, type MemoryWorkspace } from "./workspace.memory.ts";
 import { WorkspaceRefusedError, type Workspace } from "./workspace.ts";
 
@@ -38,6 +44,24 @@ const ready = (): MemoryWorkspace => memoryWorkspace({ created: true });
 
 const versionOf = async (workspace: MemoryWorkspace): Promise<string | undefined> =>
   (await workspace.readStateFile(REF))?.version;
+
+/** What the file holds now, read the way the app reads it. */
+async function read(workspace: MemoryWorkspace): Promise<State> {
+  const loaded = await readStateFile(workspace, ALICE);
+  if ("refused" in loaded) throw new Error(`the file came back refused: ${loaded.refused}`);
+  return loaded.state;
+}
+
+/**
+ * The one kind of edit ADR-0013 keeps off the undo stack: setting a preference. Written here
+ * rather than imported because there is no settings use case yet (#73 is not the ticket that
+ * adds one) — what is under test is that the wrapper treats such an edit differently, and the
+ * shape of the edit is `{ ...state, settings }` whoever eventually writes it.
+ */
+const speaking = (language: "en" | "he"): StateEditing => ({
+  label: "set-language",
+  apply: (state) => ({ ...state, settings: { ...state.settings, language } }),
+});
 
 it("reads a State File that is not there as an empty one, based on no revision", async () => {
   const loaded = await readStateFile(ready(), ALICE);
@@ -134,7 +158,9 @@ it("refuses a save based on no file when the file is already there", async () =>
 it("pushes nothing onto the undo history when a save is refused", async () => {
   const workspace = ready();
   const history: StateEdit[] = [];
-  const into = { push: (edit: StateEdit) => void history.push(edit) };
+  // `wrote` is not what this test is about, but it is not optional: a stack that cannot hear
+  // what a save did cannot tell its own writes from anyone else's
+  const into = { push: (edit: StateEdit) => void history.push(edit), wrote: () => {} };
   await editStateFile(workspace, ALICE, picking(LECTURE), { basedOn: undefined });
 
   await editStateFile(workspace, ALICE, picking({ ...LECTURE, groupNumber: "02" }), {
@@ -146,11 +172,11 @@ it("pushes nothing onto the undo history when a save is refused", async () => {
 });
 
 /**
- * ADR-0013: "the save path is the undo path", so the guard "applies equally to an undo".
- * There is no undo stack yet (#73 owes it), but an undo is already expressible — an edit
- * whose `apply` returns an earlier value — and this is that edit meeting the guard. It is
- * refused on a stale revision exactly as a first-hand edit is, and a file changed on disk
- * therefore invalidates the stack rather than being silently overwritten by it.
+ * ADR-0013: "the save path is the undo path", so the guard "applies equally to an undo". An
+ * undo is an ordinary edit whose `apply` puts an earlier snapshot back — `restoring` is that
+ * edit — and this is it meeting the guard. It is refused on a stale revision exactly as a
+ * first-hand edit is, which is why a file changed on disk invalidates the stack
+ * (`server/src/history.ts`) rather than being silently overwritten by it.
  */
 it("guards an undo exactly as it guards the edit it undoes", async () => {
   const workspace = ready();
@@ -158,10 +184,7 @@ it("guards an undo exactly as it guards the edit it undoes", async () => {
     basedOn: undefined,
   });
   if (before.kind !== "saved") throw new Error("the edit to be undone was not saved");
-  const undoing: StateEditing = {
-    label: "undo pick-group",
-    apply: () => before.edit.previous,
-  };
+  const undoing = restoring("pick-group", before.edit.previous);
   // somebody else writes the file after the edit and before the undo
   workspace.seed(REF, { schemaVersion: 1, pins: [{ courseNumber: "89-110" }] });
 
@@ -172,7 +195,92 @@ it("guards an undo exactly as it guards the edit it undoes", async () => {
   // the revision and not about undo
   const current = await versionOf(workspace);
   const done = await editStateFile(workspace, ALICE, undoing, { basedOn: current });
-  expect(done).toMatchObject({ kind: "saved", edit: { label: "undo pick-group" } });
+  expect(done).toMatchObject({ kind: "saved", edit: { label: "pick-group" } });
+  expect((await read(workspace)).timetables).toEqual([]);
+});
+
+/**
+ * ADR-0013: "One stack covers the document, minus settings … folding them in would let
+ * undoing a Pick flip the UI language." The exclusion is structural — an entry has no
+ * `settings` to put back — and this is the consequence a student would notice: the language
+ * they set after picking is still set after the undo.
+ */
+it("leaves the settings a student changed alone when an earlier snapshot goes back", async () => {
+  const workspace = ready();
+  const picked = await editStateFile(workspace, ALICE, picking(LECTURE), {
+    basedOn: undefined,
+  });
+  if (picked.kind !== "saved") throw new Error("the edit to be undone was not saved");
+  // and then they switch the UI to Hebrew, which is not an edit undo may touch
+  const hebrew = await editStateFile(workspace, ALICE, speaking("he"), {
+    basedOn: picked.version,
+  });
+  if (hebrew.kind !== "saved") throw new Error("the settings edit was not saved");
+
+  const undone = await editStateFile(
+    workspace,
+    ALICE,
+    restoring("pick-group", picked.edit.previous),
+    { basedOn: hebrew.version },
+  );
+
+  expect(undone.kind).toBe("saved");
+  const held = await read(workspace);
+  // the Pick is gone, which is what was undone
+  expect(held.timetables).toEqual([]);
+  // and the language is not, which is what was not
+  expect(held.settings.language).toBe("he");
+  // the entry itself never carried one, so there was nothing to put back
+  expect(picked.edit.previous).not.toHaveProperty("settings");
+});
+
+/**
+ * The other half of keeping `settings` off the stack: an edit that only sets a preference
+ * pushes nothing, so undo skips straight past it to the last edit that moved the document.
+ * It still tells the history the revision the file now holds — a stack that had not heard
+ * would read the file, see a revision it did not write, and throw itself away as though
+ * Dropbox had been in.
+ */
+it("keeps a settings edit off the stack while still reporting the revision it wrote", async () => {
+  const workspace = ready();
+  const pushed: StateEdit[] = [];
+  const wrote: { basedOn: string | undefined; version: string }[] = [];
+  const into = {
+    push: (edit: StateEdit) => void pushed.push(edit),
+    wrote: (save: { basedOn: string | undefined; version: string }) => void wrote.push(save),
+  };
+  const picked = await editStateFile(workspace, ALICE, picking(LECTURE), {
+    basedOn: undefined,
+    history: into,
+  });
+  if (picked.kind !== "saved") throw new Error("the Pick was not saved");
+
+  const settings = await editStateFile(workspace, ALICE, speaking("he"), {
+    basedOn: picked.version,
+    history: into,
+  });
+
+  expect(settings.kind).toBe("saved");
+  // one entry, for the Pick, and none for the language
+  expect(pushed.map((edit) => edit.label)).toEqual(["pick-group"]);
+  // but both saves, each carrying the revision it found and the revision it wrote — which is
+  // what lets a stack tell its own writes from a change made behind its back
+  expect(wrote).toEqual([
+    { basedOn: undefined, version: picked.version },
+    { basedOn: picked.version, version: await versionOf(workspace) },
+  ]);
+});
+
+/** An entry says when, for a UI that wants to name what it is about to undo. */
+it("stamps each entry with when the edit happened", async () => {
+  const workspace = ready();
+  const before = Date.now();
+
+  const saved = await editStateFile(workspace, ALICE, picking(LECTURE), { basedOn: undefined });
+
+  if (saved.kind !== "saved") throw new Error("the edit was not saved");
+  expect(saved.edit.at).toBeGreaterThanOrEqual(before);
+  expect(saved.edit.at).toBeLessThanOrEqual(Date.now());
 });
 
 /**
