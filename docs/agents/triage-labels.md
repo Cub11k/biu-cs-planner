@@ -16,7 +16,8 @@ When a skill mentions a role (e.g. "apply the AFK-ready triage label"), use the 
 
 `gh label list` shows all five in this repo's label set, and every ticket in the tracker carries
 one of them. Nothing here is a setup step, and the vocabulary is settled: the strings in the table
-are the ones already applied to live issues, so renaming one would orphan the issues that carry it.
+are the ones already applied to live issues, so editing this column alone would leave the file
+naming a label no issue carries.
 
 The four that do not ship with a new GitHub repo were created with the commands below, kept only as
 the record of the description and colour each label carries. Do not run them — `gh label create`
