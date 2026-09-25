@@ -83,9 +83,9 @@ const english = {
    * knows because the revision on disk is not the one it last wrote.
    */
   historyInvalidated:
-    "The file your plan is saved in was changed outside this page, so the undo history was " +
-    "dropped rather than put an older version back over that change. Nothing in your plan " +
-    "was lost; the steps before now can no longer be undone.",
+    "The file your plan is saved in was changed by something other than this app, so the " +
+    "undo history was dropped rather than put an older version back over that change. " +
+    "Nothing in your plan was lost; the steps before now can no longer be undone.",
   /**
    * The page's own view was stale, which is the ordinary external-edit guard and not an
    * invalidation: the stacks survive, and a re-read is all it takes. Says "nothing changed"
@@ -183,6 +183,12 @@ const english = {
 
 export type StringKey = keyof typeof english;
 
+/**
+ * Every key there is, so a test can walk them. Off the English object rather than written
+ * out, because a hand-kept list's failure mode is quietly ceasing to be the list.
+ */
+export const STRING_KEYS = Object.keys(english) as StringKey[];
+
 /** Typed against the English keys, so a missing Hebrew string is a compile error. */
 const hebrew: Record<StringKey, string> = {
   appName: "מתכנן מדעי המחשב בר־אילן",
@@ -210,7 +216,8 @@ const hebrew: Record<StringKey, string> = {
     "ולא אבד דבר. בדקו שהתיקייה עדיין במקומה — כך זה נראה כאשר כונן אינו מחובר. " +
     "הביטול יעבוד שוב כשהקובץ יחזור.",
   historyInvalidated:
-    "הקובץ שבו נשמרת התוכנית שלכם שונה מחוץ לדף הזה, ולכן היסטוריית הביטול הוסרה במקום " +
+    "הקובץ שבו נשמרת התוכנית שלכם שונה בידי משהו אחר מלבד היישום הזה, ולכן היסטוריית " +
+    "הביטול הוסרה במקום " +
     "להחזיר גרסה ישנה מעל אותו שינוי. שום דבר בתוכנית שלכם לא אבד; את הצעדים שקדמו לכך " +
     "לא ניתן עוד לבטל.",
   historyStale:

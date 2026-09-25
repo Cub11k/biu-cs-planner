@@ -221,6 +221,27 @@ export function TimetableScreen({
     { direction: Direction; answer: HistoryStep } | undefined
   >(undefined);
   /**
+   * The answer a step was sent on, while that step's own re-read is still in flight.
+   *
+   * A step's answer carries the new revision but not the Variant, so the revision on screen
+   * is spent from the moment the step succeeds until the re-read lands. `history.stepping`
+   * covers the request and stops there, which left a window — milliseconds on loopback, a
+   * whole round trip on a cold Workspace — where both buttons were live over a revision the
+   * file had moved past. Two quick presses, or Enter held down on the button, and the second
+   * came back `state-file-changed`: the page blaming the student's view for staleness the
+   * button it offered had caused.
+   *
+   * So a press waits for the week to catch up. Held by identity and not by revision, exactly
+   * as `refusedOn` is and for the same reason: a file reverted to the revision it had is
+   * still news, and waiting for a different string would wait for ever. Any newer answer
+   * releases it, because `timetable` is then a different object.
+   *
+   * Set only where a re-read is actually coming. A refusal that writes nothing has no answer
+   * on the way, and leaving this set over one would disable the buttons until something else
+   * happened to re-render the screen.
+   */
+  const [steppedOn, setSteppedOn] = useState<TimetableState | undefined>(undefined);
+  /**
    * Clicks made before the first Timetable answer arrived, in the order they were made.
    *
    * The Catalog and the Picks are asked for in parallel, so the week is clickable while the
@@ -354,7 +375,8 @@ export function TimetableScreen({
    *
    * `basedOn` is the revision on screen, exactly as a save's is: an undo *is* a save and goes
    * through the same external-edit guard (ADR-0013). Which is why no press is offered before
-   * the State File has been read — `undefined` there is the claim that there is no file, and
+   * the State File has been read, and none is offered again until the re-read below has landed
+   * — see `steppedOn` — `undefined` there is the claim that there is no file, and
    * #111 is the ticket about what that claim looks like to a student who caused none of it.
    *
    * **What the week shows afterwards is a direct re-read, not the change count.** Two reasons
@@ -364,11 +386,18 @@ export function TimetableScreen({
    * sees it the other way round — the write moves the Workspace change count and that tab
    * re-reads within the interval, which is what it already does for every edit this one makes.
    */
-  const takeStep = (direction: Direction, basedOn: StateFileVersion): void => {
+  const takeStep = (
+    direction: Direction,
+    basedOn: StateFileVersion,
+    sentOn: TimetableState,
+  ): void => {
     // whatever the last click or press was told, this press is the account owed now
     setStaleSave(false);
     setHeldLost(false);
     setLastStep(undefined);
+    // Claimed before the request goes out rather than when its answer arrives: the two are
+    // different renders, and a press landing between them is the window this closes.
+    setSteppedOn(sentOn);
 
     void history.step(direction, basedOn).then((answer) => {
       setLastStep({ direction, answer });
@@ -380,7 +409,14 @@ export function TimetableScreen({
       const stale =
         answer.kind === "refused" &&
         (answer.reason === "state-file-changed" || answer.reason === "history-invalidated");
-      if (answer.kind === "moved" || stale) setRereads((count) => count + 1);
+      if (answer.kind === "moved" || stale) {
+        setRereads((count) => count + 1);
+        return;
+      }
+      // Nothing was written, so the revision on screen is still the file's and no answer is
+      // on its way. The next press may go out at once — and must be able to, because there
+      // is nothing left to wait for.
+      setSteppedOn(undefined);
     });
   };
 
@@ -469,8 +505,8 @@ export function TimetableScreen({
    * was stale about something they had no part in.
    */
   const stepFrom =
-    timetable.kind === "served" && !history.stepping
-      ? (direction: Direction): void => takeStep(direction, timetable.version)
+    timetable.kind === "served" && !history.stepping && steppedOn !== timetable
+      ? (direction: Direction): void => takeStep(direction, timetable.version, timetable)
       : undefined;
   const stepNotice = historyNotice(language, lastStep);
 

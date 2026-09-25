@@ -83,7 +83,6 @@ it.each([
     kind: "moved",
     // the edit's own word for itself, which the UI translates — never shown as it arrives
     label: "pick-group",
-    at: 1_700_000_000_000,
     available: { canUndo: false, canRedo: true },
   });
 });
@@ -178,7 +177,9 @@ it("sends no revision when the page is showing a State File that does not exist"
   // `undefined` is the claim that there is no file, which the server fails closed on. It is
   // sendable, and the screen's job is not to send it (#111) — but the wrapper must not
   // quietly substitute something either.
-  const { sent, api } = client(() => refusal({ reason: "state-file-missing", canUndo: true, canRedo: false, warnings: [] }));
+  const { sent, api } = client(() =>
+    refusal({ reason: "state-file-missing", canUndo: true, canRedo: false, warnings: [] }),
+  );
 
   await takeStep(api, "undo", undefined);
 

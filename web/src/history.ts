@@ -57,7 +57,6 @@ export type HistoryStep =
       kind: "moved";
       /** The edit's own word for itself — `pick-group` — which the UI translates. */
       label: Moved["label"];
-      at: Moved["at"];
       available: HistoryAvailability;
     }
   | {
@@ -135,10 +134,13 @@ async function read(answer: Response & { ok: boolean; status: number }): Promise
   }
 
   const body = (await answer.json()) as Moved;
+  // `at` and `version` are on the answer and are deliberately not carried: nothing shows when
+  // an edit happened, and the revision on screen comes from the read that follows a step
+  // rather than from the step — a page holding its own second opinion about which revision it
+  // is on is the mistake `timetable/picks.ts` refuses to make.
   return {
     kind: "moved",
     label: body.label,
-    at: body.at,
     available: { canUndo: body.canUndo, canRedo: body.canRedo },
   };
 }

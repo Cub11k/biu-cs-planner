@@ -82,6 +82,21 @@ let refuseStep: { reason?: string; status?: number } | undefined;
 let claimCanUndo: boolean | undefined;
 /** Holds the next step's answer open, so a test can look at the buttons mid-step. */
 let stepHeld: Promise<void> | undefined;
+/**
+ * Holds the Timetable *reads* open, which is the window between a step's answer and the week
+ * catching up to it. Only the reads: a step a test asks for still goes through at once, so
+ * "nothing was sent" can be told from "something was sent and is waiting".
+ */
+let readHeld: Promise<void> | undefined;
+
+/** Holds something open and gives back the release. */
+function hold(): [Promise<void>, () => void] {
+  let release = (): void => {};
+  const promise = new Promise<void>((resolve) => {
+    release = (): void => resolve();
+  });
+  return [promise, release];
+}
 
 const json = (body: unknown): Response =>
   new Response(JSON.stringify(body), {
@@ -170,6 +185,7 @@ beforeEach(() => {
   refuseStep = undefined;
   claimCanUndo = undefined;
   stepHeld = undefined;
+  readHeld = undefined;
   localStorage.removeItem(SCHEME_STORAGE_KEY);
 
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -191,6 +207,7 @@ beforeEach(() => {
     }
 
     if (!pathname.startsWith("/api/timetable")) return json({ offerings: [OFFERING] });
+    if (method === "GET" && readHeld !== undefined) await readHeld;
 
     if (method === "POST" || method === "DELETE") {
       const { basedOn } = body as { basedOn?: string };
@@ -375,9 +392,13 @@ it("redoes it again: the Pick comes back, and says what was redone", async () =>
     if (buttonFor(mounted, "undo").disabled) throw new Error("undo is still disabled");
   });
   buttonFor(mounted, "undo").click();
+  // Waited for by what the *week* shows, not by the button lighting up. The button is the
+  // step's answer and the week is the read after it, and pressing on the first of those was
+  // how this test used to reach the window `steppedOn` now closes — it went red for real.
   await vi.waitFor(() => {
-    if (buttonFor(mounted, "redo").disabled) throw new Error("redo never became available");
+    if (isPicked(mounted, "01")) throw new Error("the undo never reached the week");
   });
+  expect(buttonFor(mounted, "redo").disabled).toBe(false);
 
   buttonFor(mounted, "redo").click();
 
@@ -430,10 +451,8 @@ it("neither button can be pressed while a step is in flight", async () => {
     if (buttonFor(mounted, "undo").disabled) throw new Error("undo is still disabled");
   });
 
-  let release = (): void => {};
-  stepHeld = new Promise<void>((resolve) => {
-    release = (): void => resolve();
-  });
+  const [held, release] = hold();
+  stepHeld = held;
   buttonFor(mounted, "undo").click();
 
   // A second press would go out on a revision the first has already moved past and come back
@@ -448,6 +467,48 @@ it("neither button can be pressed while a step is in flight", async () => {
   await vi.waitFor(() => {
     if (isPicked(mounted, "01")) throw new Error("the undo never landed");
   });
+});
+
+it("offers no second press until the week has caught up with the first", async () => {
+  const mounted = await openWeek();
+  await pickOne(mounted);
+  // a second edit, so there is still something to undo after the first undo lands
+  tileFor(mounted, "02").click();
+  await vi.waitFor(() => {
+    if (!isPicked(mounted, "02")) throw new Error("the second click never reached the file");
+  });
+  await vi.waitFor(() => {
+    if (buttonFor(mounted, "undo").disabled) throw new Error("undo is still disabled");
+  });
+
+  // From here the step's answer arrives and its re-read does not, which is the window: the
+  // step has moved the file, so the revision on screen is spent, and a press sent on it would
+  // come back `state-file-changed` — the page blaming the student's view for staleness the
+  // button it offered had caused.
+  const [held, release] = hold();
+  readHeld = held;
+  buttonFor(mounted, "undo").click();
+  await saying(mounted, "Undid picking a group.");
+
+  // The answer has landed, so nothing is in flight any more — and the press is still not
+  // offered, because what it would be based on is a revision the file has moved past.
+  expect(buttonFor(mounted, "undo").disabled).toBe(true);
+  expect(buttonFor(mounted, "redo").disabled).toBe(true);
+
+  readHeld = undefined;
+  release();
+
+  await vi.waitFor(() => {
+    if (buttonFor(mounted, "undo").disabled) throw new Error("undo never came back");
+  });
+  expect(buttonFor(mounted, "redo").disabled).toBe(false);
+  // …and the press that is now offered goes through, rather than being refused on a spent
+  // revision. This is the whole point: no `state-file-changed` for a press the page offered.
+  buttonFor(mounted, "undo").click();
+  await vi.waitFor(() => {
+    if (isPicked(mounted, "01")) throw new Error("the second undo never reached the week");
+  });
+  expect(mounted.textContent).not.toContain(t("en", "historyStale"));
 });
 
 /**
