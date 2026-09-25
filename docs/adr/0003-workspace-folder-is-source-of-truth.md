@@ -1,6 +1,6 @@
 # A Workspace folder of JSON files is the source of truth
 
-All data (Catalogs, Requirements Files, State Files) lives as JSON files in a Workspace folder on disk. The browser stores no data: only the auth token and per-device display preferences, which belong to the machine a student is sitting at rather than to the plan and are deliberately not synced with it (#114). Importing a new year's data means putting a file into the Workspace, so the app works for any year without rebuilding or reinstalling, and the data survives browser resets and can be copied or synced like any folder.
+All data (Catalogs, Requirements Files, State Files) lives as JSON files in a Workspace folder on disk. The browser stores no data: only the Launch Token and Device Preferences, neither of which is data about a student's plan — [ADR-0014](0014-where-a-preference-is-kept.md) rules where a preference is kept. Importing a new year's data means putting a file into the Workspace, so the app works for any year without rebuilding or reinstalling, and the data survives browser resets and can be copied or synced like any folder.
 
 ## Consequences
 
