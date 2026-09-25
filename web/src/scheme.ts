@@ -11,8 +11,8 @@
  * File.** A scheme is a property of the desk the student is sitting at, not of their
  * degree plan: the same plan opened on a phone in the sun and a desktop at night wants
  * different answers, so a State File that carried one would be wrong on the second device
- * rather than merely unhelpful. `docs/design.md:164` also lists a State File's settings as
- * language and Exam spacing, so putting a scheme there would be a design change rather
+ * rather than merely unhelpful. `docs/design.md`'s Workspace screen also lists a State File's
+ * settings as language and Exam spacing, so putting a scheme there would be a design change rather
  * than the implementation of one, and it would drag in the save path, the external-edit
  * guard (#90) and ADR-0013's `settings excluded` undo rule for a preference no domain
  * check ever reads.
@@ -81,7 +81,7 @@ export function storedScheme(browser: SchemeBrowser): SchemeChoice {
     // storage can be switched off entirely; that is a browser with no choice, not a crash
     return "system";
   }
-  return isScheme(stored) ? stored : "system";
+  return asSchemeChoice(stored);
 }
 
 /**

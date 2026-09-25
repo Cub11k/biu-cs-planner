@@ -119,7 +119,7 @@ const hebrew: Record<StringKey, string> = {
   otherLanguage: "English",
 
   schemeLabel: "ערכת צבעים",
-  schemeSystem: "לפי המערכת",
+  schemeSystem: "לפי הגדרות המערכת",
   schemeLight: "בהיר",
   schemeDark: "כהה",
 

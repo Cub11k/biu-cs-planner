@@ -217,7 +217,7 @@ it("treats a data-theme value it does not know as no choice at all", async () =>
 /** The control, mounted after an optional remembered choice, with a Tab target before it. */
 async function openControl(
   language: Language,
-): Promise<{ select: HTMLSelectElement; before: HTMLElement }> {
+): Promise<{ select: HTMLSelectElement; before: HTMLElement; label: HTMLLabelElement }> {
   const mounted = document.createElement("div");
   host = mounted;
   document.body.append(mounted);
@@ -241,14 +241,19 @@ async function openControl(
     return found;
   });
 
-  return { select, before };
+  const label = into.querySelector("label");
+  if (label === null) throw new Error("the control rendered no label");
+  return { select, before, label };
 }
 
 describe.each(LANGUAGES)("the control in %s", (language) => {
   it("names itself and its three choices from the translation files", async () => {
-    const { select } = await openControl(language);
+    const { select, label } = await openControl(language);
 
-    expect(select.getAttribute("aria-label")).toBe(t(language, "schemeLabel"));
+    // A real `<label for>` association, the way `CoursePicker` labels its search field.
+    expect(label.textContent).toBe(t(language, "schemeLabel"));
+    expect(select.id).not.toBe("");
+    expect(label.htmlFor).toBe(select.id);
     expect([...select.options].map((option) => option.value)).toEqual([...SCHEME_CHOICES]);
     expect([...select.options].map((option) => option.textContent)).toEqual([
       t(language, "schemeSystem"),
@@ -259,7 +264,7 @@ describe.each(LANGUAGES)("the control in %s", (language) => {
     // …and they are translations rather than one string shown twice: the Hebrew screen
     // showing English words is the failure this catches.
     if (language === "he") {
-      expect(select.getAttribute("aria-label")).not.toBe(t("en", "schemeLabel"));
+      expect(label.textContent).not.toBe(t("en", "schemeLabel"));
     }
   });
 
@@ -297,37 +302,59 @@ describe.each(LANGUAGES)("the control in %s", (language) => {
     expect(localStorage.getItem(SCHEME_STORAGE_KEY)).toBe(null);
   });
 
-  it("is reachable by Tab", async () => {
-    const { select, before } = await openControl(language);
-    before.focus();
+});
 
-    await userEvent.tab();
+/**
+ * The keyboard and the focus ring, asked once rather than per language: nothing in either
+ * depends on the words in the control, and `en` and `he` were two reports of one fact.
+ */
+describe("the control's keyboard and focus", () => {
+  const language = "en" as Language;
 
-    expect(document.activeElement).toBe(select);
-  });
+it("is reachable by Tab", async () => {
+  const { select, before } = await openControl(language);
+  before.focus();
 
-  it.each(["light", "dark"] as const)(
-    "shows the stylesheet's own focus ring, in the %s scheme",
-    async (scheme) => {
-      /**
-       * Chromium draws a focus ring of its own, so `matches(":focus-visible")` alone would
-       * pass with `index.css`'s rule deleted — that has happened in this repo before. What
-       * is asserted instead is the ring *that rule* makes: a solid 2px outline in `--ink`,
-       * where the user agent's is `auto` and 1px in a colour of its own. It is checked in
-       * both schemes, because a ring is only visible if it follows the tokens.
-       */
-      await operatingSystem(scheme === "dark" ? "dark" : "light");
-      const { select, before } = await openControl(language);
-      before.focus();
-      await userEvent.tab();
+  await userEvent.tab();
 
-      expect(select.matches(":focus-visible")).toBe(true);
-      const ring = getComputedStyle(select);
-      expect(ring.outlineStyle).toBe("solid");
-      expect(ring.outlineWidth).toBe("2px");
+  expect(document.activeElement).toBe(select);
+});
 
-      const ink = (scheme === "dark" ? systemDark : systemLight)["--ink"] ?? "";
-      expect(ring.outlineColor).toBe(asRgb(ink));
-    },
-  );
+it.each([
+  { where: "a light machine", os: "light", choice: "system", ink: "light" },
+  { where: "a dark machine", os: "dark", choice: "system", ink: "dark" },
+  { where: "an explicit dark choice, on a light machine", os: "light", choice: "dark", ink: "dark" },
+  { where: "an explicit light choice, on a dark machine", os: "dark", choice: "light", ink: "light" },
+] as const)("shows the stylesheet's own focus ring, on $where", async ({ os, choice, ink }) => {
+  /**
+   * Chromium draws a focus ring of its own, so `matches(":focus-visible")` alone would
+   * pass with `index.css`'s rule deleted — that has happened in this repo before. What is
+   * asserted instead is the ring *that rule* makes: a solid 2px outline in `--ink`, where
+   * the user agent's is `auto` and 1px in a colour of its own.
+   *
+   * Asked in all four combinations, because a ring is only visible if it follows the
+   * tokens — and an explicit choice is exactly the case where the ring could be left
+   * reading the machine's `--ink` while the page around it used the chosen one.
+   */
+  await operatingSystem(os);
+  // Through storage rather than `applyScheme`, because the control stamps the document
+  // itself as it mounts: a scheme set here by hand would be overwritten a frame later.
+  if (choice !== "system") localStorage.setItem(SCHEME_STORAGE_KEY, choice);
+
+  const { select, before } = await openControl(language);
+  if (choice !== "system") {
+    await vi.waitFor(() => {
+      expect(ROOT.getAttribute(SCHEME_ATTRIBUTE)).toBe(choice);
+    });
+  }
+
+  before.focus();
+  await userEvent.tab();
+
+  expect(select.matches(":focus-visible")).toBe(true);
+  const ring = getComputedStyle(select);
+  expect(ring.outlineStyle).toBe("solid");
+  expect(ring.outlineWidth).toBe("2px");
+  expect(ring.outlineColor).toBe(asRgb((ink === "dark" ? systemDark : systemLight)["--ink"] ?? ""));
+});
 });

@@ -5,6 +5,9 @@
  * browser at all. Whether the *stylesheet* then does the right thing with the stamp is a
  * question only a cascade can answer, and `scheme.browser.test.tsx` asks it.
  */
+import { readFileSync, readdirSync } from "node:fs";
+import { basename, join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import {
   SCHEME_ATTRIBUTE,
@@ -146,3 +149,36 @@ it("finds no remembered choice where there is no browser at all", () => {
   expect(() => rememberScheme(schemeStore(), "dark")).not.toThrow();
   expect(storedScheme(schemeStore())).toBe("system");
 });
+
+/**
+ * The `--dark-*` tokens are public on `:root` in every build, and only a comment says they
+ * are not for reading. This is what makes that a rule: a component writing
+ * `var(--dark-ink)` would be dark in the light scheme too, silently bypassing the choice —
+ * the one failure the token indirection exists to prevent, and one no colour test would
+ * catch, because the value it produced would be a perfectly valid colour.
+ *
+ * In the spirit of `tools/ci/workflows.test.ts`: a rule that only a comment states is a
+ * rule that holds until someone is in a hurry.
+ */
+it("keeps the dark values behind the two rules that switch them", () => {
+  /**
+   * Two files may say it. `index.css` is the one that switches the tokens, so saying it is
+   * its whole job — and this file names it in order to forbid it, which is the shape of
+   * every rule of this kind.
+   */
+  const ALLOWED = ["index.css", "scheme.test.ts"];
+
+  const web = fileURLToPath(new URL(".", import.meta.url));
+  const reading = walk(web)
+    .filter((file) => !ALLOWED.includes(basename(file)))
+    .filter((file) => readFileSync(file, "utf8").includes("var(--dark-"));
+
+  expect(reading.map((file) => relative(web, file))).toEqual([]);
+});
+
+function walk(directory: string): string[] {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const full = join(directory, entry.name);
+    return entry.isDirectory() ? walk(full) : [full];
+  });
+}
