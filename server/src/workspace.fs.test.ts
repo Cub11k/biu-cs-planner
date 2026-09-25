@@ -1067,18 +1067,6 @@ const brokenWorkspaces: [string, (at: string) => Promise<string>][] = [
       return at;
     },
   ],
-  [
-    "a Workspace only its owner may write into",
-    async (at) => {
-      await mkdir(join(at, "catalogs"));
-      await mkdir(join(at, "requirements"));
-      await mkdir(join(at, ".backups"));
-      // Skipped, never trusted: root writes whatever the mode says, so this would pass
-      // vacuously there (`unreadableFilesArePossible`, and server/src/token.test.ts).
-      if (unreadableFilesArePossible) await chmod(join(at, "catalogs"), 0o500);
-      return at;
-    },
-  ],
 ];
 
 it.each(brokenWorkspaces)(
@@ -1092,6 +1080,7 @@ it.each(brokenWorkspaces)(
       () => workspace.saveStateFile(ALICE, firstSave(STATE)),
       () => workspace.create(),
     ];
+    let refusals = 0;
     for (const attempt of attempts) {
       const thrown: unknown = await attempt().then(
         () => undefined,
@@ -1099,6 +1088,57 @@ it.each(brokenWorkspaces)(
       );
       if (thrown === undefined) continue;
       expect(thrown).toBeInstanceOf(WorkspaceRefusedError);
+      refusals += 1;
     }
+    // A property of what was thrown is worth nothing without something thrown: every one of
+    // these Workspaces is broken for at least one of the three, and a setup that stopped being
+    // broken would otherwise turn this into the vacuous pass #109 named.
+    expect(refusals).toBeGreaterThan(0);
+  },
+);
+
+/**
+ * The mode-bit half, out of the sweep and skipped rather than trusted, because root writes
+ * whatever the mode says and a bare `if` inside the sweep's setup made it *pass* there — a
+ * healthy Workspace, three operations that succeed, and nothing asserted. That is the vacuous
+ * pass #109 named, and it was in the test written to prevent it. `skipIf` is what the rest of
+ * this file and server/src/token.test.ts use, and it reports as skipped.
+ *
+ * Both writes, because they are the two `describeRef` words differently and the State File is
+ * the one with a student's edits behind it: a `catalogs` nothing may write into for the Catalog,
+ * and a root nothing may write into for the State File.
+ */
+it.skipIf(!unreadableFilesArePossible)(
+  "refuses by name when the Workspace is one nothing may write into",
+  async () => {
+    const workspace = fileSystemWorkspace(root);
+    await workspace.create();
+    await chmod(join(root, "catalogs"), 0o500);
+
+    const catalog = await workspace
+      .write({ kind: "catalog", academicYear: 2027 }, CATALOG)
+      .catch((error: unknown) => error);
+    expect(catalog).toBeInstanceOf(WorkspaceRefusedError);
+    expect((catalog as Error).message).toMatch(
+      /refusing to write the Catalog for the Academic Year 2027: it could not be written \(EACCES\)/,
+    );
+
+    await chmod(root, 0o500);
+    const state = await workspace
+      .saveStateFile(ALICE, firstSave(STATE))
+      .catch((error: unknown) => error);
+    expect(state).toBeInstanceOf(WorkspaceRefusedError);
+    // the State File named as a State File, which is the other half of `describeRef`
+    expect((state as Error).message).toMatch(
+      /refusing to write the State File "alice": it could not be written \(EACCES\)/,
+    );
+    // no path in what a caller could pass on as a Warning, and the filesystem's own error —
+    // which does carry the absolute path — kept where only a log can reach it
+    expect((state as Error).message).not.toContain(root);
+    expect((state as Error).cause).toBeInstanceOf(Error);
+
+    // so the temporary directory can be cleaned up after this test
+    await chmod(root, 0o700);
+    await chmod(join(root, "catalogs"), 0o700);
   },
 );

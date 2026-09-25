@@ -181,10 +181,15 @@ export class NotAWorkspaceError extends WorkspaceRefusedError {
   readonly folder: WorkspaceFolder | undefined;
 
   /**
-   * `because` says what is wrong with that one folder, in the adapter's own words: a plain
-   * file where the folder belongs is not the same news as a folder that could not be made,
-   * and a shared sentence that covered both would have to be vague enough to be useless. The
-   * *stem* is what is shared, and it is here.
+   * `because` says what is wrong with that one folder, in the adapter's own words, because what
+   * can be wrong with it is the adapter's business: a filesystem knows a plain file standing
+   * where a folder belongs, and another adapter will know something else. A shared sentence
+   * covering all of them would have to be vague enough to be useless, so the *stem* is what is
+   * shared and it is here.
+   *
+   * One thing this is deliberately **not** stretched to cover: `create` failing to make a folder
+   * of the layout, which `server/src/workspace.fs.ts` refuses with a `WorkspaceRefusedError` of
+   * its own. Every sentence here begins "refusing to write", and that is untrue of a create.
    */
   constructor(part?: { folder: WorkspaceFolder; because: string }) {
     super(

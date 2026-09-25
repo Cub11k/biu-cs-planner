@@ -111,20 +111,27 @@ class UnreadableError extends WorkspaceRefusedError {
  * it is caught by nothing, so it becomes a 500, and #121 was filed because that would be the
  * first unnamed one in `server/src/api.ts`.
  *
- * A `WorkspaceRefusedError`, so it is the Warning every caller of this port already makes of
- * one (docs/design.md, "API and data rules"). A student whose disk is full or whose Workspace
- * is read-only can act on being told so; there is nothing they can do with a crashed server.
+ * A `WorkspaceRefusedError`, so a caller can answer it the way every caller of this port
+ * already answers one: a Warning and never a crashed server (docs/design.md, "API and data
+ * rules"). **What reaches the student today is the `reason` and not this sentence** — the write
+ * callers, `app/src/catalog.ts` and `app/src/edit.ts`, return `workspace-refused` and drop the
+ * message, and only the read path in `app/src/queries.ts` carries one. So the errno below is
+ * for a log and for the arm that will want it, and saying otherwise here would claim something
+ * the app does not do.
  *
  * **Every failure and not a list of codes.** An enumeration is what #109 found the hole in:
  * the code nobody thought of is the one that escapes. So the recognising is done on the way in
  * — `requireLayoutFolder` names the layout mistake before a byte is written, because "catalogs
- * is not a folder" is worth more to a student than `ENOTDIR` — and this is what is left over.
+ * is not a folder" is worth more than `ENOTDIR` to whoever reads it — and this is what is left
+ * over.
  *
  * **It names the ref and never the path.** The API exposes domain operations and never a file
- * path (CLAUDE.md; ADR-0002), and a refusal's message travels out as a Warning; a filesystem
- * error's own message carries the absolute path, so it is the errno that is kept and the rest
- * that is dropped. The error itself stays on `cause`, where a log can reach it and a response
- * cannot.
+ * path (CLAUDE.md; docs/design.md, "API and data rules", rule 1), and a refusal's message can
+ * travel out as a Warning; a filesystem error's own message carries the absolute path, so the
+ * errno is kept and the rest is dropped. The error itself stays on `cause`, where a log can
+ * reach it and a response cannot. `describeRef` is the tool the two refusals above want too:
+ * `UnreadableError` and `OutsideWorkspaceError` word themselves with a Workspace-relative path
+ * and `requireJsonName` with an absolute one, which predates this and is its own ticket.
  */
 class UnwritableError extends WorkspaceRefusedError {
   constructor(what: string, error: unknown) {
@@ -132,8 +139,8 @@ class UnwritableError extends WorkspaceRefusedError {
     super(
       `refusing to write ${what}: it could not be written` +
         (code === undefined ? "" : ` (${code})`),
+      { cause: error },
     );
-    this.cause = error;
   }
 }
 
@@ -391,8 +398,10 @@ export function fileSystemWorkspace(rootPath: string): Workspace {
    */
   const requireLayoutFolder = async (ref: WorkspaceRef): Promise<void> => {
     const folder = folderFor(ref);
-    // A State File lives at the Workspace root, and `missingFolders` has already answered for
-    // that: a root that is a file holds no folder of the layout, so all three are missing.
+    // `write` is the only caller and `requireCatalogRef` has already run there, so this line is
+    // unreachable today and guards a future one — `requireJsonName`'s standing, and its reason.
+    // A State File would need no check here anyway: it lives at the Workspace root, and
+    // `missingFolders` answers for that, since a root that is a file holds no folder at all.
     if (folder === undefined) return;
     if (await isDirectory(join(root, DIRECTORY[folder]))) return;
     throw new NotAWorkspaceError({ folder, because: "is there and is not a folder" });
@@ -427,14 +436,16 @@ export function fileSystemWorkspace(rootPath: string): Workspace {
           await mkdir(join(root, DIRECTORY[folder]), { recursive: true });
         } catch (error) {
           const code = errnoOf(error);
-          const refusal = new WorkspaceRefusedError(
+          // A bare `WorkspaceRefusedError` and deliberately not the shared `NotAWorkspaceError`,
+          // which is a *write*'s refusal and says so in its first three words: this is a create,
+          // and "refusing to write" would be untrue of it. The folder is in the sentence, as
+          // `requireJsonName` puts what it refused in its own. The filesystem's error stays on
+          // `cause`, where a log can reach it and a response cannot.
+          throw new WorkspaceRefusedError(
             `refusing to create the Workspace layout: ${folder} could not be made` +
               (code === undefined ? "" : ` (${code})`),
+            { cause: error },
           );
-          // the filesystem's own error stays where a log can reach it and a response cannot,
-          // as `UnwritableError` keeps it: its message carries the absolute path
-          refusal.cause = error;
-          throw refusal;
         }
       }
     },
