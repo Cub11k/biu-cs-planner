@@ -142,9 +142,28 @@ const NOTHING_REMEMBERED: SchemeBrowser = {
   localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
 };
 
-/** This page's store, or the empty one when the code is not running in a page. */
+/**
+ * This page's store, or the empty one when there is no store to be had.
+ *
+ * **`typeof` is not what makes this safe, and on its own it is not enough.** It suppresses a
+ * `ReferenceError` for an *undeclared* name, which is the Node case — no `localStorage` in the
+ * process at all. But `localStorage` is a declared property of a browser's global object, so
+ * `typeof localStorage` *invokes the getter*, and in a browser with site data blocked that
+ * getter throws. Without the `try` the throw escapes into whatever called this; `main.tsx`
+ * calls it twice at module top level, before `createRoot`, so what escaped was the whole
+ * module and the student got a blank page (#146, criterion 3).
+ *
+ * `token.ts`'s `storedToken` has always had this right — the read is inside its `try`, "that
+ * is a browser with no token, not a crash" — and this is the same rule for the same reason:
+ * every way of not having a store is the one no-choice state, never an exception.
+ */
 export function schemeStore(): SchemeBrowser {
-  return typeof localStorage === "undefined" ? NOTHING_REMEMBERED : { localStorage };
+  try {
+    return typeof localStorage === "undefined" ? NOTHING_REMEMBERED : { localStorage };
+  } catch {
+    // site data blocked: the getter itself throws, which is still just a browser with no choice
+    return NOTHING_REMEMBERED;
+  }
 }
 
 /**

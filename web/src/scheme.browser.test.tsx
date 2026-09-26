@@ -406,6 +406,11 @@ it.each([
  * With `stamp: false` the inline script goes too, which gives every test its own control:
  * the same document, the same store, the same machine, and the one line removed.
  *
+ * With `modules: true` the module script is kept instead, pointed at where the dev server
+ * actually serves it, so **`main.tsx` runs and the app mounts**. That is a different question
+ * from the first paint and the only way to ask it: what a student actually gets. A module that
+ * throws before `createRoot` leaves a blank page, and nothing about the first paint can see it.
+ *
  * With `store: "blocked"` the document gets a store that throws on every access, ahead of the
  * stamp — a browser in a mode where the store is switched off. That is the stamp's own `catch`
  * under test rather than a stand-in for it. The same script records any uncaught error onto
@@ -416,10 +421,18 @@ it.each([
 async function entryDocument({
   stamp = true,
   store = "working",
-}: { stamp?: boolean; store?: "working" | "blocked" } = {}): Promise<Document> {
+  modules = false,
+}: { stamp?: boolean; store?: "working" | "blocked"; modules?: boolean } = {}): Promise<Document> {
   const parsed = new DOMParser().parseFromString(ENTRY_DOCUMENT, "text/html");
 
-  for (const external of parsed.querySelectorAll("script[src]")) external.remove();
+  for (const external of parsed.querySelectorAll("script[src]")) {
+    // `index.html` names `/src/main.tsx`, which is right for a server rooted at `web/`; the
+    // one running these tests is rooted at the repository, so the path is retargeted rather
+    // than the script rewritten. Everything else external goes either way.
+    const src = external.getAttribute("src");
+    if (modules && src === "/src/main.tsx") external.setAttribute("src", "/web/src/main.tsx");
+    else external.remove();
+  }
   if (!stamp) for (const inline of parsed.querySelectorAll("script")) inline.remove();
 
   if (store === "blocked") {
@@ -536,6 +549,53 @@ describe("the first paint, before any module has run", () => {
     // And it threw nothing on the way. Without this line the `catch` could be deleted and no
     // assertion here would move, because the page a throw leaves is the same page.
     expect(blocked.documentElement.dataset["stampError"]).toBeUndefined();
+  });
+
+  it("still mounts the app when the store is blocked, which is the page a student gets", async () => {
+    /**
+     * Criterion 3 of #146 in full, and the one form of it the tests above cannot reach: they
+     * load the entry document with its module removed, so a module that throws is invisible
+     * to them by construction.
+     *
+     * The trap is that `typeof` does not make a global safe to touch. It suppresses a
+     * `ReferenceError` for an *undeclared* name, but `localStorage` is a declared property of
+     * the global object, so `typeof localStorage` invokes the getter — and in a browser with
+     * site data blocked that getter throws. `schemeStore` is called twice at the top of
+     * `main.tsx`, before `createRoot`, so the whole module aborts and React never mounts.
+     * `token.ts`'s `storedToken` gets this right by reading inside its `try`.
+     *
+     * "A working page" is therefore asserted as React having mounted, not as the palette
+     * being right — a blank page in the operating system's scheme would satisfy every other
+     * assertion in this file.
+     */
+    localStorage.setItem(SCHEME_STORAGE_KEY, "dark");
+    await operatingSystem("light");
+
+    const blocked = await entryDocument({ modules: true, store: "blocked" });
+
+    await vi.waitFor(
+      () => {
+        expect(blocked.getElementById("root")?.childElementCount ?? 0).toBeGreaterThan(0);
+      },
+      { timeout: 5000 },
+    );
+
+    // Blocked, so nothing is remembered: no attribute, and the machine decides.
+    expect(blocked.documentElement.hasAttribute(SCHEME_ATTRIBUTE)).toBe(false);
+    expect(palette(blocked.documentElement)).toEqual(systemLight);
+    // And nothing threw on the way — neither the stamp nor the module.
+    expect(blocked.documentElement.dataset["stampError"]).toBeUndefined();
+
+    // The control, so this cannot pass for a reason unrelated to the store: the same document
+    // with a store that answers mounts too, and there the remembered choice is applied.
+    const working = await entryDocument({ modules: true });
+    await vi.waitFor(
+      () => {
+        expect(working.getElementById("root")?.childElementCount ?? 0).toBeGreaterThan(0);
+      },
+      { timeout: 5000 },
+    );
+    expect(working.documentElement.getAttribute(SCHEME_ATTRIBUTE)).toBe("dark");
   });
 
   it("paints the machine's scheme with no script at all, which is JavaScript switched off", async () => {
