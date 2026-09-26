@@ -2,6 +2,8 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { collect } from "./collect.ts";
 import { render, type Report } from "./render.ts";
+import type { TestRun } from "./coverage.ts";
+import type { TestCase } from "./tests.ts";
 import { packageWorkspace, type ImportKind, type Module } from "./surface.ts";
 
 const ROOT = resolve(import.meta.dirname, "../..");
@@ -19,6 +21,20 @@ const coverageOf = (branches: number) => ({
   functions: 90,
   lines: 90,
   uncoveredLines: 3,
+});
+
+/**
+ * One ordinary entry: one title, one test.
+ *
+ * Named rather than written out, because the field that makes it one test is the whole subject
+ * of #140 and a fixture that sets it inline reads as noise. A parameterised entry is written
+ * out in full at the tests that are about one.
+ */
+const entry = (title: string, suite: string[] = []): TestCase => ({
+  title,
+  suite,
+  tests: 1,
+  atLeast: false,
 });
 
 /** `ImportKind`'s three states, named as `surface.ts` and `surface.test.ts` name them. */
@@ -98,7 +114,7 @@ function report(over: Partial<Report> = {}): Report {
       },
       leaf("core/src/b.ts"),
     ],
-    tests: [{ path: "core/src/a.test.ts", cases: [{ title: "works", suite: [] }], targets: [] }],
+    tests: [{ path: "core/src/a.test.ts", cases: [entry("works")], targets: [] }],
     coverage: {
       available: true,
       total: coverageOf(91),
@@ -407,7 +423,9 @@ describe("the report comment", () => {
     const firstFold = markdown.indexOf("<details>");
 
     expect(markdown.slice(0, firstFold)).toContain("| Modules | 2 across 1 workspaces |");
-    expect(markdown.slice(0, firstFold)).toContain("| Tests | 1 in 1 files |");
+    expect(markdown.slice(0, firstFold)).toContain(
+      "| Tests | 1 in 1 files, counted from the source |",
+    );
   });
 
   it("keeps where-to-look out of a fold, and last", () => {
@@ -455,18 +473,18 @@ describe("a directory only test titles were read from", () => {
   const withTools = (over: Partial<Report> = {}): Report =>
     report({
       tests: [
-        { path: "core/src/a.test.ts", cases: [{ title: "works", suite: [] }], targets: [] },
+        { path: "core/src/a.test.ts", cases: [entry("works")], targets: [] },
         {
           path: "tools/ci/workflows.test.ts",
           cases: [
-            { title: "fails an install without --ignore-scripts", suite: ["workflows"] },
-            { title: "fails a workflow with no permissions block", suite: ["workflows"] },
+            entry("fails an install without --ignore-scripts", ["workflows"]),
+            entry("fails a workflow with no permissions block", ["workflows"]),
           ],
           targets: [],
         },
         {
           path: "tools/ci/clock-pattern.test.ts",
-          cases: [{ title: "fails a second clock body", suite: [] }],
+          cases: [entry("fails a second clock body")],
           targets: [],
         },
       ],
@@ -491,7 +509,7 @@ describe("a directory only test titles were read from", () => {
       "**tools/ci/workflows.test.ts** — 2 tests — **titles only**, not graphed or measured",
     );
     // And the measured file beside it carries no such mark.
-    expect(markdown).toContain("**core/src/a.test.ts** — 1 tests\n");
+    expect(markdown).toContain("**core/src/a.test.ts** — 1 test\n");
   });
 
   it("says in the summary, above every fold, what the graphs and the numbers do not cover", () => {
@@ -523,7 +541,9 @@ describe("a directory only test titles were read from", () => {
     expect(verdict).toContain("Nothing stands out among the modules measured");
     expect(verdict).not.toContain("Nothing stands out: every function ran");
     expect(verdict).toContain("Nothing above says anything about `tools/`");
-    expect(verdict).toContain("3 test titles in 2 files");
+    // "tests", not "test titles": the number counts what the run collects, and for `tools/`
+    // the titles are still the whole of what the report knows about them (#136, #140).
+    expect(verdict).toContain("3 tests in 2 files, their titles and nothing more");
   });
 
   it("explains inside the coverage fold why a path has no row there", () => {
@@ -610,18 +630,18 @@ describe("a directory only test titles were read from", () => {
     const markdown = render(
       withTools({
         tests: [
-          { path: "tools/ci/a.test.ts", cases: [{ title: "in tools", suite: [] }], targets: [] },
+          { path: "tools/ci/a.test.ts", cases: [entry("in tools")], targets: [] },
           {
             path: "toolsmith/src/a.test.ts",
-            cases: [{ title: "not in tools", suite: [] }],
+            cases: [entry("not in tools")],
             targets: [],
           },
         ],
       }),
     );
 
-    expect(markdown).toContain("**tools/ci/a.test.ts** — 1 tests — **titles only**");
-    expect(markdown).toContain("**toolsmith/src/a.test.ts** — 1 tests\n");
+    expect(markdown).toContain("**tools/ci/a.test.ts** — 1 test — **titles only**");
+    expect(markdown).toContain("**toolsmith/src/a.test.ts** — 1 test\n");
     expect(markdown).toContain("| Of those, titles only | 1 in 1 files under `tools/`");
   });
 });
@@ -756,5 +776,221 @@ describe("this repository", () => {
 
     for (const pkg of ["zod", "hono", "react"]) expect(targets).not.toContain(pkg);
     expect(targets.length).toBeGreaterThan(1);
+  });
+});
+
+/**
+ * The count a reviewer reads as "tests", and what the report says it is.
+ *
+ * `CLAUDE.md` sends a reviewer to this page *before* the diff, on the grounds that it is derived
+ * from the source and so cannot drift from it. That is what makes a mislabelled number here
+ * worse than the same number anywhere else: it is read instead of the thing it is wrong about.
+ * What is asserted below is not a count but a claim — that no number in the report is presented
+ * as something it is not, and that where the two sources it opens by claiming can disagree, it
+ * says so instead of choosing (#140).
+ */
+describe("the number a reviewer reads as tests", () => {
+  /** An entry that runs its table's rows: one title, several tests. */
+  const parameterised = (title: string, tests: number): TestCase => ({
+    title,
+    suite: [],
+    tests,
+    atLeast: false,
+  });
+
+  /** An entry parameterised by a table the source does not fix. */
+  const floor = (title: string): TestCase => ({ title, suite: [], tests: 1, atLeast: true });
+
+  /** A file of entries, under a path. */
+  const file = (path: string, ...cases: TestCase[]) => ({ path, cases, targets: [] });
+
+  /** A run that collected what it collected, per file. */
+  const ran = (byFile: Record<string, number>): TestRun => ({
+    available: true,
+    byFile: new Map(Object.entries(byFile)),
+    tests: Object.values(byFile).reduce((n, c) => n + c, 0),
+  });
+
+  /** The summary table, which is the part read at a glance and where the row lives. */
+  const summary = (markdown: string): string => markdown.slice(0, markdown.indexOf("<details>"));
+
+  it("says the count is read from the source, not leaving `Tests` to be read as a run's", () => {
+    const markdown = render(
+      report({ tests: [file("core/src/a.test.ts", parameterised("handles %s", 4))] }),
+    );
+
+    expect(summary(markdown)).toContain("| Tests | 4 in 1 files, counted from the source |");
+  });
+
+  it("counts a parameterised entry's rows, and says on the entry that it is one", () => {
+    // The entry list is 1 bullet under a total of 4, which is exactly the arithmetic that
+    // produced this ticket: a reader counting bullets and taking the answer for the tests.
+    const markdown = render(
+      report({ tests: [file("core/src/a.test.ts", parameterised("handles %s", 4))] }),
+    );
+
+    expect(markdown).toContain("**core/src/a.test.ts** — 4 tests");
+    expect(markdown).toContain("- handles %s — **4 cases**, one per row of its table");
+  });
+
+  it("prints a floor where a table could not be read, and does not pass it off as a count", () => {
+    const markdown = render(
+      report({ tests: [file("core/src/a.test.ts", floor("handles %s"), entry("works"))] }),
+    );
+
+    expect(summary(markdown)).toContain("| Tests | at least 2 in 1 files, counted from the source |");
+    // "counted as one row", not "counts for one test": an entry whose table went unread still
+    // multiplies by every readable table around it, so the tests it comes to need not be one.
+    expect(summary(markdown)).toContain(
+      "| Tables not fixed by the source | 1 parameterised suite is counted as one row each",
+    );
+    expect(markdown).toContain(
+      "- handles %s — parameterised by a table this report could not read, so **at least 1**",
+    );
+  });
+
+  it("says nothing checks the count when no run left one behind", () => {
+    // Not silence: a report built without a run has one source for a sentence that claims two,
+    // and a reader has no way to tell that from a report whose two sources agreed.
+    const markdown = render(report());
+
+    expect(summary(markdown)).toContain(
+      "| A run to check it against | none — no test run left its own count beside this report |",
+    );
+    expect(markdown).toContain("**Nothing checks the count above.**");
+  });
+
+  it("says which run it checked against, and that the run is not the whole suite", () => {
+    // The trap this ticket sets: the run behind the report is the coverage run, which is the
+    // node project alone, so its total is smaller than the suite's by the browser project.
+    // Printed beside a whole-tree total with nothing saying which was which, it would be a
+    // second misleading number in place of the first.
+    const markdown = render(
+      report({
+        tests: [
+          file("core/src/a.test.ts", parameterised("handles %s", 4)),
+          file("web/src/b.browser.test.tsx", entry("draws the week")),
+        ],
+        run: ran({ "core/src/a.test.ts": 4 }),
+      }),
+    );
+
+    expect(summary(markdown)).toContain(
+      "| A run to check it against | 4 tests across the 1 file it ran, and it agrees on every one |",
+    );
+    // The row carries no pronoun, so it reads the same wherever the table puts it.
+    expect(summary(markdown)).not.toContain("of them, across");
+    expect(markdown).toContain("that run is **not the whole suite**");
+    expect(markdown).toContain("1 file was not in it: 1 test that only the source counts");
+    expect(markdown).toContain("5 is what the source accounts for across every file, 4 is what that one run collected");
+  });
+
+  it("marks the file the run did not run, where that file is listed", () => {
+    // Per file, because a reviewer arrives at the fold looking a file up by name and would
+    // otherwise have to carry the scope sentence from the top of the report in their head.
+    const markdown = render(
+      report({
+        tests: [
+          file("core/src/a.test.ts", entry("works")),
+          file("web/src/b.browser.test.tsx", entry("draws the week")),
+        ],
+        run: ran({ "core/src/a.test.ts": 1 }),
+      }),
+    );
+
+    expect(markdown).toContain(
+      "**web/src/b.browser.test.tsx** — 1 test — not in the run this report was built beside",
+    );
+    // And the file the run did confirm carries no mark, because there is nothing to say.
+    expect(markdown).toContain("**core/src/a.test.ts** — 1 test\n");
+  });
+
+  it("names a file the two sources disagree about, and chooses neither", () => {
+    const markdown = render(
+      report({
+        tests: [file("core/src/a.test.ts", parameterised("handles %s", 4))],
+        run: ran({ "core/src/a.test.ts": 7 }),
+      }),
+    );
+
+    expect(summary(markdown)).toContain(
+      "| A run to check it against | **it disagrees on 1 file** — named below |",
+    );
+    expect(markdown).toContain("**Where they disagree.**");
+    expect(markdown).toContain("`core/src/a.test.ts` — the source counts 4, the run collected 7");
+    // Marked on the file too, so the disagreement is in front of whoever opens that fold.
+    expect(markdown).toContain("**core/src/a.test.ts** — 4 tests — **the run collected 7**");
+  });
+
+  it("treats a run above a floor as agreement and one below it as a disagreement", () => {
+    // A floor says "at least this many". A run that finds more is the floor working; a run that
+    // finds fewer is the report wrong about a file, and only the second is worth a reader's
+    // attention. Reported the other way round, every unread table would read as a defect.
+    const above = render(
+      report({
+        tests: [file("core/src/a.test.ts", floor("handles %s"))],
+        run: ran({ "core/src/a.test.ts": 9 }),
+      }),
+    );
+    const below = render(
+      report({
+        tests: [file("core/src/a.test.ts", floor("handles %s"), entry("works"))],
+        run: ran({ "core/src/a.test.ts": 1 }),
+      }),
+    );
+
+    expect(above).not.toContain("**Where they disagree.**");
+    expect(below).toContain("`core/src/a.test.ts` — the source counts at least 2, the run collected 1");
+  });
+
+  it("claims no agreement from a run that ran none of the files listed here", () => {
+    // A stale `coverage/test-results.json` — left by another tree, or another root, so no path
+    // matches. The run is available and its totals are non-zero, and a check that only asked
+    // "did any file disagree?" answered no and printed "agrees on every one" of nothing. That is
+    // agreement asserted from no evidence, in the row read first, which is this ticket's own
+    // defect wearing a third hat.
+    const markdown = render(
+      report({
+        tests: [file("core/src/a.test.ts", entry("works"))],
+        run: ran({ "somewhere/else/b.test.ts": 40 }),
+      }),
+    );
+
+    expect(summary(markdown)).not.toContain("agrees on every one");
+    expect(summary(markdown)).toContain("it ran none of the files listed here");
+    expect(markdown).toContain("**Nothing here was checked.**");
+    // And it still says what that run did run, so the reader can see why nothing matched.
+    expect(markdown).toContain("- `somewhere/else/b.test.ts`");
+  });
+
+  it("does not bold a floor the run merely exceeded as though the report were wrong", () => {
+    // The summary calls this agreement, so the line on the file must not contradict it. Both
+    // answers used to be derived separately, and one said "agrees on every one" while the other
+    // printed the run's number in the bold kept for the report being wrong about a file.
+    const markdown = render(
+      report({
+        tests: [file("core/src/a.test.ts", floor("handles %s"))],
+        run: ran({ "core/src/a.test.ts": 9 }),
+      }),
+    );
+
+    expect(summary(markdown)).toContain("agrees on every one");
+    expect(markdown).toContain("**core/src/a.test.ts** — at least 1 tests — the run found 9");
+    expect(markdown).not.toContain("**the run collected 9**");
+  });
+
+  it("names a test file the run found that it lists nowhere", () => {
+    // The other direction, and the one #123 was about: a file the report never walked is a file
+    // it says nothing about, and silence about a file that has tests reads as a file that has
+    // none. Here the run is the witness that the walk missed something.
+    const markdown = render(
+      report({
+        tests: [file("core/src/a.test.ts", entry("works"))],
+        run: ran({ "core/src/a.test.ts": 1, "tools/ci/workflows.test.ts": 12 }),
+      }),
+    );
+
+    expect(markdown).toContain("**The run found tests in files this report does not list.**");
+    expect(markdown).toContain("- `tools/ci/workflows.test.ts`");
   });
 });
