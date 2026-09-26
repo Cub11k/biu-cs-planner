@@ -83,8 +83,8 @@ export function readCoverage(summaryPath: string, root: string): Coverage {
  * coverage summary is.
  *
  * **It answers for one run, not for the suite.** `npm run report` builds the report after
- * `npm run coverage`, which is `vitest run --project node --coverage`: the browser project is
- * not in it. So the number here is smaller than what `npm test` runs, by exactly the browser
+ * `npm run coverage`, and that script runs `--project node` and asks vitest's json reporter for
+ * this file alongside the coverage ones: the browser project is not in it. So the number here is smaller than what `npm test` runs, by exactly the browser
  * project, and a reader who took it for the whole suite would be misled in the other
  * direction from the defect it was added to catch (#140). The map is per file for that reason:
  * `render` compares file by file and names the files this run did not touch, so the scope is
@@ -122,7 +122,10 @@ export function readTestRun(resultsPath: string, root: string): TestRun {
     if (typeof entry !== "object" || entry === null) continue;
     const { name, assertionResults } = entry as { name?: unknown; assertionResults?: unknown };
     if (typeof name !== "string" || !Array.isArray(assertionResults)) continue;
-    // A file run by two projects arrives as two entries, so they add rather than replace.
+    // Added rather than assigned, so a path arriving twice cannot silently keep only the
+    // last count. Defensive: the runs this is read from give each file one entry, and no
+    // invocation in this repo produces two. The alternative is the failure this whole ticket
+    // is about — a total nothing agrees with — for the cost of one `??`.
     const path = relative(root, name);
     byFile.set(path, (byFile.get(path) ?? 0) + assertionResults.length);
   }

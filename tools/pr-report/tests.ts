@@ -146,7 +146,15 @@ function unwrap(expression: ts.Expression): ts.Expression {
   return node;
 }
 
-/** Every top-level `const` in a file, by the name it is bound to. */
+/**
+ * Every top-level binding in a file, by the name it is bound to.
+ *
+ * Any variable statement, not only a `const`: a table held in a `let` is read the same way,
+ * because what makes it countable is that the initializer is an array literal and not which
+ * keyword introduced it. Said here because the previous wording claimed a check on `const`
+ * that the code does not make, and a comment that overstates what was checked is worth less
+ * than none.
+ */
 function topLevelBindings(source: ts.SourceFile): Map<string, ts.Expression> {
   const bound = new Map<string, ts.Expression>();
   for (const statement of source.statements) {
@@ -160,9 +168,20 @@ function topLevelBindings(source: ts.SourceFile): Map<string, ts.Expression> {
   return bound;
 }
 
-/** Which file each name a module imports by name comes from, for relative imports only. */
-function importedFrom(source: ts.SourceFile, absPath: string): Map<string, string> {
-  const from = new Map<string, string>();
+/**
+ * Where each name a module imports by name comes from, for relative imports only: the file,
+ * and the name that file knows it by.
+ *
+ * Both, because of `import { TABLE as CASES }`. The call site says `CASES` and the exporting
+ * file says `TABLE`, so keying by one name and looking it up by the same name finds nothing and
+ * turns a readable table into a floor. It fails safe either way — a floor is honest — but it
+ * fails safe by accident, and one field removes the accident.
+ */
+function importedFrom(
+  source: ts.SourceFile,
+  absPath: string,
+): Map<string, { file: string; name: string }> {
+  const from = new Map<string, { file: string; name: string }>();
   for (const statement of source.statements) {
     if (!ts.isImportDeclaration(statement)) continue;
     if (!ts.isStringLiteral(statement.moduleSpecifier)) continue;
@@ -173,7 +192,12 @@ function importedFrom(source: ts.SourceFile, absPath: string): Map<string, strin
     const bindings = statement.importClause?.namedBindings;
     if (!bindings || !ts.isNamedImports(bindings)) continue;
     for (const element of bindings.elements) {
-      from.set(element.name.text, resolve(dirname(absPath), spec));
+      // `element.name` is the local name the table is referenced by here; `propertyName` is
+      // what the exporting file calls it, and is set only when the two differ.
+      from.set(element.name.text, {
+        file: resolve(dirname(absPath), spec),
+        name: (element.propertyName ?? element.name).text,
+      });
     }
   }
   return from;
@@ -185,8 +209,8 @@ function importedFrom(source: ts.SourceFile, absPath: string): Map<string, strin
  * Three shapes are read, because those are the three this repository writes:
  *
  * - the array written at the call site, `it.each([…])`, `as const` and all;
- * - a `const` in the same file, which is how the long tables are kept readable —
- *   `app/src/workspace.test.ts` keeps 16 accepted names and 26 refused ones that way;
+ * - a binding in the same file, which is how the long tables are kept readable —
+ *   `app/src/workspace.test.ts` keeps 6 accepted names and 25 refused ones that way;
  * - a `const` **one relative import away**, which is how `LANGUAGES` reaches the two
  *   `describe.each(LANGUAGES)` suites in `web` from `web/src/i18n/strings.ts`.
  *
@@ -199,6 +223,10 @@ function importedFrom(source: ts.SourceFile, absPath: string): Map<string, strin
  * A spread inside the array (`[...rest, ["x"]]`) comes out `undefined` too: the element count
  * is not the row count there. Nothing is evaluated to find a length — this reads source, and
  * a table is data to interpret rather than to execute (ADR-0007).
+ *
+ * So the ways a table goes unread, in full: built by a call, spread into, written as a tagged
+ * template, imported from a package, or bound behind more than one hop. An alias is **not**
+ * one of them — `importedFrom` carries the exporting file's own name for exactly that reason.
  */
 function rowsOf(table: ts.Expression, source: ts.SourceFile, absPath: string): number | undefined {
   const rowsIn = (expression: ts.Expression): number | undefined => {
@@ -218,20 +246,20 @@ function rowsOf(table: ts.Expression, source: ts.SourceFile, absPath: string): n
     if (rows !== undefined) return rows;
   }
 
-  const fromFile = importedFrom(source, absPath).get(node.text);
-  if (fromFile === undefined) return undefined;
+  const origin = importedFrom(source, absPath).get(node.text);
+  if (origin === undefined) return undefined;
   let imported: ts.SourceFile;
   try {
     imported = ts.createSourceFile(
-      fromFile,
-      readFileSync(fromFile, "utf8"),
+      origin.file,
+      readFileSync(origin.file, "utf8"),
       ts.ScriptTarget.Latest,
       true,
     );
   } catch {
     return undefined;
   }
-  const bound = topLevelBindings(imported).get(node.text);
+  const bound = topLevelBindings(imported).get(origin.name);
   return bound === undefined ? undefined : rowsIn(bound);
 }
 
@@ -251,10 +279,25 @@ export function readTestFile(absPath: string, root: string): TestFile {
   let repeat = 1;
   let repeatAtLeast = false;
 
+  /**
+   * The title, as the source writes it.
+   *
+   * A template with substitutions keeps its literal text and shows each substitution as
+   * `${…}`. Dropping such an entry would be this ticket's own defect in miniature — one test
+   * contributing nothing, with nothing on the page saying so — and the entry is one test
+   * whatever the expression evaluates to, so the count does not need the value. Nothing is
+   * evaluated to build a title (ADR-0007); the placeholder is a literal string.
+   */
   const titleOf = (call: ts.CallExpression): string | undefined => {
     const [first] = call.arguments;
     if (!first) return undefined;
     if (ts.isStringLiteral(first) || ts.isNoSubstitutionTemplateLiteral(first)) return first.text;
+    if (ts.isTemplateExpression(first)) {
+      return first.templateSpans.reduce(
+        (text, span) => `${text}${"${…}"}${span.literal.text}`,
+        first.head.text,
+      );
+    }
     return undefined;
   };
 

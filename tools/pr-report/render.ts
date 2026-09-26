@@ -264,6 +264,13 @@ function logicFlow(edges: CallEdge[]): string {
 const countOf = (totals: TestTotals): string =>
   totals.atLeast ? `at least ${totals.tests}` : `${totals.tests}`;
 
+/** A number of tests, singular where it is one: "1 test", "80 tests", "at least 2 tests". */
+const testsOf = (totals: TestTotals): string =>
+  `${countOf(totals)} ${totals.tests === 1 && !totals.atLeast ? "test" : "tests"}`;
+
+/** The same, for a plain number that did not come from the source. */
+const nTests = (n: number): string => `${n} ${n === 1 ? "test" : "tests"}`;
+
 /**
  * The source's count set against a real run's, file by file.
  *
@@ -279,7 +286,20 @@ const countOf = (totals: TestTotals): string =>
  * unchecked and the files it did run are checked exactly — which is the difference between
  * saying which run and presenting one run's number as another's.
  */
+/**
+ * Whether a run's count for one file confirms the source's.
+ *
+ * One predicate, asked by the summary row and by the mark on the file, because those two were
+ * written separately and disagreed: a floor of 1 that a run answered with 9 got "agrees on
+ * every one" at the top of the page and a bold contradiction of it two folds down. A floor the
+ * run **exceeds** is the floor doing its job — the source said "at least this many" and the run
+ * found more. A run **below** a floor is the report wrong about a file.
+ */
+const confirms = (totals: TestTotals, collected: number): boolean =>
+  totals.atLeast ? collected >= totals.tests : collected === totals.tests;
+
 type RunCheck = {
+  /** Whether a run left a count that this report can be checked against at all. */
   available: boolean;
   /** Files the run ran that this report lists too, and the tests it collected in them. */
   ran: { files: number; tests: number };
@@ -289,20 +309,31 @@ type RunCheck = {
   disagree: Array<{ path: string; source: string; run: number }>;
   /** Test files the run ran that this report lists nowhere — a hole in its own walk. */
   unlisted: string[];
+  /**
+   * What was found for each file this report lists: the source's totals, and what the run
+   * collected where it ran that file.
+   *
+   * Carried rather than recomputed. The per-file mark used to derive its own answer from
+   * `totalTests` and its own comparison, which is how it came to contradict the row above it.
+   */
+  byFile: Map<string, { totals: TestTotals; collected: number | undefined }>;
 };
 
 function runCheck(tests: readonly TestFile[], run: TestRun | undefined): RunCheck {
+  const byFile = new Map<string, { totals: TestTotals; collected: number | undefined }>();
+  for (const file of tests) {
+    byFile.set(file.path, { totals: totalTests([file]), collected: run?.byFile.get(file.path) });
+  }
+
   const empty = { files: 0, tests: 0 };
   if (!run?.available) {
-    return { available: false, ran: empty, unrun: empty, disagree: [], unlisted: [] };
+    return { available: false, ran: empty, unrun: empty, disagree: [], unlisted: [], byFile };
   }
 
   const ran = { files: 0, tests: 0 };
   const unrun = { files: 0, tests: 0 };
   const disagree: RunCheck["disagree"] = [];
-  for (const file of tests) {
-    const totals = totalTests([file]);
-    const collected = run.byFile.get(file.path);
+  for (const [path, { totals, collected }] of byFile) {
     if (collected === undefined) {
       unrun.files += 1;
       unrun.tests += totals.tests;
@@ -310,15 +341,20 @@ function runCheck(tests: readonly TestFile[], run: TestRun | undefined): RunChec
     }
     ran.files += 1;
     ran.tests += collected;
-    // A floor that the run exceeds is the floor doing its job, not a disagreement: the source
-    // said "at least this many" and the run found more. A floor the run falls *below* is one.
-    const agrees = totals.atLeast ? collected >= totals.tests : collected === totals.tests;
-    if (!agrees) disagree.push({ path: file.path, source: countOf(totals), run: collected });
+    if (!confirms(totals, collected)) {
+      disagree.push({ path, source: countOf(totals), run: collected });
+    }
   }
 
   const listed = new Set(tests.map((t) => t.path));
   const unlisted = [...run.byFile.keys()].filter((path) => !listed.has(path)).sort();
-  return { available: true, ran, unrun, disagree, unlisted };
+
+  // A run that overlaps **none** of the files listed here checks nothing, and saying it "agrees
+  // on every one" of zero files is agreement asserted from no evidence — in the row read first,
+  // which is the defect this whole section exists to remove. It happens when the file is left
+  // over from another tree or another root, so the paths do not match: `unlisted` then names
+  // what it did run, and `available` is false because nothing here was checked.
+  return { available: ran.files > 0, ran, unrun, disagree, unlisted, byFile };
 }
 
 /**
@@ -391,25 +427,23 @@ export function render(report: Report): string {
   out.push(`| Tests | ${countOf(totals)} in ${tests.length} files, counted from the source |`);
   if (totals.atLeast) {
     out.push(
+      // Not "counts for one test": an entry whose own table went unread still multiplies by
+      // every table around it that did not, so inside a readable `describe.each` it counts for
+      // one row and several tests. The row a table is counted as is the fact; the tests it comes
+      // to are not.
       `| Tables not fixed by the source | ${totals.atLeast} parameterised ` +
-        `${totals.atLeast === 1 ? "suite counts" : "suites count"} for one test above, because ` +
+        `${totals.atLeast === 1 ? "suite is" : "suites are"} counted as one row each, because ` +
         `${totals.atLeast === 1 ? "its table" : "their tables"} could not be read — so the ` +
-        `count is a floor |`,
+        `count above is a floor |`,
     );
   }
   const checked = runCheck(tests, run);
-  out.push(
-    !checked.available
-      ? "| A run to check it against | none — no test run left its own count beside this report |"
-      : checked.disagree.length
-        ? `| A run to check it against | **it disagrees on ${checked.disagree.length} ` +
-            `${checked.disagree.length === 1 ? "file" : "files"}** — named below |`
-        : `| A run to check it against | ${checked.ran.tests} of them, across the ` +
-            `${checked.ran.files} ${checked.ran.files === 1 ? "file" : "files"} it ran, and it ` +
-            `agrees on every one |`,
-  );
   // Named in the summary rather than only inside the fold, because it qualifies every number
   // under it: the tests counted above are not all the tests this report can say anything about.
+  //
+  // Kept directly under `Tests`, and the cross-check row below it, because "Of those" has to
+  // have `Tests` as the thing it is of. An earlier arrangement put the run between them and
+  // left "Of those" pointing at a number about a different question.
   if (anyTestOnly) {
     out.push(
       titlesOnly.length
@@ -418,6 +452,21 @@ export function render(report: Report): string {
         : `| Titles only | ${dirList(testOnlyDirs)} — no test file, no graph, no coverage |`,
     );
   }
+  // Worded without "of them" for the same reason: this row is read wherever it sits, and a
+  // pronoun in it would bind to whichever number the table happens to put above it.
+  out.push(
+    !checked.available
+      ? checked.unlisted.length
+        ? "| A run to check it against | a run left a count, but it ran none of the files " +
+          "listed here — see below |"
+        : "| A run to check it against | none — no test run left its own count beside this report |"
+      : checked.disagree.length
+        ? `| A run to check it against | **it disagrees on ${checked.disagree.length} ` +
+            `${checked.disagree.length === 1 ? "file" : "files"}** — named below |`
+        : `| A run to check it against | ${nTests(checked.ran.tests)} across the ` +
+            `${checked.ran.files} ${checked.ran.files === 1 ? "file" : "files"} it ran, and it ` +
+            `agrees on every one |`,
+  );
   if (t) {
     out.push(`| Statements | \`${bar(t.statements)}\` ${t.statements}% |`);
     out.push(`| Branches | \`${bar(t.branches)}\` ${t.branches}% |`);
@@ -437,25 +486,35 @@ export function render(report: Report): string {
   // count, with nothing saying which was which, would replace #140's defect rather than fix it.
   if (!checked.available) {
     out.push(
-      "**Nothing checks the count above.** No test run left its own count beside this report, " +
-        "so the number is the source's alone — read as what a parser recovered, not as what a " +
-        "run collected. `npm run report` runs the tests first and leaves that count behind, so " +
-        "this line means the report was built some other way.",
+      checked.unlisted.length
+        ? "**Nothing here was checked.** A test run did leave a count beside this report, but " +
+            "not one of the files it ran is a file this report lists, so it confirms nothing " +
+            "above. That happens when the count is left over from another tree or another " +
+            "root — the paths then match nothing. What it did run is named below, and the " +
+            "number above is the source's alone."
+        : "**Nothing checks the count above.** No test run left its own count beside this " +
+            "report, so the number is the source's alone — read as what a parser recovered, " +
+            "not as what a run collected. `npm run coverage` leaves that count behind, so this " +
+            "line means the report was built some other way.",
     );
     out.push("");
   } else {
     out.push(
-      `**Which run.** The count above is read from the source; the run it is set against is the ` +
-        `one that produced the coverage below, and that run is **not the whole suite**. It ran ` +
-        `${checked.ran.files} of the ${tests.length} files here and collected ` +
-        `${checked.ran.tests} tests in them` +
+      `**Which run.** The count above is read from the source; the run it is set against is ` +
+        // Only where there is coverage to point at. Without it the row above says so, and this
+        // sentence would be naming a section that is not there.
+        (coverage.available
+          ? "the one that produced the coverage below"
+          : "the one beside this report") +
+        `, and that run is **not the whole suite**. It ran ${checked.ran.files} of the ` +
+        `${tests.length} files here and collected ${nTests(checked.ran.tests)} in them` +
         (checked.disagree.length
           ? `, and it does not agree with the source about all of them.`
           : `, agreeing with the source on every one.`) +
         (checked.unrun.files
           ? ` The other ${checked.unrun.files} ` +
             `${checked.unrun.files === 1 ? "file was" : "files were"} not in it: ` +
-            `${checked.unrun.tests} tests that only the source counts, marked where they are ` +
+            `${nTests(checked.unrun.tests)} that only the source counts, marked where they are ` +
             `listed below.`
           : "") +
         ` The two numbers answer different questions and neither is the other — ` +
@@ -658,17 +717,26 @@ export function render(report: Report): string {
     // The same reason the mark above is per file: whether a run confirmed this file's count is
     // a fact about this file, and a reader who arrives here by name would otherwise have to
     // carry the scope sentence from the top of the report in their head to know.
-    const fileTotals = totalTests([file]);
-    const collected = checked.available ? run?.byFile.get(file.path) : undefined;
+    // Taken from `runCheck` rather than recomputed here. Deriving it twice is how this line
+    // came to bold a contradiction of the row that called the same file agreement: `confirms`
+    // treats a floor the run exceeds as confirmed, and a second comparison written here did not.
+    const found = checked.byFile.get(file.path);
+    const fileTotals = found?.totals ?? totalTests([file]);
+    const collected = checked.available ? found?.collected : undefined;
     const confirmed =
-      !checked.available || collected === undefined
+      collected === undefined
         ? checked.available
           ? " — not in the run this report was built beside"
           : ""
-        : collected === fileTotals.tests
-          ? ""
+        : confirms(fileTotals, collected)
+          ? // Worth printing where the source only claimed a floor: the run says which number it
+            // is, and that is information rather than a disagreement. Unbolded, because bold here
+            // is the mark for the report being wrong about a file.
+            fileTotals.atLeast
+            ? ` — the run found ${collected}`
+            : ""
           : ` — **the run collected ${collected}**`;
-    claims.push(`**${file.path}** — ${countOf(fileTotals)} tests${confirmed}${only}`);
+    claims.push(`**${file.path}** — ${testsOf(fileTotals)}${confirmed}${only}`);
     claims.push("");
     for (const c of file.cases) {
       // An entry is a title and a count, and the count is not always one. Said on the entry

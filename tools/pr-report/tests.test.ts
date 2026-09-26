@@ -77,7 +77,7 @@ describe("how many tests a file runs", () => {
   });
 
   it("reads a table kept in a `const`, which is how the long ones are kept readable", () => {
-    // `app/src/workspace.test.ts` keeps 16 accepted names and 26 refused ones this way, and
+    // `app/src/workspace.test.ts` keeps 6 accepted names and 25 refused ones this way, and
     // inlining them at the call site would make the test unreadable to make it countable.
     const file = fromSource([
       "const ACCEPTED = [",
@@ -94,7 +94,10 @@ describe("how many tests a file runs", () => {
 
   it("follows one relative import to the table, which is how `LANGUAGES` reaches `web`", () => {
     // `describe.each(LANGUAGES)` in two `web` browser tests names a table exported from
-    // `web/src/i18n/strings.ts`. Fourteen of this repo's tests are behind that one hop.
+    // `web/src/i18n/strings.ts`. Those two suites run 20 tests between them, and 10 of the 20
+    // are counted only because the hop is followed — without it each suite counts its bodies
+    // once. Both files are in the browser project, so the cross-check against the node run
+    // cannot catch a mistake here either: the hop is the only thing that counts them.
     const file = testFile(
       {
         "web/src/i18n/strings.ts": ['export const LANGUAGES = ["en", "he"] as const;'],
@@ -143,6 +146,38 @@ describe("how many tests a file runs", () => {
 
     expect(counts(file)).toEqual({ tests: 4, entries: 3, atLeast: 0 });
     expect(file.cases.map((c) => c.title)).toContain("survives a file it may not read");
+  });
+
+  it("keeps a title written as a template, rather than dropping the test with it", () => {
+    // A title with a substitution in it is not a literal, and the reading that wanted a literal
+    // returned nothing for it — which is #140's defect in miniature: one test contributing
+    // nothing, and nothing on the page saying so. Nothing in this repo writes one today, so
+    // this pins the shape before it arrives rather than fixing a live undercount.
+    const file = fromSource([
+      "const which = 1;",
+      "it(`handles the ${which} case`, () => {});",
+    ]);
+
+    expect(counts(file)).toEqual({ tests: 1, entries: 1, atLeast: 0 });
+    expect(file.cases[0]?.title).toBe("handles the ${…} case");
+  });
+
+  it("reads a table imported under another name", () => {
+    // `import { TABLE as CASES }` says `CASES` here and `TABLE` there. Looking the local name
+    // up in the exporting file finds nothing and turns a readable table into a floor — honest,
+    // but honest by accident.
+    const file = testFile(
+      {
+        "core/src/cases.ts": ['export const TABLE = [["a"], ["b"], ["c"]];'],
+        "core/src/a.test.ts": [
+          'import { TABLE as CASES } from "./cases.ts";',
+          'it.each(CASES)("handles %s", () => {});',
+        ],
+      },
+      "core/src/a.test.ts",
+    );
+
+    expect(counts(file)).toEqual({ tests: 3, entries: 1, atLeast: 0 });
   });
 
   it("does not mistake the table for the title of a second test", () => {

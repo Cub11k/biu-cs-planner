@@ -10,9 +10,11 @@ import { render } from "./render.ts";
  *   npm run report            # writes pr-report.md
  *   npm run report -- --stdout
  *
- * It needs a coverage run first (`npx vitest run --coverage`) or the coverage
- * section says so rather than guessing. The reading of the source lives in
- * `collect.ts`, because the PR review checks the same graphs for cycles.
+ * It needs `npm run coverage` first, which leaves both the coverage summary and the run's own
+ * count of the tests it collected. Without them the report says so rather than guessing — the
+ * coverage section that it has no numbers, and the summary that nothing checks its test count.
+ * A bare `npx vitest run --coverage` leaves the first and not the second. The reading of the
+ * source lives in `collect.ts`, because the PR review checks the same graphs for cycles.
  */
 const ROOT = resolve(import.meta.dirname, "../..");
 
