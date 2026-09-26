@@ -2,7 +2,8 @@ import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
-import { createApi } from "./api.ts";
+import { settingsSchema } from "@biu-cs-planner/core";
+import { createApi, savedSettingsSchema } from "./api.ts";
 import { fileSystemWorkspace } from "./workspace.fs.ts";
 
 let root: string;
@@ -947,4 +948,301 @@ it("names a bad undo request as a 400, and refuses one with no launch token", as
     body: JSON.stringify({}),
   });
   expect(noToken.status).toBe(401);
+});
+
+/**
+ * The student's preferences over HTTP (#115): the two fields `core`'s `settingsSchema` has held
+ * since the schema was written, reachable at last.
+ *
+ * The one that matters is the restart, exactly as it is for a Pick: a language that lives in a
+ * page's `useState` is the bug this ticket is about, so the API is built again over the same
+ * folder and asked what it holds. `docs/adr/0014-where-a-preference-is-kept.md` is why the
+ * answer is in the State File rather than in the browser.
+ */
+const SETTINGS = "/api/settings";
+
+const patch = (path: string, body: unknown) =>
+  api.request(path, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...bearer },
+    body: JSON.stringify(body),
+  });
+
+/** The revision the settings route serves, which a change made on them has to be based on. */
+const settingsVersion = async (): Promise<string | undefined> =>
+  ((await (await get(SETTINGS)).json()) as { version?: string }).version;
+
+/** A change made the way a page makes one: on the revision the last answer carried. */
+const choose = async (body: object) => patch(SETTINGS, { ...body, basedOn: await settingsVersion() });
+
+it("serves the schema's defaults before any State File exists, and writes none", async () => {
+  await post("/api/workspace", {});
+
+  const response = await get(SETTINGS);
+
+  expect(response.status).toBe(200);
+  await expect(response.json()).resolves.toEqual({
+    language: "en",
+    examSpacingDays: 3,
+    warnings: [],
+  });
+  // reading created nothing: `version` was absent above, and the folder is still empty
+  expect((await readdir(root)).sort()).toEqual([".backups", "catalogs", "requirements"]);
+});
+
+it("keeps a language across a restart, which is the whole of what #115 is about", async () => {
+  await post("/api/workspace", {});
+
+  const chosen = await choose({ language: "he" });
+
+  expect(chosen.status).toBe(200);
+  await expect(chosen.json()).resolves.toMatchObject({ language: "he" });
+
+  restart();
+
+  await expect((await get(SETTINGS)).json()).resolves.toMatchObject({ language: "he" });
+});
+
+it("serves the same revision the week does, since one file holds both", async () => {
+  await post("/api/workspace", {});
+  await post(PICKS, LECTURE);
+
+  expect(await settingsVersion()).toBe(await currentVersion());
+});
+
+it("changes the preference named and leaves the other where it was", async () => {
+  await post("/api/workspace", {});
+  await choose({ examSpacingDays: 9 });
+
+  await choose({ language: "he" });
+
+  await expect((await get(SETTINGS)).json()).resolves.toMatchObject({
+    language: "he",
+    examSpacingDays: 9,
+  });
+});
+
+/**
+ * `examSpacingDays` is readable and writable by the same mechanism as the language, which is the
+ * ticket's second criterion. **Nothing carries it to `checkExams` yet** — that check takes a
+ * `spacingDays` threshold and no caller passes this field to it — so wiring the setting and
+ * wiring the check are two different things and this is only the first.
+ */
+it("reads and writes the Exam spacing by the same route as the language", async () => {
+  await post("/api/workspace", {});
+
+  const chosen = await choose({ examSpacingDays: 14 });
+
+  expect(chosen.status).toBe(200);
+  await expect(chosen.json()).resolves.toMatchObject({ examSpacingDays: 14 });
+  restart();
+  await expect((await get(SETTINGS)).json()).resolves.toMatchObject({ examSpacingDays: 14 });
+});
+
+/**
+ * **A preference change can fail**, which is the consequence of keeping a preference in a guarded
+ * document and the thing the screen has to have an answer for. Another tab, an editor, git or
+ * Dropbox wrote the file between the read this change was based on and this save.
+ */
+it("refuses a change based on a revision the file no longer holds", async () => {
+  await post("/api/workspace", {});
+  await choose({ language: "he" });
+  const stale = await settingsVersion();
+  // somebody else writes the file, so `stale` is no longer what it holds
+  await post(PICKS, { ...LECTURE, basedOn: stale });
+
+  const refused = await patch(SETTINGS, { language: "en", basedOn: stale });
+
+  expect(refused.status).toBe(409);
+  await expect(refused.json()).resolves.toMatchObject({ reason: "state-file-changed" });
+  // and the change did not happen
+  await expect((await get(SETTINGS)).json()).resolves.toMatchObject({ language: "he" });
+});
+
+it("refuses a change that names no revision when a State File is already there", async () => {
+  await post("/api/workspace", {});
+  await choose({ language: "he" });
+
+  // absent `basedOn` is the claim that there is no file, which fails closed
+  const refused = await patch(SETTINGS, { language: "en" });
+
+  expect(refused.status).toBe(409);
+  await expect(refused.json()).resolves.toMatchObject({ reason: "state-file-changed" });
+  await expect((await get(SETTINGS)).json()).resolves.toMatchObject({ language: "he" });
+});
+
+/**
+ * ADR-0013, "One stack covers the document, minus settings … folding them in would let undoing a
+ * Pick flip the UI language." Both halves asserted, because only one of them is obvious:
+ *
+ *   - a preference change adds **no** undo entry, so `canUndo` does not move;
+ *   - the undo that was already waiting still works **afterwards**, which is the half that would
+ *     break silently. The stack hears the revision every save wrote, a settings save included;
+ *     one it had not heard about would leave it believing the revision before, and the next undo
+ *     would read a file carrying a revision the stack never wrote and drop the whole history as
+ *     though something outside the app had edited it.
+ */
+it("adds no undo entry for a preference, and leaves the undo that was waiting usable", async () => {
+  await post("/api/workspace", {});
+  await post(PICKS, LECTURE);
+  await expect((await get("/api/history")).json()).resolves.toEqual({
+    canUndo: true,
+    canRedo: false,
+  });
+
+  const chosen = await choose({ language: "he" });
+  expect(chosen.status).toBe(200);
+
+  // the preference is not a step: still exactly the one Pick to undo, and nothing to redo
+  await expect((await get("/api/history")).json()).resolves.toEqual({
+    canUndo: true,
+    canRedo: false,
+  });
+
+  const undone = await step(UNDO);
+
+  expect(undone.status).toBe(200);
+  await expect(undone.json()).resolves.toMatchObject({ label: "pick-group" });
+  await expect((await get(TIMETABLE)).json()).resolves.toMatchObject({ picks: [] });
+  // and undoing the Pick did not take the language with it (ADR-0013's own example)
+  await expect((await get(SETTINGS)).json()).resolves.toMatchObject({ language: "he" });
+  await expect((await get("/api/history")).json()).resolves.toEqual({
+    canUndo: false,
+    canRedo: true,
+  });
+});
+
+/**
+ * The Warning `core` already produces, reaching the page instead of being dropped at the
+ * boundary. `core/src/state/file.ts` reads the settings one field at a time, so a corrupted Exam
+ * spacing costs that field and not the language beside it — and names the field it lost.
+ */
+it("carries the settings-unreadable Warning, naming the field it could not read", async () => {
+  await post("/api/workspace", {});
+  await writeFile(
+    join(root, "me.state.json"),
+    JSON.stringify({ schemaVersion: 1, settings: { language: "he", examSpacingDays: "three" } }),
+  );
+
+  const response = await get(SETTINGS);
+
+  expect(response.status).toBe(200);
+  await expect(response.json()).resolves.toMatchObject({
+    language: "he",
+    examSpacingDays: 3,
+    warnings: [{ kind: "settings-unreadable", field: "examSpacingDays" }],
+  });
+});
+
+it("refuses to write a preference into a folder that is not a Workspace yet", async () => {
+  const refused = await patch(SETTINGS, { language: "he" });
+
+  expect(refused.status).toBe(409);
+  await expect(refused.json()).resolves.toMatchObject({ reason: "workspace-not-ready" });
+  // and reading is still served, so a student who has not accepted the layout sees a language
+  await expect((await get(SETTINGS)).json()).resolves.toMatchObject({ language: "en" });
+});
+
+it("will not overwrite a State File it could not read for the sake of one preference", async () => {
+  await post("/api/workspace", {});
+  await writeFile(join(root, "me.state.json"), '{"hand":"edited badly"}');
+
+  const refused = await patch(SETTINGS, { language: "he" });
+
+  expect(refused.status).toBe(409);
+  await expect(refused.json()).resolves.toMatchObject({ reason: "state-file-unreadable" });
+  await expect(readFile(join(root, "me.state.json"), "utf8")).resolves.toBe(
+    '{"hand":"edited badly"}',
+  );
+});
+
+it("names every bad settings request as a 400, and never lets one become a 500", async () => {
+  await post("/api/workspace", {});
+
+  for (const body of [
+    { language: "fr" },
+    { language: 7 },
+    { examSpacingDays: "three" },
+    { basedOn: 7 },
+  ]) {
+    const response = await patch(SETTINGS, body);
+    expect(response.status, JSON.stringify(body)).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: "not-settings" });
+  }
+
+  const notJson = await api.request(SETTINGS, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...bearer },
+    body: "{",
+  });
+  expect(notJson.status).toBe(400);
+  await expect(notJson.json()).resolves.toEqual({ error: "body-not-json" });
+
+  // and nothing was written by any of them: there is still no State File to have a revision
+  expect(await settingsVersion()).toBeUndefined();
+});
+
+it("refuses a settings body carrying __proto__ before the schema ever sees it", async () => {
+  await post("/api/workspace", {});
+
+  const response = await patch(SETTINGS, JSON.parse('{"language":"he","__proto__":{"x":1}}'));
+
+  expect(response.status).toBe(400);
+  await expect(response.json()).resolves.toEqual({ error: "unsafe-keys" });
+});
+
+it("refuses the settings routes to a request with no launch token", async () => {
+  await post("/api/workspace", {});
+
+  expect((await api.request(SETTINGS)).status).toBe(401);
+  const wrote = await api.request(SETTINGS, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ language: "he" }),
+  });
+  expect(wrote.status).toBe(401);
+});
+
+it("caps the settings body as it caps every other write", async () => {
+  await post("/api/workspace", {});
+
+  const response = await patch(SETTINGS, { language: "he", pad: "x".repeat(20 * 1024 * 1024) });
+
+  expect(response.status).toBe(413);
+});
+
+/**
+ * Choosing what is already chosen answers with the revision the file still holds, so the page's
+ * next change is based on something. **This does not prove that nothing was written**, and the
+ * title does not claim it: the revision is a hash of the file's bytes, so an identical rewrite
+ * would leave it equal. That nothing was written is asserted where it can be —
+ * `app/src/settings.test.ts`, against a Workspace double that counts its writes.
+ */
+it("answers an unchanged choice with the revision the file still holds", async () => {
+  await post("/api/workspace", {});
+  await choose({ language: "he" });
+  const before = await settingsVersion();
+
+  const again = await choose({ language: "he" });
+
+  expect(again.status).toBe(200);
+  await expect(again.json()).resolves.toMatchObject({ language: "he", version: before });
+});
+
+/**
+ * The canary for `savedSettingsSchema`, which names the two fields rather than deriving them.
+ *
+ * A preference added to `core`'s `settingsSchema` and not to that schema would be a field the
+ * State File holds and no route can set — readable, unwritable, and silent. This is the line that
+ * says so. If it fails: add the field to `savedSettingsSchema` in `./api.ts`, unwrapping its
+ * default the way the two beside it do, and give it a test above.
+ */
+it("accepts every preference the State File schema holds, and no route-only extra", () => {
+  // The property the docstring promises, asserted rather than pinned: the body's fields are exactly
+  // the State File's, plus the revision every write carries. An earlier version of this test pinned
+  // `settingsSchema`'s keys instead, which caught a new preference but said nothing at all about the
+  // route — the second half of this title was asserted nowhere.
+  const body = Object.keys(savedSettingsSchema.shape).filter((field) => field !== "basedOn");
+
+  expect(body).toEqual(Object.keys(settingsSchema.shape));
 });

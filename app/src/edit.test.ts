@@ -7,6 +7,7 @@ import {
   type StateEdit,
   type StateEditing,
 } from "./edit.ts";
+import { choosing } from "./settings.ts";
 import { memoryWorkspace, type MemoryWorkspace } from "./workspace.memory.ts";
 import { WorkspaceRefusedError, type Workspace } from "./workspace.ts";
 
@@ -53,15 +54,15 @@ async function read(workspace: MemoryWorkspace): Promise<State> {
 }
 
 /**
- * The one kind of edit ADR-0013 keeps off the undo stack: setting a preference. Written here
- * rather than imported because there is no settings use case yet (#73 is not the ticket that
- * adds one) — what is under test is that the wrapper treats such an edit differently, and the
- * shape of the edit is `{ ...state, settings }` whoever eventually writes it.
+ * The one kind of edit ADR-0013 keeps off the undo stack: setting a preference.
+ *
+ * The real one, from `./settings.ts`, now that #115 has built it. It used to be written out
+ * here with a note that there was no settings use case to import — which left the wrapper's
+ * rule proved against a stand-in of this test's own shaping, and so proved nothing about the
+ * thing that would eventually write a preference. `./settings.test.ts` asserts the same rule
+ * from the use case's side; this asserts it of the wrapper, which is where the rule lives.
  */
-const speaking = (language: "en" | "he"): StateEditing => ({
-  label: "set-language",
-  apply: (state) => ({ ...state, settings: { ...state.settings, language } }),
-});
+const speaking = (language: "en" | "he"): StateEditing => choosing({ language });
 
 it("reads a State File that is not there as an empty one, based on no revision", async () => {
   const loaded = await readStateFile(ready(), ALICE);

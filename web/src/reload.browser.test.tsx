@@ -80,6 +80,11 @@ beforeEach(() => {
     }
     // answered before the fall-through, which counts Catalog asks: the header asks this one
     if (pathname === "/api/history") return json({ canUndo: false, canRedo: false });
+    // and `App` asks this one, for the language the State File holds (#115). English and the
+    // schema's default spacing, so this file's assertions are about the Catalog and nothing else.
+    if (pathname === "/api/settings") {
+      return json({ language: "en", examSpacingDays: 3, version: "v1", warnings: [] });
+    }
     if (pathname.startsWith("/api/timetable")) {
       // nothing is picked in this fixture: what is under test here is the Catalog
       return json({ variantName: "A", picks: [], clashes: [], warnings: [] });

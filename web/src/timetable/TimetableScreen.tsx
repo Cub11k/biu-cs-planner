@@ -22,6 +22,12 @@ import {
   type HistoryStep,
 } from "../history.ts";
 import { HistoryControls } from "../HistoryControls.tsx";
+import type {
+  SettingsNotice,
+  SettingsRefusal,
+  SettingsUnread,
+  SettingsWarning,
+} from "../settings.ts";
 import { SchemeControl } from "../SchemeControl.tsx";
 import { CoursePicker } from "./CoursePicker.tsx";
 import { WeekGrid } from "./WeekGrid.tsx";
@@ -89,6 +95,41 @@ const HISTORY_REFUSAL_STRING = {
   "workspace-refused": "historyUnreadable",
   "workspace-not-ready": "picksNotSaved",
 } as const satisfies Record<NonNullable<HistoryRefusal>, StringKey>;
+
+/**
+ * Why a change to a preference did nothing, in words the student can act on. Exhaustive against
+ * the contract, so a reason added to the settings route is a compile error here rather than a
+ * refusal the student never hears about.
+ *
+ * `state-file-changed` gets its own sentence rather than `picksStale`'s. That one is an account of
+ * a click on a Group and a student who used the language switch clicked no Group — and #111 is the
+ * ticket about showing a claim the page cannot make. `workspace-not-ready` shares `picksNotSaved`,
+ * as the history refusals do: "this folder is not a workspace yet, so nothing can be saved in it"
+ * is the whole truth for any of them.
+ */
+const SETTINGS_REFUSAL_STRING = {
+  "workspace-not-ready": "picksNotSaved",
+  "state-file-unreadable": "settingsFileUnreadable",
+  "state-file-changed": "settingsStale",
+  "workspace-refused": "settingsFileRefused",
+} as const satisfies Record<NonNullable<SettingsRefusal>, StringKey>;
+
+/**
+ * The name of a preference, for the `settings-unreadable` Warning to say which one it lost. A `Map`
+ * and not a record, because `field` is a `string` on the wire: `core` names whatever field of
+ * `settingsSchema` it could not read, and a newer server may name one this build has no word for.
+ */
+/**
+ * One `settings-unreadable` Warning, derived from the contract rather than written out: the shape
+ * was spelled by hand in three places, which compiled only because it happened to match `core`'s
+ * member — a renamed sibling field would not have been caught.
+ */
+type UnreadableSetting = Extract<SettingsWarning, { kind: "settings-unreadable" }>;
+
+const SETTING_NAME_STRING = new Map<string, StringKey>([
+  ["language", "settingLanguage"],
+  ["examSpacingDays", "settingExamSpacing"],
+]);
 
 /**
  * The name of an edit, from the label the API answers with. A `Map` and not a record, because
@@ -160,7 +201,42 @@ function useReloading<T>(
 
 export type TimetableScreenProps = {
   language: Language;
-  onLanguage: (language: Language) => void;
+  /**
+   * How the language switch is honoured, or `undefined` for *not now* — the settings have not been
+   * read, or a change is already in flight (`../settings.ts`). The switch is then disabled rather
+   * than a button that sends a change which cannot succeed.
+   */
+  onLanguage: ((language: Language) => void) | undefined;
+  /**
+   * What the last change to a preference did, when it did nothing. A preference lives in the State
+   * File, so changing one goes through the guarded save path and **can be refused** — and this is
+   * the only account the student gets of a switch they pressed that changed nothing (#115).
+   */
+  settingsNotice?: SettingsNotice | undefined;
+  /**
+   * The Warnings the settings were read with. `settings-unreadable` is the one that is shown:
+   * `core` has always raised it per field it could not read, and until #115 it was dropped at the
+   * boundary — so a preference back at its default looked exactly like one never set.
+   */
+  settingsWarnings?: readonly SettingsWarning[];
+  /**
+   * That the preferences could not be read, and which of the two things that means: `"never"` —
+   * the language on screen is the schema's default and the switch beside it is disabled; `"again"`
+   * — it is the last version this page read. Two sentences, because the first would be false in
+   * the second case (`../settings.ts`).
+   */
+  settingsUnread?: SettingsUnread | undefined;
+  /**
+   * Called when this screen has written the State File, so whatever else on the page is holding a
+   * revision can stop holding a spent one.
+   *
+   * There are two writers on one page now — a Pick here and a preference in the header — and each
+   * holds the revision it read. The Workspace poll reconciles them up to `DEFAULT_EVERY_MS` later,
+   * which is seconds in which the other writer's save is refused `state-file-changed` and the
+   * student is told their page was stale about something they caused themselves. This is the same
+   * remedy `askHistory` already is for the undo buttons, and it is called from beside it.
+   */
+  onEdited?: (() => void) | undefined;
   /** Taken as an argument so the screen can be opened on any date, and tested. */
   today?: Date;
   /**
@@ -184,6 +260,10 @@ export type TimetableScreenProps = {
 export function TimetableScreen({
   language,
   onLanguage,
+  settingsNotice,
+  settingsWarnings = [],
+  settingsUnread,
+  onEdited,
   today = new Date(),
   workspaceChanges = 0,
 }: TimetableScreenProps): React.JSX.Element {
@@ -363,11 +443,17 @@ export function TimetableScreen({
         // does not carry the two flags. The change count reports it a poll later, which is
         // seconds of a greyed-out button the student has already earned — so it is asked for
         // here, and the poll's own answer is then the same one.
-        if (answer.kind === "served") askHistory();
+        //
+        // `onEdited` is the same argument for the same reason: this write moved the file's
+        // revision, and the header's language switch is holding its own.
+        if (answer.kind === "served") {
+          askHistory();
+          onEdited?.();
+        }
         return answer;
       });
     },
-    [setTimetable, askHistory],
+    [setTimetable, askHistory, onEdited],
   );
 
   /**
@@ -411,6 +497,8 @@ export function TimetableScreen({
         (answer.reason === "state-file-changed" || answer.reason === "history-invalidated");
       if (answer.kind === "moved" || stale) {
         setRereads((count) => count + 1);
+        // an undo is a save (ADR-0013), so it moved the revision the header is holding too
+        if (answer.kind === "moved") onEdited?.();
         return;
       }
       // Nothing was written, so the revision on screen is still the file's and no answer is
@@ -554,10 +642,18 @@ export function TimetableScreen({
           Hebrew without a second rule (CLAUDE.md: direction-neutral classes only).
         */}
         <SchemeControl language={language} />
+        {/*
+          The language switch, which now writes the choice into the State File instead of holding
+          it in a `useState` that a reload threw away (#115, ADR-0014). `disabled` and not
+          `aria-disabled`, for `HistoryControls`' reason: a switch that cannot be honoured is not a
+          thing to tab to and be refused by.
+        */}
         <button
           type="button"
-          onClick={() => onLanguage(language === "en" ? "he" : "en")}
-          className="rounded-sm border border-rule bg-paper px-3 py-1 text-sm text-ink-soft"
+          data-language={language}
+          disabled={onLanguage === undefined}
+          onClick={() => onLanguage?.(language === "en" ? "he" : "en")}
+          className="rounded-sm border border-rule bg-paper px-3 py-1 text-sm text-ink-soft disabled:opacity-50"
         >
           {t(language, "otherLanguage")}
         </button>
@@ -614,6 +710,20 @@ export function TimetableScreen({
               {staleSave && <span>{t(language, "picksStale")}</span>}
               {/* what the last press of undo or redo did, or why it did nothing */}
               {stepNotice === undefined ? null : <span>{stepNotice}</span>}
+              {/* why the last change to a preference did nothing, and a preference that could
+                  not be read at all — both in the live region, because a language that did not
+                  change is exactly the kind of nothing a student cannot otherwise tell happened */}
+              {settingsSaid(language, settingsNotice) === undefined ? null : (
+                <span>{settingsSaid(language, settingsNotice)}</span>
+              )}
+              {settingsUnread === undefined ? null : (
+                <span>
+                  {t(language, settingsUnread === "never" ? "settingsUnread" : "settingsUnreread")}
+                </span>
+              )}
+              {unreadableSettings(settingsWarnings).map((warning) => (
+                <span key={warning.field ?? "all"}>{settingSaid(language, warning)}</span>
+              ))}
               {clashes.length > 0 && <span>{clashesSaid(language, clashes.length)}</span>}
             </span>
             <span className="ms-auto flex items-center gap-2 text-xs text-pencil">
@@ -702,6 +812,59 @@ function historyNotice(
     case "unreachable":
       return t(language, "apiUnreachable");
   }
+}
+
+/**
+ * What the screen says about the last change to a preference, and nothing when there has been
+ * none or it went through.
+ *
+ * There is no arm for a change that worked, deliberately: a language that changed flips the whole
+ * document, which is its own account, and a sentence saying so would be one more thing to read
+ * about something the student can already see.
+ */
+function settingsSaid(language: Language, notice: SettingsNotice | undefined): string | undefined {
+  if (notice === undefined) return undefined;
+
+  switch (notice.kind) {
+    case "refused":
+      // A refusal with no reason on it is an answer the contract has and this client cannot
+      // provoke — a 400 on a body it does not send. What is true of it is that nothing changed.
+      return notice.reason === undefined
+        ? t(language, "settingsNotDone")
+        : t(language, SETTINGS_REFUSAL_STRING[notice.reason]);
+    case "unauthorized":
+      return t(language, "catalogUnauthorized");
+    case "unreachable":
+      return t(language, "apiUnreachable");
+  }
+}
+
+/**
+ * The preferences that could not be read, out of every Warning the settings were read with.
+ *
+ * Only `settings-unreadable`, which is the one #115 is about. The other kinds a State File read
+ * can raise reach this screen in the same array and are still not shown — that is the boundary
+ * this ticket narrowed rather than closed, and each of them is about a part of the document this
+ * line is not showing.
+ */
+function unreadableSettings(warnings: readonly SettingsWarning[]): UnreadableSetting[] {
+  return warnings.filter(
+    (warning): warning is UnreadableSetting => warning.kind === "settings-unreadable",
+  );
+}
+
+/**
+ * One preference that could not be read, named when `core` named a field.
+ *
+ * A field this build has no word for falls back to the unnamed sentence rather than printing the
+ * key: `examSpacingDays` is not a word in either language, and a component that showed it would be
+ * inventing a string outside the translation files.
+ */
+function settingSaid(language: Language, warning: UnreadableSetting): string {
+  const name = warning.field === undefined ? undefined : SETTING_NAME_STRING.get(warning.field);
+  return name === undefined
+    ? t(language, "settingsUnreadable")
+    : t(language, "settingsUnreadableNamed", { setting: t(language, name) });
 }
 
 /** One Pick is not "1 groups picked", and Hebrew's singular is a different word again. */

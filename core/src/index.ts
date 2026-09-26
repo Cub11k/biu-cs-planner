@@ -69,6 +69,7 @@ export type { PickSlot, VariantRef } from "./state/picks.ts";
 export {
   CURRENT_STATE_SCHEMA_VERSION,
   groupPickSchema,
+  settingsSchema,
   stateSchema,
 } from "./state/schema.ts";
 export type {
