@@ -586,6 +586,17 @@ describe("the first paint, before any module has run", () => {
     // And nothing threw on the way — neither the stamp nor the module.
     expect(blocked.documentElement.dataset["stampError"]).toBeUndefined();
 
+    // `SchemeControl` reached the screen too, which is the other half of the same exposure:
+    // it calls `schemeStore()` twice itself, and those calls were unreachable only because
+    // `main.tsx` died first. The guard is in the shared seam, so one fix covers both, and
+    // this is what says so rather than a comment claiming it.
+    await vi.waitFor(() => {
+      const control = blocked.querySelector("select");
+      if (control === null) throw new Error("the scheme control never reached the screen");
+      // Its own options, so this is that control and not whichever `<select>` came first.
+      expect([...control.options].map((option) => option.value)).toEqual([...SCHEME_CHOICES]);
+    });
+
     // The control, so this cannot pass for a reason unrelated to the store: the same document
     // with a store that answers mounts too, and there the remembered choice is applied.
     const working = await entryDocument({ modules: true });
