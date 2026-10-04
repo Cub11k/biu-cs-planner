@@ -33,12 +33,16 @@ These hold regardless of what the table says:
   put both in one table and hope the overlapping file is one neither of them reaches.
 - **The table names `CONTEXT.md` and every `docs/adr/` file the run expects to be touched**, each
   one assigned to **at most one** agent. There is one `CONTEXT.md` and one `docs/adr/` for the whole
-  repo (`domain.md`, "Layout: single-context"), so two agents amending the record are two agents in
-  one file, which the top of this section already rules out. A table does not arrive at those files
-  on its own: an implementer reaches for the record *because* its own commit just made the record
-  false, and `CLAUDE.md` asks for exactly that — so the files most likely to be written outside a
-  lane are the ones a lane table never thinks to list. **When no agent can be given one, the brief
-  says so**, and the amendment is left to the orchestrator after the merge. On 2026-10-04 three of
+  repo (`domain.md`, "Layout: single-context"), so two agents amending one entry are two agents in
+  one file, which the top of this section already rules out — and two agents each adding "the next
+  free number" collide over the directory rather than over any line in it. A table does not arrive
+  at those files on its own: an implementer reaches for the record *because* its own commit just
+  made the record false, which for `CONTEXT.md` is what `CLAUDE.md` asks for in as many words
+  ("update it when a term changes") and for an ADR is the same reflex one document over. So the
+  files most likely to be written outside a lane are the ones a lane table never thinks to list.
+  **When no agent can be given one, the brief says so**, and the amendment is left to the
+  orchestrator after the merge — as its own ticket, worktree and pull request, because the main
+  checkout stays on `dev` and holds no feature work (`worktrees.md`). On 2026-10-04 three of
   the four agents edited `docs/adr/` with no row naming it, each edit correct and each one declared:
   PR #194 and PR #195 both amended `0014-where-a-preference-is-kept.md` — at its line 32 and its
   line 11, missing each other by luck of line numbers — and PR #197 amended
