@@ -1769,6 +1769,19 @@ it("names no path in a refusal when a Catalog cannot be read, on all four routes
   // the setup asserted rather than assumed: this is the refusal and not some other answer
   expect(JSON.parse(listedBody)).toMatchObject({ warnings: [{ kind: "workspace-refused" }] });
   namesNoPath(listedBody, "GET offerings");
+  // **and it still says something true.** The other half of #216: a path removed with nothing
+  // put in its place would leave a page unable to tell the student which file to go and look
+  // at. `reason` is the refusal's own sentence (`app/src/queries.ts`), and it names the Catalog
+  // by its Academic Year — a domain operation, which is what the API is allowed to expose.
+  expect(JSON.parse(listedBody)).toMatchObject({
+    warnings: [
+      {
+        kind: "workspace-refused",
+        reason:
+          "refusing the Catalog for the Academic Year 2027: it is there and cannot be read (EISDIR)",
+      },
+    ],
+  });
 
   const one = await get("/api/catalog/2027/offerings/89-110");
   expect(one.status).toBe(409);

@@ -1987,16 +1987,22 @@ it("names no path in any refusal it can make, over every operation of the port",
     // 4. `contained`'s two arms: the Catalog file points out of the Workspace, and the folder
     //    holding the Catalogs does. They used to be told apart by naming two different paths.
     {
-      const away = await folder();
-
+      // **A folder of its own out there, holding nothing.** The arm this provokes is the one
+      // reached when the target does **not** exist, so its folder is what gets checked — and the
+      // case below writes a `2027.json` into whatever it is pointed at. Sharing one folder let
+      // that file appear before these thunks ran, the target resolved after all, and both cases
+      // then provoked the *file* arm: measured, by a mutation that put the path back in this arm
+      // and failed nothing here.
+      const emptyAway = await folder();
       const linked = await folder();
       await mkdir(join(linked, "requirements"));
       await mkdir(join(linked, ".backups"));
-      await symlink(away, join(linked, "catalogs"), "dir");
+      await symlink(emptyAway, join(linked, "catalogs"), "dir");
       sweep("read through a folder pointing out", () =>
         fileSystemWorkspace(linked).read({ kind: "catalog", academicYear: 2027 }),
       );
 
+      const away = await folder();
       const path = await folder();
       const workspace = fileSystemWorkspace(path);
       await workspace.create();
