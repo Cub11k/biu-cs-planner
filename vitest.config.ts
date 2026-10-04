@@ -20,6 +20,15 @@ import { configDefaults, defineConfig } from "vitest/config";
  * the postinstall back, `--ignore-scripts` would stop it, so this stays the way it is
  * rather than becoming implicit again.) Without a browser, `npm run test:node` runs the
  * whole node project and passes.
+ *
+ * **Coverage is collected from both projects**, which is why `npm run coverage` names no
+ * project and therefore does need a browser. Measured on this tree, the node project alone
+ * reported `web/src/history.ts` at 68.51% of statements and 53.84% of functions, and
+ * `web/src/settings.ts` at 42.66% and 43.47%, while 18 browser tests exercised the first and
+ * the second is reached through a page. Both read 100% of functions once the browser project
+ * is counted, and the repository's never-entered functions drop from 38 to 12. A number that
+ * calls tested code untested is one a reader learns to discount, and then the measurement is
+ * worth nothing (issue #163).
  */
 export default defineConfig({
   test: {
