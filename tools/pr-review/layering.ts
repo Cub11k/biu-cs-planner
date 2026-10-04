@@ -33,8 +33,8 @@ import type { TestFile } from "../pr-report/tests.ts";
  *   either: a build tool reads `web/vite.config.ts` off disk, which is not an import and puts
  *   no edge in any graph.
  * - The dependency is a **test's**, and nothing a test imports can reach a student: `files` in
- *   the root `package.json` names `dist` and nothing else, and release.yml fails a pack that
- *   carries a `.test.` path.
+ *   the root `package.json` names `dist`, `README.md` and `LICENSE` and nothing else, and
+ *   release.yml fails a pack that carries a `.test.` path.
  * - Declaring it would not have covered the use that needs covering. `tools/` is no workspace
  *   and has no `package.json` of its own, so the packaging test could be declared nowhere but
  *   the root — and the honest statement is about a *kind of file*, not about one package list.

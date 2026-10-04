@@ -246,10 +246,10 @@ describe("this repository", () => {
     // A budget rather than the default five seconds, because this reads and parses every
     // source file in the repository and pays for the TypeScript compiler's first load. Under
     // `npm run coverage`, which instruments all of that, it was measured at 4157ms on a CI
-    // runner (#223's report job) and 4819ms here — passing on 3% of its budget, and only while
-    // no other worker was busy. #211 added a test file that runs a real Vite build and an
-    // `npm pack`, and this one went over. The assertions above are unchanged; what was wrong
-    // was a default timeout standing in for a measurement nobody had taken.
+    // runner (#223's report job) and 4819ms here — passing with 3% of the budget to spare, and
+    // only while no other worker was busy. #211 added a test file that runs a real Vite build
+    // and an `npm pack`, and this one went over. The assertions above are unchanged; what was
+    // wrong was a default timeout standing in for a measurement nobody had taken.
   }, 30_000);
 
   it("over-reports inside the walk's own module, which is the direction it errs in", () => {
@@ -262,7 +262,11 @@ describe("this repository", () => {
 
     expect(found.length).toBeGreaterThan(1);
     expect(found.every((f) => f.path === FOLLOWER_HOME)).toBe(true);
-  });
+    // The same whole-tree walk, and so the same budget and the same reason as above. Given
+    // one now rather than when it becomes the next to time out: it is cheaper than its
+    // neighbour only because that one paid the compiler's first load, which is an ordering
+    // this file does not control.
+  }, 30_000);
 
   it("reads the whole tree and not a list of files", () => {
     // What makes the assertion above worth anything. Derived from the walk rather than listed
@@ -275,7 +279,8 @@ describe("this repository", () => {
       expect(paths.some((p) => p.startsWith(dir))).toBe(true);
     }
     expect(paths.some((p) => p.includes("node_modules"))).toBe(false);
-  });
+    // Whole tree, same budget, same reason.
+  }, 30_000);
 
   it("finds a second follower written into the tree beside the first", () => {
     // The mutation as a test: a real file, written to a real root that holds the real walk,

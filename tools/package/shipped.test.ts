@@ -24,9 +24,15 @@ const WEB = join(ROOT, "web");
  * and `web/src/scheme.browser.test.tsx` loads with `?raw`. `server/src/ui.test.ts` builds
  * that input and asserts on the **output** `serveBuiltUi` hands a browser (#169, #194). What
  * an install serves is neither: it is `dist/ui/index.html`, which `builtUiRoot()` points at
- * and which this folder's copy step puts there. Until now that file was tested only for
- * existing — release.yml lists the tarball's paths and opens none of them — and a copy step
- * is exactly where a file arrives truncated, stale, or not at all.
+ * and which this folder's copy step puts there.
+ *
+ * **What already looked at it, and how far that went.** release.yml installs the tarball,
+ * starts the binary and greps the served page for `id="root"`; it also lists every path in
+ * the tarball and rejects a `.test.` or a `.ts` among them. So the file was not quite
+ * untested — but one `grep` for one attribute is all of it, nothing reads the file itself,
+ * and it runs only on a packaging pull request or a tag. A copy step is exactly where a file
+ * arrives truncated, stale, or not at all, and `id="root"` is in the first 40 bytes of the
+ * body: a document cut off after `<head>` still fails, a document cut off after it does not.
  *
  * **It packs rather than reading `dist/ui` off the tree**, for the reason #194 gave for
  * building rather than reading `web/dist`: a tree's `dist/` may be absent, in which case a
@@ -86,6 +92,13 @@ describe("the document the package ships", () => {
     // The real copy step, not a re-implementation of it.
     await stagePackage({ root: stage, builtUi: build });
 
+    // A decoy outside `dist`, so that "nothing but the package" below is a claim which can
+    // fail. Without it the staging root holds only `package.json` and `dist/`, and there is
+    // nothing available to stray — the assertion would pass whatever `files` said. This is
+    // the small version of release.yml's stowaway grep, which makes the same claim over the
+    // real tree and is still the one that matters.
+    await writeFile(join(stage, "not-the-package.ts"), "export const stowaway = 1;\n");
+
     const { stdout } = await run(npm(), ["pack", "--ignore-scripts", "--json"], { cwd: stage });
     packed = unpack(await readFile(join(stage, tarballFrom(stdout))));
   }, 180_000);
@@ -127,23 +140,31 @@ describe("the document the package ships", () => {
     expect(packedEntry()).toContain("setAttribute(");
   });
 
-  it("ships the assets that document names, not only the document", () => {
+  it("ships every asset that document names, not only the document", () => {
     // A copy step that copied one file would pass every assertion above and leave a student
-    // with a page that loads nothing. The `src` is a hashed asset rather than `/src/main.tsx`,
-    // which is also what says these bytes came out of a build.
-    const sources = [...packedEntry().matchAll(/<script[^>]*\ssrc="([^"]*)"/g)].map(
-      (found) => found[1] ?? "",
-    );
+    // with a page that loads nothing. Every `/assets/` reference rather than the module
+    // script alone: the build emits a stylesheet `<link>` as well, and the palette that
+    // `data-theme` selects is in it, so a page that found its script and not its stylesheet
+    // would be the scheme bug #146 fixed, wearing a different hat.
+    const referenced = [
+      ...packedEntry().matchAll(/(?:src|href)="(\/assets\/[^"]*)"/g),
+    ].map((found) => found[1] ?? "");
 
-    expect(sources).toHaveLength(1);
-    const src = sources[0] ?? "";
-    expect(src.startsWith("/assets/")).toBe(true);
-    expect([...packed.keys()]).toContain(shipped("assets", src.slice("/assets/".length)));
+    expect(referenced.length).toBeGreaterThan(0);
+    for (const asset of referenced) {
+      expect([...packed.keys()]).toContain(shipped("assets", asset.slice("/assets/".length)));
+    }
+
+    // Hashed names, and no `/src/main.tsx` anywhere: that is what says these bytes came out
+    // of a build rather than being the source document copied by mistake.
+    expect(referenced.some((asset) => asset.endsWith(".js"))).toBe(true);
+    expect(packedEntry()).not.toContain("/src/main.tsx");
   });
 
-  it("holds the package and nothing else of the root it was packed from", () => {
-    // `files` is an allowlist, and this says it still is one: everything in the tarball came
-    // out of `dist`, bar the manifest npm always includes.
+  it("leaves the decoy beside it out, because files is still an allowlist", () => {
+    // `not-the-package.ts` is in the root this was packed from and must not be in the
+    // tarball. `files` naming `dist`, `README.md` and `LICENSE` is what keeps it out, and a
+    // `files` that had stopped being an allowlist is what would let it in.
     const strays = [...packed.keys()].filter(
       (path) => !path.startsWith("package/dist/") && path !== "package/package.json",
     );
@@ -182,6 +203,12 @@ function stampLiterals(html: string): string[] {
  * rather than shelled out to: `tar` is a different program on every platform, and a test that
  * opens the package should not depend on which one is installed. Only regular files are kept,
  * which is all npm puts in a package tarball.
+ *
+ * **ustar only**, which is as far as this needs to go: a name is the `name` field, or the
+ * `prefix` field joined to it, which together carry about 255 characters — and the paths in
+ * question are `package/dist/ui/assets/index-<8 chars>.js`. A PAX or GNU long-name extension
+ * header would be skipped here as a non-regular entry; nothing npm packs for this package
+ * produces one.
  */
 function unpack(tarball: Buffer): Map<string, Buffer> {
   const tar = gunzipSync(tarball);
@@ -194,6 +221,9 @@ function unpack(tarball: Buffer): Map<string, Buffer> {
     if (name === "") break;
     const prefix = field(header.subarray(345, 500));
     const size = Number.parseInt(field(header.subarray(124, 136)).trim(), 8);
+    // Said out loud rather than ending the walk: `NaN` makes the loop condition false, so a
+    // corrupt archive would otherwise read as a short one and fail as a missing file.
+    if (!Number.isFinite(size)) throw new Error(`unreadable size on ${name} in the tarball`);
     const kind = field(header.subarray(156, 157));
 
     at += 512;
