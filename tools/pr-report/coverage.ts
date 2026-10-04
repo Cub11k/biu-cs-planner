@@ -82,13 +82,14 @@ export function readCoverage(summaryPath: string, root: string): Coverage {
  * What a real test run collected, per test file — vitest's json reporter, read the way the
  * coverage summary is.
  *
- * **It answers for one run, not for the suite.** `npm run report` builds the report after
- * `npm run coverage`, and that script runs `--project node` and asks vitest's json reporter for
- * this file alongside the coverage ones: the browser project is not in it. So the number here is smaller than what `npm test` runs, by exactly the browser
- * project, and a reader who took it for the whole suite would be misled in the other
- * direction from the defect it was added to catch (#140). The map is per file for that reason:
- * `render` compares file by file and names the files this run did not touch, so the scope is
- * visible rather than asserted.
+ * **It answers for one run.** `npm run report` builds the report after `npm run coverage`, and
+ * that script names no project, so the run it describes is the whole suite — both projects, the
+ * same run that wrote the coverage summary beside it. It was not always: until #163 the script
+ * ran `--project node` and this count was smaller than what `npm test` runs by exactly the
+ * browser project, which is the direction of error the cross-check was added to catch (#140).
+ * The map stays per file regardless: `render` compares file by file and names the files the run
+ * did not touch, so the scope is visible rather than asserted, and that is what would make a
+ * future narrowing of the run obvious instead of silent.
  *
  * `available` is false where no run left the file, and the report then says the source's count
  * is unchecked rather than implying a run agreed with it.

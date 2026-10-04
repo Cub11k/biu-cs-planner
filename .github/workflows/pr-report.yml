@@ -3,6 +3,10 @@
 # The report is derived: module graph and call graph from the source, coverage and
 # per-function hit counts from a real test run. Running it also runs the tests, so a
 # red job means the change does not pass, not that the report failed to build.
+#
+# That run is the whole suite since #163, both projects, so this job needs a Chromium and a
+# Hebrew font the way the browser job in ci.yml does. The alternative was a coverage number
+# measured on the node project alone, which called browser-tested code untested.
 name: PR report
 
 on:
@@ -42,6 +46,34 @@ jobs:
 
       - name: Typecheck
         run: npm run typecheck
+
+      # Chromium carries no fonts of its own, so a bare runner draws Hebrew as boxes and
+      # every geometry assertion passes against boxes, because boxes have widths. Same
+      # reasoning, and the same two commands, as the browser job in ci.yml.
+      - name: Install a Hebrew font, and the libraries Chromium needs
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fonts-noto-core
+          fc-cache -f
+          npx playwright install-deps chromium
+
+      # The exact version, not the lockfile's hash: the browser is ~300MB of the same bytes
+      # every run, and it only changes when Playwright does.
+      - name: Read the Playwright version
+        id: playwright
+        run: echo "version=$(node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the browser download
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+
+      # A no-op when the cache hit. Explicit because `playwright` ships no install script, and
+      # because the `--ignore-scripts` above would stop one if a future version brought it back.
+      - name: Download Chromium
+        run: npm run install:browsers
 
       # Writes pr-report.md, and appends the same markdown to the job summary.
       - name: Build the report

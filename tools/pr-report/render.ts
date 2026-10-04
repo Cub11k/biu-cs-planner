@@ -506,20 +506,32 @@ export function render(report: Report): string {
         (coverage.available
           ? "the one that produced the coverage below"
           : "the one beside this report") +
-        `, and that run is **not the whole suite**. It ran ${checked.ran.files} of the ` +
-        `${tests.length} files here and collected ${nTests(checked.ran.tests)} in them` +
-        (checked.disagree.length
-          ? `, and it does not agree with the source about all of them.`
-          : `, agreeing with the source on every one.`) +
+        // Whether the run reached every file this report lists is the one thing this
+        // paragraph must get right, and it is read off `unrun` rather than assumed either
+        // way. It was asserted before #163: the sentence said "not the whole suite"
+        // unconditionally, which was true while `npm run coverage` ran `--project node` and
+        // became a flat contradiction the moment the script stopped doing that — the same
+        // paragraph then read "not the whole suite. It ran 69 of the 69 files here".
         (checked.unrun.files
-          ? ` The other ${checked.unrun.files} ` +
+          ? `, and that run is **not the whole suite**. It ran ${checked.ran.files} of the ` +
+            `${tests.length} files here and collected ${nTests(checked.ran.tests)} in them` +
+            (checked.disagree.length
+              ? `, and it does not agree with the source about all of them.`
+              : `, agreeing with the source on every one.`) +
+            ` The other ${checked.unrun.files} ` +
             `${checked.unrun.files === 1 ? "file was" : "files were"} not in it: ` +
             `${nTests(checked.unrun.tests)} that only the source counts, marked where they are ` +
-            `listed below.`
-          : "") +
-        ` The two numbers answer different questions and neither is the other — ` +
-        `${countOf(totals)} is what the source accounts for across every file, ` +
-        `${checked.ran.tests} is what that one run collected.`,
+            `listed below.` +
+            ` The two numbers answer different questions and neither is the other — ` +
+            `${countOf(totals)} is what the source accounts for across every file, ` +
+            `${checked.ran.tests} is what that one run collected.`
+          : `, and it ran **every one of the ${tests.length} files** this report lists, ` +
+            `collecting ${nTests(checked.ran.tests)} in them` +
+            (checked.disagree.length
+              ? `, and it does not agree with the source about all of them.`
+              : `, agreeing with the source on every one. That is the strongest form this ` +
+                `check takes: every file the source was parsed for was also executed, so the ` +
+                `count above is not a parser's reading that nothing tried.`)),
     );
     out.push("");
   }

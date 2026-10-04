@@ -13,8 +13,12 @@ import { render } from "./render.ts";
  * It needs `npm run coverage` first, which leaves both the coverage summary and the run's own
  * count of the tests it collected. Without them the report says so rather than guessing — the
  * coverage section that it has no numbers, and the summary that nothing checks its test count.
- * A bare `npx vitest run --coverage` leaves the first and not the second. The reading of the
- * source lives in `collect.ts`, because the PR review checks the same graphs for cycles.
+ * A bare `npx vitest run --coverage` leaves the first and not the second.
+ *
+ * That script runs both projects since #163, so building the report needs a Chromium on the
+ * machine: `npm run install:browsers`, which is already how a clean slate is set up
+ * (`CLAUDE.md`). `npm run test:node` still needs nothing. The reading of the source lives in
+ * `collect.ts`, because the PR review checks the same graphs for cycles.
  */
 const ROOT = resolve(import.meta.dirname, "../..");
 

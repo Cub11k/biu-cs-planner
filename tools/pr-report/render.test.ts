@@ -861,10 +861,13 @@ describe("the number a reviewer reads as tests", () => {
   });
 
   it("says which run it checked against, and that the run is not the whole suite", () => {
-    // The trap this ticket sets: the run behind the report is the coverage run, which is the
-    // node project alone, so its total is smaller than the suite's by the browser project.
-    // Printed beside a whole-tree total with nothing saying which was which, it would be a
-    // second misleading number in place of the first.
+    // The trap: a run smaller than the suite, printed beside a whole-tree total with nothing
+    // saying which was which, would be a second misleading number in place of the first.
+    //
+    // `npm run coverage` runs both projects since #163, so this is no longer what that script
+    // produces. It is still what a report built any other way produces — `vitest run --project
+    // node --coverage` by hand, or a run that failed partway — and the sentence has to be right
+    // for those too, which is why this case keeps its test.
     const markdown = render(
       report({
         tests: [
@@ -883,6 +886,31 @@ describe("the number a reviewer reads as tests", () => {
     expect(markdown).toContain("that run is **not the whole suite**");
     expect(markdown).toContain("1 file was not in it: 1 test that only the source counts");
     expect(markdown).toContain("5 is what the source accounts for across every file, 4 is what that one run collected");
+  });
+
+  it("says the run covered every file it lists, where it did, rather than denying it", () => {
+    // The paragraph used to say "not the whole suite" unconditionally. That was true while
+    // `npm run coverage` ran the node project alone and became a contradiction the moment
+    // #163 stopped it doing that: the same sentence read "not the whole suite. It ran 69 of
+    // the 69 files here". A report that contradicts itself in its own second paragraph is
+    // not read further, so the claim is derived from `unrun` rather than asserted.
+    const markdown = render(
+      report({
+        tests: [
+          file("core/src/a.test.ts", parameterised("handles %s", 4)),
+          file("web/src/b.browser.test.tsx", entry("draws the week")),
+        ],
+        run: ran({ "core/src/a.test.ts": 4, "web/src/b.browser.test.tsx": 1 }),
+      }),
+    );
+
+    expect(markdown).toContain("it ran **every one of the 2 files** this report lists");
+    expect(markdown).toContain("agreeing with the source on every one");
+    expect(markdown).not.toContain("not the whole suite");
+    // No "the other N files were not in it" clause, and no two-numbers sentence: both exist to
+    // explain a gap, and inventing a gap to explain is how the contradiction above happened.
+    expect(markdown).not.toContain("that only the source counts");
+    expect(markdown).not.toContain("neither is the other");
   });
 
   it("marks the file the run did not run, where that file is listed", () => {
