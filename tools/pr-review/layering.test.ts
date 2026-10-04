@@ -733,7 +733,9 @@ describe("this repository", () => {
     const modules = readSources(ROOT)
       .filter((source) => source.path.startsWith("tools/") && !/\.test\.tsx?$/.test(source.path))
       .map((source) => readModule(join(ROOT, source.path), ROOT));
-    const tests = derived.tests.filter((test) => test.path.startsWith("tools/"));
+    // `file`, not `test`: `tools/pr-report/tests.ts` reads `test.path.startsWith("tools/")` as
+    // a test titled "tools/", and the report's own cross-check flagged this file for it.
+    const tests = derived.tests.filter((file) => file.path.startsWith("tools/"));
 
     // That both lists hold something is what makes the empty answer below mean anything.
     expect(modules.length).toBeGreaterThan(10);
