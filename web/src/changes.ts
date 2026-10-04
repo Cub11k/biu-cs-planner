@@ -37,6 +37,9 @@ export type WorkspacePollOptions = {
   repeat?: Repeat;
 };
 
+/** The guard answers before the route does, so its status is not one of the route's. */
+const UNAUTHORIZED = 401;
+
 /**
  * One ask. Reports a change only when the count differs from one it has already seen: the
  * first answer is the baseline, so a page that loads against a Workspace which has changed
@@ -45,6 +48,25 @@ export type WorkspacePollOptions = {
  * A count, never a value with meaning: the server restarts it at 0, so only the movement
  * says anything. An unanswered ask changes nothing and leaves the baseline alone — the
  * server being briefly away is not a change to the folder.
+ *
+ * **A refused ask is the one exception, and it is #126's whole remedy.** A poll that fails is
+ * not news about the Workspace, which is why every other failure here is silent; a poll that
+ * fails *with a 401* is news about **the page**, and it is the only signal there is without a
+ * click. `biu-cs-planner rotate-token` replaces the launch token (ADR-0004), so a tab that
+ * was open and authenticated when the app was restarted holds a retired one — and before this
+ * it discarded every refused poll, kept showing what it had last read, and looked healthy
+ * until a reload or the next click.
+ *
+ * So a refusal is reported, and the reporting is deliberately a **transition** and not an
+ * answer: once per entry into refused, and once more when an ask is answered again. Reporting
+ * every refused ask would re-read the whole page twice a second for as long as the token
+ * stayed retired, and reporting none of the recoveries would leave a tab that *has* picked up
+ * the fresh token (the same origin's store, so opening the new address in the same browser is
+ * enough) still showing the sentence until something else re-rendered it.
+ *
+ * What it reports is still only "ask again". The sentence the student reads comes from the
+ * screens' own reads, each of which says what it is about the pane it owns — one source for
+ * it, rather than this module growing an opinion about the Picks.
  */
 export function workspaceChangePoll(
   client: ApiClient,
@@ -52,18 +74,35 @@ export function workspaceChangePoll(
 ): () => Promise<void> {
   let seen: number | undefined;
   let asking = false;
+  /** That the last answered ask was refused, so the next thing either way is worth reporting. */
+  let refused = false;
 
   return async (): Promise<void> => {
     if (asking) return; // a slow answer must not queue a second ask behind it
     asking = true;
     try {
       const answer = await client.api.workspace.changes.$get();
+      // widened deliberately: the launch token guard rejects the ask before the route runs, so
+      // 401 is not among the answers the contract knows about
+      const status: number = answer.status;
+      if (status === UNAUTHORIZED) {
+        if (refused) return;
+        refused = true;
+        onChanged();
+        return;
+      }
+      // Any other refusal keeps the old silence, and leaves `refused` alone: a 500 from the
+      // route says nothing about this page's token, and nothing here can act on it.
       if (!answer.ok) return;
 
       const { changeCount } = await answer.json();
       const moved = seen !== undefined && changeCount !== seen;
+      // This page can be heard again, which is news about the page in the same way the refusal
+      // was: the screens are still showing whatever they could last read.
+      const heard = refused;
+      refused = false;
       seen = changeCount;
-      if (moved) onChanged();
+      if (moved || heard) onChanged();
     } catch {
       // the server is not answering: the next ask tries again, and the page shows what it
       // has rather than an error for something the student did not do

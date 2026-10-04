@@ -212,8 +212,25 @@ const english = {
   catalogEmpty: "No course matches",
   catalogMissing: "No catalog for {year} yet. Import a crawl of Shoham to fill it.",
   catalogUnreadable: "The catalog for {year} is there, but could not be read:",
+  /**
+   * The two ways the server will not talk to this page, which are **two** states and not one
+   * (#126). The remedy is the same — a fresh address from the terminal — and the cause is not:
+   * `catalogUnauthorized` is true of a page that was opened without a launch token, and was
+   * shown for a page holding one as well, where it is false. A tab that was authenticated when
+   * `biu-cs-planner rotate-token` ran holds a retired token, and a student who reads carefully
+   * would go looking for a token they can see is present.
+   *
+   * Neither sentence claims the token *was* rotated: the server refuses a wrong token and a
+   * missing one identically, so what is known is that this page sent one and it was refused.
+   * Neither names `rotate-token` either — a student who did not run it would be reading about a
+   * command that had nothing to do with what happened to them, and the remedy is the same for
+   * all of the ways a token stops being accepted.
+   */
   catalogUnauthorized:
     "This page has no launch token. Start the app from a terminal and open the address it prints.",
+  tokenRetired:
+    "This page's launch token was refused, so it is no longer the one the app accepts. " +
+    "Start the app from a terminal and open the address it prints.",
 
   /**
    * The app answered and this page could not read the answer (#171). Two sentences for one
@@ -379,6 +396,9 @@ const hebrew: Record<StringKey, string> = {
   catalogUnreadable: "הקטלוג לשנת {year} קיים, אך לא ניתן לקרוא אותו:",
   catalogUnauthorized:
     "לדף הזה אין אסימון הפעלה. הפעילו את היישום מהמסוף ופתחו את הכתובת שהוא מדפיס.",
+  tokenRetired:
+    "אסימון ההפעלה של הדף הזה נדחה, ולכן הוא אינו האסימון שהיישום מקבל. " +
+    "הפעילו את היישום מהמסוף ופתחו את הכתובת שהוא מדפיס.",
 
   catalogAnswerUnreadable:
     "היישום החזיר תשובה שהדף הזה אינו יודע לקרוא, ולכן הקטלוג אינו מוצג. " +

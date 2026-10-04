@@ -77,3 +77,24 @@ export const api = createApiClient(() => tokens().current());
  * Re-exported here so a component never has to know where the token comes from.
  */
 export const claimToken = (): string | undefined => tokens().claim();
+
+/**
+ * Whether this page is holding a launch token at all.
+ *
+ * **A retired token and no token are different states** and the page could not tell them
+ * apart: every request 401s either way, and the one sentence it had said "this page has no
+ * launch token" — which is false for a tab that was authenticated when
+ * `biu-cs-planner rotate-token` ran, and sends a student looking for a token they can see is
+ * present (#126).
+ *
+ * The 401 cannot carry the difference: the server refuses a wrong token and a missing one
+ * identically and must, because saying which would tell a caller whether it had guessed a
+ * real token. So it is answered here, from the page's own side, and it is read from the same
+ * store every request reads its token from rather than from anything remembered at load — a
+ * tab on the same port picks up a fresh token as soon as the new address is opened in that
+ * browser (ADR-0004), and a snapshot taken at load would go on claiming the old state.
+ *
+ * Whether the request that was refused carried *this* token is deliberately not claimed: the
+ * sentence it chooses says the token was refused, not which one.
+ */
+export const hasLaunchToken = (): boolean => tokens().current() !== undefined;
