@@ -1,6 +1,5 @@
 import {
   checkExams,
-  DEFAULT_VARIANT_NAME,
   variantAt,
   type ExamCheck,
   type ExamSource,
@@ -8,7 +7,7 @@ import {
   type StateFileWarning,
 } from "@biu-cs-planner/core";
 import { readStateFile, type EditRefusal } from "./edit.ts";
-import { DEFAULT_STATE_FILE, type TimetableRef } from "./picks.ts";
+import { DEFAULT_STATE_FILE, variantRefFor, type TimetableRef } from "./picks.ts";
 import { listOfferings, type QueryWarning } from "./queries.ts";
 import type { Workspace } from "./workspace.ts";
 
@@ -36,6 +35,13 @@ import type { Workspace } from "./workspace.ts";
 export type ExamsResult =
   | {
       kind: "served";
+      /**
+       * The Variant these Exams are the Picks of, named as `TimetableView` names it and for the
+       * same reason: a page drawing the rail beside the week has to be able to see that the two
+       * are about one Variant. The Variant does not exist in the file until its first Pick, so
+       * this is the name asked about rather than a name read back out of it.
+       */
+      variantName: string;
       exams: ExamCheck;
       /**
        * The threshold the check above was given, which is the student's stored `examSpacingDays`.
@@ -63,22 +69,37 @@ export type ExamsResult =
 const pickedCourses = (courseNumbers: readonly string[]): string[] => [...new Set(courseNumbers)];
 
 /**
- * What the exam check is asked about: one entry per picked Course, carrying that Course's
- * sittings out of the Catalog.
+ * What the exam check is asked about: **every** Offering the Catalog holds for a picked Course,
+ * plus one unknown entry per picked Course it holds none for.
+ *
+ * Every Offering and not one per course number. A Catalog keys an Offering by its Course *and its
+ * Semesters* (`offeringKey`, `core/src/shoham/changes.ts`), so one Academic Year can hold two for
+ * the same Course — a Fall one and a Year-long one — and both answer to a Fall query
+ * (`./queries.ts` filters on `semesters.includes`). Keeping one per course number would drop the
+ * other's sittings silently, and `checkExams` is written for exactly this case: "Two Offerings of
+ * one Course whose Exams genuinely differ both survive, because the whole sitting is the key and
+ * not the course number." It drops an identical sitting arriving twice itself, and counts Courses
+ * rather than entries, so handing it both costs nothing while losing one would cost an Exam.
  *
  * A Course the Catalog cannot answer for is handed in with `known: false` rather than left out,
  * and that one rule covers every way of not knowing: no Catalog imported for the year, a Catalog
- * the Workspace refused, a Course that is not in it, and an Offering whose Exams nobody has
- * published. Left out, those Courses would simply be missing from a rail that implied it was
- * complete; handed in this way they are what `coursesWithUnknownExams` counts, which is the
- * number the screen uses to admit the picture is partial.
+ * the Workspace refused, and a Course that is not in the Catalog there is. An Offering nobody has
+ * published Exams for needs nothing here — it already says so itself. Left out, those Courses
+ * would simply be missing from a rail that implied it was complete; handed in this way they are
+ * what `coursesWithUnknownExams` counts, which is the number the screen uses to admit the picture
+ * is partial.
  */
 function sourcesFor(courseNumbers: readonly string[], offerings: readonly ExamSource[]): ExamSource[] {
-  const known = new Map(offerings.map((offering) => [offering.courseNumber, offering]));
-  return pickedCourses(courseNumbers).map(
-    (courseNumber) =>
-      known.get(courseNumber) ?? { courseNumber, exams: { known: false, sittings: [] } },
-  );
+  const picked = new Set(pickedCourses(courseNumbers));
+  const answered = offerings.filter((offering) => picked.has(offering.courseNumber));
+  const covered = new Set(answered.map((offering) => offering.courseNumber));
+
+  return [
+    ...answered,
+    ...[...picked]
+      .filter((courseNumber) => !covered.has(courseNumber))
+      .map((courseNumber) => ({ courseNumber, exams: { known: false, sittings: [] } })),
+  ];
 }
 
 /**
@@ -93,6 +114,15 @@ function sourcesFor(courseNumbers: readonly string[], offerings: readonly ExamSo
  * Refused only for the State File, as `readTimetable` is: the Picks and the threshold are in it,
  * so without it there is no question to answer. A Catalog that cannot be served is not a refusal —
  * it is an exam period nobody has published yet, which is a Warning and a partial rail.
+ *
+ * **One limit this cannot honour, and it is the data model rather than this function.** The
+ * Semester filters *Offerings* and cannot filter *sittings*: a Catalog `Exam` is `{ moed, date,
+ * time }` with no Semester on it (`core/src/catalog/schema.ts`), so a Year-long Offering picked in
+ * Fall hands over all of its sittings and a Fall rail can carry a Spring date. Narrowing it would
+ * mean either guessing a Semester from a date — a date-to-Semester calendar this project does not
+ * have — or the Shoham Importer recording which Semester a sitting belongs to, which is a change
+ * to the Catalog. Said here rather than papered over, because a reader of the rail would otherwise
+ * take the breadth for a bug in it.
  */
 export async function readExams(workspace: Workspace, at: TimetableRef): Promise<ExamsResult> {
   const loaded = await readStateFile(workspace, at.stateFile ?? DEFAULT_STATE_FILE);
@@ -100,11 +130,10 @@ export async function readExams(workspace: Workspace, at: TimetableRef): Promise
     return { kind: "refused", reason: loaded.refused, warnings: loaded.warnings };
   }
 
-  const variant = variantAt(loaded.state, {
-    academicYear: at.academicYear,
-    semester: at.semester,
-    variant: at.variant ?? DEFAULT_VARIANT_NAME,
-  });
+  // The same Variant the week is read from, through the same function, so the rail and the grid
+  // beside it cannot come to be about two different Variants (`./picks.ts`).
+  const where = variantRefFor(at);
+  const variant = variantAt(loaded.state, where);
   const courseNumbers = (variant?.picks ?? []).map((pick) => pick.courseNumber);
 
   const catalog = await listOfferings(workspace, {
@@ -115,6 +144,7 @@ export async function readExams(workspace: Workspace, at: TimetableRef): Promise
   const spacingDays = loaded.state.settings.examSpacingDays;
   return {
     kind: "served",
+    variantName: where.variant,
     exams: checkExams(sourcesFor(courseNumbers, catalog.offerings ?? []), { spacingDays }),
     spacingDays,
     version: loaded.version,

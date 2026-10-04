@@ -74,7 +74,14 @@ export type PickOptions = {
   history?: EditHistory;
 };
 
-const where = (at: TimetableRef): VariantRef => ({
+/**
+ * Which Variant a `TimetableRef` names, with the default filled in.
+ *
+ * Exported because `./exams.ts` answers about the same Variant this one does, and a second copy
+ * of the fallback would let the exam rail quietly be about a different Variant than the week
+ * beside it the day the default changes.
+ */
+export const variantRefFor = (at: TimetableRef): VariantRef => ({
   academicYear: at.academicYear,
   semester: at.semester,
   variant: at.variant ?? DEFAULT_VARIANT_NAME,
@@ -98,7 +105,7 @@ export async function readTimetable(
 
   return {
     kind: "served",
-    view: view(loaded.state, where(at)),
+    view: view(loaded.state, variantRefFor(at)),
     version: loaded.version,
     warnings: loaded.warnings,
   };
@@ -123,7 +130,7 @@ async function edit(
 
   return {
     kind: "served",
-    view: view(outcome.state, where(at)),
+    view: view(outcome.state, variantRefFor(at)),
     version: outcome.version,
     warnings: outcome.warnings,
   };
@@ -142,7 +149,7 @@ export async function pickGroup(
   return edit(
     workspace,
     at,
-    { label: "pick-group", apply: (state) => recordPick(state, where(at), pick) },
+    { label: "pick-group", apply: (state) => recordPick(state, variantRefFor(at), pick) },
     options,
   );
 }
@@ -157,7 +164,7 @@ export async function removeGroupPick(
   return edit(
     workspace,
     at,
-    { label: "remove-pick", apply: (state) => removePick(state, where(at), slot) },
+    { label: "remove-pick", apply: (state) => removePick(state, variantRefFor(at), slot) },
     options,
   );
 }

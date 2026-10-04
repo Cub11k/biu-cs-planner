@@ -794,6 +794,12 @@ it("answers a State File it cannot read at all with a 409 on every route, not a 
   expect(settings.status).toBe(409);
   await expect(settings.json()).resolves.toEqual({ reason: "workspace-refused", warnings: [] });
 
+  // and the exam period, which is the fourth route reaching this one file (#164). Listed here
+  // rather than beside its own tests, because what is being swept is the file and not the route.
+  const exams = await get(EXAMS);
+  expect(exams.status).toBe(409);
+  await expect(exams.json()).resolves.toEqual({ reason: "workspace-refused", warnings: [] });
+
   // the bytes and not just the status code: what stood where the State File belongs is exactly
   // as it was, which is the whole of what #109 was filed to protect
   expect(await readdir(join(root, "me.state.json"))).toEqual(["inside.txt"]);
@@ -1144,7 +1150,11 @@ it("reads and writes the Exam spacing by the same route as the language", async 
 it("refuses an Exam spacing a number of days cannot be, and stores nothing", async () => {
   await post("/api/workspace", {});
 
-  for (const examSpacingDays of [-5, -1, 2.5, 1e309]) {
+  // `-5` and `-1` are the Warning nothing could raise, `2.5` compares against whole-day gaps,
+  // and `null` is what `JSON.stringify` writes for an infinity — the nearest a request body can
+  // come to one, since JSON can write neither it nor `NaN`. The schema refuses those directly,
+  // in `core/src/state/schema.test.ts`, which is the only place they can arrive at all.
+  for (const examSpacingDays of [-5, -1, 2.5, null]) {
     const response = await choose({ examSpacingDays });
     expect(response.status, String(examSpacingDays)).toBe(400);
     await expect(response.json(), String(examSpacingDays)).resolves.toEqual({
@@ -1197,29 +1207,42 @@ it("opens a State File holding an Exam spacing the bound refuses, and says which
  * `LECTURE` and `CLASHING` pick, so the Picks below are the ones the rest of this file makes.
  * Invented, as every fixture here is: no crawled data is committed to this repo (ADR-0006).
  */
-const EXAM_CRAWL = {
+const examCrawl = (secondExam: string) => ({
   rows: [
     CRAWL.rows[0]!,
     { ...CRAWL.rows[0]!, code: "89210", name: "אלגברה לינארית", lid: "900001" },
   ],
   details: {
     "89110|סמסטר א'": { terms: [{ type: "מועד א'", date: "21/01/2027", hour: "09:00" }] },
-    "89210|סמסטר א'": { terms: [{ type: "מועד א'", date: "23/01/2027", hour: "09:00" }] },
+    "89210|סמסטר א'": { terms: [{ type: "מועד א'", date: secondExam, hour: "09:00" }] },
   },
-};
+});
 
 const EXAMS = `${TIMETABLE}/exams`;
 
-/** The two Courses of `EXAM_CRAWL` picked, and the exam period that comes back afterwards. */
-const examPeriodAfterPicking = async (): Promise<void> => {
+/**
+ * The two Courses picked, with their Exams `gap` days apart, and the exam period readable
+ * afterwards.
+ *
+ * The gap is a parameter because each direction of the threshold needs its own: a pair two days
+ * apart is warned about at three and silent at two, and a pair five days apart is silent at three
+ * and warned about at seven. A test that widened the threshold over a pair already inside it
+ * would pass whether the stored threshold reached the check or not.
+ */
+const examPeriodAfterPicking = async (gap: { secondExam: string }): Promise<void> => {
   await post("/api/workspace", {});
-  const imported = await post("/api/catalog/2027/import", EXAM_CRAWL);
+  const imported = await post("/api/catalog/2027/import", examCrawl(gap.secondExam));
   expect(imported.status).toBe(200);
   await expect(imported.json()).resolves.toMatchObject({ summary: { exams: 2 } });
 
   expect((await post(PICKS, LECTURE)).status).toBe(200);
   expect((await save(PICKS, CLASHING)).status).toBe(200);
 };
+
+/** Two days apart: a spacing Warning at the design's three, silent at two. */
+const TWO_DAYS = { secondExam: "23/01/2027" };
+/** Five days apart: silent at three, a spacing Warning once a student asks for a week. */
+const FIVE_DAYS = { secondExam: "26/01/2027" };
 
 /**
  * **The criterion the whole of #164 turns on**: a student's stored threshold reaches
@@ -1231,11 +1254,13 @@ const examPeriodAfterPicking = async (): Promise<void> => {
  * the only thing that changes between the two reads is the preference in the State File.
  */
 it("checks the Exams at the threshold the student stored, and changes when they change it", async () => {
-  await examPeriodAfterPicking();
+  await examPeriodAfterPicking(TWO_DAYS);
 
   const atThree = await get(EXAMS);
   expect(atThree.status).toBe(200);
   await expect(atThree.json()).resolves.toMatchObject({
+    // the Variant this rail is about, so a page can see it is the one the grid shows
+    variantName: "A",
     spacingDays: 3,
     exams: {
       sittings: [
@@ -1263,14 +1288,22 @@ it("checks the Exams at the threshold the student stored, and changes when they 
   });
 });
 
-/** The other direction, and the Clash the spacing Warning is never a substitute for. */
-it("widens the Exam check when the student widens the threshold, and still reports a Clash", async () => {
-  await examPeriodAfterPicking();
+/**
+ * The other direction, over a gap the default is **silent** about: five days apart raises nothing
+ * at three, so the Warnings below can only be the stored seven arriving at the check. Asserted
+ * before as well as after, because "it warns now" says nothing without "it did not warn then".
+ */
+it("widens the Exam check when the student widens the threshold", async () => {
+  await examPeriodAfterPicking(FIVE_DAYS);
+
+  await expect((await get(EXAMS)).json()).resolves.toMatchObject({
+    spacingDays: 3,
+    exams: { warnings: [] },
+  });
+
   await choose({ examSpacingDays: 7 });
 
-  const wide = await get(EXAMS);
-
-  await expect(wide.json()).resolves.toMatchObject({
+  await expect((await get(EXAMS)).json()).resolves.toMatchObject({
     spacingDays: 7,
     exams: { warnings: [{ kind: "exam-spacing" }, { kind: "exam-spacing" }] },
   });

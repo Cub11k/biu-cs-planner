@@ -144,27 +144,19 @@ it("fills an all-but-empty file in, so a new State File is a version and nothing
 });
 
 /**
- * #164. The Exam spacing is a number of calendar days a Warning is raised below, and `checkExams`
- * counts with it — so the values a day count cannot have are refused here rather than reaching
- * the arithmetic. A negative threshold is a Warning nothing can ever raise, and a fractional one
- * compares against whole-day gaps and so means the integer above it, worded in a way no student
- * could predict.
+ * #164's bound, and the values it is a bound against. Why it has this shape — what `0` means, why
+ * there is no ceiling, and why a State File already holding a refused value still opens — is
+ * argued once, on the field in `./schema.ts`, and deliberately not again here.
  *
- * **Zero is allowed and is a feature, not a hole.** `checkExams` warns when a gap is *fewer* than
- * the threshold, and same-day sittings are a Clash rather than a spacing Warning, so `0` is
- * exactly "never warn me about spacing" — the student turning the Warning off. `1` means the same
- * thing by accident (a gap of 0 days is the Clash), and that is an argument for keeping the floor
- * at the number that says it on purpose.
- *
- * No ceiling, deliberately. A threshold wider than an exam period warns about every sitting, which
- * is true and is what a student asking for it asked for; `.int()` already refuses `Infinity`,
- * `NaN` and anything past `Number.MAX_SAFE_INTEGER`, which are the values arithmetic would be a
- * lie about.
+ * The infinities and `NaN` are handed to the schema directly, which is the only place they can be
+ * tested from: JSON can write neither, so no request body can carry one — `JSON.stringify` turns
+ * both into `null`, which this refuses too.
  */
 it("refuses an Exam spacing a number of days cannot be, and allows zero", () => {
   const spacing = settingsSchema.shape.examSpacingDays;
 
-  for (const refused of [-5, -1, 2.5, Number.NaN, Infinity, -Infinity, Number.MAX_SAFE_INTEGER + 2]) {
+  const refusals = [-5, -1, 2.5, Number.NaN, Infinity, -Infinity, Number.MAX_SAFE_INTEGER + 2, null];
+  for (const refused of refusals) {
     expect(spacing.safeParse(refused).success, String(refused)).toBe(false);
   }
   for (const allowed of [0, 1, 3, 14, 365]) {

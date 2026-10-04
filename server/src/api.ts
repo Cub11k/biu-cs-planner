@@ -472,6 +472,9 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
       }
 
       return c.json({
+        // named as the week's answer names it, so a page can see that the rail it draws and the
+        // grid beside it are about one Variant
+        variantName: result.variantName,
         exams: result.exams,
         // what "too close" means here, so whatever draws the rail says the student's own number
         // rather than repeating a default it would be free to get wrong

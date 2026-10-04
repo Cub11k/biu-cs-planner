@@ -1,5 +1,16 @@
 import { z } from "zod";
 import { daySchema, semesterSchema } from "../catalog/schema.ts";
+/**
+ * One constant, imported rather than copied, so a file that says nothing about Exam spacing and a
+ * `checkExams` call given no threshold cannot come to mean two different numbers (#164).
+ *
+ * **Not in tension with what `blockedTimeSchema` says below.** That doc declines to *borrow a
+ * record shape* from the Clashes module, because a Blocked Time is not a Meeting and the two must
+ * be free to differ; this borrows a number both sides have to agree on, which is the opposite
+ * situation. The direction is one `./picks.ts` already takes (it imports `../timetable/clashes.ts`)
+ * and it closes no loop: `../timetable/exams.ts` imports one type from `../catalog/schema.ts` and
+ * nothing from here.
+ */
 import { DEFAULT_EXAM_SPACING_DAYS } from "../timetable/exams.ts";
 
 /**
@@ -147,8 +158,9 @@ export const settingsSchema = z.object({
   language: z.enum(["en", "he"]).default("en"),
   /**
    * Exams closer together than this many calendar days raise a spacing Warning
-   * (`docs/design.md`, "Exams"). Bounded as a count of days is bounded: whole, and never
-   * negative (#164).
+   * (`docs/design.md`, "Exams"). Bounded the way a count of days is bounded: whole, and never
+   * negative (#164). **This doc is where that bound is explained**; everything else that mentions
+   * it points here rather than arguing it again.
    *
    * **`0` is allowed and means "never warn me about spacing".** `checkExams` warns on a gap
    * *fewer* than this, and two sittings on one day are a Clash rather than a spacing Warning,

@@ -37,6 +37,11 @@ const catalog = (offerings: Offering[]): Catalog => ({
   offerings,
 });
 
+/** Two days apart: warned about at the design's three, silent at two. */
+const TWO_DAYS = "2027-01-23";
+/** Five days apart: silent at three, warned about once a student asks for a week. */
+const FIVE_DAYS = "2027-01-26";
+
 const pick = (courseNumber: string): GroupPick => ({
   courseNumber,
   lessonType: "הרצאה",
@@ -44,12 +49,19 @@ const pick = (courseNumber: string): GroupPick => ({
   meetings: [{ semester: "fall", day: "tuesday", start: "09:00", end: "11:00" }],
 });
 
-/** A Workspace holding a Catalog and two Picks two days apart. */
-async function twoExamsTwoDaysApart(): Promise<MemoryWorkspace> {
+/**
+ * A Workspace holding a Catalog and two Picks, with their Exams `secondExam` apart.
+ *
+ * The second date is a parameter because each direction of the threshold needs its own gap: a
+ * pair two days apart is warned about at three and silent at two, while narrowing the threshold
+ * over a pair *outside* it — or widening it over a pair already inside it — would pass whether
+ * the stored threshold reached the check or not.
+ */
+async function twoExams(secondExam: string): Promise<MemoryWorkspace> {
   const workspace = memoryWorkspace({ created: true });
   workspace.seed(
     { kind: "catalog", academicYear: 2027 },
-    catalog([offering("89-110", ["2027-01-21"]), offering("89-112", ["2027-01-23"])]),
+    catalog([offering("89-110", ["2027-01-21"]), offering("89-112", [secondExam])]),
   );
 
   let version: string | undefined;
@@ -74,7 +86,7 @@ const versionOf = async (workspace: MemoryWorkspace): Promise<string | undefined
  * their State File.
  */
 it("checks the Exams at the threshold the student stored, not at the default", async () => {
-  const workspace = await twoExamsTwoDaysApart();
+  const workspace = await twoExams(TWO_DAYS);
 
   const atThree = await readExams(workspace, AT);
   expect(atThree.kind === "served" && atThree.spacingDays).toBe(3);
@@ -92,7 +104,7 @@ it("checks the Exams at the threshold the student stored, not at the default", a
 
 /** `0` is the student turning the spacing Warning off, which is what the bound allows it to be. */
 it("raises no spacing Warning at a stored threshold of zero", async () => {
-  const workspace = await twoExamsTwoDaysApart();
+  const workspace = await twoExams(TWO_DAYS);
 
   await setSettings(workspace, { examSpacingDays: 0 }, { basedOn: await versionOf(workspace) });
 
@@ -101,9 +113,15 @@ it("raises no spacing Warning at a stored threshold of zero", async () => {
   expect(off.kind === "served" && off.exams.warnings).toEqual([]);
 });
 
-/** Widening it the other way: the same two Exams, and a student who wants a week between them. */
+/**
+ * Widening it the other way, over a gap the default is **silent** about: five days apart raises
+ * nothing at three, so the Warnings afterwards can only be the stored seven reaching the check.
+ */
 it("warns about a wider gap once the student widens the threshold", async () => {
-  const workspace = await twoExamsTwoDaysApart();
+  const workspace = await twoExams(FIVE_DAYS);
+
+  const atThree = await readExams(workspace, AT);
+  expect(atThree.kind === "served" && atThree.exams.warnings).toEqual([]);
 
   await setSettings(workspace, { examSpacingDays: 7 }, { basedOn: await versionOf(workspace) });
 
@@ -115,7 +133,7 @@ it("warns about a wider gap once the student widens the threshold", async () => 
 });
 
 it("serves the sittings in date order, so the rail can space its marks", async () => {
-  const workspace = await twoExamsTwoDaysApart();
+  const workspace = await twoExams(TWO_DAYS);
 
   const read = await readExams(workspace, AT);
 
@@ -145,6 +163,47 @@ it("counts a Course once however many Lesson Types are picked for it", async () 
 
   expect(read.kind === "served" && read.exams.sittings).toHaveLength(1);
   expect(read.kind === "served" && read.exams.warnings).toEqual([]);
+});
+
+/**
+ * Two Offerings of one Course in one Academic Year, which a Catalog can hold: it keys an Offering
+ * by its Course **and its Semesters** (`offeringKey`, `core/src/shoham/changes.ts`), so a Fall one
+ * and a Year-long one are two entries and both answer to a Fall query. Both sets of sittings reach
+ * the rail — `checkExams`'s own doc promises exactly that ("Two Offerings of one Course whose
+ * Exams genuinely differ both survive, because the whole sitting is the key and not the course
+ * number"), and a `Map` keyed by course number in the app layer would have made the promise
+ * unkeepable by dropping whichever came first.
+ *
+ * The Course is still one Course, so nothing counts it twice: three distinct sittings, and none of
+ * them reported as Clashing with the Course they belong to.
+ */
+it("keeps both Offerings when one Course has two in the same year", async () => {
+  const workspace = memoryWorkspace({ created: true });
+  const fall = offering("89-110", ["2027-01-21"]);
+  const yearLong: Offering = {
+    ...offering("89-110", ["2027-01-28", "2027-02-04"]),
+    semesters: ["fall", "spring"],
+  };
+  workspace.seed({ kind: "catalog", academicYear: 2027 }, catalog([fall, yearLong]));
+  await pickGroup(workspace, AT, pick("89-110"), { basedOn: undefined });
+
+  const read = await readExams(workspace, AT);
+
+  expect(read.kind === "served" && read.exams.sittings.map((s) => s.date)).toEqual([
+    "2027-01-21",
+    "2027-01-28",
+    "2027-02-04",
+  ]);
+  expect(read.kind === "served" && read.exams.coursesWithUnknownExams).toBe(0);
+});
+
+/** The Variant the answer is about, named as the week's answer names it. */
+it("names the Variant it answered for", async () => {
+  const workspace = await twoExams(TWO_DAYS);
+
+  const read = await readExams(workspace, AT);
+
+  expect(read.kind === "served" && read.variantName).toBe("A");
 });
 
 /**
