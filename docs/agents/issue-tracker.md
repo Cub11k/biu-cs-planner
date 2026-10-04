@@ -95,6 +95,48 @@ composed parent is not a `wayfinder:map`: a map is a standing document with Fog 
 Decisions-so-far that outlives its children, while a parent is one unit of work that closes with
 them.
 
+### Verify the links from GitHub, not from the body you wrote
+
+Once the pull request exists, ask GitHub what it recorded:
+
+```sh
+gh pr view <n> --json closingIssuesReferences --jq '[.closingIssuesReferences[].number]'
+```
+
+The expected answer is the parent and every child. The body is an input; this list is the state,
+and the two can disagree — the same distinction "Verify a creation by number, not by a listing" in
+`orchestration.md` draws, one level in.
+
+**The spelling being right is not the link being right.** On 2026-10-04 PR #223 carried `Closes
+#205`, `Closes #202`, `Closes #203` and `Closes #204`, each with the keyword on its own line and
+outside any code fence, and none of its six commit messages put a closing keyword before a number.
+GitHub registered it as closing exactly one issue, the already-closed **#125**, and the four
+written on purpose were not among them. Re-writing the body did not change it, and the parent and
+its three children had to be closed by hand after the merge, with the reason on each (#205, #202,
+#203, #204). The other pull requests merged in the same batch registered correctly — #221 its
+parent #201 and all three children, #222 its parent #209 and all three, #224 its parent #181 and
+both, and #220 the one parentless ticket (#213) it closed — so this was one pull request's links,
+not a rule that does not work. #191's spelling rule stands unchanged; checking the list is the
+step it never covered.
+
+**A closing keyword in ordinary prose is a closing reference too, and may displace yours.** #223's
+body carries, at its line 12 and some two hundred lines above its `Closes` block, the words `the
+closed` with `#125` immediately after them, mid-sentence and reading as an adjective: "a dated
+amendment on the closed #125, which is why #202 exists". `closed` is one of GitHub's keywords, so
+that phrase — not a keyword-free mention, which is what the note on #205's thread calls it — is
+where the #125 link came from. Across the five pull requests merged in that batch, #223 is the
+only one whose body held a keyword-and-number pair anywhere before its `Closes` block, and the
+only one whose `Closes` block did not register; the pair that *did* register is that phrase. One
+run of five is a correlation and not a mechanism, and GitHub documents no such limit, so **treat
+it as a reason to look rather than as a rule**: before opening a pull request, read the body for a
+keyword that has landed next to a number by accident, and rephrase it so the two are not adjacent.
+Quoting this very paragraph is the easy way to do it by mistake — put a quotation like that inside
+a code fence, where no reference is parsed at all.
+
+**When the list disagrees with the body, close the missing issues by hand after the merge**, with
+the reason on each, as #202 through #205 record. Do not wait for a re-parse to repair it, and do
+not carry the conclusion to the next pull request in either direction: check its list too.
+
 ### The lane test
 
 Two atomic asks belong in one ticket when **the files they would write overlap, or sit in the same
