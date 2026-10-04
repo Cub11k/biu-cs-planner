@@ -72,6 +72,8 @@ const REFUSAL_STRING = {
   "state-file-unreadable": "picksUnreadable",
   "state-file-changed": "picksStale",
   "workspace-refused": "picksUnreadable",
+  // The State File read fine and the backup could not be made, so not `picksUnreadable` (#229).
+  "backup-refused": "picksBackupRefused",
 } as const satisfies Record<NonNullable<StateRefusal>, StringKey>;
 
 /**
@@ -79,8 +81,8 @@ const REFUSAL_STRING = {
  * contract, so a reason added to `server/src/history.ts` is a compile error here rather than
  * a refusal the student never hears about.
  *
- * Four of the eight are the edit refusals an undo inherits by going through the same save
- * path (ADR-0013), and three of those four get their own sentence rather than the Pick's:
+ * Five of the nine are the edit refusals an undo inherits by going through the same save
+ * path (ADR-0013), and four of those five get their own sentence rather than the Pick's:
  * `picksStale` is an account of a click that was not saved, and a student who pressed Undo
  * did not click a Group. `workspace-not-ready` is the exception — "this folder is not a
  * workspace yet, so nothing can be saved in it" is the whole truth for either.
@@ -94,6 +96,7 @@ const HISTORY_REFUSAL_STRING = {
   "state-file-unreadable": "historyUnreadable",
   "workspace-refused": "historyUnreadable",
   "workspace-not-ready": "workspaceNotReady",
+  "backup-refused": "historyBackupRefused",
 } as const satisfies Record<NonNullable<HistoryRefusal>, StringKey>;
 
 /**
@@ -113,6 +116,7 @@ const SETTINGS_REFUSAL_STRING = {
   "state-file-unreadable": "settingsFileUnreadable",
   "state-file-changed": "settingsStale",
   "workspace-refused": "settingsFileRefused",
+  "backup-refused": "settingsBackupRefused",
 } as const satisfies Record<NonNullable<SettingsRefusal>, StringKey>;
 
 /**
@@ -245,8 +249,9 @@ export type TimetableScreenProps = {
    */
   settingsUnread?: SettingsUnread | undefined;
   /**
-   * Called when this screen has written the State File, so whatever else on the page is holding a
-   * revision can stop holding a spent one.
+   * Called when this screen has written the State File, or may have — a step or a click whose
+   * answer it could not read (#206, #231) — so whatever else on the page is holding a revision
+   * can stop holding one that may be spent. It asks the header to go and look, and claims nothing.
    *
    * There are two writers on one page now — a Pick here and a preference in the header — and each
    * holds the revision it read. The Workspace poll reconciles them up to `DEFAULT_EVERY_MS` later,
@@ -316,6 +321,15 @@ export function TimetableScreen({
    * #104's question, and one sentence for "a click was refused" is the honest floor.
    */
   const [staleSave, setStaleSave] = useState(false);
+  /**
+   * That a click's answer arrived and could not be read, so whether it was saved is not known
+   * (#231). Its own flag rather than the answer put on screen as the week, for the reason
+   * `takeStep` gives for a step's: the arm is reached from the 200 as well as from the refusal,
+   * so the click may have landed, and the page goes and looks rather than showing a blank week
+   * in place of one it can re-read. The re-read would then replace an account held in
+   * `timetable`, so the account is held here, and retired as `staleSave` is.
+   */
+  const [unknownSave, setUnknownSave] = useState(false);
   const [rereads, setRereads] = useState(0);
   /**
    * The undo or redo this page last took, and which way it went.
@@ -441,6 +455,7 @@ export function TimetableScreen({
       remove: boolean,
       basedOn: StateFileVersion,
       query: TimetableQuery,
+      sentOn: TimetableState,
     ): Promise<TimetableResult> => {
       const slot = { courseNumber: group.courseNumber, lessonType: group.lessonType };
       const done = remove
@@ -466,6 +481,29 @@ export function TimetableScreen({
         if (answer.kind === "refused" && answer.reason === "state-file-changed") {
           setStaleSave(true);
           setRereads((count) => count + 1);
+          return answer;
+        }
+        // An answer nobody could read, which is **not** the claim that nothing was written: the
+        // arm is reached from the 200 as well as from the refusal (#231). So everything that
+        // holds a revision goes and looks, as `takeStep` does for a step whose answer could not
+        // be read (#206) — the week, the two buttons, and the header's switch — and the week on
+        // screen is kept until the re-read replaces it. None of the three is a claim about
+        // whether the click landed; all three are ways of finding out.
+        //
+        // **One thing `takeStep` has that this does not**: a press waits for that re-read
+        // (`steppedOn`, which this sets too), and a direct click does not. A second click made before the re-read
+        // lands goes out on a revision the first may have spent, and comes back
+        // `state-file-changed` if it did. Held clicks are spared by the drain's wait below;
+        // routing a direct click into `held` instead would change what it means, since a held
+        // click asks for a Pick and a click on ink asks for its removal. Left as an open window.
+        if (answer.kind === "unreadable-answer") {
+          setUnknownSave(true);
+          // and the undo buttons wait for that re-read, as they do after a step: a press sent
+          // on a revision this click may have spent would come back `historyStale`
+          setSteppedOn(sentOn);
+          setRereads((count) => count + 1);
+          askHistory();
+          onEdited?.();
           return answer;
         }
         setTimetable(answer);
@@ -509,6 +547,7 @@ export function TimetableScreen({
   ): void => {
     // whatever the last click or press was told, this press is the account owed now
     setStaleSave(false);
+    setUnknownSave(false);
     setHeldLost(false);
     setLastStep(undefined);
     // Claimed before the request goes out rather than when its answer arrives: the two are
@@ -559,6 +598,7 @@ export function TimetableScreen({
     // whatever became of the last click, this one is the account the student is owed now
     setHeldLost(false);
     setStaleSave(false);
+    setUnknownSave(false);
     setLastStep(undefined);
     const query = { academicYear, semester };
 
@@ -568,7 +608,7 @@ export function TimetableScreen({
     }
     // Only a served answer knows this, and `picked` is a `boolean` once it does. A click on
     // ink removes the Pick; a click on pencil records one.
-    void save(group, group.picked === true, timetable.version, query);
+    void save(group, group.picked === true, timetable.version, query, timetable);
   };
 
   /**
@@ -622,11 +662,15 @@ export function TimetableScreen({
 
     sending.current = true;
     const sentOn = timetable;
-    void save(next.group, false, timetable.version, next.query).then((answer) => {
+    void save(next.group, false, timetable.version, next.query, sentOn).then((answer) => {
       sending.current = false;
       // This click is spent either way. A refused one is not re-sent — that is #104 — but the
-      // rest of the queue must not be fired at the revision that refused it.
-      if (answer.kind === "refused" && answer.reason === "state-file-changed") {
+      // rest of the queue must not be fired at the revision that refused it — nor at one an
+      // unreadable answer may already have spent, which the re-read it triggered will settle.
+      if (
+        (answer.kind === "refused" && answer.reason === "state-file-changed") ||
+        answer.kind === "unreadable-answer"
+      ) {
         refusedOn.current = sentOn;
       }
       setHeld((waiting) => waiting.slice(1));
@@ -762,6 +806,7 @@ export function TimetableScreen({
               )}
               {heldLost && <span>{t(language, "picksHeldLost")}</span>}
               {staleSave && <span>{t(language, "picksStale")}</span>}
+              {unknownSave && <span>{t(language, "picksSaveAnswerUnreadable")}</span>}
               {/* what the last press of undo or redo did, or why it did nothing */}
               {stepNotice === undefined ? null : <span>{stepNotice}</span>}
               {/* why the last change to a preference did nothing, and a preference that could

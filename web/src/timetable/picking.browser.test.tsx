@@ -17,6 +17,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import "../index.css";
 import type { Offering } from "./catalog.ts";
 import type { GroupPick } from "./picks.ts";
+import { t } from "../i18n/strings.ts";
 import { TimetableScreen } from "./TimetableScreen.tsx";
 
 /** October 2026: the Fall Semester of Academic Year 2027, which is what the fixture is. */
@@ -89,6 +90,14 @@ let version: number;
 /** Set to answer the next save as a file that changed under the page. */
 let changedUnderneath: boolean;
 /**
+ * Set to answer the next save with a body that is not JSON, at this status, **after** the fake
+ * has accepted it — so a 200 here is a click that landed and whose answer nobody could read,
+ * which is the case #231 is about.
+ */
+let unreadableSave: number | undefined;
+/** How many times the screen told its host that the file's revision may have moved. */
+let edits: number;
+/**
  * Holds the *read* of the Timetable open while the Catalog is served at once, which is the
  * window #111 is about: the screen asks for both in parallel, so the week is clickable
  * before the State File has been read.
@@ -156,6 +165,18 @@ const timetableReads = (): number =>
     (request) => request.method === "GET" && request.pathname.startsWith("/api/timetable"),
   ).length;
 
+/** The header's undo button. */
+const undoButton = (mounted: HTMLElement): HTMLButtonElement => {
+  const found = mounted.querySelector<HTMLButtonElement>('button[data-history="undo"]');
+  if (found === null) throw new Error("the header has no undo button");
+  return found;
+};
+
+/** How many times the header asked whether undo and redo are available. */
+const availabilityAsks = (): number =>
+  sent.filter((request) => request.method === "GET" && request.pathname === "/api/history")
+    .length;
+
 /** One of the fixture's Groups as a Pick, the way a State File on disk would hold it. */
 function pickOf(groupNumber: string, lessonType = "הרצאה"): GroupPick {
   const group = OFFERING.groups.find(
@@ -187,6 +208,8 @@ beforeEach(() => {
   refuse = undefined;
   version = 0;
   changedUnderneath = false;
+  unreadableSave = undefined;
+  edits = 0;
   readHeld = undefined;
   saveHeld = undefined;
   answerHeldFor = undefined;
@@ -271,6 +294,12 @@ beforeEach(() => {
       );
     }
 
+    if (unreadableSave !== undefined && (method === "POST" || method === "DELETE")) {
+      const status = unreadableSave;
+      unreadableSave = undefined;
+      return new Response("<!doctype html>", { status, headers: { "content-type": "text/html" } });
+    }
+
     // the two Groups that overlap in this fixture, once both are picked
     const clashes =
       picks.some((p) => p.lessonType === "הרצאה" && p.groupNumber === "01") &&
@@ -302,7 +331,16 @@ async function openWeek(options: { strict?: boolean } = {}): Promise<HTMLElement
   host = mounted;
   document.body.append(mounted);
   root = createRoot(mounted);
-  const screen = <TimetableScreen language="en" onLanguage={() => {}} today={TODAY} />;
+  const screen = (
+    <TimetableScreen
+      language="en"
+      onLanguage={() => {}}
+      onEdited={() => {
+        edits += 1;
+      }}
+      today={TODAY}
+    />
+  );
   root.render(options.strict === true ? <StrictMode>{screen}</StrictMode> : screen);
 
   const chooser = await vi.waitFor(() => {
@@ -481,6 +519,56 @@ it("says the folder is not a workspace rather than that nothing is picked", asyn
     }
   });
   expect(mounted.textContent).not.toContain("Nothing picked yet");
+});
+
+/**
+ * #229 as the student meets it: the State File read perfectly well and the save could not first
+ * make its backup. The sentence says that and nothing else — not that the saved Picks could not
+ * be read, which was what this refusal used to reach.
+ */
+it("says a click was not saved for want of a backup, and not that the picks are unreadable", async () => {
+  const mounted = await openWeek();
+
+  refuse = { reason: "backup-refused", warnings: [] };
+  tileFor(mounted, "01").click();
+
+  await waitForText(mounted, t("en", "picksBackupRefused"));
+  expect(mounted.textContent).not.toContain(t("en", "picksUnreadable"));
+});
+
+/**
+ * #231: a click whose answer arrived and could not be read. Driven as a **200** after the fake
+ * accepted the Pick, so the click landed and nobody can tell from the answer — which is why the
+ * sentence may say neither that it was saved nor that it was not, and why the page goes and
+ * looks: the week is read again, the undo buttons are asked about, and the header is told the
+ * revision may have moved. Exactly what a step whose answer could not be read does (#206).
+ */
+it("says whether a click was saved is not known, and goes and looks, when its answer is unreadable", async () => {
+  const mounted = await openWeek();
+  const readsBefore = timetableReads();
+  const asksBefore = availabilityAsks();
+
+  unreadableSave = 200;
+  tileFor(mounted, "01").click();
+
+  await waitForText(mounted, t("en", "picksSaveAnswerUnreadable"));
+  for (const claim of ["picksStale", "picksUnreadable", "picksAnswerUnreadable"] as const) {
+    expect(mounted.textContent, `${claim} claims what this page cannot know`).not.toContain(
+      t("en", claim),
+    );
+  }
+  expect(mounted.textContent).not.toContain("not saved");
+  await vi.waitFor(() => {
+    if (timetableReads() <= readsBefore) throw new Error("the week was never read again");
+    if (availabilityAsks() <= asksBefore) throw new Error("the undo buttons were never asked");
+    if (edits === 0) throw new Error("the header was never told the revision may have moved");
+    // the click landed, and the re-read is what shows it
+    if (!tileFor(mounted, "01").classList.contains("is-picked")) {
+      throw new Error("the re-read never drew the Pick the file holds");
+    }
+  });
+  // the account outlives the re-read: it is about the click, not about the week
+  expect(mounted.textContent).toContain(t("en", "picksSaveAnswerUnreadable"));
 });
 
 /**
@@ -837,6 +925,69 @@ it("sends the rest of the queue on the re-read, not on the revision just refused
   expect(tileFor(mounted, "01").classList.contains("is-picked")).toBe(false);
   expect(mounted.textContent).toContain(FILE_CHANGED);
   expect(mounted.textContent).toContain("1 group picked");
+});
+
+/**
+ * The undo buttons wait for that re-read too (#231), as they do after a step whose answer could
+ * not be read. The click may have moved the file, so a press sent on the revision on screen
+ * would come back `state-file-changed` for a staleness the page's own click caused.
+ */
+it("holds the undo button shut until the re-read after an unreadable click lands", async () => {
+  const mounted = await openWeek();
+  tileFor(mounted, "01").click();
+  await vi.waitFor(() => {
+    if (undoButton(mounted).disabled) throw new Error("undo never became available");
+  });
+
+  const release = holdTheRead();
+  unreadableSave = 200;
+  tileFor(mounted, "02").click();
+
+  await waitForText(mounted, t("en", "picksSaveAnswerUnreadable"));
+  // the history has been asked again and still offers an undo, so only the wait is holding it
+  await vi.waitFor(() => {
+    if (availabilityAsks() < 3) throw new Error("the undo buttons were never asked again");
+  });
+  expect(undoButton(mounted).disabled).toBe(true);
+
+  release();
+
+  await vi.waitFor(() => {
+    if (undoButton(mounted).disabled) throw new Error("the re-read landed and undo stayed shut");
+  });
+});
+
+/**
+ * The same wait, after an answer nobody could read (#231). A **200** that landed: the file moved
+ * to v1 and the page could not tell. Firing the next held click at v0 would be refused
+ * `state-file-changed`, so the student would read that their click was not saved because of a
+ * file change their own first click had made. It waits for the re-read instead.
+ */
+it("sends the rest of the queue on the re-read after an answer it could not read", async () => {
+  const release = holdTheRead();
+  const mounted = await openWeek();
+
+  tileFor(mounted, "01").click();
+  tileFor(mounted, "03", "Tirgul").click();
+  await waitForText(mounted, STILL_LOADING);
+
+  unreadableSave = 200;
+  release();
+
+  await vi.waitFor(() => {
+    if (!tileFor(mounted, "03", "Tirgul").classList.contains("is-picked")) {
+      throw new Error("the click behind the unreadable answer was not saved");
+    }
+  });
+  const recorded = sent.filter((request) => request.method === "POST");
+  expect(recorded.map((request) => request.body)).toMatchObject([
+    { groupNumber: "01", basedOn: "v0" },
+    // on the revision the re-read brought, which the first click's landing had moved
+    { groupNumber: "03", basedOn: "v1" },
+  ]);
+  // both landed, and nothing says a click was refused for a change the page itself made
+  expect(tileFor(mounted, "01").classList.contains("is-picked")).toBe(true);
+  expect(mounted.textContent).not.toContain(FILE_CHANGED);
 });
 
 /**

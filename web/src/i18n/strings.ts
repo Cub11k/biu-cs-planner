@@ -103,9 +103,23 @@ const english = {
   /** The file, or the folder, could not be read at all. Nothing was written. */
   historyUnreadable: "The file your work is saved in could not be read, so nothing changed.",
   /**
+   * The save could not first make its backup, so it wrote nothing (#229). Three of these, one
+   * per place a save is answered — a Pick, an undo or redo, a preference — each ending as that
+   * place's other refusals end; the first half is shared and is the whole of what the reason
+   * says.
+   *
+   * **Not `picksUnreadable`, `historyUnreadable` or `settingsFileRefused`**, which is what this
+   * used to reach: the
+   * State File read perfectly well, and it is the backup that could not be made. Nor does it
+   * say why the backup failed, or where backups are kept — the reason carries neither, and a
+   * folder named here would be a path in all but spelling (#216).
+   */
+  historyBackupRefused:
+    "The app could not make a backup of your saved work before changing it, so nothing changed.",
+  /**
    * A refusal the route named no reason for. The floor, and deliberately the floor: what is
-   * true of it is that nothing happened, and naming one of the eight causes would be wrong
-   * in the other seven. `picksHeldLost` is the same shape for the same reason.
+   * true of it is that nothing happened, and naming one of the nine causes would be wrong
+   * in the other eight. `picksHeldLost` is the same shape for the same reason.
    */
   historyNotDone: "Nothing changed.",
 
@@ -148,10 +162,14 @@ const english = {
   settingsFileRefused:
     "The file your preferences are saved in could not be read or written, so your preference was " +
     "not changed.",
+  /** `historyBackupRefused`'s sentence, for a preference. */
+  settingsBackupRefused:
+    "The app could not make a backup of your saved work before changing it, so your preference " +
+    "was not changed.",
   /**
    * A refusal the route named no reason for: an answer the contract has and this client cannot
-   * provoke. What is true of it is that nothing happened, and naming one of the four causes would
-   * be wrong in the other three — `historyNotDone` is the same shape for the same reason.
+   * provoke. What is true of it is that nothing happened, and naming one of the five causes would
+   * be wrong in the other four — `historyNotDone` is the same shape for the same reason.
    */
   settingsNotDone: "Your preference was not changed.",
   /**
@@ -241,12 +259,13 @@ const english = {
     "Start the app from a terminal and open the address it prints.",
 
   /**
-   * The app answered and this page could not read the answer (#171, #206, #207). Five sentences
-   * for one cause, because they appear in five places and the places differ in what they are an
-   * account **of**. Three answer for something the student did — a click on a Group, a press of
-   * undo or redo, a press of the language switch — and two answer for a pane that simply could
-   * not get what it went to read. The rule those three follow is #171's: an act gets an account,
-   * an ask does not, which is also why the Workspace poll and `fetchAvailability` say nothing.
+   * The app answered and this page could not read the answer (#171, #206, #207, #231). Six
+   * sentences for one cause, because they appear in six places and the places differ in what
+   * they are an account **of**. Three answer for something the student did — a click on a Group,
+   * a press of undo or redo, a press of the language switch — and three answer for a pane that
+   * simply could not get what it went to read. The rule the three acts follow is #171's: an act
+   * gets an account, an ask does not, which is also why the Workspace poll and
+   * `fetchAvailability` say nothing.
    *
    * What they claim is exactly what is known: an answer arrived, and it was not one this page
    * can read. **Not** that the file changed, that it was unreadable, or that the Workspace
@@ -256,12 +275,14 @@ const english = {
    * development Vite answers an HTML 500 for a server that is not running, and hono answers a
    * plain-text 404 for a path only a newer bundle asks for.
    *
-   * **Not one of the five says whether anything was saved**, and `picksAnswerUnreadable` is the
-   * one that had to be talked out of it. `read` in `timetable/picks.ts` reaches this arm from the
-   * served arm as well as the refused one, so an unparseable **200** to a Pick gets this sentence
-   * and that write may perfectly well have landed — and the same sentence is shown for the
-   * week's own read, where nothing was attempted at all. What holds in every one of those is
-   * that the week on screen is not known to be the file, so that is all it says.
+   * **Not one of the six says whether anything was saved**, and `picksAnswerUnreadable` is the
+   * one that had to be talked out of it, back when it answered a click as well as the week's
+   * read. `read` in `timetable/picks.ts` reaches this arm from the served arm as well as the
+   * refused one, so an unparseable **200** to a Pick may perfectly well have landed. A click now
+   * has its own sentence, `picksSaveAnswerUnreadable`, which says that whether it was saved is
+   * not known (#231); `picksAnswerUnreadable` is left answering for the week's own read, where
+   * nothing was attempted at all and what holds is that the week on screen is not known to be
+   * the file.
    */
   catalogAnswerUnreadable:
     "The app answered with something this page could not read, so the catalog is not shown. " +
@@ -288,6 +309,17 @@ const english = {
     "The app answered with something this page could not read, so whether anything changed is " +
     "not known here. The app may not be running, or may be a different version from this page " +
     "— start it from a terminal and open the address it prints.",
+  /**
+   * `historyAnswerUnreadable`'s account, for a click on a Group (#231). The click's answer may
+   * be a 200 nobody could read, so it says neither that the click was saved nor that it was not:
+   * the page re-reads the week, and the week it then draws comes from that re-read.
+   * `picksAnswerUnreadable` is the *read's* sentence and says the week is not the saved work,
+   * which a week drawn from a re-read that succeeded would contradict.
+   */
+  picksSaveAnswerUnreadable:
+    "The app answered your click with something this page could not read, so whether it was " +
+    "saved is not known here. The app may not be running, or may be a different version from " +
+    "this page — start it from a terminal and open the address it prints.",
   /**
    * …and the two for the preferences (#207), which had no sentence of their own at all: an answer
    * the page could not read was folded into `settingsNotDone` for a change and into
@@ -344,6 +376,10 @@ const english = {
   picksStale:
     "The file changed since this page read it, so your click was not saved. " +
     "The week is the file as it is now — click again if you still want it.",
+  /** `historyBackupRefused`'s sentence, for a click on a Group. */
+  picksBackupRefused:
+    "The app could not make a backup of your saved work before changing it, so your click was " +
+    "not saved.",
   /**
    * A click made before the saved Picks had arrived. It is kept rather than sent on a
    * guess about a file the page has not read, so this says where it went (#111).
@@ -427,6 +463,8 @@ const hebrew: Record<StringKey, string> = {
     "הדף הציג גרסה ישנה יותר של העבודה השמורה, ולכן לא השתנה דבר. " +
     "הדף קרא את הקובץ מחדש — נסו שוב.",
   historyUnreadable: "לא ניתן היה לקרוא את הקובץ שבו נשמרת העבודה שלכם, ולכן לא השתנה דבר.",
+  historyBackupRefused:
+    "היישום לא הצליח ליצור גיבוי של העבודה השמורה שלכם לפני שינויה, ולכן לא השתנה דבר.",
   historyNotDone: "לא השתנה דבר.",
 
   settingsStale:
@@ -436,6 +474,8 @@ const hebrew: Record<StringKey, string> = {
     "לא ניתן היה לקרוא את הקובץ שבו נשמרות ההעדפות שלכם, ולכן ההעדפה לא שונתה.",
   settingsFileRefused:
     "לא ניתן היה לקרוא או לכתוב את הקובץ שבו נשמרות ההעדפות שלכם, ולכן ההעדפה לא שונתה.",
+  settingsBackupRefused:
+    "היישום לא הצליח ליצור גיבוי של העבודה השמורה שלכם לפני שינויה, ולכן ההעדפה לא שונתה.",
   settingsNotDone: "ההעדפה לא שונתה.",
   settingsUnread:
     "לא ניתן היה לקרוא את ההעדפות השמורות שלכם, ולכן היישום מציג את ברירות המחדל " +
@@ -481,6 +521,10 @@ const hebrew: Record<StringKey, string> = {
     "היישום החזיר תשובה שהדף הזה אינו יודע לקרוא, ולכן לא ידוע כאן אם משהו השתנה. " +
     "ייתכן שהיישום אינו פועל, או שהוא בגרסה אחרת מזו של הדף — הפעילו אותו מהמסוף " +
     "ופתחו את הכתובת שהוא מדפיס.",
+  picksSaveAnswerUnreadable:
+    "היישום השיב ללחיצה שלכם בתשובה שהדף הזה אינו יודע לקרוא, ולכן לא ידוע כאן אם היא " +
+    "נשמרה. ייתכן שהיישום אינו פועל, או שהוא בגרסה אחרת מזו של הדף — הפעילו אותו מהמסוף " +
+    "ופתחו את הכתובת שהוא מדפיס.",
   settingsAnswerUnreadable:
     "היישום החזיר תשובה שהדף הזה אינו יודע לקרוא, ולכן לא ידוע כאן אם ההעדפה שלכם שונתה. " +
     "ייתכן שהיישום אינו פועל, או שהוא בגרסה אחרת מזו של הדף — הפעילו אותו מהמסוף " +
@@ -512,6 +556,8 @@ const hebrew: Record<StringKey, string> = {
   picksStale:
     "הקובץ השתנה מאז שהדף קרא אותו, ולכן הלחיצה לא נשמרה. " +
     "השבוע מוצג כפי שהקובץ נראה עכשיו — לחצו שוב אם עדיין תרצו את הבחירה.",
+  picksBackupRefused:
+    "היישום לא הצליח ליצור גיבוי של העבודה השמורה שלכם לפני שינויה, ולכן הלחיצה לא נשמרה.",
   picksHeld: "הבחירות השמורות עדיין נטענות. הלחיצה שלכם ממתינה להן.",
   picksHeldLost: "הלחיצה שלכם לא נשמרה.",
 

@@ -120,3 +120,15 @@ it("makes an answer of a served body that is not JSON too", async () => {
 
   expect(result).toEqual({ kind: "unreadable-answer" });
 });
+
+/**
+ * A body of JSON `null`, served and refused (#230): `"warnings" in body` and
+ * `served.body.offerings` both threw on it, outside any `try`, and the sidebar said nothing.
+ */
+it.each([200, 409])("makes an answer of a %i whose body is null", async (status) => {
+  const { api } = client(() => Response.json(null, { status }));
+
+  const result = await fetchOfferings(api, { academicYear: 2027, semester: "fall" });
+
+  expect(result).toEqual({ kind: "unreadable-answer" });
+});

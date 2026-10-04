@@ -3,6 +3,7 @@ import { watch, type FSWatcher } from "node:fs";
 import { mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import {
+  BackupRefusedError,
   backupsToPrune,
   isStateFileName,
   NotAWorkspaceError,
@@ -239,8 +240,9 @@ class UnreadableError extends WorkspaceRefusedError {
  * A `WorkspaceRefusedError`, so a caller can answer it the way every caller of this port
  * already answers one: a Warning and never a crashed server (docs/design.md, "API and data
  * rules"). **What reaches the student today is the `reason` and not this sentence** — the write
- * callers, `app/src/catalog.ts` and `app/src/edit.ts`, return `workspace-refused` and drop the
- * message, and only the read path in `app/src/queries.ts` carries one. So the errno below is
+ * callers, `app/src/catalog.ts` and `app/src/edit.ts`, return `workspace-refused` — or
+ * `backup-refused`, when it came out of a save's snapshot (#229) — and drop the message, and
+ * only the read path in `app/src/queries.ts` carries one. So the errno below is
  * for a log and for the arm that will want it, and saying otherwise here would claim something
  * the app does not do.
  *
@@ -981,7 +983,15 @@ export function fileSystemWorkspace(
       // destroyed the very file `.backups/` exists to hold. A first save replaces nothing and
       // so copies nothing. One extra snapshot of content that is still current — which is what
       // a failed rename after a written snapshot leaves — is harmless and prunes away.
-      if (replacing !== undefined) await snapshot(ref.name, replacing.bytes);
+      //
+      // A refusal out of the snapshot is said to be one (#229): nothing about the State File
+      // was wrong, and a caller that could not tell this from an unreadable one told the
+      // student their saved picks could not be read.
+      if (replacing !== undefined) {
+        await snapshot(ref.name, replacing.bytes).catch((error: unknown) => {
+          throw error instanceof WorkspaceRefusedError ? new BackupRefusedError(error) : error;
+        });
+      }
 
       await writeAtomically(ref, check.path, json);
       // after the save, because pruning only ever deletes and may not cost a save

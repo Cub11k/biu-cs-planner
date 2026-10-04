@@ -36,10 +36,21 @@ it("says an empty body is not readable", async () => {
   await expect(readBody(() => new Response("").json())).resolves.toEqual({ readable: false });
 });
 
-/** Only the read is guarded: a `null` body really is JSON, and is handed back as one. */
-it("hands back a body that is JSON but says nothing", async () => {
-  await expect(readBody(() => Response.json(null).json())).resolves.toEqual({
-    readable: true,
-    body: null,
+/**
+ * A body that is JSON and not an object is not one any caller can read a field off, so it is
+ * an answer this page cannot read (#230). `null` is the case the ticket was filed for: this file
+ * used to assert it came back `readable: true`, and every caller then threw on it, outside any
+ * `try`, with the student told nothing. A number, a string or a boolean throws the same way at
+ * `"warnings" in body`; an array does not throw there, and is no shape any route answers with.
+ */
+it.each([
+  ["null", null],
+  ["a number", 0],
+  ["a string", "ok"],
+  ["a boolean", true],
+  ["an array", []],
+])("says a body that is %s is not readable, although it is JSON", async (_, value) => {
+  await expect(readBody(() => Response.json(value).json())).resolves.toEqual({
+    readable: false,
   });
 });

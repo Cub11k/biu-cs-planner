@@ -381,6 +381,30 @@ export class NotAWorkspaceError extends WorkspaceRefusedError {
 }
 
 /**
+ * A save refused because the snapshot it takes into `.backups/` could not be made — and not
+ * because of anything about the State File being saved (#229).
+ *
+ * `saveStateFile` copies what it is about to replace before it replaces it, and refuses the
+ * save when the copy cannot be made (its doc says why). Every refusal out of that step used
+ * to arrive as a bare `WorkspaceRefusedError`, indistinguishable from a State File that
+ * cannot be read or written, so `app/src/edit.ts` worded it as one and the page told the
+ * student their saved picks could not be read — about a file that had read perfectly well.
+ * This subclass is how the one case is told apart: an adapter raises it for whatever went
+ * wrong in the snapshot step, with its own refusal on `cause` and that refusal's sentence as
+ * its message, so nothing it said is lost.
+ *
+ * **Still a `WorkspaceRefusedError`**, so every caller that answers one keeps answering this
+ * one, and `name` is left as the base class's for `NotAWorkspaceError`'s reason. Nothing is
+ * written when it is raised: the snapshot is taken before the rename, so the State File is
+ * the one the save found.
+ */
+export class BackupRefusedError extends WorkspaceRefusedError {
+  constructor(refusal: WorkspaceRefusedError) {
+    super(refusal.message, { cause: refusal });
+  }
+}
+
+/**
  * What a State File holds, and which revision that content is.
  *
  * `version` is the field's name, and what it holds is the State File's **revision** (`CONTEXT.md`;
@@ -550,8 +574,9 @@ export type Workspace = {
    *
    * **A snapshot that cannot be written refuses the save.** `.backups/` is part of the
    * Workspace Layout and this method already refuses a save when any part of it is missing, so
-   * an unwritable one is the same refusal met from the other side: a Warning the student can
-   * act on. The alternative — saving anyway and quietly keeping no backup — is the failure #67
+   * an unwritable one is a refusal too: a Warning the student can act on. It is raised as
+   * `BackupRefusedError`, which every adapter owes the caller (#229), so that it is worded as
+   * the backup's and not as the State File's. The alternative — saving anyway and quietly keeping no backup — is the failure #67
    * was filed about, and it is invisible until the day it matters. **Pruning is the other way
    * round**: it runs after the save, it only deletes, and a snapshot it could not remove is
    * one too many rather than one too few, so it never costs a student their save.
