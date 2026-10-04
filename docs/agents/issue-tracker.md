@@ -88,6 +88,17 @@ never dispatched at the same time — the dispatch brief sequences them, exactly
 agents that wanted one file. Do not answer an intersection by splitting a parent back into atoms;
 that trades a scheduling constraint for the overhead this rule exists to remove.
 
+### Compose asks that are equally ready
+
+**Where a lane holds both specified asks and asks waiting on a ruling, group the specified ones
+together and leave the rulings to a parent of their own.** A parent is only as dispatchable as its
+least-ready child, so composing one of each buys nothing and costs the specified ask its turn.
+
+This is not the same as the asks being badly written. A `needs-triage` ticket in this repo is
+usually complete prose ending in "What to decide" — `#145` sets out both readings of a bound and
+says which questions the ruling has to answer. What it waits on is a judgement the author makes,
+not a sentence an implementer could supply, and no amount of grouping shortens that wait.
+
 ### When there is nothing to compose with
 
 An atomic ask that shares a lane with nothing ships as its own ticket, with no parent and no
