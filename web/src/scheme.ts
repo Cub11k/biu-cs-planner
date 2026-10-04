@@ -21,12 +21,13 @@
  * unrecognised one, a store that throws, no browser at all — is the one `"system"` state
  * rather than a third palette, which is what makes losing the value cost a click.
  *
- * Three places read that store, and they have to agree. The blocking stamp in
- * `web/index.html` runs before the first paint, `main.tsx` narrows the same key before
- * React mounts, and `watchScheme` below re-reads it when another tab writes (#146).
- * `asSchemeChoice` stays the single place a value from outside becomes a choice: the inline
- * stamp keeps that true by narrowing nothing at all, and `scheme.test.ts` fails if it
- * starts to.
+ * Four places read that store, and they have to agree. The blocking stamp in
+ * `web/index.html` runs before the first paint, `main.tsx` narrows the same key before React
+ * mounts, `watchScheme` below re-reads it when another tab writes (#146), and `SchemeControl`
+ * reads it for the word it shows — at render for the first paint of the control and again at
+ * commit, because by then the first answer can be out of date (#168). `asSchemeChoice` stays
+ * the single place a value from outside becomes a choice: the inline stamp keeps that true by
+ * narrowing nothing at all, and `scheme.test.ts` fails if it starts to.
  *
  * **This module owns the attribute, and every stamp carries what the store says now.** The
  * three writers are `main.tsx` once at startup, `watchScheme` on an event it answers by
