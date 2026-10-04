@@ -243,7 +243,14 @@ describe("this repository", () => {
     expect(strayFollowers(sources)).toEqual([]);
     expect(new Set(found.map((f) => f.path))).toEqual(new Set([FOLLOWER_HOME]));
     expect(found.length).toBeGreaterThan(0);
-  });
+    // A budget rather than the default five seconds, because this reads and parses every
+    // source file in the repository and pays for the TypeScript compiler's first load. Under
+    // `npm run coverage`, which instruments all of that, it was measured at 4157ms on a CI
+    // runner (#223's report job) and 4819ms here — passing on 3% of its budget, and only while
+    // no other worker was busy. #211 added a test file that runs a real Vite build and an
+    // `npm pack`, and this one went over. The assertions above are unchanged; what was wrong
+    // was a default timeout standing in for a measurement nobody had taken.
+  }, 30_000);
 
   it("over-reports inside the walk's own module, which is the direction it errs in", () => {
     // Three functions in `FOLLOWER_HOME` match and one walk exists: `readModule` reads an
