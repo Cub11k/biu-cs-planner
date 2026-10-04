@@ -94,7 +94,10 @@ export const claimToken = (): string | undefined => tokens().claim();
  * tab on the same port picks up a fresh token as soon as the new address is opened in that
  * browser (ADR-0004), and a snapshot taken at load would go on claiming the old state.
  *
- * Whether the request that was refused carried *this* token is deliberately not claimed: the
- * sentence it chooses says the token was refused, not which one.
+ * The sentence it chooses does say *this page's* token was refused, which is safe because
+ * `claimLaunchToken` runs before the first request goes out (`main.tsx`): a page that is holding
+ * a token now was holding it when the refusal was answered. What is deliberately not claimed is
+ * that the token was **rotated** — the server refuses a token it never issued the same way, and
+ * a second app on the port would too.
  */
 export const hasLaunchToken = (): boolean => tokens().current() !== undefined;

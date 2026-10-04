@@ -181,13 +181,19 @@ it("says the server is not there rather than throwing at the screen", async () =
  * Driven as the HTML 500 Vite's `/api` proxy answers when the server behind it is not running,
  * which is how this arrives in ordinary development rather than as a contract curiosity.
  */
-const HTML_500 = new Response("<!doctype html><h1>500 Internal Server Error</h1>", {
-  status: 500,
-  headers: { "content-type": "text/html" },
-});
+/**
+ * A factory and not one held `Response`: a body can be read once, so a shared instance only works
+ * while every caller remembers to clone it, and the first test that forgets reads an empty body
+ * and passes for the wrong reason.
+ */
+const htmlFiveHundred = (): Response =>
+  new Response("<!doctype html><h1>500 Internal Server Error</h1>", {
+    status: 500,
+    headers: { "content-type": "text/html" },
+  });
 
 it("makes an answer of an error body that is not JSON, rather than rejecting", async () => {
-  const { api } = client(() => HTML_500.clone());
+  const { api } = client(htmlFiveHundred);
 
   await expect(fetchTimetable(api, FALL_2027)).resolves.toEqual({ kind: "unreadable-answer" });
   await expect(recordPick(api, FALL_2027, LECTURE, VERSION)).resolves.toEqual({
@@ -223,7 +229,7 @@ it("makes an answer of a served body that is not JSON", async () => {
  * be read" — and nothing about an unparseable body says the State File was reached at all.
  */
 it("does not call an unreadable answer a refusal, which would name a cause it does not know", async () => {
-  const { api } = client(() => HTML_500.clone());
+  const { api } = client(htmlFiveHundred);
 
   const result = await fetchTimetable(api, FALL_2027);
 

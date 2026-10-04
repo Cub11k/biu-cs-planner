@@ -169,8 +169,6 @@ it("says something when a click's answer is a body it cannot read", async () => 
   await vi.waitFor(() => {
     expect(said(mounted)).toContain(t("en", "picksAnswerUnreadable"));
   });
-  // and nothing was written, which is what the sentence claims
-  expect(picks).toEqual([]);
 });
 
 /**

@@ -71,9 +71,13 @@ export async function fetchOfferings(
     if (status === UNAUTHORIZED) return { kind: "unauthorized" };
 
     // `Answer` named explicitly, because `json()` on an answer narrowed to `!ok` is a union of
-    // signatures and inference off one of them would pick a single arm of the body's type. It is
-    // the same union the direct `await answer.json()` gave before, so `"warnings" in body` still
-    // tells a Catalog refusal from the guard's `{ error }`.
+    // signatures and inference off one of them would pick a single arm of the body's type.
+    //
+    // It is **wider** than what the direct `await answer.json()` gave here, not the same: hono
+    // narrows the body by `.ok` — which is what lets the served read below name `ServedCatalog` —
+    // so naming the whole union puts the served arm back. Nothing is read off it but
+    // `"warnings" in body`, and `ServedCatalog` has no `warnings`, so the widening cannot make
+    // this branch claim a Warning that is not there.
     const refused = await readBody<Answer>(() => answer.json());
     if (!refused.readable) return { kind: "unreadable-answer" };
     const body = refused.body;

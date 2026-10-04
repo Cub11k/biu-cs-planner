@@ -113,23 +113,23 @@ const languageOf = (served: string): Language | undefined =>
   LANGUAGES.find((known) => known === served);
 
 /**
- * A body that is not JSON at all is an answer rather than a crash, and `readBody` in ./api.ts is
- * what makes it one. It used to be a private copy here; two more copies were written by hand in
- * `timetable/picks.ts` and `timetable/offerings.ts` and were both still letting `json()` reject,
- * which is #171 — so there is one now and the three modules share it.
+ * An answer whose body says nothing this module can act on. The floor, and deliberately the
+ * floor: what is true of it is that there is nothing here to go on, and it reads as `refused` with
+ * no reason — which the screen says as "nothing changed" for a write and "could not be read" for a
+ * read, both of which are what the student needs to hear.
+ *
+ * **A body that is not JSON at all is an answer rather than a crash**, and `readBody` in ./api.ts
+ * is what makes it one. That guard used to be a private copy here; two more copies were written by
+ * hand in `timetable/picks.ts` and `timetable/offerings.ts` and were both still letting `json()`
+ * reject, which is #171 — so there is one of it now and the three modules share it. What each of
+ * them then *makes* of an unreadable body still differs, and `timetable/picks.ts` says why it
+ * gives that body an arm of its own rather than this one.
  *
  * Letting `json()` reject was the first version of this module and it was a real bug: the
  * rejection escaped both callers, so `saving` was never cleared and the language switch stayed
  * disabled and silent for the life of the page. `useHistory` clears `stepping` in a `finally` for
  * the same reason; this module does both — it clears the flag *and* turns the body into an answer,
  * because a disabled control with no sentence is the failure #111 is about.
- */
-
-/**
- * An answer whose body says nothing this module can act on. The floor, and deliberately the
- * floor: what is true of it is that there is nothing here to go on, and it reads as `refused` with
- * no reason — which the screen says as "nothing changed" for a write and "could not be read" for a
- * read, both of which are what the student needs to hear.
  */
 const nothingToGoOn = (): SettingsResult => ({ kind: "refused", reason: undefined, warnings: [] });
 
@@ -140,9 +140,9 @@ async function read(answer: Response & { ok: boolean; status: number }): Promise
   const status: number = answer.status;
   if (status === UNAUTHORIZED) return { kind: "unauthorized" };
 
-  const read = await readBody((): Promise<unknown> => answer.json());
-  if (!read.readable) return nothingToGoOn();
-  const body = read.body;
+  const answered = await readBody((): Promise<unknown> => answer.json());
+  if (!answered.readable) return nothingToGoOn();
+  const body = answered.body;
 
   if (!answer.ok) {
     const refused = body as { reason?: SettingsRefusal; warnings?: SettingsWarning[] };

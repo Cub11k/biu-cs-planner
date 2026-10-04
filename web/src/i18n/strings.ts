@@ -243,15 +243,22 @@ const english = {
    * causes that are actually known to produce this are named as the possibilities they are: in
    * development Vite answers an HTML 500 for a server that is not running, and hono answers a
    * plain-text 404 for a path only a newer bundle asks for.
+   *
+   * **Neither says whether anything was saved**, and `picksAnswerUnreadable` is the one that had
+   * to be talked out of it. `read` in `timetable/picks.ts` reaches this arm from the served arm
+   * as well as the refused one, so an unparseable **200** to a Pick gets this sentence and that
+   * write may perfectly well have landed — and the same sentence is shown for the week's own
+   * read, where nothing was attempted at all. What holds in every one of those is that the week
+   * on screen is not known to be the file, so that is all it says.
    */
   catalogAnswerUnreadable:
     "The app answered with something this page could not read, so the catalog is not shown. " +
     "The app may not be running, or may be a different version from this page — start it from " +
     "a terminal and open the address it prints.",
   picksAnswerUnreadable:
-    "The app answered with something this page could not read, so nothing was changed and the " +
-    "week is not your saved work. The app may not be running, or may be a different version " +
-    "from this page.",
+    "The app answered with something this page could not read, so the week is not your saved " +
+    "work. The app may not be running, or may be a different version from this page — start it " +
+    "from a terminal and open the address it prints.",
 
   warningFileUnreadable: "The catalog file is not a catalog this app can read.",
   warningSchemaTooNew: "The catalog was written by a newer version of the app.",
@@ -397,7 +404,7 @@ const hebrew: Record<StringKey, string> = {
   catalogUnauthorized:
     "לדף הזה אין אסימון הפעלה. הפעילו את היישום מהמסוף ופתחו את הכתובת שהוא מדפיס.",
   tokenRetired:
-    "אסימון ההפעלה של הדף הזה נדחה, ולכן הוא אינו האסימון שהיישום מקבל. " +
+    "אסימון ההפעלה של הדף הזה נדחה, ולכן הוא כבר אינו האסימון שהיישום מקבל. " +
     "הפעילו את היישום מהמסוף ופתחו את הכתובת שהוא מדפיס.",
 
   catalogAnswerUnreadable:
@@ -405,8 +412,9 @@ const hebrew: Record<StringKey, string> = {
     "ייתכן שהיישום אינו פועל, או שהוא בגרסה אחרת מזו של הדף — הפעילו אותו מהמסוף " +
     "ופתחו את הכתובת שהוא מדפיס.",
   picksAnswerUnreadable:
-    "היישום החזיר תשובה שהדף הזה אינו יודע לקרוא, ולכן דבר לא שונה והשבוע אינו " +
-    "משקף את העבודה השמורה. ייתכן שהיישום אינו פועל, או שהוא בגרסה אחרת מזו של הדף.",
+    "היישום החזיר תשובה שהדף הזה אינו יודע לקרוא, ולכן השבוע אינו משקף את העבודה " +
+    "השמורה שלכם. ייתכן שהיישום אינו פועל, או שהוא בגרסה אחרת מזו של הדף — הפעילו " +
+    "אותו מהמסוף ופתחו את הכתובת שהוא מדפיס.",
 
   warningFileUnreadable: "הקובץ אינו קטלוג שהיישום יודע לקרוא.",
   warningSchemaTooNew: "הקטלוג נכתב בגרסה חדשה יותר של היישום.",

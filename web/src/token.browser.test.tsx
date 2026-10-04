@@ -54,10 +54,23 @@ const realFetch = globalThis.fetch;
 
 /** Whether the server refuses every request, as it does from the start after a rotation. */
 let refuseEverything: boolean;
+/**
+ * Whether only the Timetable route is refused. Not a shape a retired token produces — the guard
+ * is in front of every route — but it is how the week's own behaviour under an unreadable set of
+ * Picks can be looked at without an empty Catalog in front of it.
+ */
+let refuseTimetable: boolean;
 /** The Picks the fake's State File holds, so the week has something to lose. */
 let picks: unknown[];
 let changeCount: number;
 let sent: string[];
+
+/** Exactly what `server/src/guard.ts` answers, which is the same for every way a token fails. */
+const unauthorized = (): Response =>
+  new Response(JSON.stringify({ error: "unauthorized" }), {
+    status: 401,
+    headers: { "content-type": "application/json" },
+  });
 
 const json = (body: unknown): Response =>
   new Response(JSON.stringify(body), {
@@ -74,6 +87,7 @@ const PICK = {
 
 beforeEach(() => {
   refuseEverything = false;
+  refuseTimetable = false;
   picks = [PICK];
   changeCount = 0;
   sent = [];
@@ -91,12 +105,7 @@ beforeEach(() => {
     sent.push(pathname);
     // Exactly what the guard answers, and it answers it the same way for a wrong token and for
     // no token at all — which is why the page has to tell the two apart from its own side.
-    if (refuseEverything) {
-      return new Response(JSON.stringify({ error: "unauthorized" }), {
-        status: 401,
-        headers: { "content-type": "application/json" },
-      });
-    }
+    if (refuseEverything) return unauthorized();
 
     if (pathname === "/api/settings") {
       return json({ language: "en", examSpacingDays: 3, version: "v1", warnings: [] });
@@ -104,6 +113,7 @@ beforeEach(() => {
     if (pathname === "/api/workspace/changes") return json({ changeCount });
     if (pathname === "/api/history") return json({ canUndo: false, canRedo: false });
     if (pathname.startsWith("/api/timetable")) {
+      if (refuseTimetable) return unauthorized();
       return json({ variantName: "A", picks, clashes: [], version: "v1", warnings: [] });
     }
     return json({ offerings: [OFFERING] });
@@ -134,6 +144,22 @@ function mount(): HTMLElement {
 
 /** Everything on screen, both panes: the sidebar says one of these and the hint line the other. */
 const onScreen = (mounted: HTMLElement): string => mounted.textContent ?? "";
+
+/**
+ * Chooses the fixture's Course, which puts its Groups on the week. Needed for the tile assertion
+ * below: the week draws a Pick only through the Course it belongs to or through the Picks it was
+ * served, so with neither in hand it draws nothing at all.
+ */
+async function chooseCourse(mounted: HTMLElement): Promise<void> {
+  const chooser = await vi.waitFor(() => {
+    const found = [...mounted.querySelectorAll("button")].find((button) =>
+      button.textContent?.includes(OFFERING.courseNumber),
+    );
+    if (found === undefined) throw new Error("the Catalog served no Course to choose");
+    return found;
+  });
+  chooser.click();
+}
 
 /** A 401 answered from here on, the way a restarted app refuses a tab holding the old token. */
 function refuseFromNowOn(): void {
@@ -192,15 +218,22 @@ it("finds out that its token was refused without anything being clicked", async 
   await vi.waitFor(() => {
     expect(onScreen(mounted)).toContain(t("en", "picksCountOne"));
   });
-  const asksBefore = sent.length;
 
   refuseFromNowOn();
+  // Every ask from here on, so the mechanism can be read off it rather than inferred. Counting
+  // asks would not do: the poll moves that number every two seconds whether or not a refusal is
+  // ever reported, so a count would pass with `changes.ts` reverted.
+  sent.length = 0;
 
   await vi.waitFor(() => {
     expect(onScreen(mounted)).toContain(t("en", "tokenRetired"));
   }, POLL);
-  // the page asked again of its own accord, which is the only way this sentence could appear
-  expect(sent.length).toBeGreaterThan(asksBefore);
+
+  // The poll was refused — and the page then **re-read the week**, which is the whole of how it
+  // finds out. A refused poll that reported nothing would leave only the poll's own asks here,
+  // because `useReloading` asks again on the change count and nothing else moved it.
+  expect(sent).toContain("/api/workspace/changes");
+  expect(sent.some((path) => path.startsWith("/api/timetable"))).toBe(true);
 });
 
 /**
@@ -209,20 +242,69 @@ it("finds out that its token was refused without anything being clicked", async 
  * would be a false statement about their own data — which is #111's lesson and #117's unread
  * tile state. Asserted here because #126 is one of the shapes of ignorance that reaches it.
  */
-it("does not claim the student has no Picks when it cannot read them", async () => {
+it("leaves the week empty under a 401, and never says the student has no Picks", async () => {
   localStorage.setItem(TOKEN_STORAGE_KEY, TOKEN);
   const mounted = mount();
+  await chooseCourse(mounted);
   await vi.waitFor(() => {
-    expect(onScreen(mounted)).toContain(t("en", "picksCountOne"));
+    const found = mounted.querySelector<HTMLElement>(".day-column .tile");
+    if (found === null) throw new Error("the served Pick put no tile on the week");
+    expect(found.getAttribute("aria-pressed")).toBe("true");
   });
 
   refuseFromNowOn();
 
+  // **A retired token refuses the Catalog as well**, so there is no Offering left to draw and no
+  // tile of any kind — not a pencil option, which would be the week claiming the Group is not
+  // picked. The sentence beside the week is the whole account of what is missing, which is
+  // honest and is not the same as the week saying so itself; redrawing the Picks a page read a
+  // moment ago, as something it can no longer confirm, is the unread-screen question (#119,
+  // #120, #172) and is not decided here.
   await vi.waitFor(() => {
     expect(onScreen(mounted)).toContain(t("en", "tokenRetired"));
+    expect(mounted.querySelector(".day-column .tile")).toBeNull();
   }, POLL);
   expect(onScreen(mounted)).not.toContain(t("en", "picksNone"));
   expect(onScreen(mounted)).not.toContain(t("en", "picksCountOne"));
+});
+
+/**
+ * **The criterion itself, isolated: "cannot read the Picks" is not "no Picks".**
+ *
+ * Only the Timetable route is refused here, and the Catalog still serves. A retired token refuses
+ * both, so this is not the rotation reproduced — it is the week's own behaviour under the
+ * ignorance a 401 produces, which is the part of #126 the screen has to get right and the part a
+ * full refusal hides behind an empty Catalog. `aria-pressed="mixed"` with `aria-busy` is #117's
+ * unread state; `aria-pressed="false"` — a pencil option, "this Group is not picked" — is the
+ * false claim the `[]` fallback made, and is what this holds the screen to.
+ *
+ * The sentences would not catch it: `picksNone` and `picksCountOne` come from `picksSaid`, which
+ * `picksNotice` reaches only on a served answer, so neither can appear on this path however the
+ * Picks were defaulted.
+ */
+it("draws a Group whose Picks it cannot read as unread, not as unpicked", async () => {
+  localStorage.setItem(TOKEN_STORAGE_KEY, TOKEN);
+  const mounted = mount();
+  await chooseCourse(mounted);
+  await vi.waitFor(() => {
+    const found = mounted.querySelector<HTMLElement>(".day-column .tile");
+    if (found === null) throw new Error("the served Pick put no tile on the week");
+    expect(found.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  refuseTimetable = true;
+  // and the folder changes, which is what makes the page re-read: the Workspace poll is still
+  // answered here, so nothing else would send it back to a route that has started refusing
+  changeCount = 1;
+
+  await vi.waitFor(() => {
+    const tile = mounted.querySelector<HTMLElement>(".day-column .tile");
+    if (tile === null) throw new Error("the Catalog is still served, so the Group must be drawn");
+    expect(tile.getAttribute("aria-pressed")).toBe("mixed");
+    expect(tile.getAttribute("aria-busy")).toBe("true");
+    expect(tile.className).toContain("is-unread");
+  }, POLL);
+  expect(onScreen(mounted)).not.toContain(t("en", "picksNone"));
 });
 
 /**
