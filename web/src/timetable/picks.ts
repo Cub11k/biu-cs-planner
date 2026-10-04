@@ -8,6 +8,7 @@
  * "Architecture").
  */
 import type { InferRequestType, InferResponseType } from "hono/client";
+import { readBody } from "../api.ts";
 import type { ApiClient } from "./offerings.ts";
 import type { Semester } from "./catalog.ts";
 
@@ -73,6 +74,18 @@ export type TimetableResult =
   | { kind: "refused"; reason: StateRefusal | undefined; warnings: StateWarning[] }
   /** This page has no launch token, so the server will not talk to it (ADR-0004). */
   | { kind: "unauthorized" }
+  /**
+   * The answer arrived and its body is not one this page can read — Vite's HTML 500 when the
+   * server is not running behind the dev proxy, hono's plain-text 404 for a path a newer
+   * bundle asks for (`readBody` in ../api.ts).
+   *
+   * Its own arm and not `refused` with no reason, which is what `settings.ts` makes of the
+   * same body. That arm's sentence here is `picksUnreadable` — "your saved picks could not be
+   * read" — and nothing about an unparseable body says the State File was read at all, let
+   * alone that it could not be. Naming a cause the page does not know is the mistake #111 is
+   * about and #171 says not to repeat.
+   */
+  | { kind: "unreadable-answer" }
   /** The request never arrived: the server is not running, or not running here. */
   | { kind: "unreachable" };
 
@@ -99,14 +112,24 @@ async function read(
     const status: number = answer.status;
     if (status === UNAUTHORIZED) return { kind: "unauthorized" };
 
-    const refused = (await answer.json()) as {
-      reason?: StateRefusal;
-      warnings?: StateWarning[];
+    const refused = await readBody(
+      () =>
+        answer.json() as Promise<{
+          reason?: StateRefusal;
+          warnings?: StateWarning[];
+        }>,
+    );
+    if (!refused.readable) return { kind: "unreadable-answer" };
+    return {
+      kind: "refused",
+      reason: refused.body.reason,
+      warnings: refused.body.warnings ?? [],
     };
-    return { kind: "refused", reason: refused.reason, warnings: refused.warnings ?? [] };
   }
 
-  const body = (await answer.json()) as ServedTimetable;
+  const served = await readBody(() => answer.json() as Promise<ServedTimetable>);
+  if (!served.readable) return { kind: "unreadable-answer" };
+  const body = served.body;
   return {
     kind: "served",
     variantName: body.variantName,
@@ -120,7 +143,8 @@ async function read(
  * Sends one request, and reads the answer **outside** the catch: only the request failing
  * is the server not being there. An answer this module then cannot make sense of is a
  * contract problem, and calling it "unreachable" would send the student to look at a
- * server that answered them.
+ * server that answered them — so a body that is not JSON comes back as `unreadable-answer`
+ * (see `read`) rather than as either a rejection or a lie about where the server is.
  */
 async function ask(
   send: () => Promise<Response & { ok: boolean; status: number }>,

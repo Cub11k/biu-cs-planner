@@ -29,6 +29,40 @@ export function createApiClient(readToken: () => string | undefined, fetchImpl?:
 }
 
 /**
+ * A body that was read, or an answer this page could not read at all.
+ *
+ * `readable: false` is an **answer** and not a crash, which is the whole of #171. In
+ * development `web/vite.config.ts` proxies `/api` to the server, and Vite answers with an
+ * HTML 500 page when the target refuses the connection — so "the server is not running"
+ * arrives as a response with an unparseable body rather than as a failed request. An
+ * unmatched `/api/...` path is hono's plain-text 404 (`server/src/ui.ts`), and a bundle
+ * newer than the server it is talking to produces exactly that.
+ */
+export type AnswerBody<T> = { readable: true; body: T } | { readable: false };
+
+/**
+ * Reads one answer's body, turning a body that is not JSON into an answer rather than a
+ * rejected promise.
+ *
+ * Here rather than in each module that fetches, because three copies of it had already been
+ * written by hand and two of them were wrong: `web/src/settings.ts` read the body inside a
+ * `try` after #115's reviewer found the hole, and `timetable/picks.ts` and
+ * `timetable/offerings.ts` still read theirs outside one — so a Pick, a Pick removal and an
+ * Offerings read rejected with the student told nothing at all (#171).
+ *
+ * It takes the read as a thunk rather than the answer, so the typed client's own union of
+ * body types flows through untouched: `readBody(() => answer.json())` has exactly the type
+ * `answer.json()` had.
+ */
+export async function readBody<T>(read: () => Promise<T>): Promise<AnswerBody<T>> {
+  try {
+    return { readable: true, body: await read() };
+  } catch {
+    return { readable: false };
+  }
+}
+
+/**
  * `window` is touched only when a request is actually sent or the token claimed, never
  * as this module loads — which is what lets the client be built without a browser.
  */

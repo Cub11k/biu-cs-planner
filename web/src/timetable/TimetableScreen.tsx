@@ -667,6 +667,13 @@ export function TimetableScreen({
             <p className="text-sm text-pencil">{t(language, "apiUnreachable")}</p>
           ) : catalog.kind === "unauthorized" ? (
             <p className="text-sm text-pencil">{t(language, "catalogUnauthorized")}</p>
+          ) : /*
+               An answer this page could not read. Its own branch and **before** the fall-through,
+               because the fall-through is `CoursePicker` over an empty Catalog — a sidebar that
+               silently shows no Course and says nothing, which is #171's failure exactly.
+             */
+          catalog.kind === "unreadable-answer" ? (
+            <p className="text-sm text-pencil">{t(language, "catalogAnswerUnreadable")}</p>
           ) : catalog.kind === "refused" ? (
             <CatalogNotice
               language={language}
@@ -770,6 +777,11 @@ function picksNotice(language: Language, timetable: TimetableState): string | un
       return t(language, "apiUnreachable");
     case "unauthorized":
       return t(language, "catalogUnauthorized");
+    // An answer that arrived and could not be read. Not `picksUnreadable`: that sentence says
+    // the saved Picks could not be read, and nothing about an unparseable body says the State
+    // File was reached at all (#171).
+    case "unreadable-answer":
+      return t(language, "picksAnswerUnreadable");
     case "refused":
       return t(
         language,

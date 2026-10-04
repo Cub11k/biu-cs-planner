@@ -215,6 +215,27 @@ const english = {
   catalogUnauthorized:
     "This page has no launch token. Start the app from a terminal and open the address it prints.",
 
+  /**
+   * The app answered and this page could not read the answer (#171). Two sentences for one
+   * cause, because they appear in two places and only one of them is about a click.
+   *
+   * What they claim is exactly what is known: an answer arrived, and it was not one this page
+   * can read. **Not** that the file changed, that it was unreadable, or that the Workspace
+   * refused — `picksUnreadable` and `catalogUnreadable` each name a cause an unparseable body
+   * says nothing about, and the remedy they would send the student to is the wrong one. The two
+   * causes that are actually known to produce this are named as the possibilities they are: in
+   * development Vite answers an HTML 500 for a server that is not running, and hono answers a
+   * plain-text 404 for a path only a newer bundle asks for.
+   */
+  catalogAnswerUnreadable:
+    "The app answered with something this page could not read, so the catalog is not shown. " +
+    "The app may not be running, or may be a different version from this page — start it from " +
+    "a terminal and open the address it prints.",
+  picksAnswerUnreadable:
+    "The app answered with something this page could not read, so nothing was changed and the " +
+    "week is not your saved work. The app may not be running, or may be a different version " +
+    "from this page.",
+
   warningFileUnreadable: "The catalog file is not a catalog this app can read.",
   warningSchemaTooNew: "The catalog was written by a newer version of the app.",
   warningSchemaUnsupported: "The catalog's schema version is not one this app reads.",
@@ -358,6 +379,14 @@ const hebrew: Record<StringKey, string> = {
   catalogUnreadable: "הקטלוג לשנת {year} קיים, אך לא ניתן לקרוא אותו:",
   catalogUnauthorized:
     "לדף הזה אין אסימון הפעלה. הפעילו את היישום מהמסוף ופתחו את הכתובת שהוא מדפיס.",
+
+  catalogAnswerUnreadable:
+    "היישום החזיר תשובה שהדף הזה אינו יודע לקרוא, ולכן הקטלוג אינו מוצג. " +
+    "ייתכן שהיישום אינו פועל, או שהוא בגרסה אחרת מזו של הדף — הפעילו אותו מהמסוף " +
+    "ופתחו את הכתובת שהוא מדפיס.",
+  picksAnswerUnreadable:
+    "היישום החזיר תשובה שהדף הזה אינו יודע לקרוא, ולכן דבר לא שונה והשבוע אינו " +
+    "משקף את העבודה השמורה. ייתכן שהיישום אינו פועל, או שהוא בגרסה אחרת מזו של הדף.",
 
   warningFileUnreadable: "הקובץ אינו קטלוג שהיישום יודע לקרוא.",
   warningSchemaTooNew: "הקטלוג נכתב בגרסה חדשה יותר של היישום.",
