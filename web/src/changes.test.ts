@@ -33,6 +33,9 @@ function servingRevision() {
     failWith: (status: number) => {
       answer = () => new Response("no", { status });
     },
+    answerAgain: () => {
+      answer = () => Response.json({ changeCount });
+    },
     refuseToAnswer: () => {
       answer = () => {
         throw new Error("the server is not running");
@@ -136,8 +139,18 @@ it("treats the count going backwards as a change, not as nothing", async () => {
   expect(changed).toBe(1);
 });
 
-/** A page with no launch token is refused, and a refusal is not news about the folder. */
-it("reports nothing when the API refuses the ask", async () => {
+/**
+ * **The contract #126 changed.** A refused ask used to be discarded, like every other failure
+ * here — and the reasoning was sound for a poll that fails, because that is not news about the
+ * folder. A poll refused *with a 401* is news about **the page**: `rotate-token` plus a restart
+ * leaves an open tab holding a retired launch token (ADR-0004), and this is the only signal
+ * there is without a click. Before this the tab kept showing what it had last read and looked
+ * healthy until a reload.
+ *
+ * Reported **once**, on entry into refused. Reporting every refused ask would re-read the whole
+ * page twice a second for as long as the token stayed retired.
+ */
+it("reports a refused ask once, because that is news about the page", async () => {
   const server = servingRevision();
   let changed = 0;
   const poll = workspaceChangePoll(server.client, () => (changed += 1));
@@ -146,8 +159,77 @@ it("reports nothing when the API refuses the ask", async () => {
   server.failWith(401);
   await poll();
   await poll();
+  await poll();
+
+  expect(changed).toBe(1);
+});
+
+/**
+ * …and reports again when it is answered once more, which is what heals a tab on its own. The
+ * page sends whatever the origin's store holds, so opening the fresh address in the same browser
+ * is enough to make the requests work again (ADR-0004) — and the screens are still showing
+ * whatever they could last read until something tells them to ask again.
+ *
+ * The count is deliberately left where it was, so the recovery is the only thing being measured:
+ * a count that had also moved would have reported on its own.
+ */
+it("reports again when an ask is answered after a refusal, even with the count unmoved", async () => {
+  const server = servingRevision();
+  let changed = 0;
+  const poll = workspaceChangePoll(server.client, () => (changed += 1));
+
+  await poll();
+  server.failWith(401);
+  await poll();
+  expect(changed).toBe(1);
+
+  server.answerAgain();
+  await poll();
+
+  expect(changed).toBe(2);
+  // and the recovery is reported once, not on every answered ask after it
+  await poll();
+  await poll();
+  expect(changed).toBe(2);
+});
+
+/**
+ * Every other refusal keeps the old silence. A 500 from the route says nothing about this page's
+ * token, and there is nothing a re-read would mend — so it is not reported, and it does not
+ * stand in for the refusal that is.
+ */
+it("reports nothing for a refusal that is not about this page's token", async () => {
+  const server = servingRevision();
+  let changed = 0;
+  const poll = workspaceChangePoll(server.client, () => (changed += 1));
+
+  await poll();
+  server.failWith(500);
+  await poll();
+  await poll();
 
   expect(changed).toBe(0);
+
+  // …and a 401 after it is still the first entry into refused, so it is still reported
+  server.failWith(401);
+  await poll();
+  expect(changed).toBe(1);
+});
+
+/**
+ * A page refused from its very first ask is reported too. There is no baseline to compare
+ * against — `seen` is still `undefined` — and that is exactly the tab the ticket is about: it
+ * read nothing, so without this it would sit on `loading` for ever saying nothing.
+ */
+it("reports a refusal on the first ask, when there is no baseline yet", async () => {
+  const server = servingRevision();
+  server.failWith(401);
+  let changed = 0;
+  const poll = workspaceChangePoll(server.client, () => (changed += 1));
+
+  await poll();
+
+  expect(changed).toBe(1);
 });
 
 /** The server not being there is not a change either, and never an unhandled rejection. */

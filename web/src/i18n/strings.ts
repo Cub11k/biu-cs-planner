@@ -212,8 +212,53 @@ const english = {
   catalogEmpty: "No course matches",
   catalogMissing: "No catalog for {year} yet. Import a crawl of Shoham to fill it.",
   catalogUnreadable: "The catalog for {year} is there, but could not be read:",
+  /**
+   * The two ways the server will not talk to this page, which are **two** states and not one
+   * (#126). The remedy is the same — a fresh address from the terminal — and the cause is not:
+   * `catalogUnauthorized` is true of a page that was opened without a launch token, and was
+   * shown for a page holding one as well, where it is false. A tab that was authenticated when
+   * `biu-cs-planner rotate-token` ran holds a retired token, and a student who reads carefully
+   * would go looking for a token they can see is present.
+   *
+   * Neither sentence claims the token *was* rotated: the server refuses a wrong token and a
+   * missing one identically, so what is known is that this page sent one and it was refused.
+   * Neither names `rotate-token` either — a student who did not run it would be reading about a
+   * command that had nothing to do with what happened to them, and the remedy is the same for
+   * all of the ways a token stops being accepted.
+   */
   catalogUnauthorized:
     "This page has no launch token. Start the app from a terminal and open the address it prints.",
+  tokenRetired:
+    "This page's launch token was refused, so it is no longer the one the app accepts. " +
+    "Start the app from a terminal and open the address it prints.",
+
+  /**
+   * The app answered and this page could not read the answer (#171). Two sentences for one
+   * cause, because they appear in two places and only one of them is about a click.
+   *
+   * What they claim is exactly what is known: an answer arrived, and it was not one this page
+   * can read. **Not** that the file changed, that it was unreadable, or that the Workspace
+   * refused — `picksUnreadable` and `catalogUnreadable` each name a cause an unparseable body
+   * says nothing about, and the remedy they would send the student to is the wrong one. The two
+   * causes that are actually known to produce this are named as the possibilities they are: in
+   * development Vite answers an HTML 500 for a server that is not running, and hono answers a
+   * plain-text 404 for a path only a newer bundle asks for.
+   *
+   * **Neither says whether anything was saved**, and `picksAnswerUnreadable` is the one that had
+   * to be talked out of it. `read` in `timetable/picks.ts` reaches this arm from the served arm
+   * as well as the refused one, so an unparseable **200** to a Pick gets this sentence and that
+   * write may perfectly well have landed — and the same sentence is shown for the week's own
+   * read, where nothing was attempted at all. What holds in every one of those is that the week
+   * on screen is not known to be the file, so that is all it says.
+   */
+  catalogAnswerUnreadable:
+    "The app answered with something this page could not read, so the catalog is not shown. " +
+    "The app may not be running, or may be a different version from this page — start it from " +
+    "a terminal and open the address it prints.",
+  picksAnswerUnreadable:
+    "The app answered with something this page could not read, so the week is not your saved " +
+    "work. The app may not be running, or may be a different version from this page — start it " +
+    "from a terminal and open the address it prints.",
 
   warningFileUnreadable: "The catalog file is not a catalog this app can read.",
   warningSchemaTooNew: "The catalog was written by a newer version of the app.",
@@ -358,6 +403,18 @@ const hebrew: Record<StringKey, string> = {
   catalogUnreadable: "הקטלוג לשנת {year} קיים, אך לא ניתן לקרוא אותו:",
   catalogUnauthorized:
     "לדף הזה אין אסימון הפעלה. הפעילו את היישום מהמסוף ופתחו את הכתובת שהוא מדפיס.",
+  tokenRetired:
+    "אסימון ההפעלה של הדף הזה נדחה, ולכן הוא כבר אינו האסימון שהיישום מקבל. " +
+    "הפעילו את היישום מהמסוף ופתחו את הכתובת שהוא מדפיס.",
+
+  catalogAnswerUnreadable:
+    "היישום החזיר תשובה שהדף הזה אינו יודע לקרוא, ולכן הקטלוג אינו מוצג. " +
+    "ייתכן שהיישום אינו פועל, או שהוא בגרסה אחרת מזו של הדף — הפעילו אותו מהמסוף " +
+    "ופתחו את הכתובת שהוא מדפיס.",
+  picksAnswerUnreadable:
+    "היישום החזיר תשובה שהדף הזה אינו יודע לקרוא, ולכן השבוע אינו משקף את העבודה " +
+    "השמורה שלכם. ייתכן שהיישום אינו פועל, או שהוא בגרסה אחרת מזו של הדף — הפעילו " +
+    "אותו מהמסוף ופתחו את הכתובת שהוא מדפיס.",
 
   warningFileUnreadable: "הקובץ אינו קטלוג שהיישום יודע לקרוא.",
   warningSchemaTooNew: "הקטלוג נכתב בגרסה חדשה יותר של היישום.",

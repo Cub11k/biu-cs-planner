@@ -33,7 +33,7 @@
  *     is a change to `core`'s schema and belongs in its own ticket.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api } from "./api.ts";
+import { api, readBody } from "./api.ts";
 import type { ApiClient } from "./changes.ts";
 import { LANGUAGES, type Language } from "./i18n/strings.ts";
 import type { InferRequestType, InferResponseType } from "hono/client";
@@ -113,36 +113,23 @@ const languageOf = (served: string): Language | undefined =>
   LANGUAGES.find((known) => known === served);
 
 /**
- * A body that is not JSON at all, which is an answer rather than a crash.
+ * An answer whose body says nothing this module can act on. The floor, and deliberately the
+ * floor: what is true of it is that there is nothing here to go on, and it reads as `refused` with
+ * no reason — which the screen says as "nothing changed" for a write and "could not be read" for a
+ * read, both of which are what the student needs to hear.
  *
- * **This is not hypothetical and it is not only a contract problem.** In development
- * `web/vite.config.ts` proxies `/api` to the server, and Vite answers with an HTML 500 page when
- * the target refuses the connection — so "the server is not running" arrives here as a response
- * with an unparseable body rather than as a failed request. An unmatched `/api/...` path is
- * hono's plain-text 404 (`server/src/ui.ts`), and a bundle newer than the server it is talking to
- * produces exactly that.
+ * **A body that is not JSON at all is an answer rather than a crash**, and `readBody` in ./api.ts
+ * is what makes it one. That guard used to be a private copy here; two more copies were written by
+ * hand in `timetable/picks.ts` and `timetable/offerings.ts` and were both still letting `json()`
+ * reject, which is #171 — so there is one of it now and the three modules share it. What each of
+ * them then *makes* of an unreadable body still differs, and `timetable/picks.ts` says why it
+ * gives that body an arm of its own rather than this one.
  *
  * Letting `json()` reject was the first version of this module and it was a real bug: the
  * rejection escaped both callers, so `saving` was never cleared and the language switch stayed
  * disabled and silent for the life of the page. `useHistory` clears `stepping` in a `finally` for
  * the same reason; this module does both — it clears the flag *and* turns the body into an answer,
  * because a disabled control with no sentence is the failure #111 is about.
- */
-const UNREADABLE = Symbol("a body this module cannot read");
-
-const bodyOf = async (answer: { json(): Promise<unknown> }): Promise<unknown> => {
-  try {
-    return await answer.json();
-  } catch {
-    return UNREADABLE;
-  }
-};
-
-/**
- * An answer whose body says nothing this module can act on. The floor, and deliberately the
- * floor: what is true of it is that there is nothing here to go on, and it reads as `refused` with
- * no reason — which the screen says as "nothing changed" for a write and "could not be read" for a
- * read, both of which are what the student needs to hear.
  */
 const nothingToGoOn = (): SettingsResult => ({ kind: "refused", reason: undefined, warnings: [] });
 
@@ -153,8 +140,9 @@ async function read(answer: Response & { ok: boolean; status: number }): Promise
   const status: number = answer.status;
   if (status === UNAUTHORIZED) return { kind: "unauthorized" };
 
-  const body = await bodyOf(answer);
-  if (body === UNREADABLE) return nothingToGoOn();
+  const answered = await readBody((): Promise<unknown> => answer.json());
+  if (!answered.readable) return nothingToGoOn();
+  const body = answered.body;
 
   if (!answer.ok) {
     const refused = body as { reason?: SettingsRefusal; warnings?: SettingsWarning[] };
@@ -175,7 +163,7 @@ async function read(answer: Response & { ok: boolean; status: number }): Promise
  * Sends one request and reads the answer **outside** the catch: only the request failing is the
  * server not being there. An answer this module cannot make sense of is a contract problem, and
  * calling it "unreachable" would send the student to look at a server that answered them — so a
- * body that is not JSON comes back as `refused` with no reason (see `bodyOf`) rather than as
+ * body that is not JSON comes back as `refused` with no reason (see `nothingToGoOn`) rather than as
  * either a rejection or a lie about where the server is.
  */
 async function ask(
@@ -405,7 +393,7 @@ export function useSettings(options: UseSettingsOptions = {}): SettingsUse {
             })
             // In a `finally` and not in the `then`: an answer this module could not read used to
             // reject, leaving this flag set and the switch dead and silent for the life of the
-            // page. `bodyOf` now makes that an answer rather than a rejection, and this is the
+            // page. `readBody` now makes that an answer rather than a rejection, and this is the
             // belt as well — `useHistory.step` clears `stepping` the same way.
             .finally(() => setSaving(false));
         };

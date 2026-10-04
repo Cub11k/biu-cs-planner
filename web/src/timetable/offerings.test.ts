@@ -89,3 +89,34 @@ it("says the API is unreachable rather than throwing at the screen", async () =>
 
   expect(result).toEqual({ kind: "unreachable" });
 });
+
+/**
+ * **The other half of #171.** The body was read outside the `catch`, so Vite's HTML 500 — what
+ * the dev proxy answers when the server behind it is not running — rejected the promise and the
+ * sidebar was left on "Loading the catalog…" with no account of why.
+ *
+ * `unreadable-answer` and deliberately not `refused` with no Warnings: `isAbsence` reads that
+ * shape as "this year has no Catalog yet, import a crawl", which is an affirmative claim about
+ * the student's folder that an unparseable body says nothing about.
+ */
+it("makes an answer of an error body that is not JSON, rather than rejecting", async () => {
+  const { api } = client(
+    () =>
+      new Response("<!doctype html><h1>500 Internal Server Error</h1>", {
+        status: 500,
+        headers: { "content-type": "text/html" },
+      }),
+  );
+
+  const result = await fetchOfferings(api, { academicYear: 2027, semester: "fall" });
+
+  expect(result).toEqual({ kind: "unreadable-answer" });
+});
+
+it("makes an answer of a served body that is not JSON too", async () => {
+  const { api } = client(() => new Response("<!doctype html>", { status: 200 }));
+
+  const result = await fetchOfferings(api, { academicYear: 2027, semester: "fall" });
+
+  expect(result).toEqual({ kind: "unreadable-answer" });
+});

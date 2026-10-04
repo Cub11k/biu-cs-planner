@@ -171,3 +171,75 @@ it("says the server is not there rather than throwing at the screen", async () =
   await expect(fetchTimetable(api, FALL_2027)).resolves.toEqual({ kind: "unreachable" });
   await expect(recordPick(api, FALL_2027, LECTURE, VERSION)).resolves.toEqual({ kind: "unreachable" });
 });
+
+/**
+ * **The defect #171 is filed for.** The body was read outside the `catch` that was meant to
+ * cover it, so an error body that is not JSON rejected the promise instead of producing an
+ * answer — and `TimetableScreen` has no `.catch` on these paths, so the click appeared to do
+ * nothing at all.
+ *
+ * Driven as the HTML 500 Vite's `/api` proxy answers when the server behind it is not running,
+ * which is how this arrives in ordinary development rather than as a contract curiosity.
+ */
+/**
+ * A factory and not one held `Response`: a body can be read once, so a shared instance only works
+ * while every caller remembers to clone it, and the first test that forgets reads an empty body
+ * and passes for the wrong reason.
+ */
+const htmlFiveHundred = (): Response =>
+  new Response("<!doctype html><h1>500 Internal Server Error</h1>", {
+    status: 500,
+    headers: { "content-type": "text/html" },
+  });
+
+it("makes an answer of an error body that is not JSON, rather than rejecting", async () => {
+  const { api } = client(htmlFiveHundred);
+
+  await expect(fetchTimetable(api, FALL_2027)).resolves.toEqual({ kind: "unreadable-answer" });
+  await expect(recordPick(api, FALL_2027, LECTURE, VERSION)).resolves.toEqual({
+    kind: "unreadable-answer",
+  });
+  await expect(
+    removePick(api, FALL_2027, { courseNumber: "89-110", lessonType: "הרצאה" }, VERSION),
+  ).resolves.toEqual({ kind: "unreadable-answer" });
+});
+
+/** A plain-text 404, which is what hono answers for a path only a newer bundle asks for. */
+it("makes an answer of a plain-text refusal too", async () => {
+  const { api } = client(() => new Response("404 Not Found", { status: 404 }));
+
+  await expect(recordPick(api, FALL_2027, LECTURE, VERSION)).resolves.toEqual({
+    kind: "unreadable-answer",
+  });
+});
+
+/**
+ * A 200 whose body is not JSON either. The same door: the dev proxy can answer a GET with a
+ * page, and a read that rejected would leave the week on `loading` for the life of the page.
+ */
+it("makes an answer of a served body that is not JSON", async () => {
+  const { api } = client(() => new Response("<!doctype html>", { status: 200 }));
+
+  await expect(fetchTimetable(api, FALL_2027)).resolves.toEqual({ kind: "unreadable-answer" });
+});
+
+/**
+ * …and it is **not** `refused`, which is the half of the ticket that is about what the student
+ * is told. `refused` with no reason is said as `picksUnreadable` — "your saved picks could not
+ * be read" — and nothing about an unparseable body says the State File was reached at all.
+ */
+it("does not call an unreadable answer a refusal, which would name a cause it does not know", async () => {
+  const { api } = client(htmlFiveHundred);
+
+  const result = await fetchTimetable(api, FALL_2027);
+
+  expect(result.kind).not.toBe("refused");
+  expect(result.kind).not.toBe("unreachable");
+});
+
+/** 401 is answered from the status alone, so the guard's body is never read for it. */
+it("still reads a 401 as having no token, whatever body the guard sent", async () => {
+  const { api } = client(() => new Response("unauthorized", { status: 401 }));
+
+  await expect(fetchTimetable(api, FALL_2027)).resolves.toEqual({ kind: "unauthorized" });
+});

@@ -237,6 +237,17 @@ export type TimetableScreenProps = {
    * remedy `askHistory` already is for the undo buttons, and it is called from beside it.
    */
   onEdited?: (() => void) | undefined;
+  /**
+   * Whether this page is holding a launch token at all, which is what tells a **retired** token
+   * from **no** token (#126). Both are refused with a 401 and the server cannot say which it
+   * was, so the fact comes from the page's own side — `hasLaunchToken` in `../api.ts`, which
+   * `App` reads and hands down.
+   *
+   * A prop and not read here, because it is a fact about the page and this screen is one pane
+   * of it; and it defaults to `false`, which is the state of a page that was opened without a
+   * token and the sentence this screen showed for everything before this.
+   */
+  tokenHeld?: boolean;
   /** Taken as an argument so the screen can be opened on any date, and tested. */
   today?: Date;
   /**
@@ -264,6 +275,7 @@ export function TimetableScreen({
   settingsWarnings = [],
   settingsUnread,
   onEdited,
+  tokenHeld = false,
   today = new Date(),
   workspaceChanges = 0,
 }: TimetableScreenProps): React.JSX.Element {
@@ -607,7 +619,7 @@ export function TimetableScreen({
     steppedOn !== timetable
       ? (direction: Direction): void => takeStep(direction, timetable.version, timetable)
       : undefined;
-  const stepNotice = historyNotice(language, lastStep);
+  const stepNotice = historyNotice(language, lastStep, tokenHeld);
 
   // one spelling of the year on the whole screen: the header and the sidebar disagreeing
   // about 2026-27 and 2027 reads as if a different year were the one missing
@@ -666,7 +678,14 @@ export function TimetableScreen({
           ) : catalog.kind === "unreachable" ? (
             <p className="text-sm text-pencil">{t(language, "apiUnreachable")}</p>
           ) : catalog.kind === "unauthorized" ? (
-            <p className="text-sm text-pencil">{t(language, "catalogUnauthorized")}</p>
+            <p className="text-sm text-pencil">{unauthorizedSaid(language, tokenHeld)}</p>
+          ) : /*
+               An answer this page could not read. Its own branch and **before** the fall-through,
+               because the fall-through is `CoursePicker` over an empty Catalog — a sidebar that
+               silently shows no Course and says nothing, which is #171's failure exactly.
+             */
+          catalog.kind === "unreadable-answer" ? (
+            <p className="text-sm text-pencil">{t(language, "catalogAnswerUnreadable")}</p>
           ) : catalog.kind === "refused" ? (
             <CatalogNotice
               language={language}
@@ -698,8 +717,8 @@ export function TimetableScreen({
                 state when clicked, so without this a screen-reader user's click is silently
                 dropped — which is the failure #111 is about, for them. */}
             <span role="status" className="flex flex-wrap items-center gap-x-3 gap-y-1">
-              {picksNotice(language, timetable) === undefined ? null : (
-                <span>{picksNotice(language, timetable)}</span>
+              {picksNotice(language, timetable, tokenHeld) === undefined ? null : (
+                <span>{picksNotice(language, timetable, tokenHeld)}</span>
               )}
               {/* only while it is true: once the answer is served the click is being saved
                   rather than waiting, and the ink it produces is its own account */}
@@ -713,8 +732,8 @@ export function TimetableScreen({
               {/* why the last change to a preference did nothing, and a preference that could
                   not be read at all — both in the live region, because a language that did not
                   change is exactly the kind of nothing a student cannot otherwise tell happened */}
-              {settingsSaid(language, settingsNotice) === undefined ? null : (
-                <span>{settingsSaid(language, settingsNotice)}</span>
+              {settingsSaid(language, settingsNotice, tokenHeld) === undefined ? null : (
+                <span>{settingsSaid(language, settingsNotice, tokenHeld)}</span>
               )}
               {settingsUnread === undefined ? null : (
                 <span>
@@ -753,6 +772,19 @@ export function TimetableScreen({
 }
 
 /**
+ * Which of the two things a 401 means, said once for the whole screen.
+ *
+ * The server answers a wrong token and a missing one identically — it must, or the answer would
+ * tell a caller whether it had guessed a real token — so the difference comes from whether this
+ * page is holding one at all (`hasLaunchToken` in `../api.ts`). Shown in four places, which is
+ * why it is a function and not four ternaries: a page that said one of them in one pane and the
+ * other in another would be claiming both.
+ */
+function unauthorizedSaid(language: Language, tokenHeld: boolean): string {
+  return t(language, tokenHeld ? "tokenRetired" : "catalogUnauthorized");
+}
+
+/**
  * What the hint line says about the Picks — and what it does **not** say.
  *
  * Only a served answer knows how many Picks there are. Falling back to an empty list and
@@ -761,7 +793,11 @@ export function TimetableScreen({
  * Picks are on disk and this page simply cannot see them. Each of the other four answers
  * says what it actually is, as the Catalog half of this screen already does.
  */
-function picksNotice(language: Language, timetable: TimetableState): string | undefined {
+function picksNotice(
+  language: Language,
+  timetable: TimetableState,
+  tokenHeld: boolean,
+): string | undefined {
   switch (timetable.kind) {
     // the first read is in flight and there is nothing honest to say yet
     case "loading":
@@ -769,7 +805,12 @@ function picksNotice(language: Language, timetable: TimetableState): string | un
     case "unreachable":
       return t(language, "apiUnreachable");
     case "unauthorized":
-      return t(language, "catalogUnauthorized");
+      return unauthorizedSaid(language, tokenHeld);
+    // An answer that arrived and could not be read. Not `picksUnreadable`: that sentence says
+    // the saved Picks could not be read, and nothing about an unparseable body says the State
+    // File was reached at all (#171).
+    case "unreadable-answer":
+      return t(language, "picksAnswerUnreadable");
     case "refused":
       return t(
         language,
@@ -791,6 +832,7 @@ function picksNotice(language: Language, timetable: TimetableState): string | un
 function historyNotice(
   language: Language,
   last: { direction: Direction; answer: HistoryStep } | undefined,
+  tokenHeld: boolean,
 ): string | undefined {
   if (last === undefined) return undefined;
   const { direction, answer } = last;
@@ -808,7 +850,7 @@ function historyNotice(
         ? t(language, "historyNotDone")
         : t(language, HISTORY_REFUSAL_STRING[answer.reason]);
     case "unauthorized":
-      return t(language, "catalogUnauthorized");
+      return unauthorizedSaid(language, tokenHeld);
     case "unreachable":
       return t(language, "apiUnreachable");
   }
@@ -822,7 +864,11 @@ function historyNotice(
  * document, which is its own account, and a sentence saying so would be one more thing to read
  * about something the student can already see.
  */
-function settingsSaid(language: Language, notice: SettingsNotice | undefined): string | undefined {
+function settingsSaid(
+  language: Language,
+  notice: SettingsNotice | undefined,
+  tokenHeld: boolean,
+): string | undefined {
   if (notice === undefined) return undefined;
 
   switch (notice.kind) {
@@ -833,7 +879,7 @@ function settingsSaid(language: Language, notice: SettingsNotice | undefined): s
         ? t(language, "settingsNotDone")
         : t(language, SETTINGS_REFUSAL_STRING[notice.reason]);
     case "unauthorized":
-      return t(language, "catalogUnauthorized");
+      return unauthorizedSaid(language, tokenHeld);
     case "unreachable":
       return t(language, "apiUnreachable");
   }

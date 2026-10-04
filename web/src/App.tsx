@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { hasLaunchToken } from "./api.ts";
 import { useWorkspaceChanges } from "./changes.ts";
 import { DIRECTION, type Language } from "./i18n/strings.ts";
 import { useSettings } from "./settings.ts";
@@ -15,6 +16,10 @@ import { TimetableScreen } from "./timetable/TimetableScreen.tsx";
  * It now comes from the State File over the API (`./settings.ts`), which ADR-0014 is the decision
  * for: a preference about the person belongs where the data is, not in the browser's store.
  *
+ * Watching the Workspace is also what makes a page whose launch token has been retired find out
+ * on its own: a refused poll is reported rather than discarded, which re-reads every pane, and
+ * each pane then says what it is (#126, `./changes.ts`).
+ *
  * Watching the Workspace lives here for the same reason the language does: a file appearing in the
  * folder is news for the whole app and not for one pane of it, so it is asked for once here and
  * handed to whichever screen is open, and to `useSettings`, which re-reads the language when
@@ -28,6 +33,17 @@ import { TimetableScreen } from "./timetable/TimetableScreen.tsx";
  */
 export function App(): React.JSX.Element {
   const workspaceChanges = useWorkspaceChanges();
+  /**
+   * Whether this page is holding a launch token, which is what tells a **retired** token from
+   * **no** token in everything the screen says about a 401 (#126, `./api.ts`).
+   *
+   * Read on every render rather than once, and that is what makes it true over time: a tab on
+   * the same port picks up a fresh token as soon as the new address is opened in that browser,
+   * because the token comes from the origin's own store per request (ADR-0004). The poll is what
+   * re-renders this — a refused ask, and the first answered one after it, are both reported
+   * (`./changes.ts`) — so the fact is re-read within one interval of either happening.
+   */
+  const tokenHeld = hasLaunchToken();
   const settings = useSettings({ changes: workspaceChanges });
   const { choose } = settings;
 
@@ -52,6 +68,7 @@ export function App(): React.JSX.Element {
       // screen re-reads at once. `onEdited` is the same fix pointing the other way.
       workspaceChanges={workspaceChanges + settings.writes}
       onEdited={settings.ask}
+      tokenHeld={tokenHeld}
     />
   );
 }
