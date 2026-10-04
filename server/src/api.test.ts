@@ -1727,7 +1727,9 @@ it("names no path in either answer, and no State File", async () => {
  * So these go the other way round: **provoke a refusal on every route that can answer
  * `workspace-refused`, and read the body.** The routes are enumerated from `createApi` rather
  * than from the ticket, because #195 added one and inherited the leak by doing nothing wrong and
- * #67 added two more.
+ * #67 added two more. Eighteen routes are registered; fourteen of them have a refusal arm, and
+ * all fourteen are provoked below — four by the Catalog, nine by the State File, and
+ * `POST /api/workspace` by a Workspace Layout that cannot be made.
  *
  * `error.message` is the only channel an adapter's prose has out of `app` — measured, with
  * `grep -rn '\.message' app/src server/src core/src web/src`, which finds `queries.ts` and
@@ -1916,6 +1918,30 @@ it("names no path in a refusal when the State File cannot be read, on every rout
  * `app/src/backups.ts` collapses it to a reason code, so nothing escaped; it is here because the
  * sweep is over routes and not over the ones that happened to carry a message.
  */
+/**
+ * `POST /api/workspace` is the fourteenth refusal-capable route and the only one not reached by
+ * either of the two provocations above, so it gets its own case rather than being left to the
+ * total-body assertion further up this file — which does cover it, by asserting the whole body
+ * equals `{ reason: "workspace-refused" }`, but does so as a test about #141 and not about paths.
+ * A sweep with a hole in it is worth less than the hole is wide.
+ *
+ * A plain file where `catalogs` belongs and `requirements` genuinely missing, so `status` reports
+ * not-ready, the student is offered the Workspace Layout, and accepting it lands on the file
+ * (#121). `create`'s refusal names the **Workspace Layout folder token**, which is the same token
+ * `GET /api/workspace` already serves in `missing` — which is why `namesNoPath` forbids
+ * `catalogs/` with the separator and not the bare word.
+ */
+it("names no path when the Workspace Layout cannot be created", async () => {
+  await writeFile(join(root, "catalogs"), "not a folder");
+
+  const refused = await post("/api/workspace", {});
+
+  expect(refused.status).toBe(409);
+  const body = await refused.text();
+  expect(JSON.parse(body)).toEqual({ reason: "workspace-refused" });
+  namesNoPath(body, "POST workspace");
+});
+
 it("names no path when the snapshots folder is there and cannot be listed", async () => {
   await mkdir(join(root, "catalogs"));
   await mkdir(join(root, "requirements"));
