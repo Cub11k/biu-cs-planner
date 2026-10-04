@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import ts from "typescript";
@@ -929,19 +929,13 @@ describe("a re-exported name's declaration", () => {
     ).toEqual(["thing -> nowhere"]);
   });
 
-  it("keeps the re-export walk in one module of the report's own source", () => {
-    // #124 asks for one barrel-follower in the codebase. It lives in `surface.ts` because
-    // `calls.ts` already imports that module, so a follower kept in `calls.ts` and imported
-    // back would be a cycle in the very module graph this report draws. A canary rather than a
-    // proof: it catches the walk being copied back, not a second one written under a new name.
-    const defining = ["calls.ts", "collect.ts", "render.ts", "surface.ts", "main.ts"].filter((f) =>
-      /(?:function|const)\s+declaringModule\b/.test(
-        readFileSync(resolve(import.meta.dirname, f), "utf8"),
-      ),
-    );
-
-    expect(defining).toEqual(["surface.ts"]);
-  });
+  // The canary that stood here — five hard-coded filenames read and searched for the literal
+  // `declaringModule` — is gone, not kept beside its replacement. It caught the walk being
+  // copied back into one of those five files and was blind to a second follower anywhere else,
+  // under any other name, which is what the rule is about (#203). The rule now lives in
+  // `tools/pr-review/followers.ts`, beside the other structural checks, asks what it means
+  // rather than searching for an identifier, and reads the whole tree — including `tools/`,
+  // which `collect` cannot see.
 });
 
 /**
