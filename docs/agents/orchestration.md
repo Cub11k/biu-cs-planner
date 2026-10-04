@@ -107,16 +107,20 @@ way to know is to delete the implementation and watch it fail.
 
 A `:focus-visible` assertion once passed because Chromium draws its own focus ring, so removing
 the rule under test changed nothing the test could see. It had never tested anything. #97 records
-it and nothing else does: **which assertion and which run has not been established.**
-`git log -S':focus-visible' -- web/src` returns six commits, and the pass that went looking (on PR
-#221's thread) proposed none of them rather than guess.
+it, and PR #137 restates it in the same terms as something this repo "has been burned by", but
+**which assertion and which run has not been established.** `git log -S':focus-visible' -- web/src`
+returns six commits, PR #137's own among them, and the pass that went looking (on PR #221's thread)
+proposed none of them rather than guess.
 
 **Commit before you mutate.** `git checkout -- <file>` reverts to the last commit, not to where
 you were, so using it to undo a deliberate mutation discards any uncommitted work in that file —
 including the review fixes you are in the middle of. Three agents hit this across two runs in
 September 2026 (#136, #137, #153), and one of them then took two mutation results off a file it
 had silently reverted before catching it and re-running from a committed tree. All three caught it
-themselves and reported it unprompted. Commit, then mutate, then revert.
+themselves and reported it unprompted — #136 and #153 on their own threads, while **PR #137 records
+nothing of it**: the account of that third one, the two mutation results included, is #175's body,
+written from run reports this repository does not hold, and #175 names the three by their tickets
+(#123, #114, #144) rather than by the pull requests cited here. Commit, then mutate, then revert.
 
 **The restore has to name `HEAD:` — `git show :<path>` reads the index.** One character apart, and
 the index form is the one that can hand back something you did not ask for: `git stash` followed by
