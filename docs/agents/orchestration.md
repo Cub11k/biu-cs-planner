@@ -106,6 +106,22 @@ September 2026 (#136, #137, #153), and one of them then took two mutation result
 had silently reverted before catching it and re-running from a committed tree. All three caught it
 themselves and reported it unprompted. Commit, then mutate, then revert.
 
+**Revert with `git show HEAD:<path> > <path>`.** It writes the committed content back over the file,
+which is all the step needs, and it destroys nothing that is not already in a commit — so it is also
+the form that runs when `git checkout -- <file>` does not. On 2026-10-04 #179's agent had that
+`checkout` denied by the permission classifier as "Irreversible Local Destruction" and built its two
+commits through the index instead, reverting each mutation from `HEAD`; PR #196 records the shape
+("commit first, then mutate, then restore from `HEAD`") and the denial itself is on #200. Three
+other agents in the same run ran `git checkout --` and were not blocked, so the denial is not
+uniform, and an agent meeting it needs a step it can take rather than a judgement to make.
+
+**A denied command is not permission to skip the mutation**, and not a thing to route around.
+Report that it was denied and what you did instead. Do not hunt for a spelling that gets past it,
+and do not edit a permission setting to let it through: those settings are not this document's to
+change, and an agent that widens its own is no longer bound by them. Of the two, routing around the
+denial is the worse: a skipped mutation is a gap in the evidence and the report can say so, while a
+decision the settings made and an agent undid shows up nowhere.
+
 ## Verification discipline
 
 - **Verify a creation by number, not by a listing.** After creating an issue, comment or pull
