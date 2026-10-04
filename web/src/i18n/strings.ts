@@ -233,8 +233,12 @@ const english = {
     "Start the app from a terminal and open the address it prints.",
 
   /**
-   * The app answered and this page could not read the answer (#171). Two sentences for one
-   * cause, because they appear in two places and only one of them is about a click.
+   * The app answered and this page could not read the answer (#171, #206, #207). Five sentences
+   * for one cause, because they appear in five places and the places differ in what they are an
+   * account **of**. Three answer for something the student did — a click on a Group, a press of
+   * undo or redo, a press of the language switch — and two answer for a pane that simply could
+   * not get what it went to read. The rule those three follow is #171's: an act gets an account,
+   * an ask does not, which is also why the Workspace poll and `fetchAvailability` say nothing.
    *
    * What they claim is exactly what is known: an answer arrived, and it was not one this page
    * can read. **Not** that the file changed, that it was unreadable, or that the Workspace
@@ -244,12 +248,12 @@ const english = {
    * development Vite answers an HTML 500 for a server that is not running, and hono answers a
    * plain-text 404 for a path only a newer bundle asks for.
    *
-   * **Neither says whether anything was saved**, and `picksAnswerUnreadable` is the one that had
-   * to be talked out of it. `read` in `timetable/picks.ts` reaches this arm from the served arm
-   * as well as the refused one, so an unparseable **200** to a Pick gets this sentence and that
-   * write may perfectly well have landed — and the same sentence is shown for the week's own
-   * read, where nothing was attempted at all. What holds in every one of those is that the week
-   * on screen is not known to be the file, so that is all it says.
+   * **Not one of the five says whether anything was saved**, and `picksAnswerUnreadable` is the
+   * one that had to be talked out of it. `read` in `timetable/picks.ts` reaches this arm from the
+   * served arm as well as the refused one, so an unparseable **200** to a Pick gets this sentence
+   * and that write may perfectly well have landed — and the same sentence is shown for the
+   * week's own read, where nothing was attempted at all. What holds in every one of those is
+   * that the week on screen is not known to be the file, so that is all it says.
    */
   catalogAnswerUnreadable:
     "The app answered with something this page could not read, so the catalog is not shown. " +
@@ -259,6 +263,47 @@ const english = {
     "The app answered with something this page could not read, so the week is not your saved " +
     "work. The app may not be running, or may be a different version from this page — start it " +
     "from a terminal and open the address it prints.",
+  /**
+   * …and the same cause for an undo or a redo (#206), which is the one where the silence was
+   * worst: undo is the click a student makes **because something already went wrong**, and
+   * ADR-0013 makes it the whole recovery story — there is no inverse to retry.
+   *
+   * One sentence for both directions, because `read` in `../history.ts` cannot tell them apart
+   * and neither can the body it could not read. It says "whether anything changed is not known
+   * here" and that is the whole of the claim: this arm is reached from the **200** as well as
+   * from the refusal, so an unparseable answer to an undo may perfectly well have undone.
+   * `historyNotDone` and `historyUnreadable` both say "nothing changed", which is exactly the
+   * false statement #197's reviewers caught in `picksAnswerUnreadable`'s draft, and
+   * `historyStale` would name a cause the body says nothing about.
+   */
+  historyAnswerUnreadable:
+    "The app answered with something this page could not read, so whether anything changed is " +
+    "not known here. The app may not be running, or may be a different version from this page " +
+    "— start it from a terminal and open the address it prints.",
+  /**
+   * …and the two for the preferences (#207), which had no sentence of their own at all: an answer
+   * the page could not read was folded into `settingsNotDone` for a change and into
+   * `settingsUnread` or `settingsUnreread` for a read.
+   *
+   * All three of those are false of it. `settingsNotDone` says the preference was not changed and
+   * this arm is reached from the **served** arm, so an unparseable 200 to a `PATCH` may perfectly
+   * well have written — the exact sentence #197's reviewers struck out of
+   * `picksAnswerUnreadable`'s draft. The other two say the saved preferences could not be read,
+   * and nothing in an unparseable body says they were reached at all.
+   *
+   * Two and not one, because they answer for two different moments, as `settingsStale` and
+   * `settingsUnread` already do: one is about a change the student asked for, the other about a
+   * page that has no word on their preferences. Neither claims the file was read, written, or
+   * left alone.
+   */
+  settingsAnswerUnreadable:
+    "The app answered with something this page could not read, so whether your preference " +
+    "changed is not known here. The app may not be running, or may be a different version from " +
+    "this page — start it from a terminal and open the address it prints.",
+  settingsReadAnswerUnreadable:
+    "The app answered with something this page could not read, so what is on screen is not " +
+    "known to be your saved preferences. The app may not be running, or may be a different " +
+    "version from this page — start it from a terminal and open the address it prints.",
 
   warningFileUnreadable: "The catalog file is not a catalog this app can read.",
   warningSchemaTooNew: "The catalog was written by a newer version of the app.",
@@ -415,6 +460,18 @@ const hebrew: Record<StringKey, string> = {
     "היישום החזיר תשובה שהדף הזה אינו יודע לקרוא, ולכן השבוע אינו משקף את העבודה " +
     "השמורה שלכם. ייתכן שהיישום אינו פועל, או שהוא בגרסה אחרת מזו של הדף — הפעילו " +
     "אותו מהמסוף ופתחו את הכתובת שהוא מדפיס.",
+  historyAnswerUnreadable:
+    "היישום החזיר תשובה שהדף הזה אינו יודע לקרוא, ולכן לא ידוע כאן אם משהו השתנה. " +
+    "ייתכן שהיישום אינו פועל, או שהוא בגרסה אחרת מזו של הדף — הפעילו אותו מהמסוף " +
+    "ופתחו את הכתובת שהוא מדפיס.",
+  settingsAnswerUnreadable:
+    "היישום החזיר תשובה שהדף הזה אינו יודע לקרוא, ולכן לא ידוע כאן אם ההעדפה שלכם שונתה. " +
+    "ייתכן שהיישום אינו פועל, או שהוא בגרסה אחרת מזו של הדף — הפעילו אותו מהמסוף " +
+    "ופתחו את הכתובת שהוא מדפיס.",
+  settingsReadAnswerUnreadable:
+    "היישום החזיר תשובה שהדף הזה אינו יודע לקרוא, ולכן לא ידוע אם מה שמוצג הוא ההעדפות " +
+    "השמורות שלכם. ייתכן שהיישום אינו פועל, או שהוא בגרסה אחרת מזו של הדף — הפעילו אותו " +
+    "מהמסוף ופתחו את הכתובת שהוא מדפיס.",
 
   warningFileUnreadable: "הקובץ אינו קטלוג שהיישום יודע לקרוא.",
   warningSchemaTooNew: "הקטלוג נכתב בגרסה חדשה יותר של היישום.",

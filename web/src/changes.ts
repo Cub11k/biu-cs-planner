@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, type createApiClient } from "./api.ts";
+import { UNAUTHORIZED } from "./body.ts";
 
 /*
  * How the page hears that the Workspace changed under it: a Catalog dropped into
@@ -36,9 +37,6 @@ export type WorkspacePollOptions = {
   everyMs?: number;
   repeat?: Repeat;
 };
-
-/** The guard answers before the route does, so its status is not one of the route's. */
-const UNAUTHORIZED = 401;
 
 /**
  * One ask. Reports a change only when the count differs from one it has already seen: the

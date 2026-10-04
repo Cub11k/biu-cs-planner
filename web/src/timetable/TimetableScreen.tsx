@@ -115,6 +115,20 @@ const SETTINGS_REFUSAL_STRING = {
 } as const satisfies Record<NonNullable<SettingsRefusal>, StringKey>;
 
 /**
+ * What the screen says when a read brought no preferences, and which of the three it was.
+ *
+ * A map rather than the ternary it replaces, and `satisfies` so it is exhaustive: the ternary
+ * said `settingsUnreread` for everything that was not `"never"`, so #207's third value would
+ * have been shown as "what is on screen is the last version this page read" — a claim about a
+ * read that, for an answer nobody could parse, never happened.
+ */
+const SETTINGS_UNREAD_STRING = {
+  never: "settingsUnread",
+  again: "settingsUnreread",
+  "answer-unreadable": "settingsReadAnswerUnreadable",
+} as const satisfies Record<SettingsUnread, StringKey>;
+
+/**
  * The name of a preference, for the `settings-unreadable` Warning to say which one it lost. A `Map`
  * and not a record, because `field` is a `string` on the wire: `core` names whatever field of
  * `settingsSchema` it could not read, and a newer server may name one this build has no word for.
@@ -220,10 +234,13 @@ export type TimetableScreenProps = {
    */
   settingsWarnings?: readonly SettingsWarning[];
   /**
-   * That the preferences could not be read, and which of the two things that means: `"never"` —
-   * the language on screen is the schema's default and the switch beside it is disabled; `"again"`
-   * — it is the last version this page read. Two sentences, because the first would be false in
-   * the second case (`../settings.ts`).
+   * That the page has no word on the preferences, and which of the three things that means:
+   * `"never"` — the language on screen is the schema's default and the switch beside it is
+   * disabled; `"again"` — it is the last version this page read; `"answer-unreadable"` — the
+   * answer itself could not be read, so the file was not reached at all as far as this page can
+   * tell. Three sentences, because each of the other two would be false of at least one of the
+   * rest: the first claims defaults are on screen, and the first two both claim a read of the
+   * preferences that an unparseable body says nothing about (`../settings.ts`, #207).
    */
   settingsUnread?: SettingsUnread | undefined;
   /**
@@ -507,10 +524,27 @@ export function TimetableScreen({
       const stale =
         answer.kind === "refused" &&
         (answer.reason === "state-file-changed" || answer.reason === "history-invalidated");
-      if (answer.kind === "moved" || stale) {
+      /**
+       * An answer this page could not read is **not** the claim that nothing was written. The
+       * arm is reached from the 200 as well as from the refusal, so the step may have landed and
+       * the revision on screen may already be spent — and `setSteppedOn(undefined)` below is
+       * exactly the assertion that it has not, which would leave the next press to be refused
+       * `state-file-changed` for staleness this screen had caused.
+       *
+       * So the page stops relying on what it is holding and goes and looks: the week, the two
+       * buttons' availability, and whatever else holds a revision. None of the three is a claim
+       * about what happened; all three are ways of finding out (#206).
+       */
+      const unknown = answer.kind === "unreadable-answer";
+      if (answer.kind === "moved" || stale || unknown) {
         setRereads((count) => count + 1);
-        // an undo is a save (ADR-0013), so it moved the revision the header is holding too
-        if (answer.kind === "moved") onEdited?.();
+        // A move is a save (ADR-0013), so it moved the revision the header is holding too. For an
+        // answer nobody could read, whether it moved is the thing not known — which is why the
+        // header is told to go and look rather than told that it moved.
+        if (answer.kind === "moved" || unknown) onEdited?.();
+        // Availability arrives in the body, so an unreadable one left the buttons on an older
+        // answer. A move and a refusal both carried the flags and need no second request.
+        if (unknown) askHistory();
         return;
       }
       // Nothing was written, so the revision on screen is still the file's and no answer is
@@ -736,9 +770,7 @@ export function TimetableScreen({
                 <span>{settingsSaid(language, settingsNotice, tokenHeld)}</span>
               )}
               {settingsUnread === undefined ? null : (
-                <span>
-                  {t(language, settingsUnread === "never" ? "settingsUnread" : "settingsUnreread")}
-                </span>
+                <span>{t(language, SETTINGS_UNREAD_STRING[settingsUnread])}</span>
               )}
               {unreadableSettings(settingsWarnings).map((warning) => (
                 <span key={warning.field ?? "all"}>{settingSaid(language, warning)}</span>
@@ -849,6 +881,11 @@ function historyNotice(
       return answer.reason === undefined
         ? t(language, "historyNotDone")
         : t(language, HISTORY_REFUSAL_STRING[answer.reason]);
+    // An answer that arrived and could not be read. Not `historyNotDone` and not
+    // `historyUnreadable`: both say "nothing changed", and this arm is reached from the 200 as
+    // well as from the refusal, so the step may perfectly well have been taken (#206).
+    case "unreadable-answer":
+      return t(language, "historyAnswerUnreadable");
     case "unauthorized":
       return unauthorizedSaid(language, tokenHeld);
     case "unreachable":
@@ -878,6 +915,11 @@ function settingsSaid(
       return notice.reason === undefined
         ? t(language, "settingsNotDone")
         : t(language, SETTINGS_REFUSAL_STRING[notice.reason]);
+    // An answer that arrived and could not be read. Not `settingsNotDone`: "your preference was
+    // not changed" is a claim about the file, and this arm is reached from the served arm too, so
+    // an unparseable 200 to a `PATCH` may perfectly well have written (#207).
+    case "unreadable-answer":
+      return t(language, "settingsAnswerUnreadable");
     case "unauthorized":
       return unauthorizedSaid(language, tokenHeld);
     case "unreachable":

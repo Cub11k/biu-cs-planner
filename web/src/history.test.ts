@@ -55,6 +55,18 @@ it("says nothing about the buttons when the server does not answer that question
 
   const nonsense = client(() => Response.json({ offerings: [] }));
   expect(await fetchAvailability(nonsense.api)).toBeUndefined();
+
+  // And the poll keeps its silence for a body that is not JSON at all, deliberately: this is
+  // an ask and nobody pressed anything, so there is nothing the student is owed an account of
+  // (#171's rule, kept by #206). The two steps below are acts and get one.
+  //
+  // **A 200, and the status is the whole of whether this assertion tests anything.** It was
+  // written as a 500 and could not fail for the reason above it: `fetchAvailability` returns on
+  // `!answer.ok` before `json()` is ever called, so a 500 exercises the same branch the 401 two
+  // lines up already does and the body guard is never reached. Found by #209's reviewer, which
+  // proved it by moving the body read outside the catch and watching all 23 tests here still pass.
+  const unreadable = client(() => new Response("<h1>200</h1>", { status: 200 }));
+  expect(await fetchAvailability(unreadable.api)).toBeUndefined();
 });
 
 it.each([
@@ -184,4 +196,62 @@ it("sends no revision when the page is showing a State File that does not exist"
   await takeStep(api, "undo", undefined);
 
   expect(await sent[0]!.json()).toEqual({});
+});
+
+/**
+ * **An answer whose body is not JSON, which is the hole #206 is named for.** `history.ts` was
+ * not in #171's census and read both of its bodies outside the catch, exactly as
+ * `timetable/picks.ts` and `timetable/offerings.ts` did: an undo or a redo answered with one
+ * **rejected**, the rejection escaped into `useHistory.step`, and the student read nothing.
+ *
+ * Not a hypothetical. In development `web/vite.config.ts` proxies `/api` to the server and Vite
+ * answers an HTML 500 page when the target refuses the connection, so "the server is not
+ * running" arrives as a response with an unparseable body rather than as a failed request; an
+ * unmatched `/api/...` path is hono's plain-text 404, which a bundle newer than its server
+ * produces.
+ *
+ * Both directions, because the only difference between them is the path.
+ */
+it.each([
+  { what: "an HTML error page, as Vite's proxy answers with", body: "<h1>500</h1>", status: 500 },
+  { what: "hono's plain-text 404", body: "Not Found", status: 404 },
+  { what: "a 409 carrying no JSON refusal", body: "<html>", status: 409 },
+  { what: "a 200 whose body is not JSON at all", body: "<html>", status: 200 },
+])("reads $what as an answer it could not read, rather than rejecting", async (answer) => {
+  const unreadable = (): Response =>
+    new Response(answer.body, {
+      status: answer.status,
+      headers: { "content-type": "text/html" },
+    });
+
+  // resolves, and resolves to its own arm: not `refused`, which the screen says as a cause, and
+  // not `unreachable`, which would send the student to look at a server that answered them
+  await expect(takeStep(client(unreadable).api, "undo", VERSION)).resolves.toEqual({
+    kind: "unreadable-answer",
+  });
+  await expect(takeStep(client(unreadable).api, "redo", VERSION)).resolves.toEqual({
+    kind: "unreadable-answer",
+  });
+});
+
+/**
+ * The 200 said on its own, because it is the one that carries the trap: the step may perfectly
+ * well have been taken. Nothing may be read off this answer — not a reason, not a label, and
+ * above all not the two availability flags, which arrive in the body nobody could read.
+ */
+it("claims nothing at all off a 200 whose body it could not read", async () => {
+  const { api } = client(() => new Response("<html>", { status: 200 }));
+
+  const step = await takeStep(api, "undo", VERSION);
+
+  expect(step).toEqual({ kind: "unreadable-answer" });
+  expect("available" in step).toBe(false);
+  expect("reason" in step).toBe(false);
+});
+
+/** A 401 is still the guard's, read before the body is touched at all. */
+it("reads a 401 with an unparseable body as this page having no launch token", async () => {
+  const { api } = client(() => new Response("<h1>401</h1>", { status: 401 }));
+
+  expect(await takeStep(api, "undo", VERSION)).toEqual({ kind: "unauthorized" });
 });

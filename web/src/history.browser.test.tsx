@@ -75,6 +75,14 @@ let sent: Array<{ method: string; pathname: string; body: unknown }>;
  */
 let refuseStep: { reason?: string; status?: number } | undefined;
 /**
+ * Makes the next step answer with a body that is **not JSON**, at this status. Vite's proxy
+ * answers an HTML 500 page for a server that is not running and hono answers a plain-text 404
+ * for a path only a newer bundle asks for, so this is the shape of both (#206). The stacks are
+ * left exactly as they were, which is the honest fake: whether the step landed is the thing
+ * nobody can establish, so a test may not assert it either way.
+ */
+let unreadableStep: { status: number } | undefined;
+/**
  * A lie the fake tells about availability, so a test can drive the refusal a button that was
  * wrong produces. The real server can be in this state honestly: `GET /api/history` is
  * answered from memory, and a second tab can empty a stack between the ask and the click.
@@ -146,6 +154,14 @@ function pickOf(groupNumber: string): GroupPick {
  * so a redo in this fake cannot drift from its undo either.
  */
 function step(direction: "undo" | "redo", basedOn: string | undefined): Response {
+  if (unreadableStep !== undefined) {
+    const { status } = unreadableStep;
+    unreadableStep = undefined;
+    return new Response("<!doctype html><h1>502 Bad Gateway</h1>", {
+      status,
+      headers: { "content-type": "text/html" },
+    });
+  }
   if (refuseStep !== undefined) {
     const { reason, status } = refuseStep;
     refuseStep = undefined;
@@ -189,6 +205,7 @@ beforeEach(() => {
   version = 0;
   sent = [];
   refuseStep = undefined;
+  unreadableStep = undefined;
   claimCanUndo = undefined;
   stepHeld = undefined;
   readHeld = undefined;
@@ -331,6 +348,15 @@ async function saying(mounted: HTMLElement, sentence: string): Promise<void> {
     }
   });
 }
+
+/** How many times the week itself has been read, which is how a re-read is measured. */
+const timetableReads = (): number =>
+  sent.filter((request) => request.pathname.startsWith("/api/timetable") && request.method === "GET")
+    .length;
+
+/** How many times the two buttons' availability has been asked about. */
+const availabilityAsks = (): number =>
+  sent.filter((request) => request.pathname === "/api/history").length;
 
 /** Picks Group 01 and waits for the ink, which is the edit every test below starts from. */
 async function pickOne(mounted: HTMLElement, lessonType?: string): Promise<void> {
@@ -637,6 +663,116 @@ it("says nothing changed for a refusal the route named no reason for", async () 
   await saying(mounted, t("en", "historyNotDone"));
   expect(mounted.textContent).not.toContain("could not be read");
   expect(isPicked(mounted, "01")).toBe(true);
+});
+
+/**
+ * **The hole #206 is named for, as a student meets it.** `history.ts` read both of its bodies
+ * outside the catch, so an undo answered with an HTML 500 or a plain-text 404 rejected inside
+ * `useHistory.step` and the screen said nothing at all — for the one click a student makes
+ * *because* something has already gone wrong.
+ *
+ * Both directions, and the status is a **200**, which is the shape that carries the trap: the
+ * answer said the step was taken and the body saying what it did could not be read. So the
+ * assertions below are about what is said and what is **not**: no sentence here may claim the
+ * undo did or did not happen, and three of the screen's existing sentences do claim it.
+ */
+it.each(["undo", "redo"] as const)(
+  "says something a student can act on when a %s is answered with a body it cannot read",
+  async (direction) => {
+    const mounted = await openWeek();
+    await pickOne(mounted);
+    if (direction === "redo") {
+      // a redo needs something on the redo stack, which is an undo that went through
+      buttonFor(mounted, "undo").click();
+      await vi.waitFor(() => {
+        if (isPicked(mounted, "01")) throw new Error("the undo never reached the week");
+      });
+    }
+    await vi.waitFor(() => {
+      if (buttonFor(mounted, direction).disabled) throw new Error(`${direction} is still grey`);
+    });
+    // the 200 and not a refusal: the step may perfectly well have been taken
+    unreadableStep = { status: 200 };
+
+    buttonFor(mounted, direction).click();
+
+    await saying(mounted, t("en", "historyAnswerUnreadable"));
+  },
+);
+
+/**
+ * …and the sentence it says claims nothing about the file.
+ *
+ * This is #197's defect, in the place its reviewers said to look next. `historyNotDone` and
+ * `historyUnreadable` both end "nothing changed", `historyStale` names a cause the body says
+ * nothing about, and all three would be affirmative statements about a student's own work in
+ * exactly the case where nobody knows.
+ */
+it("claims nothing about whether the undo happened, because the page cannot know", async () => {
+  const mounted = await openWeek();
+  await pickOne(mounted);
+  await vi.waitFor(() => {
+    if (buttonFor(mounted, "undo").disabled) throw new Error("undo is still grey");
+  });
+  unreadableStep = { status: 200 };
+
+  buttonFor(mounted, "undo").click();
+
+  await saying(mounted, t("en", "historyAnswerUnreadable"));
+  const said = mounted.textContent ?? "";
+  for (const forbidden of ["historyNotDone", "historyUnreadable", "historyStale"] as const) {
+    expect(said, `${forbidden} claims what this page cannot know`).not.toContain(
+      t("en", forbidden),
+    );
+  }
+  // and not the Pick's either, which is an account of a click on a Group
+  expect(said).not.toContain(t("en", "picksStale"));
+});
+
+/**
+ * **It goes and looks rather than assuming nothing happened.** The arm is reached from the 200,
+ * so the step may have landed and the revision on screen may already be spent — and treating it
+ * as a refusal that wrote nothing would leave the next press to be refused `state-file-changed`
+ * for staleness the screen had caused, which is the window `steppedOn` was added to close.
+ *
+ * Measured as a second read of the week **and** a button that can be pressed again: `steppedOn`
+ * is released by a newer Timetable answer and by nothing else, so a screen that sat on this arm
+ * would leave both buttons dead for the life of the page.
+ */
+it("re-reads the week after an answer it could not read, and offers the buttons again", async () => {
+  const mounted = await openWeek();
+  await pickOne(mounted);
+  await vi.waitFor(() => {
+    if (buttonFor(mounted, "undo").disabled) throw new Error("undo is still grey");
+  });
+  const readsBefore = timetableReads();
+  const asksBefore = availabilityAsks();
+  unreadableStep = { status: 200 };
+
+  buttonFor(mounted, "undo").click();
+
+  await saying(mounted, t("en", "historyAnswerUnreadable"));
+  await vi.waitFor(() => {
+    if (timetableReads() <= readsBefore) throw new Error("the week was never read again");
+    // the flags arrive in the body nobody could read, so they are asked for rather than kept
+    if (availabilityAsks() <= asksBefore) throw new Error("the buttons were never asked about");
+    if (buttonFor(mounted, "undo").disabled) throw new Error("undo is still held shut");
+  });
+});
+
+/** In Hebrew too, because a sentence in one language is half a sentence (`CLAUDE.md`). */
+it("says it in Hebrew as well, rather than falling back to the English sentence", async () => {
+  const mounted = await openWeek("he");
+  await pickOne(mounted, "הרצאה");
+  await vi.waitFor(() => {
+    if (buttonFor(mounted, "undo").disabled) throw new Error("undo is still grey");
+  });
+  unreadableStep = { status: 200 };
+
+  buttonFor(mounted, "undo").click();
+
+  await saying(mounted, t("he", "historyAnswerUnreadable"));
+  expect(mounted.textContent).not.toContain(t("en", "historyAnswerUnreadable"));
 });
 
 it("retires what a press said when the next click is made", async () => {

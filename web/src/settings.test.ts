@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { createApiClient } from "./api.ts";
-import { fetchSettings, saveSettings } from "./settings.ts";
+import { fetchSettings, saveSettings, unreadAfter } from "./settings.ts";
 
 /**
  * The half of the settings that lives in `web`: what the typed client actually sends to the two
@@ -182,28 +182,69 @@ it("reads a request that never arrived as the server not being there", async () 
  *
  * It used to make both functions **reject**, which escaped both callers in `useSettings`: `saving`
  * was never cleared and the language switch stayed disabled and silent for the life of the page.
+ *
+ * **And then it was `refused` with no reason, which is #207.** The screen says that arm as
+ * "Your preference was not changed." — and the 200 in this list is the one that makes it a lie,
+ * because an unparseable 200 to a `PATCH` may perfectly well have written. Its own arm now, as
+ * `timetable/picks.ts` has, and nothing can be read off it.
  */
 it.each([
   { what: "an HTML error page, as Vite's proxy answers with", body: "<h1>500</h1>", status: 500 },
   { what: "hono's plain-text 404", body: "Not Found", status: 404 },
   { what: "hono's plain-text 500", body: "Internal Server Error", status: 500 },
   { what: "a 200 whose body is not JSON at all", body: "<html>", status: 200 },
-])("reads $what as an answer with nothing to go on, rather than rejecting", async (answer) => {
+])("reads $what as an answer it could not read, rather than rejecting", async (answer) => {
   const { api } = client(
     () => new Response(answer.body, { status: answer.status, headers: { "content-type": "text/html" } }),
   );
 
-  // resolves, and resolves to the floor: nothing here to act on, and no cause invented
-  await expect(fetchSettings(api)).resolves.toEqual({
-    kind: "refused",
-    reason: undefined,
-    warnings: [],
-  });
+  // resolves, and to an arm of its own: not `refused`, which the screen says as "not changed"
+  await expect(fetchSettings(api)).resolves.toEqual({ kind: "unreadable-answer" });
   await expect(saveSettings(api, { language: "he" }, VERSION)).resolves.toEqual({
-    kind: "refused",
-    reason: undefined,
-    warnings: [],
+    kind: "unreadable-answer",
   });
+});
+
+/**
+ * The two answers are not the same answer, said side by side — which is the whole of #207's
+ * first criterion. A `409` carrying `{ reason }` is the server having declined and said so; the
+ * same status with an HTML body is nobody having said anything.
+ */
+it("tells a refusal the route named from an answer it could not read at all", async () => {
+  const named = client(() => refusal({ reason: "state-file-unreadable", warnings: [] }));
+  const unreadable = client(
+    () => new Response("<h1>409</h1>", { status: 409, headers: { "content-type": "text/html" } }),
+  );
+
+  const first = await saveSettings(named.api, { language: "he" }, VERSION);
+  const second = await saveSettings(unreadable.api, { language: "he" }, VERSION);
+
+  expect(first).toEqual({ kind: "refused", reason: "state-file-unreadable", warnings: [] });
+  expect(second).toEqual({ kind: "unreadable-answer" });
+  expect(first.kind).not.toBe(second.kind);
+});
+
+/**
+ * Which sentence a read that brought no preferences owes.
+ *
+ * `"never"` and `"again"` are the two halves of a refusal and were already here; the third is
+ * #207's, and the point of it is that **neither** of the other two is true of an answer nobody
+ * could read. Both of them say the saved preferences could not be read, and an unparseable body
+ * says nothing about whether they were reached — so the answer does not depend on whether this
+ * page has ever held them, where for a refusal it is the only thing it depends on.
+ */
+it.each([true, false])("says the same thing about an unreadable answer, ever held: %s", (held) => {
+  expect(unreadAfter("unreadable-answer", held)).toBe("answer-unreadable");
+});
+
+it("still tells defaults from a kept version when a read was refused", () => {
+  expect(unreadAfter("refused", false)).toBe("never");
+  expect(unreadAfter("refused", true)).toBe("again");
+});
+
+it("owes no sentence at all when the read was not one of those two", () => {
+  expect(unreadAfter(undefined, false)).toBeUndefined();
+  expect(unreadAfter(undefined, true)).toBeUndefined();
 });
 
 /** A 401 is still the guard's, read before the body is touched at all. */
