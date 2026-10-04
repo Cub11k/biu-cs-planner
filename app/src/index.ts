@@ -67,6 +67,7 @@ export {
   backupsToPrune,
   isStateFileName,
   NotAWorkspaceError,
+  requireBackupRef,
   requireCatalogRef,
   requireStateFileName,
   StateFileChangedError,

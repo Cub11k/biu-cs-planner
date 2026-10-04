@@ -102,15 +102,56 @@ export const backupDay = (takenAt: number): number => Math.floor(takenAt / 86_40
  * **The newest of each day** is the one the daily rule keeps: it is that day's last word, and
  * a student asking for "yesterday" means where they left off rather than where they started.
  *
- * **A snapshot dated in the future is kept.** A clock that has gone backwards — a laptop
- * waking up with a bad time, a sync client stamping ahead — must not be a reason to delete
- * data, so the window is the last 30 days *and everything after now*.
+ * **A snapshot dated in the future is kept**, so a clock that has run *ahead* — a laptop
+ * waking with a bad time, a sync client stamping forward — is not a reason to delete data: the
+ * window is the last 30 days *and everything after now*.
+ *
+ * **The other direction is not defended, and saying so is the honest answer.** A clock that
+ * jumps *backwards* by more than 30 days makes the snapshot a save has just written look old,
+ * and with 20 newer ones already there the same save's pruning deletes it. That is this rule
+ * reading its inputs correctly — the snapshot genuinely claims to be from before the others —
+ * and the alternative is for the rule to know which snapshot the caller just made, which is a
+ * clock the pure function does not have. Written down rather than guarded, because the guard
+ * would have to be a lie about one of the two numbers.
  *
  * The answer is in newest-first order, which is this function's own and not the input's.
+ *
+ * **One State File's snapshots, and it refuses a mixed list rather than documenting that it
+ * wants one.** The count rule is "the last 20 *of this file*", so a list holding two names
+ * would apply one allowance across both and delete the whole of the quieter file's history to
+ * make room for the busier one's — measured, not reasoned: 30 of each produced 20 deletions,
+ * every one of them the second name's. Both callers filter first, so this guards a future one,
+ * which is `requireStateFileName`'s standing and its reason. An unguarded precondition is a
+ * poor trade on the one function in this repository whose mistake *deletes* a student's data.
+ *
+ * **A moment identifies a snapshot, so the list is read as a set of moments.** Within one State
+ * File both adapters refuse to let two snapshots share a millisecond — the save nudges past a
+ * name that is taken — so two refs carrying one moment are two references to one file. Read any
+ * other way they cost a slot each: a list holding one of the twenty twice kept nineteen
+ * snapshots rather than twenty, and an identity `Set` then disagreed with itself about whether
+ * the duplicate was kept. Neither is reachable from either adapter, which builds a fresh ref per
+ * directory entry, and a shared rule should not be wrong in a way a third adapter could find.
+ * The answer therefore holds at most one ref per moment, which is all a caller needs: it deletes
+ * by the name and the moment, and that is one file.
  */
 export function backupsToPrune(snapshots: BackupRef[], now: number): BackupRef[] {
-  const newestFirst = [...snapshots].sort((a, b) => b.takenAt - a.takenAt);
-  const keep = new Set<BackupRef>(newestFirst.slice(0, BACKUP_KEEP_SAVES));
+  const names = new Set(snapshots.map((snapshot) => snapshot.name));
+  if (names.size > 1) {
+    throw new WorkspaceRefusedError(
+      "refusing to prune the snapshots of more than one State File at once: " +
+        `the last ${BACKUP_KEEP_SAVES} saves are one file's, and these name ` +
+        [...names].sort().map((name) => JSON.stringify(name)).join(", "),
+    );
+  }
+
+  const byMoment = new Map<number, BackupRef>();
+  for (const snapshot of snapshots) {
+    if (!byMoment.has(snapshot.takenAt)) byMoment.set(snapshot.takenAt, snapshot);
+  }
+  const newestFirst = [...byMoment.values()].sort((a, b) => b.takenAt - a.takenAt);
+  const keep = new Set<number>(
+    newestFirst.slice(0, BACKUP_KEEP_SAVES).map((snapshot) => snapshot.takenAt),
+  );
 
   const today = backupDay(now);
   const daysKept = new Set<number>();
@@ -119,10 +160,10 @@ export function backupsToPrune(snapshots: BackupRef[], now: number): BackupRef[]
     if (today - day >= BACKUP_KEEP_DAYS) continue;
     if (daysKept.has(day)) continue;
     daysKept.add(day);
-    keep.add(snapshot);
+    keep.add(snapshot.takenAt);
   }
 
-  return newestFirst.filter((snapshot) => !keep.has(snapshot));
+  return newestFirst.filter((snapshot) => !keep.has(snapshot.takenAt));
 }
 
 /**
@@ -208,6 +249,29 @@ export function requireStateFileName(name: string): void {
   throw new WorkspaceRefusedError(
     `refusing a State File named ${JSON.stringify(name)}: a name, never a path`,
   );
+}
+
+/**
+ * The refusal for a snapshot's reference, so both adapters make it in the same words — and the
+ * other half of what `requireStateFileName` does for a State File.
+ *
+ * **`takenAt` is guarded for the reason `requireCatalogRef` guards a year.** That doc's
+ * argument is that an adapter turns the year straight into a file name, so "a year that is not
+ * a number is the same hole with a different key", and that "the rule should not depend on
+ * being remembered". A snapshot's moment is that same key: an adapter turns it into a file name
+ * too. Nothing reachable today gets past it — `server/src/api.ts` parses the body with
+ * `z.number().int().safe()`, and the adapter composes the name out of `String(...).padStart(...)`
+ * output, which cannot produce a separator or a `..` whatever number it is handed — so this
+ * guards a future caller and is here rather than in the one caller that currently exists.
+ */
+export function requireBackupRef(ref: BackupRef): void {
+  requireStateFileName(ref.name);
+  if (!Number.isSafeInteger(ref.takenAt)) {
+    throw new WorkspaceRefusedError(
+      `refusing a snapshot of the State File ${JSON.stringify(ref.name)} taken at ` +
+        `${JSON.stringify(ref.takenAt)}: a moment is a whole number of milliseconds, never a path`,
+    );
+  }
 }
 
 /**
@@ -484,6 +548,12 @@ export type Workspace = {
    * a student either way, exactly as `list` answers for a folder that is not there. A folder
    * that is there and cannot be listed is `WorkspaceRefusedError`, which is the third answer
    * `list` has and for the same reason (#129): "I could not look" may never come back empty.
+   *
+   * **This asks nothing about the Workspace Layout**, deliberately and unlike `restoreBackup`
+   * in `./backups.ts`: a folder nobody has made a Workspace yet holds no snapshots, which is
+   * the empty answer and not a refusal. A student should be able to open the screen before
+   * they have accepted the Layout, exactly as reading the State File is unguarded while
+   * writing it is not (`app/src/edit.ts`).
    *
    * Per State File, because retention is per State File: `alice` keeping her last 20 saves
    * says nothing about `bob`'s.

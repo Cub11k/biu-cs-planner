@@ -6,6 +6,7 @@ import {
   backupsToPrune,
   isStateFileName,
   NotAWorkspaceError,
+  requireBackupRef,
   requireCatalogRef,
   requireStateFileName,
   WorkspaceRefusedError,
@@ -134,7 +135,7 @@ it("refuses a write into a folder that is not a Workspace, as a refusal and not 
  * shared and the tail is the adapter's, because "is there and is not a folder" and "could not
  * be made" are different news about the same folder.
  */
-it("names the part of the layout that is what is wrong, when one part is", () => {
+it("names the part of the Workspace Layout that is what is wrong, when one part is", () => {
   const refusal = new NotAWorkspaceError({
     folder: "catalogs",
     because: "is there and is not a folder",
@@ -345,4 +346,79 @@ it("answers in newest-first order whatever order it was handed", () => {
     [...going.map((snapshot) => snapshot.takenAt)].sort((a, b) => b - a),
   );
   expect(going.length).toBeGreaterThan(0);
+});
+
+/**
+ * A snapshot's reference, which carries both kinds of key the port has learned to distrust: a
+ * name, and a number an adapter turns straight into a file name. `requireCatalogRef`'s doc is
+ * the argument — "the rule should not depend on being remembered" — and this is it applied to
+ * the third ref.
+ */
+it("refuses a snapshot whose name is a path, or whose moment is not a whole number", () => {
+  expect(() => requireBackupRef({ kind: "backup", name: "alice", takenAt: NOON })).not.toThrow();
+  // zero and a pre-epoch moment are whole numbers and are accepted: a clock is allowed to be
+  // wrong, and `backupsToPrune` is where that is dealt with
+  expect(() => requireBackupRef({ kind: "backup", name: "alice", takenAt: 0 })).not.toThrow();
+  expect(() => requireBackupRef({ kind: "backup", name: "alice", takenAt: -1 })).not.toThrow();
+
+  for (const name of ["../alice", "a/b", ".hidden", "", "NUL"]) {
+    expect(() => requireBackupRef({ kind: "backup", name, takenAt: NOON }), name).toThrow(
+      WorkspaceRefusedError,
+    );
+  }
+  for (const takenAt of [1.5, Number.NaN, Infinity, -Infinity, 2 ** 53]) {
+    expect(() => requireBackupRef({ kind: "backup", name: "alice", takenAt }), `${takenAt}`)
+      .toThrow(/a moment is a whole number of milliseconds, never a path/);
+  }
+});
+
+/**
+ * The count rule is "the last 20 **of this file**", so a list holding two names has one
+ * allowance to share and would delete the whole of the quieter file's history. Guarded rather
+ * than documented, because this is the function whose mistake deletes a student's data.
+ */
+it("refuses to prune the snapshots of more than one State File at once", () => {
+  const mixed: BackupRef[] = [
+    ...Array.from({ length: 30 }, (_, index) => ({
+      kind: "backup" as const,
+      name: "alice",
+      takenAt: NOON - index * 1000,
+    })),
+    ...Array.from({ length: 30 }, (_, index) => ({
+      kind: "backup" as const,
+      name: "bob",
+      takenAt: NOON - index * 1000,
+    })),
+  ];
+
+  expect(() => backupsToPrune(mixed, NOON)).toThrow(WorkspaceRefusedError);
+  expect(() => backupsToPrune(mixed, NOON)).toThrow(/"alice", "bob"/);
+  // and one name is fine however many of them there are
+  expect(backupsToPrune(mixed.slice(0, 30), NOON)).toHaveLength(10);
+});
+
+/**
+ * A moment identifies a snapshot, so a list holding one of them twice is read as one file: 20
+ * moments are still kept, and the duplicate is not counted twice nor named twice in the answer.
+ */
+it("reads two references to one moment as one snapshot", () => {
+  const one: BackupRef = { kind: "backup", name: "alice", takenAt: NOON };
+  const rest = Array.from({ length: 31 }, (_, index) => ({
+    kind: "backup" as const,
+    name: "alice",
+    takenAt: NOON - (index + 1) * 1000,
+  }));
+  const held = [one, one, ...rest];
+
+  const going = backupsToPrune(held, NOON);
+  const goingMoments = going.map((snapshot) => snapshot.takenAt);
+
+  // 32 distinct moments, 20 kept, so 12 go — and each named once
+  expect(new Set(goingMoments).size).toBe(goingMoments.length);
+  expect(goingMoments).toHaveLength(12);
+  expect(goingMoments).not.toContain(NOON);
+  // which leaves exactly the count rule's 20 distinct moments standing
+  const keptMoments = new Set(held.map((snapshot) => snapshot.takenAt));
+  for (const moment of goingMoments) keptMoments.delete(moment);
+  expect(keptMoments.size).toBe(BACKUP_KEEP_SAVES);
 });

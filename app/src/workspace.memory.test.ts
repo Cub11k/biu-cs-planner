@@ -54,12 +54,12 @@ it("forgets a file that was taken away from outside", async () => {
  * failing for a Workspace that is merely not set up yet.
  *
  * The third answer is the one this double cannot give, for the reason `MemoryWorkspace`'s doc
- * states: reaching it needs a mode bit or a plain file standing where a folder of the layout
- * belongs, and there is nothing here that could be either. A use case that needs it injects it,
- * as `cannotBeRead` in `edit.test.ts` does for `readStateFile`.
+ * states: reaching it needs a mode bit or a plain file standing where a folder of the Workspace
+ * Layout belongs, and there is nothing here that could be either. A use case that needs it injects
+ * it, as `cannotBeRead` in `edit.test.ts` does for `readStateFile`.
  */
 it("lists nothing, and never refuses, for a Workspace holding nothing of that kind", async () => {
-  // before the layout exists, which on a disk is the absent folder that answers `[]`
+  // before the Workspace Layout exists, which on a disk is the absent folder that answers `[]`
   const fresh = memoryWorkspace();
   await expect(fresh.list("catalog")).resolves.toEqual([]);
   await expect(fresh.list("state")).resolves.toEqual([]);
@@ -141,10 +141,10 @@ it("refuses a whole-file write of a State File, cast past the narrowing", async 
 
 /**
  * Refused because of the ref and not because of the folder, which is the order the real adapter
- * asks in: a double that answered this with the layout error would send a caller looking at the
- * wrong thing, and a double that answered it with a conflict worse still.
+ * asks in: a double that answered this with the Workspace Layout error would send a caller looking
+ * at the wrong thing, and a double that answered it with a conflict worse still.
  */
-it("refuses a cast whole-file write of a State File before it looks at the layout", async () => {
+it("refuses a cast whole-file write of a State File before it looks at the Layout", async () => {
   const workspace = memoryWorkspace();
 
   const write = workspace.write as unknown as (ref: unknown, data: unknown) => Promise<void>;
@@ -187,7 +187,7 @@ it("refuses a whole-file read of a State File", async () => {
  * the sentence spelled out here a second time: nothing caught it by name, and a wording a
  * student reads was free to drift from the adapter's (#121).
  */
-it("refuses a write before the layout exists", async () => {
+it("refuses a write before the Workspace Layout exists", async () => {
   const workspace = memoryWorkspace();
   const alice = { kind: "state", name: "alice" } as const;
 
@@ -406,7 +406,7 @@ it("keeps two saves inside one millisecond as two snapshots", async () => {
 });
 
 it("lists nothing, and never refuses, for a Workspace with no snapshots", async () => {
-  // before the layout exists, which on a disk is the absent `.backups/` that answers `[]`
+  // before the Workspace Layout exists, which on a disk is the absent `.backups/` that answers `[]`
   await expect(memoryWorkspace().listBackups(ALICE)).resolves.toEqual([]);
   await expect(memoryWorkspace({ created: true }).listBackups(ALICE)).resolves.toEqual([]);
 });

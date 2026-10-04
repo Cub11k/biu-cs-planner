@@ -60,7 +60,7 @@ const CATALOG = {
   offerings: [],
 };
 
-it("reports an ordinary folder as not a Workspace, and creates the layout when asked", async () => {
+it("reports an ordinary folder as not a Workspace, and creates the Layout when asked", async () => {
   const workspace = fileSystemWorkspace(root);
 
   expect(await workspace.status()).toEqual({
@@ -222,7 +222,7 @@ it("does not call a Workspace ready when its folders point outside", async () =>
   }
 });
 
-it("reads nothing, rather than throwing, before the layout exists", async () => {
+it("reads nothing, rather than throwing, before the Workspace Layout exists", async () => {
   const workspace = fileSystemWorkspace(root);
 
   // the port promises absence is not an error, and a query must not become a 500
@@ -362,7 +362,7 @@ it("sees a Catalog that is modified, deleted and renamed", async () => {
   expect(await within(() => watched.events() > renamed)).toBe(true);
 });
 
-/** A State File sits in the root itself, so the root is watched as well as the layout. */
+/** A State File sits in the root itself, so the root is watched as well as the Workspace Layout. */
 it("sees a file that appears in the Workspace root", async () => {
   const workspace = fileSystemWorkspace(root);
   await workspace.create();
@@ -374,7 +374,7 @@ it("sees a file that appears in the Workspace root", async () => {
 });
 
 /**
- * A Workspace can be watched before it is one. The layout appearing afterwards — created
+ * A Workspace can be watched before it is one. The Workspace Layout appearing afterwards — created
  * by the student, or arriving with a clone — has to be picked up, or the first Catalog of
  * a brand new Workspace would be the one change nobody hears about.
  */
@@ -620,9 +620,9 @@ it("watches an ordinary folder that is not a Workspace yet without failing", asy
 });
 
 /**
- * A State File sits at the Workspace root rather than in a folder of the layout, because a
- * Workspace holds one or more of them and the name is what tells them apart
- * (docs/design.md, "Storage").
+ * A State File sits at the Workspace root rather than in a folder of the Workspace Layout, because
+ * a Workspace holds one or more of them and the name is what tells them apart (docs/design.md,
+ * "Storage").
  */
 const STATE = {
   schemaVersion: 1,
@@ -931,8 +931,8 @@ it("lists the State Files the Workspace holds, and nothing else at its root", as
  * **This is the trigger that needs no mode bit**, so it runs everywhere rather than being
  * skipped where the test user can read anything. `usablePath` asks whether a path resolves
  * inside the Workspace and not what it *is*, so a `catalogs` that is a plain file is usable,
- * counts towards the layout, and makes `status` report the Workspace **ready** (#121) — and the
- * listing then said "no Catalogs" about a Workspace the port had just called ready. That is
+ * counts towards the Workspace Layout, and makes `status` report the Workspace **ready** (#121) —
+ * and the listing then said "no Catalogs" about a Workspace the port had just called ready. That is
  * #109's lie in the one place a student would be looking straight at it.
  *
  * The refusal says which of the two it met, because the file reads perfectly well as the file
@@ -969,12 +969,12 @@ it("refuses to list Catalogs when catalogs is a plain file, rather than reportin
  *
  * **It rests on that reading alone and not on the argument the `catalogs` case makes.** There
  * `status` reports the Workspace ready, which is what makes an empty answer a lie; here every
- * folder of the layout is missing, so `status` reports **not ready** and the student would be
- * offered the layout. Asserted below rather than left to be assumed either way. The refusal is
- * still the right answer — something is at that name and it is the wrong kind of thing, so "I
- * could not look" is true where "there are none" is not — but it is the one case in this ticket
- * where a query on a Workspace that is not set up refuses rather than answering empty, and that
- * is worth seeing plainly rather than glossing as the same case.
+ * folder of the Workspace Layout is missing, so `status` reports **not ready** and the student
+ * would be offered the Workspace Layout. Asserted below rather than left to be assumed either way.
+ * The refusal is still the right answer — something is at that name and it is the wrong kind of
+ * thing, so "I could not look" is true where "there are none" is not — but it is the one case in
+ * this ticket where a query on a Workspace that is not set up refuses rather than answering empty,
+ * and that is worth seeing plainly rather than glossing as the same case.
  *
  * The whole sentence, because the Workspace root is the one folder whose refusal cannot spell
  * itself as a path: `path.replace(root, ".")` leaves `"."`, which names nothing, so
@@ -1011,7 +1011,7 @@ it("refuses to list State Files when the Workspace root is a file rather than a 
 it("lists nothing for a Workspace with no layout, an empty one, and a root that is not there", async () => {
   const workspace = fileSystemWorkspace(root);
 
-  // before the layout exists: the folder is absent, and the root holds no State File
+  // before the Workspace Layout exists: the folder is absent, and the root holds no State File
   expect(await workspace.list("catalog")).toEqual([]);
   expect(await workspace.list("state")).toEqual([]);
 
@@ -1230,7 +1230,8 @@ it("refuses a whole-file read of a State File, which would come back with no rev
   await workspace.saveStateFile(ALICE, firstSave(STATE));
 
   await expect(wholeFileRead(workspace)(ALICE)).rejects.toThrow(WorkspaceRefusedError);
-  // the same refusal the in-memory double makes, in the same words (app/src/workspace.memory.test.ts)
+  // the same refusal the in-memory double makes, in the same words
+  // (app/src/workspace.memory.test.ts)
   await expect(wholeFileRead(workspace)(ALICE)).rejects.toThrow(
     /refusing the State File "alice" here/,
   );
@@ -1238,11 +1239,11 @@ it("refuses a whole-file read of a State File, which would come back with no rev
 
 /**
  * #121's reachable door, and the one the ticket was really filed for. `usablePath` asks whether
- * a folder of the layout resolves inside the Workspace and not what it *is*, so a `catalogs`
- * that is a plain file is usable, counts towards the layout, and makes `status` report the
- * Workspace **ready** — and the Catalog write then opened its temporary below that file and met
- * a raw `ENOTDIR`. A ready Workspace producing a raw filesystem error is the unnamed 500 by a
- * different door from the unreachable one the ticket is named after.
+ * a folder of the Workspace Layout resolves inside the Workspace and not what it *is*, so a
+ * `catalogs` that is a plain file is usable, counts towards the Workspace Layout, and makes
+ * `status` report the Workspace **ready** — and the Catalog write then opened its temporary below
+ * that file and met a raw `ENOTDIR`. A ready Workspace producing a raw filesystem error is the
+ * unnamed 500 by a different door from the unreachable one the ticket is named after.
  */
 it("refuses a Catalog when catalogs is a file rather than a folder, and says which folder", async () => {
   await mkdir(join(root, "requirements"));
@@ -1260,20 +1261,20 @@ it("refuses a Catalog when catalogs is a file rather than a folder, and says whi
   expect(refusal).toBeInstanceOf(NotAWorkspaceError);
   expect((refusal as NotAWorkspaceError).folder).toBe("catalogs");
   expect((refusal as Error).message).toMatch(/catalogs is there and is not a folder/);
-  // refused before a byte is written, so what the student is told is the layout mistake rather
-  // than the filesystem's word for its consequence
+  // refused before a byte is written, so what the student is told is the Workspace Layout mistake
+  // rather than the filesystem's word for its consequence
   expect((refusal as Error).message).not.toMatch(/ENOTDIR/);
   // and the file it would have written below is exactly as it was
   expect(await readFile(join(root, "catalogs"), "utf8")).toBe("not a folder");
 });
 
 /**
- * The same file met from the other side. With one part of the layout a file and another
- * genuinely missing, `status` is not ready, the student is offered the layout, and accepting it
- * reaches `mkdir` — which is `EEXIST` for a name a plain file holds. Raw, that is the same
- * unnamed 500 one function further along, so it is refused by name too (#121).
+ * The same file met from the other side. With one part of the Workspace Layout a file and another
+ * genuinely missing, `status` is not ready, the student is offered the Workspace Layout, and
+ * accepting it reaches `mkdir` — which is `EEXIST` for a name a plain file holds. Raw, that is the
+ * same unnamed 500 one function further along, so it is refused by name too (#121).
  */
-it("refuses to create the layout when a name it needs is held by a file", async () => {
+it("refuses to create the Workspace Layout when a name it needs is held by a file", async () => {
   await writeFile(join(root, "catalogs"), "not a folder");
   const workspace = fileSystemWorkspace(root);
 
@@ -1730,12 +1731,19 @@ it("lists only what it would have written, and nothing else in .backups", async 
 });
 
 /**
- * Only on a disk. Pruning runs after the save has landed and only ever deletes, so a snapshot
- * it could not remove is one too many rather than one too few — and it may not cost a student
- * their save. The save above it, and the snapshot of what it replaced, both stand.
+ * Only on a disk. A `.backups/` the app may not write into refuses the save, which is the
+ * refusal the port's doc argues for: saving anyway and quietly keeping no backup is invisible
+ * until the day it matters. **And nothing is lost** — the snapshot is taken before the rename,
+ * so the previous save and its snapshots all stand.
+ *
+ * This is the write side of "refuses the save, by name, when .backups is there and is not a
+ * folder" above; that one is the kind of thing standing there, this one is the mode bit. It
+ * says nothing about **pruning**, which is two tests below: at `0o500` the snapshot write fails
+ * before `prune` is ever reached, and an earlier version of this test claimed otherwise in its
+ * title (found in review).
  */
 it.skipIf(!unreadableFilesArePossible)(
-  "saves even when the pruning cannot delete anything",
+  "refuses the save when the snapshot cannot be written, and loses nothing",
   async () => {
     const time = clock(NOON);
     const workspace = fileSystemWorkspace(root, { now: time.now });
@@ -1767,3 +1775,105 @@ it.skipIf(!unreadableFilesArePossible)(
     expect(await workspace.listBackups(ALICE)).toHaveLength(BACKUP_KEEP_SAVES);
   },
 );
+
+/**
+ * Only on a disk. **Pruning never costs a student their save**, which is the asymmetry the
+ * port's `saveStateFile` doc argues for: the snapshot is the part that refuses, the pruning
+ * only deletes, and a snapshot it could not remove is one too many rather than one too few.
+ *
+ * Asked the only way a test can ask it — break the deletion and look at what survived. A
+ * **directory** standing where a snapshot's name belongs is a target `rm` without `recursive`
+ * cannot remove, and it needs no permissions at all, so this runs everywhere. The save after it
+ * must still land.
+ */
+it("saves even when the pruning cannot delete what it chose", async () => {
+  const time = clock(NOON);
+  const workspace = fileSystemWorkspace(root, { now: time.now });
+  await workspace.create();
+
+  let version = await workspace.saveStateFile(ALICE, firstSave(STATE));
+  for (let save = 0; save < BACKUP_KEEP_SAVES; save++) {
+    time.advance(1000);
+    version = await workspace.saveStateFile(ALICE, {
+      json: { schemaVersion: 1, pins: [] },
+      basedOn: version,
+    });
+  }
+  // the oldest of the 20 is what the next save's pruning will choose
+  const held = await workspace.listBackups(ALICE);
+  expect(held).toHaveLength(BACKUP_KEEP_SAVES);
+  const oldest = held[held.length - 1];
+  const stuck = join(root, ".backups", `alice.2026-10-07T12-00-01-000Z.state.json`);
+  expect(oldest?.takenAt).toBe(Date.UTC(2026, 9, 7, 12, 0, 1, 0));
+
+  await rm(stuck);
+  await mkdir(stuck); // a directory `rm` without `recursive` will not remove
+
+  time.advance(1000);
+  const saved = await workspace.saveStateFile(ALICE, {
+    json: { schemaVersion: 1 },
+    basedOn: version,
+  });
+
+  // the save landed, which is the whole claim
+  expect(saved).toEqual(expect.any(String));
+  expect(JSON.parse(await aliceOnDisk())).toEqual({ schemaVersion: 1 });
+  // and the snapshot of what it replaced is there, beside the one that would not go
+  expect((await workspace.listBackups(ALICE)).map((snapshot) => snapshot.takenAt)).toContain(
+    time.now(),
+  );
+});
+
+/**
+ * Only on a disk, and the other half of the asymmetry: a `.backups/` that cannot be **listed**
+ * at all stops the pruning without stopping the save. Reachable without a mode bit on a first
+ * save, which takes no snapshot — so nothing refuses, and `prune`'s own `entriesOrAbsent` is
+ * what meets the `ENOTDIR` and swallows it.
+ */
+it("saves when the pruning cannot even look, on a save that takes no snapshot", async () => {
+  const workspace = fileSystemWorkspace(root, { now: () => NOON });
+  await workspace.create();
+  await rm(join(root, ".backups"), { recursive: true });
+  await writeFile(join(root, ".backups"), "not a folder", "utf8");
+  // `missingFolders` asks whether the path resolves inside the Workspace and not what it is
+  expect(await workspace.status()).toEqual({ ready: true, missing: [] });
+
+  // a first save replaces nothing, so no snapshot is attempted and nothing refuses
+  const version = await workspace.saveStateFile(ALICE, firstSave(STATE));
+
+  expect(version).toEqual(expect.any(String));
+  expect(JSON.parse(await aliceOnDisk())).toEqual(STATE);
+});
+
+/**
+ * Only on a disk. A State File may legally be called `alice.2026-10-07T12-00-00-000Z` —
+ * `isStateFileName` allows a dot that is not the first character — so its snapshots carry two
+ * stamps, and the *last* of them has to be read as the moment or the snapshot is attributed to
+ * a State File called `alice`, which is a different student's file.
+ *
+ * **What makes that work is the `$` anchor and not the greedy group**, which was measured
+ * rather than assumed: `BACKUP_FILE` with `(.+?)` in place of `(.+)` passes this test, because
+ * the anchor forces the stamp to be the end of the name whichever way the group leans. Said
+ * here because the obvious reading of that pattern is that its greediness is load-bearing, and
+ * it is not — the next person to touch it should know which part they may not take away.
+ */
+it("reads the last stamp of a name that itself ends in one, not the first", async () => {
+  const time = clock(NOON);
+  const workspace = fileSystemWorkspace(root, { now: time.now });
+  await workspace.create();
+  const twoStamps = { kind: "state", name: "alice.2026-10-07T12-00-00-000Z" } as const;
+  const alice = { kind: "state", name: "alice" } as const;
+
+  const first = await workspace.saveStateFile(twoStamps, firstSave(STATE));
+  time.advance(1000);
+  await workspace.saveStateFile(twoStamps, {
+    json: { schemaVersion: 1, pins: [] },
+    basedOn: first,
+  });
+
+  expect(await workspace.listBackups(twoStamps)).toEqual([
+    { kind: "backup", name: twoStamps.name, takenAt: NOON + 1000 },
+  ]);
+  // and nothing of it is attributed to the State File whose name is the prefix
+  expect(await workspace.listBackups(alice)).toEqual([]);
+});

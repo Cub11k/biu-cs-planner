@@ -276,7 +276,7 @@ it("refuses a snapshot that is not there, rather than writing an empty State Fil
 it("refuses a restore into a folder that is not a Workspace", async () => {
   const workspace = memoryWorkspace({ created: true, now: () => NOON });
   const version = await saved(workspace, ["80001", "80002"]);
-  // the same Workspace, with the layout taken away from under it
+  // the same Workspace, with the Workspace Layout taken away from under it
   const notReady: MemoryWorkspace = {
     ...workspace,
     status: () => Promise.resolve({ ready: false, missing: ["backups"] }),

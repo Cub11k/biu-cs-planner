@@ -51,7 +51,17 @@ export type BackupSnapshot = {
 
 export type BackupsResult =
   | { kind: "served"; snapshots: BackupSnapshot[] }
-  /** The folder is not a Workspace, or `.backups/` is there and cannot be listed. */
+  /**
+   * `.backups/` is there and cannot be listed — a mode bit, or a plain file standing where the
+   * folder belongs.
+   *
+   * **Not "the folder is not a Workspace yet."** This use case deliberately asks nothing about
+   * the Workspace Layout, unlike `restoreBackup` below: a folder nobody has accepted holds no
+   * snapshots, which is the empty answer. Both adapters agree — the filesystem one answers `[]`
+   * for an absent `.backups/` and the double makes no Layout check at all — and a test pins it
+   * from the API's side. Said here because an earlier version of this comment claimed the
+   * other thing, which was a doc describing a branch the code cannot take (found in review).
+   */
   | { kind: "refused"; reason: "workspace-refused" };
 
 /**

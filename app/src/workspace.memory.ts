@@ -2,6 +2,7 @@ import type { StateFileSave, StateFileVersion } from "@biu-cs-planner/core";
 import {
   backupsToPrune,
   NotAWorkspaceError,
+  requireBackupRef,
   requireCatalogRef,
   requireStateFileName,
   StateFileChangedError,
@@ -105,7 +106,7 @@ const stored = (data: unknown): unknown => JSON.parse(JSON.stringify(data)) as u
  * name and a double that accepted one a disk refuses would prove nothing.
  */
 const backupKey = (ref: BackupRef): string => {
-  requireStateFileName(ref.name);
+  requireBackupRef(ref);
   return `backup:${ref.name}:${ref.takenAt}`;
 };
 

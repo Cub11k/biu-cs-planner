@@ -299,14 +299,14 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
      * Is this folder a Workspace yet, and what is missing if not?
      *
      * One answer and no refusal arm, which `workspaceStatus` in `app/src/setup.ts` is where the
-     * argument for lives: the layout probe behind it reports a part it cannot resolve as
+     * argument for lives: the Workspace Layout probe behind it reports a part it cannot resolve as
      * *missing* rather than raising, so the hole the POST below had is not open here (#141).
      */
     .get("/api/workspace", async (c) => c.json(await workspaceStatus(workspace)))
 
     /**
-     * Creating the layout is an explicit act, which is why it is a POST and not a side effect
-     * of the GET above: nothing is written until the student asks.
+     * Creating the Workspace Layout is an explicit act, which is why it is a POST and not a side
+     * effect of the GET above: nothing is written until the student asks.
      *
      * **A refused create is the same named 409 the other write routes answer with.** Until #141
      * this route was an unnamed 500: `createWorkspace` threw, the route had no arm for it, and
@@ -557,9 +557,10 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
      * needs: no file name, no path, no size (ADR-0002). No State File is named in the path
      * either, exactly as the history and settings routes name none.
      *
-     * A refusal is the same named 409 every other Workspace route answers with. It means the
-     * folder is not a Workspace yet, or `.backups/` is there and cannot be listed — never "no
-     * backups", which is an empty list and a perfectly good answer.
+     * A refusal is the same named 409 every other Workspace route answers with, and it means
+     * exactly one thing: `.backups/` is there and cannot be listed. It is **not** "the folder
+     * is not a Workspace yet" — that is an empty list, which the test below pins — and it is
+     * never "no backups", which is an empty list too and a perfectly good answer.
      */
     .get("/api/backups", async (c) => {
       const result = await listBackups(workspace);
