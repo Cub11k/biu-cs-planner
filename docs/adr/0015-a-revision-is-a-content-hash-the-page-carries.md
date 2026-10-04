@@ -66,6 +66,6 @@ to hand the value to a browser.
   are both explicitly not revisions, and neither may be used to decide whether a save goes
   through. The watcher reports the app's own writes too (#88), because telling the app's write from
   somebody else's is this guard's job, done from content.
-- **Reading costs a hash of a file a few kilobytes long**, once per read and once per save. That is
-  the whole price, and it is paid only for State Files: a Catalog is re-importable from its Raw
+- **Reading and saving cost a hash of a file a few kilobytes long**: one per read, and a save
+  hashes both what it found on disk and what it wrote. That is the whole price, and it is paid only for State Files: a Catalog is re-importable from its Raw
   Crawl and nothing edits one in place, so `read` and `write` carry no revision.

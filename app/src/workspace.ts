@@ -470,17 +470,19 @@ export type Workspace = {
    * part way leaves the parts it had already made. What a refused create promises is only that
    * nothing already standing there was replaced, never that the folder is as it was found.
    *
-   * **`status()` is how to see what a refused create left**: it reports exactly which parts of
-   * the Workspace Layout exist, and accepting the Workspace Layout again makes the rest. That is
+   * **`status()` is how to see what a refused create left**: it reports which parts of the
+   * Workspace Layout are missing, and accepting the Workspace Layout again makes the rest once
+   * whatever refused it is fixed. (A name the Workspace Layout needs that a plain file holds
+   * counts as there and is refused by name on the next create or write, #121.) That is
    * the reason this need not roll back while a State File write must be atomic: a half-made
    * Workspace Layout is empty folders, a state the app can describe and recover from, and a
    * half-written file is neither. A rollback would also have to tell the folders this call made
    * from the ones that were already there, which `recursive` hides — and removing one that was
    * already there is the one thing a create must never do.
    *
-   * Throws `WorkspaceRefusedError` for a part it cannot make; `createWorkspace` in
-   * `./setup.ts` answers that refusal rather than letting it out of the route, and is why its
-   * answer cannot be "nothing was changed".
+   * The filesystem adapter refuses a part it cannot make with a `WorkspaceRefusedError` naming
+   * it; `createWorkspace` in `./setup.ts` answers that refusal rather than letting it out of the
+   * route, and this is why its answer cannot be "nothing was changed".
    */
   create(): Promise<void>;
   /**

@@ -1317,7 +1317,7 @@ it("leaves the parts it made when refused part way, and status says which", asyn
   expect(await readFile(join(root, "requirements"), "utf8")).toBe("not a folder");
   // and `status()` describes exactly that: `catalogs` made, `.backups` missing. `requirements` is
   // not missing, because a name the Workspace Layout needs that is there counts as there — the
-  // test above says why — and a write into it is refused by name instead (#121)
+  // `requireLayoutFolder` in the adapter says why — and a write into it is refused by name instead (#121)
   expect(await workspace.status()).toEqual({ ready: false, missing: ["backups"] });
 
   // once the obstacle is gone, accepting the Workspace Layout again makes the rest
