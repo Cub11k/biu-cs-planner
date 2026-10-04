@@ -79,9 +79,10 @@ the rule under test changed nothing the test could see. It had never tested anyt
 
 **Commit before you mutate.** `git checkout -- <file>` reverts to the last commit, not to where
 you were, so using it to undo a deliberate mutation discards any uncommitted work in that file —
-including the review fixes you are in the middle of. Three agents did this to themselves across
-two runs in September 2026, and one then measured three mutations against a file it had silently
-reverted. Commit, then mutate, then revert.
+including the review fixes you are in the middle of. Three agents hit this across two runs in
+September 2026 (#136, #137, #153), and one of them then took two mutation results off a file it
+had silently reverted before catching it and re-running from a committed tree. All three caught it
+themselves and reported it unprompted. Commit, then mutate, then revert.
 
 ## Verification discipline
 
@@ -150,10 +151,12 @@ run, the date and the number of agents, and the `Co-Authored-By` and `Claude-Ses
 the session doing the dispatching.
 
 **What must not stay there is anything that will be true of the next run too.** A brief is
-rewritten every run and read once, under load: the `git checkout -- <file>` hazard above was
-warned about in prose in the brief for the run after it was first hit, and an agent hit it anyway.
-A briefing is not a substitute for this file. If a run learns something the next run needs, it
-belongs here, and the pull request that learned it is the cheapest place to propose the line.
+rewritten every run and read once, under load, and then it is gone: briefs are written into an
+agent's prompt, and nothing in this repository can be made to point at one. A briefing is not a
+substitute for this file. The `git checkout -- <file>` hazard above is the case in point — three
+agents met it across two runs while this file still did not carry the line, and each had to
+notice and recover from it unaided. If a run learns something the next run needs, it belongs
+here, and the pull request that learned it is the cheapest place to propose the line.
 
 ## Rules that live elsewhere, and are not repeated here
 
