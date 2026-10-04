@@ -45,10 +45,16 @@ These hold regardless of what the table says:
   `0004-localhost-auth-bearer-token.md`. #110 records the same thing in the run of 2026-09-24: #103
   landed "in a run with four other agents, two of them writing in `docs/adr/`", with `CONTEXT.md`
   "outside every lane. Deliberately left rather than raced." Twice is a pattern.
-- **Prefix every scratch file with your ticket number.** The scratchpad is shared across agents
-  and sessions. A run in September 2026 had two scratch files overwritten mid-task by a sibling
-  agent, and one measurement briefly reported another worktree's numbers as its own. Never trust
-  a scratch file you did not write in this run.
+- **Prefix every scratch file with your ticket number *and* something that identifies you within
+  the ticket** — `182-review-1-graphs.ts`, not `182-graphs.ts`. The scratchpad is shared across
+  agents and sessions. A run in September 2026 had two scratch files overwritten mid-task by a
+  sibling agent, and one measurement briefly reported another worktree's numbers as its own. The
+  ticket number separates tickets, and a parent and its two reviewers are one ticket: all three
+  derive the same prefix and then reach for the same obvious stem — `graphs`, `counts`, `baseline`.
+  On 2026-10-04 #182's agent followed the rule exactly and told both its reviewers to, and one of
+  them overwrote the parent's `182-graphs.ts`; the parent noticed because the output was not in the
+  format it had written, re-ran its graph checks from a uniquely named file, and reported the
+  collision itself (#199). Never trust a scratch file you did not write in this run.
 
 ## Reviewers are read-only, and have to be told so in those words
 
@@ -64,7 +70,9 @@ them unless it is told not to.
 **Tell them the scratch-file rule too**, for the same reason: a reviewer writes notes and
 throwaway scripts like anyone else, and it has no way to know the scratchpad is shared. In one
 run an agent kept the rule perfectly and its two reviewers wrote unprefixed files beside it,
-because relaying the rule had not occurred to anyone.
+because relaying the rule had not occurred to anyone. Hand each reviewer the identifier it is to
+use — `201-review-1-`, `201-review-2-` — rather than leaving each to invent one, since a reviewer
+choosing for itself cannot see what the other chose.
 
 ## Ask whether the test passes for the reason you think it does
 
