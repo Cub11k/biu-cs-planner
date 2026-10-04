@@ -362,6 +362,43 @@ it("says what is wrong with a stored Catalog it will not overwrite", async () =>
   });
 });
 
+/**
+ * #130's second half, and the Catalog's version of the test below the Picks. The one above is a
+ * stored Catalog whose bytes are not a Catalog — `stored-catalog-unreadable`, with the file
+ * Warnings that say what is wrong with it — and this is one whose bytes cannot be read, which is
+ * the port's refusal and arrives as `workspace-refused` with nothing added. #116 closed the hole:
+ * an unreadable stored Catalog used to read as a year with none, and an import would then merge
+ * into nothing and write the result over a Catalog it had never read.
+ *
+ * Both routes that reach the file, for the reason the State File test gives: the import's arm and
+ * the query's `notServed` are two different lines, and `notServed` is also where a refusal is
+ * told from absence — a 404 here would be the API claiming a refused Catalog simply was not
+ * there.
+ *
+ * A directory in the file's place again, so nothing is skipped on any runner (#130).
+ */
+it("answers a stored Catalog it cannot read with a 409, and never a 500 or a 404", async () => {
+  await post("/api/workspace", {});
+  await mkdir(join(root, "catalogs", "2027.json"));
+  await writeFile(join(root, "catalogs", "2027.json", "inside.txt"), "a year's Offerings", "utf8");
+
+  const imported = await post("/api/catalog/2027/import", CRAWL);
+  expect(imported.status).toBe(409);
+  await expect(imported.json()).resolves.toEqual({ reason: "workspace-refused" });
+
+  const listed = await get("/api/catalog/2027/offerings?semester=fall");
+  expect(listed.status).toBe(409);
+  await expect(listed.json()).resolves.toMatchObject({
+    warnings: [{ kind: "workspace-refused" }],
+  });
+
+  // the bytes, not just the status code: the import wrote nothing over what it could not read
+  expect(await readdir(join(root, "catalogs", "2027.json"))).toEqual(["inside.txt"]);
+  expect(await readFile(join(root, "catalogs", "2027.json", "inside.txt"), "utf8")).toBe(
+    "a year's Offerings",
+  );
+});
+
 it("refuses every route but the health probe to a request with no token", async () => {
   await post("/api/workspace", {});
 
@@ -713,6 +750,54 @@ it("will not overwrite a State File that is not even JSON", async () => {
     warnings: [{ kind: "file-unreadable" }],
   });
   expect(await readFile(join(root, "me.state.json"), "utf8")).toBe("{ not json at all");
+});
+
+/**
+ * #130, and the last of #109's chain. The two tests above are a State File whose **bytes** are
+ * not a State File; this is one whose bytes cannot be got at at all — and the two take different
+ * paths. A file the schema rejects is `state-file-unreadable` from the reader, while a file the
+ * port cannot read is the port's own `WorkspaceRefusedError`, which `app/src/edit.ts` maps to
+ * `workspace-refused`. Reported as absent, that refusal let a save based on there being no file
+ * overwrite one that was there all along (#109), and #109's second criterion — "the refusal is
+ * one the API already turns into a 409 or a Warning rather than a 500" — was verified by reading
+ * the four port call sites rather than by a test. Nothing failed if the boundary dropped its
+ * `catch`, which is what this closes.
+ *
+ * **Every route the one file reaches**, because the arm is per route and not per file: the two
+ * reads and the write each have their own, and a 409 on the write says nothing about the GET
+ * beside it.
+ *
+ * A **directory in the file's place** rather than a mode bit, which is #130's own instruction:
+ * it needs no permission trick, so this runs everywhere instead of skipping visibly as the
+ * `chmod` tests in `./token.test.ts` and `./workspace.fs.test.ts` must. Root reads a file
+ * whatever its mode says and reads no directory as a file, so there is no runner this passes
+ * vacuously on.
+ */
+it("answers a State File it cannot read at all with a 409 on every route, not a 500", async () => {
+  await post("/api/workspace", {});
+  await mkdir(join(root, "me.state.json"));
+  await writeFile(join(root, "me.state.json", "inside.txt"), "a student's data, somehow", "utf8");
+
+  const picked = await post(PICKS, LECTURE);
+  expect(picked.status).toBe(409);
+  await expect(picked.json()).resolves.toEqual({ reason: "workspace-refused", warnings: [] });
+
+  // the week and the preferences are read through two more call sites of the same port, and a
+  // refused write would not tell us what either of them answers
+  const week = await get(TIMETABLE);
+  expect(week.status).toBe(409);
+  await expect(week.json()).resolves.toEqual({ reason: "workspace-refused", warnings: [] });
+
+  const settings = await get(SETTINGS);
+  expect(settings.status).toBe(409);
+  await expect(settings.json()).resolves.toEqual({ reason: "workspace-refused", warnings: [] });
+
+  // the bytes and not just the status code: what stood where the State File belongs is exactly
+  // as it was, which is the whole of what #109 was filed to protect
+  expect(await readdir(join(root, "me.state.json"))).toEqual(["inside.txt"]);
+  expect(await readFile(join(root, "me.state.json", "inside.txt"), "utf8")).toBe(
+    "a student's data, somehow",
+  );
 });
 
 it("refuses a Pick to a request with no launch token", async () => {
