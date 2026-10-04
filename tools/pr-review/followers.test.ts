@@ -250,6 +250,18 @@ describe("this repository", () => {
     // only while no other worker was busy. #211 added a test file that runs a real Vite build
     // and an `npm pack`, and this one went over. The assertions above are unchanged; what was
     // wrong was a default timeout standing in for a measurement nobody had taken.
+    //
+    // **Why the three whole-tree tests each call `readSources` rather than share one read in a
+    // `beforeAll`** (#256, measured 2026-10-04 on a tree of 163 `.ts` files). The read is not
+    // what costs: `readSources(ROOT)` took 12–15ms cold and 4ms warm in a plain node process,
+    // and 5–11ms inside the suite. The parse does — `reExportFollowers` at 225ms cold and
+    // 115–150ms warm, `strayFollowers` (which parses again) at 115–130ms. Inside vitest this
+    // test ran 645–940ms on its own and 1163–1492ms in the full suite; with coverage,
+    // 2300–3064ms on its own and 4641–4889ms in the full suite, and the next one 1249–1424ms.
+    // Hoisting the read would save about 30ms of that and nothing of the cold parse, which is
+    // what sits near five seconds, so no budget could come back down on the strength of it.
+    // Sharing the *parse* would mean handing `strayFollowers` another call's result, which
+    // changes what this test asserts. So the read stays per test and the budget stays.
   }, 30_000);
 
   it("over-reports inside the walk's own module, which is the direction it errs in", () => {
