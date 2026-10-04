@@ -119,13 +119,18 @@ and #220 the one parentless ticket (#213) it closed — so this was one pull req
 rule that does not work. #191's spelling rule stands unchanged; checking the list is the step it
 never covered.
 
-**A closing keyword in ordinary prose is a closing reference too.** #223's body also contains the
-sentence "a dated amendment on the closed #125", and `closed` is one of GitHub's keywords, so that
-phrase is where the #125 link came from — the note on #205's thread calls it "a mention, no
-keyword", and it is not one. Nothing is explained by that about the four that went missing, but two
-things follow for anyone writing a body: a sentence that puts `closes`, `fixed` or `resolved` next
-to a number would close that issue on merge, and a link you did not intend in the list is evidence
-the list is worth reading rather than evidence GitHub invented something.
+**A closing keyword in ordinary prose is a closing reference too, and may displace yours.** #223's
+body carries, at its line 12 and some two hundred lines above its `Closes` block, a sentence
+ending in the word `closed` with `#125` immediately after it. `closed` is one of GitHub's keywords, so that phrase — not a
+keyword-free mention, which is what the note on #205's thread calls it — is where the #125 link
+came from. Across the five pull requests merged in that batch, #223 is the only one whose body held
+a keyword-and-number pair anywhere before its `Closes` block, and the only one whose `Closes` block
+did not register; the pair that *did* register is that sentence. One run of five is a correlation
+and not a mechanism, and GitHub documents no such limit, so **treat it as a reason to look rather
+than as a rule**: before opening a pull request, read the body for a keyword that has landed next
+to a number by accident, and rephrase it so the two are not adjacent. Quoting this very paragraph
+is the easy way to do it by mistake — put a quotation like that inside a code fence, where no
+reference is parsed at all.
 
 **When the list disagrees with the body, close the missing issues by hand after the merge**, with
 the reason on each, as #202 through #205 record. Do not wait for a re-parse to repair it, and do
