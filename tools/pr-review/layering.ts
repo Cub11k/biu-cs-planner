@@ -46,11 +46,18 @@ import type { TestFile } from "../pr-report/tests.ts";
  * `collect` records, which is to say any file that is not a test — reaching for a build tool
  * is a finding for a human reviewer, because `server` pulling Vite into `dist/cli.js` is a
  * different claim altogether and a much larger one. `forbiddenEdges` cannot make that call: it
- * reads static `import` statements between the four workspaces, and a dynamic import of a
+ * reads static `import` statements into the four workspaces, and a dynamic import of a
  * package is in no graph at all (see the blind spots listed on `forbiddenEdges`). So the tests
  * pin the mechanical half instead — that this check stays quiet about `vite`, and still catches
- * a test that reaches past the toolchain into `web`'s source — which turns a later widening of
- * `workspaceOfPackage` or of `judge`'s early return into a failing test rather than a surprise.
+ * a test that reaches past the toolchain into `web`'s source, in a workspace and in `tools/`
+ * alike — which turns a later widening of `workspaceOfPackage` or of `judge`'s early return
+ * into a failing test rather than a surprise.
+ *
+ * **Until #255 the `tools/` half of that was not checked at all.** `judge` looked a path's
+ * first segment up among the four workspaces, `tools` matched none of them, and every import
+ * written under `tools/` was skipped — so the directory the ruling sanctions driving the
+ * toolchain from was the one directory where knowing `web`'s source went unseen. `TOOLS` below
+ * is the rule that closes it.
  */
 
 /** The four workspaces the layering rule governs, in the order they may depend. */
@@ -177,13 +184,68 @@ export const summarise = (): string =>
   }).join(", ");
 
 /**
- * Keyed by plain string rather than by `WorkspaceName`, so a path segment or a package
- * name read out of the source can be looked up directly without being asserted into the
- * type first.
+ * The one directory outside the four whose imports are judged too, and the only name an
+ * importer can have besides a workspace's. `tools` is matched as a whole first path segment,
+ * like a workspace — a literal, never a pattern built from anything (ADR-0007).
+ */
+export type Importer = WorkspaceName | "tools";
+
+/**
+ * **What `tools/` may import: none of the four workspaces** (#255).
+ *
+ * `tools/` holds the checks over the code and the scripts that package it, and it has every
+ * reason to *read* the four — `tools/pr-report` walks them as data, `tools/ci` greps them,
+ * `tools/package` and `tools/package/shipped.test.ts` drive `web`'s build — and none to import
+ * them. Reading a file off disk is not an import and puts no edge in any graph, and neither
+ * does a build tool resolving `web/vite.config.ts`, so everything `tools/` does today is
+ * outside this rule; measured on the tree this landed on, no file under `tools/` imports any
+ * of the four. What it may import is itself and third-party packages — `typescript`, `vite`,
+ * `vitest`, `node:` builtins — and neither is a workspace, so neither is judged.
+ *
+ * **Why all four, when the hole #255 names is `web`.** The ticket's question is what `tools/`
+ * may import, and the answer the tree gives is "nothing of the four". An entry that forbade
+ * `web` alone would allow `tools/` to start importing `core` without anyone deciding it
+ * should, which is the quiet kind of widening this table exists to prevent; an entry that
+ * forbids all four makes the first such import a finding, and allowing it then is one word
+ * added to `mayImport` with the reason beside it. `web` is the edge the ruling on #210 turns
+ * on, and the one a test driving the toolchain is likeliest to write by accident.
+ *
+ * Kept apart from `LAYERS` rather than added to it, because `LAYERS` is the four workspaces
+ * and their direction — `summarise` states it in the pull request comment as the layering
+ * between them — and `tools/` is no layer of the application.
+ */
+export const TOOLS: {
+  readonly directory: "tools";
+  readonly mayImport: readonly AllowedImport[];
+  readonly rule: string;
+} = {
+  directory: "tools",
+  mayImport: [],
+  rule:
+    "`tools/` reads the four workspaces as data and drives `web`'s build toolchain, so it " +
+    "may import its own modules and third-party packages but nothing from `core`, `app`, " +
+    "`server` or `web`",
+};
+
+/** One importer's half of the rule, whether that importer is a workspace or `tools/`. */
+type Judged = { importer: Importer; mayImport: readonly AllowedImport[]; rule: string };
+
+/**
+ * Keyed by plain string rather than by `Importer`, so a path segment or a package name read
+ * out of the source can be looked up directly without being asserted into the type first.
  */
 const BY_NAME: ReadonlyMap<string, Layer> = new Map(
   LAYERS.map((layer) => [layer.workspace, layer]),
 );
+
+/** Every importer this check judges: the four workspaces, then `tools/`. */
+const JUDGED: ReadonlyMap<string, Judged> = new Map<string, Judged>([
+  ...LAYERS.map((layer): [string, Judged] => [
+    layer.workspace,
+    { importer: layer.workspace, mayImport: layer.mayImport, rule: layer.rule },
+  ]),
+  [TOOLS.directory, { importer: TOOLS.directory, mayImport: TOOLS.mayImport, rule: TOOLS.rule }],
+]);
 
 /** The workspace a name refers to, if this project has one by that name. */
 const workspaceNamed = (name: string): WorkspaceName | undefined =>
@@ -193,8 +255,12 @@ const workspaceNamed = (name: string): WorkspaceName | undefined =>
 export type ForbiddenEdge = {
   /** Repo-relative path of the file that writes the import. */
   from: string;
-  /** The workspace that file belongs to. */
-  fromWorkspace: WorkspaceName;
+  /**
+   * The workspace that file belongs to — or `tools`, the one directory outside them whose
+   * imports are judged (see `TOOLS`). Named for the four because they are what it was until
+   * #255, and `tools` reads as its first segment exactly the way a workspace does.
+   */
+  fromWorkspace: Importer;
   /**
    * What it imports: the repo-relative path when the import was written as a relative
    * one, the package name when it was written as `@biu-cs-planner/…`.
@@ -269,8 +335,16 @@ function workspaceOfPackage(specifier: string): WorkspaceName | undefined {
  * meant.
  *
  * Edges that leave the four workspaces altogether — an import of `tools/`, of `zod`, of
- * `node:fs` — are not judged here. This check is about the direction between workspaces
- * and nothing else; see "Not in this ticket" on #33.
+ * `node:fs` — are not judged here. This check is about which way an import points *into*
+ * the four and nothing else; see "Not in this ticket" on #33.
+ *
+ * **Who is judged is the four workspaces and `tools/`** (`TOOLS`, #255). A file anywhere else
+ * — `vitest.config.ts` at the root, say — matches neither and is skipped. And `tools/` is
+ * judged only as far as it is handed in: `collect` reads `tools/` for test titles and no
+ * further, so its *test* files arrive here in `tests` and its other modules arrive in no
+ * list at all. `layering.test.ts` reads those modules itself for its whole-tree assertion, so
+ * `npm test` judges both; the pull request comment, built from `collect` alone, judges the
+ * tests.
  *
  * What it sees is what `tools/pr-report` records, and no more. Two blind spots come with
  * that, and both are the price of deriving the graphs once rather than three times:
@@ -295,15 +369,15 @@ export function forbiddenEdges(
     imported: ImportRef,
     to: WorkspaceName | undefined,
   ): void => {
-    // Anything outside the four — `tools/`, say — is not governed by this rule at all.
-    const layer = BY_NAME.get(workspace);
-    if (!layer || to === undefined || to === layer.workspace) return;
+    // Anything that is neither one of the four nor `tools/` is not governed by this rule.
+    const layer = JUDGED.get(workspace);
+    if (!layer || to === undefined || to === layer.importer) return;
     const allowed = layer.mayImport.map(terms).find((t) => t.workspace === to);
     // A wide entry allows the edge outright; a narrowed one allows only the erased form.
     if (allowed && (!allowed.erasable || imported.erasable)) return;
     found.push({
       from,
-      fromWorkspace: layer.workspace,
+      fromWorkspace: layer.importer,
       imported: imported.specifier,
       toWorkspace: to,
       kind: !allowed ? "direction" : imported.typeOnly ? "spelling" : "value",

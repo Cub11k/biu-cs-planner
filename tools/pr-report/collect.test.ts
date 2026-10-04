@@ -46,7 +46,11 @@ describe("what the report is derived from", () => {
 
     expect(titles.get("tools/ci/workflows.test.ts")).toBeGreaterThan(0);
     expect(titles.get("tools/ci/clock-pattern.test.ts")).toBeGreaterThan(0);
-  });
+    // A budget rather than the default five seconds: `collect(ROOT)` parses the whole tree, and
+    // under `npm run report` this took 2731ms on 2026-10-04 while a sibling in
+    // `render.test.ts` timed out at 5000ms on PR #265's report job. The same budget and reason
+    // as the whole-tree tests in `tools/pr-review/followers.test.ts`.
+  }, 30_000);
 
   it("reads every test file under a titles-only directory, not a hand-kept list of them", () => {
     // Derived from the tree rather than listed here, so a test file added to `tools/` tomorrow
@@ -61,7 +65,8 @@ describe("what the report is derived from", () => {
 
     expect(onDisk.length).toBeGreaterThan(5);
     expect(collected).toEqual(onDisk);
-  });
+    // Whole tree, same budget, same reason.
+  }, 30_000);
 
   it("keeps those directories out of both graphs and out of coverage", () => {
     // The other half of the decision, and the half a later change is likeliest to undo by
@@ -84,7 +89,8 @@ describe("what the report is derived from", () => {
       expect([...derived.coverage.byFile.keys()].filter(inTools)).toEqual([]);
       expect(derived.unmeasured.filter(inTools)).toEqual([]);
     }
-  });
+    // Whole tree, same budget, same reason.
+  }, 30_000);
 
   it("tells the renderer which directories it read nothing but titles from", () => {
     // `render` cannot work this out from the paths it is handed — a path says where a file is,
@@ -92,7 +98,8 @@ describe("what the report is derived from", () => {
     // report would hold `tools/` titles and still say nothing about what it left out.
     expect(collect(ROOT).testOnlyDirs).toEqual(TEST_ONLY_DIRS);
     expect(TEST_ONLY_DIRS).toContain("tools");
-  });
+    // Whole tree, same budget, same reason.
+  }, 30_000);
 
   it("answers, from the report alone, whether a change under tools has tests", () => {
     // The acceptance criterion of #123 end to end, over the real tree: the question a reviewer
@@ -104,7 +111,8 @@ describe("what the report is derived from", () => {
     expect(markdown).toContain(
       "`tools/` is in neither graph, in no exported-type list and in no coverage row",
     );
-  });
+    // Whole tree, same budget, same reason.
+  }, 30_000);
 });
 
 /**

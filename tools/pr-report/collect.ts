@@ -172,9 +172,9 @@ export function collect(root: string): Report {
   // reader of `tests` wants all of them. Splitting them would mean every such reader
   // remembering to read the second field, which is the shape of the bug in #77 — one field
   // going unread in one place — and `render` is told which directories are titles-only
-  // through `Report.testOnlyDirs` instead. `forbiddenEdges` is unaffected either way: it
-  // looks a path's first segment up in `LAYERS` and a `tools/` test matches no layer, so it
-  // was already skipping what it is handed here.
+  // through `Report.testOnlyDirs` instead. `forbiddenEdges` judges what it is handed here:
+  // a `tools/` test is held to `TOOLS` in `tools/pr-review/layering.ts`, which forbids it the
+  // four workspaces' source (#255).
   //
   // Through a `Set`, because the two lists are independent constants and nothing stops an entry
   // of one lying inside the other. `tools` and `core/src` do not overlap today; if they ever did,
