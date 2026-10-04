@@ -187,7 +187,7 @@ it("says a held launch token was refused, rather than claiming the page has none
   await vi.waitFor(() => {
     expect(onScreen(mounted)).toContain(t("en", "tokenRetired"));
   }, POLL);
-  expect(onScreen(mounted)).not.toContain(t("en", "catalogUnauthorized"));
+  expect(onScreen(mounted)).not.toContain(t("en", "tokenMissing"));
 });
 
 /**
@@ -201,7 +201,7 @@ it("still says a page has no launch token when it has none", async () => {
   const mounted = mount();
 
   await vi.waitFor(() => {
-    expect(onScreen(mounted)).toContain(t("en", "catalogUnauthorized"));
+    expect(onScreen(mounted)).toContain(t("en", "tokenMissing"));
   }, POLL);
   expect(onScreen(mounted)).not.toContain(t("en", "tokenRetired"));
 });
@@ -342,7 +342,7 @@ it("heals itself when a fresh token reaches the same origin's store", async () =
 it("has a sentence for each of the two states, in both languages", () => {
   for (const language of ["en", "he"] as const) {
     expect(t(language, "tokenRetired")).not.toBe("");
-    expect(t(language, "tokenRetired")).not.toBe(t(language, "catalogUnauthorized"));
+    expect(t(language, "tokenRetired")).not.toBe(t(language, "tokenMissing"));
   }
   expect(t("he", "tokenRetired")).not.toBe(t("en", "tokenRetired"));
 });

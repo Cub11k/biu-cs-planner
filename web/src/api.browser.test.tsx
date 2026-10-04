@@ -192,7 +192,7 @@ it("names no cause an unreadable answer does not carry", async () => {
   expect(said(mounted)).not.toContain(t("en", "picksUnreadable"));
   expect(said(mounted)).not.toContain(t("en", "picksStale"));
   expect(said(mounted)).not.toContain(t("en", "apiUnreachable"));
-  expect(said(mounted)).not.toContain(t("en", "picksNotSaved"));
+  expect(said(mounted)).not.toContain(t("en", "workspaceNotReady"));
 });
 
 /** The read path too: the week is not left on "loading" with nothing said. */
