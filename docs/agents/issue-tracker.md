@@ -39,6 +39,103 @@ guessing which is current.
 Labels and assignees are not the body; change those freely. `gh issue edit --body` and
 `--body-file` are for creating a ticket, not for revising one.
 
+## How big a ticket is
+
+**A ticket is two or three atomic asks that share a file lane, stated as one goal.** Three is a
+cap, not a target.
+
+The habit this replaces was one atomic ask per ticket — a single defect, a single untested
+function, a single wrong line in a record. Those tickets are sharp and each is reviewable against
+its own diff, and nothing here asks for vaguer ones. What they cost is overhead: a worktree, an
+`npm install`, a branch, a pull request, two reviewers and a merge are roughly fixed per ticket, so
+the smaller the ticket the worse the ratio. Worse, two atomic asks in the same file get sequenced
+across days instead of being fixed in one pass by someone already holding the context, and the
+second one pays to rebuild it.
+
+### The shape: a parent with the atomic tickets as sub-issues
+
+The parent ticket states the composed goal. The atomic tickets become its GitHub sub-issues and
+**nothing in their bodies is touched** — composing is additive, which is why it was chosen over a
+ticket that quotes its predecessors and closes them as superseded. That alternative would move the
+ask into a body written after the fact, which is the thing "Tickets are frozen" exists to prevent.
+A parent adds a layer; it does not replace one.
+
+A parent body carries the goal, the lane, which child contributes what, acceptance criteria that
+span the children, and what is out of scope. It does **not** restate the children's asks. They are
+one click away and they are the frozen record; a paraphrase in the parent is a second version of
+the ask that can drift from the first.
+
+**One worktree, one branch, one pull request per parent**, and the pull request closes the children
+(`Closes #a, #b, #c`). The saving is the overhead, so a parent that lands as three pull requests
+has saved nothing.
+
+This is the same sub-issue machinery the wayfinding section below uses, for a different purpose. A
+composed parent is not a `wayfinder:map`: a map is a standing document with Fog and
+Decisions-so-far that outlives its children, while a parent is one unit of work that closes with
+them.
+
+### The lane test
+
+Two atomic asks belong in one ticket when **the files they would write overlap, or sit in the same
+module**. Not when they merely share a subsystem, and not when they would merely read well together
+— the lane is the test because a composed ticket then *is* one lane in the sense
+`orchestration.md` means, and the unit the tracker shows is the unit an agent is dispatched on.
+
+**Lanes between parents will intersect, and that is not a defect in the grouping.** This repo is
+small: `server/src/api.ts` and `docs/design.md` are each named by five or more open tickets at the
+time of writing, and no grouping of them is disjoint. So two parents whose lanes intersect are
+never dispatched at the same time — the dispatch brief sequences them, exactly as it would two
+agents that wanted one file. Do not answer an intersection by splitting a parent back into atoms;
+that trades a scheduling constraint for the overhead this rule exists to remove.
+
+### Compose asks that are equally ready
+
+**Where a lane holds both specified asks and asks waiting on a ruling, group the specified ones
+together and leave the rulings to a parent of their own.** A parent is only as dispatchable as its
+least-ready child, so composing one of each buys nothing and costs the specified ask its turn.
+
+This is not the same as the asks being badly written. A `needs-triage` ticket in this repo is
+usually complete prose ending in "What to decide" — `#145` sets out both readings of a bound and
+says which questions the ruling has to answer. What it waits on is a judgement the author makes,
+not a sentence an implementer could supply, and no amount of grouping shortens that wait.
+
+### When there is nothing to compose with
+
+An atomic ask that shares a lane with nothing ships as its own ticket, with no parent and no
+apology. `ready-for-human` tickets are usually in this position, and so is whatever is left when a
+reconciliation pass runs out of partners. Holding a specified ticket back until a partner appears
+costs more than a small ticket does.
+
+### Labels
+
+**The parent carries the triage label that gates the work.** Children keep the label they were
+filed with, and where the two disagree the parent's is the one dispatch reads. A parent is
+`ready-for-agent` only when every child is specified well enough to build; one `needs-triage` child
+makes the parent `needs-triage`, because the agent would stall on it either way.
+
+### Commands
+
+The sub-issues endpoint takes the child's numeric **database id**, not its `#number` and not its
+`node_id`:
+
+```sh
+# the child's database id
+gh api repos/Cub11k/biu-cs-planner/issues/<child> --jq .id
+
+# attach / detach
+gh api --method POST   repos/Cub11k/biu-cs-planner/issues/<parent>/sub_issues -F sub_issue_id=<child-db-id>
+gh api --method DELETE repos/Cub11k/biu-cs-planner/issues/<parent>/sub_issue  -F sub_issue_id=<child-db-id>
+
+# read the composition
+gh api repos/Cub11k/biu-cs-planner/issues/<parent>/sub_issues --jq '.[] | {number, title, state}'
+gh issue view <parent>   # prints the sub-issues and sub-issues-completed fields
+gh issue view <child>    # prints the parent field
+```
+
+`gh issue list` does not show the parent/child relation, so a listing cannot tell you whether a
+ticket is already composed. Check the ticket itself, as "Verify a creation by number, not by a
+listing" in `orchestration.md` says for the same reason.
+
 ## Pull requests as a triage surface
 
 **PRs as a request surface: no.** _(Set to `yes` if this repo treats external PRs as feature requests; `/triage` reads this flag.)_

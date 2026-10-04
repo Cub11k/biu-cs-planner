@@ -4,6 +4,10 @@
 outside its lane is read-only to it.** One worktree per piece of work is already the rule
 (`worktrees.md`); this file is what changes when several of them run at the same time.
 
+The ticket is a composed parent: two or three atomic asks that share a file lane, with the atomic
+tickets as its sub-issues (`issue-tracker.md`, "How big a ticket is"). Its lane is therefore
+already drawn by the grouping, and the table below records that lane rather than inventing one.
+
 None of what follows is derivable from the code. Each rule is a mistake that was made once,
 written as the thing that prevents it.
 
@@ -23,6 +27,10 @@ Three things hold regardless of what the table says:
 - **The ticket wins over the lane.** If the ticket asks for something the table did not
   anticipate, do it — the scoping has been the incomplete thing before. Say in the pull request
   that you went outside the lane and which file it was, so the merge can be sequenced.
+- **Two parents whose lanes intersect go in different runs.** Tickets are grouped by lane, but in
+  a repo this size some parents still name a file in common — `issue-tracker.md` says so, and says
+  not to answer it by splitting a parent back into atoms. Sequence them across runs instead. Do not
+  put both in one table and hope the overlapping file is one neither of them reaches.
 - **Prefix every scratch file with your ticket number.** The scratchpad is shared across agents
   and sessions. A run in September 2026 had two scratch files overwritten mid-task by a sibling
   agent, and one measurement briefly reported another worktree's numbers as its own. Never trust
@@ -151,6 +159,7 @@ belongs here, and the pull request that learned it is the cheapest place to prop
 
 - The code guardrails, the `--ignore-scripts` rule and the branching model — `CLAUDE.md`
 - Frozen ticket bodies, and amendments as comments — `issue-tracker.md`
+- How big a ticket is, and composition as a parent plus sub-issues — `issue-tracker.md`
 - Why a worktree at all, and how to create and remove one — `worktrees.md`
 - The vocabulary code and commits must use — `CONTEXT.md`
 - Crawled data staying out of this repo — ADR-0006, and `CLAUDE.md`
