@@ -161,6 +161,46 @@ function shapeHeadings(markdown: string): string[] {
   return (body ?? "").split("\n").flatMap((line) => /^\*\*(.+)\*\*$/.exec(line.trim())?.[1] ?? []);
 }
 
+/** The shapes fold's body, which three readers below take apart differently. */
+const shapesBody = (markdown: string): string =>
+  folds(markdown).find((f) => f.summary.includes("The shapes the data takes"))?.body ?? "";
+
+/** The shapes fold's own summary line, counts and all. */
+const shapesSummary = (markdown: string): string =>
+  folds(markdown).find((f) => f.summary.includes("The shapes the data takes"))?.summary ?? "";
+
+/**
+ * Every `type X = …` row the shapes fold prints, in order.
+ *
+ * Read off the markdown for the same reason `shapeHeadings` is: #202 is about what a reader
+ * sees twice, and a test that counted `Module.exports` itself would agree with the renderer
+ * however it printed them. The pattern is literal — the word `type`, a name, an `=`.
+ */
+const shapeRows = (markdown: string): string[] =>
+  shapesBody(markdown)
+    .split("\n")
+    .filter((line) => /^type \w+ = /.test(line));
+
+/** The name each of those rows declares, which is what #202 counts. */
+const shapeRowNames = (markdown: string): string[] =>
+  shapeRows(markdown).flatMap((row) => /^type (\w+) = /.exec(row)?.[1] ?? []);
+
+/**
+ * Every pointer the fold prints for a name a barrel carries, as `name -> module` and, where a
+ * clause renamed the name on its way through, `name -> module as declared`.
+ *
+ * The pattern is literal: a list bullet, a backticked name, an em dash, a backticked module,
+ * and the optional `(declared …)` tail.
+ */
+const carriedShapes = (markdown: string): string[] =>
+  shapesBody(markdown)
+    .split("\n")
+    .flatMap((line) => {
+      const found = /^- `([^`]+)` — `([^`]+)`(?: \(declared `([^`]+)`\))?$/.exec(line.trim());
+      if (!found) return [];
+      return [`${found[1]} -> ${found[2]}${found[3] ? ` as ${found[3]}` : ""}`];
+    });
+
 /** The module each row of the coverage table names, in the order the table lists them. */
 function coverageRows(markdown: string): string[] {
   const body = folds(markdown).find((f) => f.summary.includes("Coverage, file by file"))?.body;
@@ -795,6 +835,158 @@ describe("naming a module in a heading", () => {
 });
 
 /**
+ * A name the fold lists, and where it lists it.
+ *
+ * #202: every re-exported type was printed in full under the module that declares it and again,
+ * identically, under every barrel carrying it — 253 rows for 150 names on `dev` at `4d5cf3a`,
+ * 86 of those names appearing more than once. #125's body predicted the signature pass would
+ * remove the duplication; it made the two copies *identical* instead, because before it one of
+ * them read `(re-exported)`.
+ */
+describe("a type a barrel carries", () => {
+  /** A declaring module and a barrel that re-exports its type, as `collect` hands them over. */
+  const carried = (over: Partial<Report> = {}) =>
+    report({
+      modules: [
+        {
+          path: "core/src/index.ts",
+          workspace: "core",
+          exports: [
+            {
+              name: "Variant",
+              kind: "type",
+              signature: "{ name: string }",
+              from: { specifier: "core/src/state/schema.ts", name: "Variant" },
+              declaredIn: { path: "core/src/state/schema.ts", name: "Variant" },
+            },
+          ],
+          imports: [],
+          packages: [],
+        },
+        {
+          path: "core/src/state/schema.ts",
+          workspace: "core",
+          exports: [{ name: "Variant", kind: "type", signature: "{ name: string }" }],
+          imports: [],
+          packages: [],
+        },
+      ],
+      coverage: {
+        available: true,
+        total: coverageOf(91),
+        byFile: new Map([["core/src/index.ts", coverageOf(91)]]),
+        deadFunctions: [],
+      },
+      edges: [],
+      ...over,
+    });
+
+  it("prints the shape once, under the module that declares it", () => {
+    expect(shapeRows(render(carried()))).toEqual(["type Variant = { name: string }"]);
+  });
+
+  it("keeps the name under the barrel, pointing at the declaration", () => {
+    // The barrel does not vanish from the fold. A reviewer who found `Variant` *through*
+    // `core`'s barrel looks it up under `core`, and what they get is the name and one jump,
+    // rather than a second copy of the shape or nothing at all.
+    const markdown = render(carried());
+
+    expect(shapeHeadings(markdown)).toEqual(["core", "core/state/schema"]);
+    expect(carriedShapes(markdown)).toEqual(["Variant -> core/state/schema"]);
+  });
+
+  it("says the declared name too where a clause renamed it on the way through", () => {
+    // `export type { Variant as Scenario }`: `Scenario` is what the barrel offers and
+    // `Variant` is what the row to read is headed, so a pointer that named only the module
+    // would send a reader looking for a name that file does not print.
+    const renamed = carried();
+    const barrel = renamed.modules[0]!;
+    barrel.exports = [
+      {
+        name: "Scenario",
+        kind: "type",
+        signature: "{ name: string }",
+        from: { specifier: "core/src/state/schema.ts", name: "Variant" },
+        declaredIn: { path: "core/src/state/schema.ts", name: "Variant" },
+      },
+    ];
+
+    expect(carriedShapes(render(renamed))).toEqual([
+      "Scenario -> core/state/schema as Variant",
+    ]);
+  });
+
+  it("counts shapes rather than rows, which is the other half of the defect", () => {
+    // The summary added the rows up, so it told a reader the repository held 253 types where
+    // it declares 150. The pointers are counted too and said apart from the shapes, because a
+    // count that silently dropped them would be the same defect the other way round.
+    expect(shapesSummary(render(carried()))).toContain(
+      "1 exported types, 1 of them re-exported by a barrel",
+    );
+  });
+
+  it("keeps the full shape where the chain ended at nothing this report read", () => {
+    // `export type { Options } from "some-package"`. There is no row anywhere to point at, so
+    // dropping the signature would lose the only mention the name gets — and the placeholder is
+    // itself the sentence "a shape this report never read".
+    const outside = carried();
+    outside.modules = [
+      {
+        path: "core/src/index.ts",
+        workspace: "core",
+        exports: [
+          {
+            name: "Options",
+            kind: "type",
+            signature: "(re-exported)",
+            from: { specifier: "some-package", name: "Options" },
+          },
+        ],
+        imports: [],
+        packages: [],
+      },
+    ];
+
+    expect(shapeRows(render(outside))).toEqual(["type Options = (re-exported)"]);
+    expect(carriedShapes(render(outside))).toEqual([]);
+  });
+
+  it("keeps the full shape where the far end declares the name as something else", () => {
+    // `export type { Refused } from "./file.ts"` over a `class Refused`: the clause re-exports
+    // the type side and the declaration is a class, so the fold prints no `type Refused` row
+    // under `core/state/file` for this one to point at.
+    const ofAClass = carried();
+    ofAClass.modules = [
+      {
+        path: "core/src/index.ts",
+        workspace: "core",
+        exports: [
+          {
+            name: "Refused",
+            kind: "type",
+            signature: "class",
+            from: { specifier: "core/src/state/file.ts", name: "Refused" },
+            declaredIn: { path: "core/src/state/file.ts", name: "Refused" },
+          },
+        ],
+        imports: [],
+        packages: [],
+      },
+      {
+        path: "core/src/state/file.ts",
+        workspace: "core",
+        exports: [{ name: "Refused", kind: "class", signature: "class" }],
+        imports: [],
+        packages: [],
+      },
+    ];
+
+    expect(shapeRows(render(ofAClass))).toEqual(["type Refused = class"]);
+    expect(carriedShapes(render(ofAClass))).toEqual([]);
+  });
+});
+
+/**
  * The graph against the tree it describes. The unit tests above prove the rule; these prove
  * that this repo's own dependencies land in the picture a reviewer is told to read first.
  */
@@ -858,6 +1050,49 @@ describe("this repository", () => {
       expect(headings).toContain(workspace);
     }
     expect(headings).not.toContain("index");
+  });
+
+  it("prints a name as often as the source declares it, never once per barrel", () => {
+    // #202, over the tree the fold is actually read on. The source is the oracle rather than
+    // the renderer's own rule: a name is printed as many times as some module *declares* it,
+    // so `Day` appears twice — `web` may not import `core`, so `web/timetable/catalog`
+    // declares its own beside `core/catalog/schema`'s — and `Catalog`, which four barrels
+    // carry, appears once.
+    const derived = collect(ROOT);
+    const markdown = render(derived);
+
+    const declarations = new Map<string, number>();
+    for (const m of derived.modules) {
+      for (const e of m.exports) {
+        if (e.kind === "type" && e.from === undefined) {
+          declarations.set(e.name, (declarations.get(e.name) ?? 0) + 1);
+        }
+      }
+    }
+
+    const printed = new Map<string, number>();
+    for (const name of shapeRowNames(markdown)) {
+      printed.set(name, (printed.get(name) ?? 0) + 1);
+    }
+
+    expect(printed.size).toBeGreaterThan(100);
+    expect([...printed.entries()].sort()).toEqual([...declarations.entries()].sort());
+    // And the one `CLAUDE.md` sends a layering reviewer here for: carried, not copied.
+    expect(printed.get("Catalog")).toBe(1);
+    expect(carriedShapes(markdown)).toContain("Catalog -> core/catalog/schema");
+  });
+
+  it("counts, in its own summary, exactly what the fold lists", () => {
+    // Both numbers, against the rendered lines rather than against the loop that wrote them.
+    const markdown = render(collect(ROOT));
+    const rows = shapeRows(markdown).length;
+    const pointers = carriedShapes(markdown).length;
+
+    expect(rows).toBeGreaterThan(100);
+    expect(pointers).toBeGreaterThan(50);
+    expect(shapesSummary(markdown)).toContain(
+      `${rows} exported types, ${pointers} of them re-exported by a barrel`,
+    );
   });
 
   it("points no arrow at a third-party package", () => {

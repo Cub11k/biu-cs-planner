@@ -854,6 +854,81 @@ describe("a re-exported name's declaration", () => {
     expect(JSON.stringify(read)).toBe(before);
   });
 
+  /** `name -> declaredIn` for every export of the module at `path`, after the second pass. */
+  const declaredInOf = (
+    path: string,
+    files: Readonly<Record<string, readonly string[]>>,
+    entries: ReadonlyMap<string, string> = new Map(),
+  ): string[] =>
+    resolveReExports(modulesFromSources(files), entries)
+      .filter((m) => m.path === path)
+      .flatMap((m) =>
+        m.exports.map(
+          (e) =>
+            `${e.name} -> ${e.declaredIn ? `${e.declaredIn.path}#${e.declaredIn.name}` : "nowhere"}`,
+        ),
+      );
+
+  it("writes down which module the walk ended at, so no other reader has to walk it", () => {
+    // #202. The shapes fold lists one row per declared type and one pointer per barrel that
+    // carries it, and telling the two apart needs the far end of the chain. `render.ts` holds
+    // no module map and no package entries, so the alternative to this field was a second
+    // barrel-follower in the renderer — the thing #124 put the walk in one place to prevent.
+    expect(
+      declaredInOf("core/src/index.ts", {
+        "core/src/index.ts": ['export { importRawCrawl } from "./shoham/import.ts";'],
+        "core/src/shoham/import.ts": DECLARED,
+      }),
+    ).toEqual(["importRawCrawl -> core/src/shoham/import.ts#importRawCrawl"]);
+  });
+
+  it("names the far module's own spelling of a name a clause renamed", () => {
+    expect(
+      declaredInOf("core/src/index.ts", {
+        "core/src/index.ts": ['export { importRawCrawl as readCrawl } from "./shoham/import.ts";'],
+        "core/src/shoham/import.ts": DECLARED,
+      }),
+    ).toEqual(["readCrawl -> core/src/shoham/import.ts#importRawCrawl"]);
+  });
+
+  it("records the end of the chain and not the step, where a barrel re-exports a barrel", () => {
+    expect(
+      declaredInOf(
+        "app/src/index.ts",
+        {
+          "app/src/index.ts": ['export { importRawCrawl } from "@biu-cs-planner/core";'],
+          "core/src/index.ts": ['export { importRawCrawl } from "./shoham/import.ts";'],
+          "core/src/shoham/import.ts": DECLARED,
+        },
+        new Map([["@biu-cs-planner/core", "core/src/index.ts"]]),
+      ),
+      // Not `core/src/index.ts`, which is where `from` points.
+    ).toEqual(["importRawCrawl -> core/src/shoham/import.ts#importRawCrawl"]);
+  });
+
+  it("leaves it absent wherever the signature stays the placeholder", () => {
+    // The two fields answer one question — was the chain walked to a declaration this report
+    // read — so they are written together and cannot disagree. A declaration has no chain and
+    // so no site either; the rest are the ways a chain ends at nothing.
+    expect(
+      declaredInOf("core/src/index.ts", {
+        "core/src/index.ts": [
+          'export { join } from "node:path";',
+          'export { gone } from "./shoham/import.ts";',
+          "export const here = 1;",
+        ],
+        "core/src/shoham/import.ts": DECLARED,
+      }),
+    ).toEqual(["join -> nowhere", "gone -> nowhere", "here -> nowhere"]);
+
+    expect(
+      declaredInOf("core/src/a.ts", {
+        "core/src/a.ts": ['export { thing } from "./b.ts";'],
+        "core/src/b.ts": ['export { thing } from "./a.ts";'],
+      }),
+    ).toEqual(["thing -> nowhere"]);
+  });
+
   it("keeps the re-export walk in one module of the report's own source", () => {
     // #124 asks for one barrel-follower in the codebase. It lives in `surface.ts` because
     // `calls.ts` already imports that module, so a follower kept in `calls.ts` and imported
