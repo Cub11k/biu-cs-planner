@@ -68,7 +68,7 @@ const WARNING_STRING = new Map<CatalogWarning["kind"], StringKey>([
  * sentence about an unreadable file shown for something else entirely.
  */
 const REFUSAL_STRING = {
-  "workspace-not-ready": "picksNotSaved",
+  "workspace-not-ready": "workspaceNotReady",
   "state-file-unreadable": "picksUnreadable",
   "state-file-changed": "picksStale",
   "workspace-refused": "picksUnreadable",
@@ -93,7 +93,7 @@ const HISTORY_REFUSAL_STRING = {
   "state-file-changed": "historyStale",
   "state-file-unreadable": "historyUnreadable",
   "workspace-refused": "historyUnreadable",
-  "workspace-not-ready": "picksNotSaved",
+  "workspace-not-ready": "workspaceNotReady",
 } as const satisfies Record<NonNullable<HistoryRefusal>, StringKey>;
 
 /**
@@ -103,12 +103,13 @@ const HISTORY_REFUSAL_STRING = {
  *
  * `state-file-changed` gets its own sentence rather than `picksStale`'s. That one is an account of
  * a click on a Group and a student who used the language switch clicked no Group — and #111 is the
- * ticket about showing a claim the page cannot make. `workspace-not-ready` shares `picksNotSaved`,
- * as the history refusals do: "this folder is not a workspace yet, so nothing can be saved in it"
- * is the whole truth for any of them.
+ * ticket about showing a claim the page cannot make. `workspace-not-ready` shares
+ * `workspaceNotReady` with the other two maps: "this folder is not a workspace yet, so nothing can
+ * be saved in it" is the whole truth for any of them, which is why that one key names the folder
+ * and not a pane (#217).
  */
 const SETTINGS_REFUSAL_STRING = {
-  "workspace-not-ready": "picksNotSaved",
+  "workspace-not-ready": "workspaceNotReady",
   "state-file-unreadable": "settingsFileUnreadable",
   "state-file-changed": "settingsStale",
   "workspace-refused": "settingsFileRefused",
@@ -813,7 +814,7 @@ export function TimetableScreen({
  * other in another would be claiming both.
  */
 function unauthorizedSaid(language: Language, tokenHeld: boolean): string {
-  return t(language, tokenHeld ? "tokenRetired" : "catalogUnauthorized");
+  return t(language, tokenHeld ? "tokenRetired" : "tokenMissing");
 }
 
 /**

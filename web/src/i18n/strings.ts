@@ -215,8 +215,8 @@ const english = {
   /**
    * The two ways the server will not talk to this page, which are **two** states and not one
    * (#126). The remedy is the same — a fresh address from the terminal — and the cause is not:
-   * `catalogUnauthorized` is true of a page that was opened without a launch token, and was
-   * shown for a page holding one as well, where it is false. A tab that was authenticated when
+   * `tokenMissing` is true of a page that was opened without a launch token, and was shown for
+   * a page holding one as well, where it is false. A tab that was authenticated when
    * `biu-cs-planner rotate-token` ran holds a retired token, and a student who reads carefully
    * would go looking for a token they can see is present.
    *
@@ -225,8 +225,16 @@ const english = {
    * Neither names `rotate-token` either — a student who did not run it would be reading about a
    * command that had nothing to do with what happened to them, and the remedy is the same for
    * all of the ways a token stops being accepted.
+   *
+   * **Neither key names a pane**, and `tokenMissing` was `catalogUnauthorized` until #217.
+   * It was named when the Catalog was the only pane with a 401 to report; `unauthorizedSaid`
+   * in `../timetable/TimetableScreen.tsx` now says one of these two for all four of the
+   * screen's 401 sites (#197), so three of the four were reading a key that named a pane the
+   * sentence is not about. Both are about this page's Launch Token, which is what they are
+   * named after. They sit below the `catalog*` block only because that is where the first of
+   * them was written.
    */
-  catalogUnauthorized:
+  tokenMissing:
     "This page has no launch token. Start the app from a terminal and open the address it prints.",
   tokenRetired:
     "This page's launch token was refused, so it is no longer the one the app accepts. " +
@@ -323,7 +331,16 @@ const english = {
   clashesCount: "{count} clashes.",
   clashesCountOne: "1 clash.",
   picksUnreadable: "Your saved picks could not be read, so the week shows none of them.",
-  picksNotSaved: "This folder is not a workspace yet, so nothing can be saved in it.",
+  /**
+   * The folder, not the Picks — which is why this one key in the middle of the Picks block
+   * carries no pane prefix. It was `picksNotSaved` until #217, named when a click on a Group
+   * was the only thing that could be refused, and all three of the refusal maps in
+   * `../timetable/TimetableScreen.tsx` now answer `workspace-not-ready` with it: a Pick, an
+   * undo or redo, and a change to a preference. Their comments say why, in as many words —
+   * "this folder is not a workspace yet, so nothing can be saved in it" is the whole truth for
+   * any of them, which is exactly the property a pane in the key would have contradicted.
+   */
+  workspaceNotReady: "This folder is not a workspace yet, so nothing can be saved in it.",
   picksStale:
     "The file changed since this page read it, so your click was not saved. " +
     "The week is the file as it is now — click again if you still want it.",
@@ -446,7 +463,7 @@ const hebrew: Record<StringKey, string> = {
   catalogEmpty: "אין קורס מתאים",
   catalogMissing: "אין עדיין קטלוג לשנת {year}. ייבאו זחילה משוהם כדי למלא אותו.",
   catalogUnreadable: "הקטלוג לשנת {year} קיים, אך לא ניתן לקרוא אותו:",
-  catalogUnauthorized:
+  tokenMissing:
     "לדף הזה אין אסימון הפעלה. הפעילו את היישום מהמסוף ופתחו את הכתובת שהוא מדפיס.",
   tokenRetired:
     "אסימון ההפעלה של הדף הזה נדחה, ולכן הוא כבר אינו האסימון שהיישום מקבל. " +
@@ -491,7 +508,7 @@ const hebrew: Record<StringKey, string> = {
   clashesCount: "{count} התנגשויות.",
   clashesCountOne: "התנגשות אחת.",
   picksUnreadable: "לא ניתן לקרוא את הבחירות השמורות, ולכן הן אינן מוצגות בשבוע.",
-  picksNotSaved: "התיקייה הזו אינה עדיין סביבת עבודה, ולכן לא ניתן לשמור בה דבר.",
+  workspaceNotReady: "התיקייה הזו אינה עדיין סביבת עבודה, ולכן לא ניתן לשמור בה דבר.",
   picksStale:
     "הקובץ השתנה מאז שהדף קרא אותו, ולכן הלחיצה לא נשמרה. " +
     "השבוע מוצג כפי שהקובץ נראה עכשיו — לחצו שוב אם עדיין תרצו את הבחירה.",
