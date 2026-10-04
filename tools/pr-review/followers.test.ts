@@ -252,7 +252,7 @@ describe("this repository", () => {
     // wrong was a default timeout standing in for a measurement nobody had taken.
     //
     // **Why the three whole-tree tests each call `readSources` rather than share one read in a
-    // `beforeAll`** (#256, measured 2026-10-04 on a tree of 163 `.ts` files). The read is not
+    // `beforeAll`** (#256, measured 2026-10-04 on a tree of 163 `.ts` and `.tsx` files). The read is not
     // what costs: `readSources(ROOT)` took 12–15ms cold and 4ms warm in a plain node process,
     // and 5–11ms inside the suite. The parse does — `reExportFollowers` at 225ms cold and
     // 115–150ms warm, `strayFollowers` (which parses again) at 115–130ms. Inside vitest this
