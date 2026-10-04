@@ -23,9 +23,15 @@ export type ExportedSymbol = {
    * `const` is what `readModule` answers for every re-exported value, a function and a class
    * included, because telling those apart means reading the declaration in another module.
    * **`resolveReExports` is where that happens**, and after it a re-exported function reads
-   * `function` and a re-exported class reads `class` (#124). `const` survives only where the
-   * chain leaves this repository — a re-export of `node:path`'s `join`, say — which is the
-   * honest answer rather than a guess. See `from`.
+   * `function` and a re-exported class reads `class` (#124).
+   *
+   * `const` afterwards means one of two things, and the common one is simply that the name *is*
+   * a const: all 19 of this repository's remaining `const` re-exports resolve to a real `const`
+   * declaration — `core/src/index.ts`'s `catalogSchema`, `server/src/index.ts`'s
+   * `DEFAULT_PORT`. The other is a chain that leaves this repository, a re-export of
+   * `node:path`'s `join`, say, where there is no declaration to read; `signature` is what tells
+   * the two apart, because only the second keeps `RE_EXPORTED`. There are none of those here
+   * today. See `from`.
    */
   kind: "function" | "const" | "type" | "class";
   /**
@@ -87,9 +93,11 @@ export type ExportOrigin = { specifier: string; name: string };
  * What `ExportedSymbol.signature` says while nothing has followed the re-export to its
  * declaration, and what it keeps saying where following it leads out of this repository.
  *
- * A constant rather than a literal in two places, because `resolveReExports` decides what to
- * replace by comparing against it and `surface.test.ts` asserts it: three spellings of one
- * string is how the replacement quietly stops happening.
+ * `readModule` writes it (once), and `resolveReExports` replaces it by *overwriting* rather
+ * than by comparing against it: a resolved symbol takes the declaration's signature whatever
+ * was there before, and an unresolved one keeps this because nothing wrote over it. So the
+ * constant buys no branch — it buys the tests and this documentation naming the same string as
+ * the one the code writes, instead of each spelling it out and drifting apart.
  */
 export const RE_EXPORTED = "(re-exported)";
 
@@ -532,7 +540,15 @@ export type ExportedNames = ReadonlyMap<string, ExportOrigin | null>;
  * satisfies it structurally.
  */
 export type ModuleOrigins = {
-  /** Every module read, by repo-relative path. */
+  /**
+   * Every module read, by repo-relative path.
+   *
+   * **How full each module's name map is, is the caller's question rather than this type's**,
+   * and the two callers answer it differently: `resolveReExports` puts every export in, because
+   * a type has a shape to go and read, while `collect.ts`'s `exportedNames` keeps only what is
+   * not a type, because a type is not a callee. So the same walk stops dead at a type name for
+   * the call graph and follows it for the surface pass, which is what each of them wants.
+   */
   modules: ReadonlyMap<string, ExportedNames>;
   /**
    * Package name to the module a bare import of it reaches, from the manifest's `exports`.
@@ -600,9 +616,11 @@ export function declaringModule(
  *   `tools/pr-review/cycles.ts`, which is what a cycle is reported by.
  * - **`from` itself.** Where a name came from stays recorded as the one step it is; this fills
  *   in what is at the end of the steps, and the call graph still walks them one at a time.
- * - **A `type` keyword on the clause.** `export type { StateFileChangedError } from "./x.ts"`
- *   re-exports the type side of a class and nothing else, so the clause is what decides what
- *   *this* module offers and the declaration only decides what shape it has. Taking `class`
+ * - **A `type` keyword on the clause.** Written of a class — `export type { Refused } from
+ *   "./file.ts"`, which no workspace here writes today; `app/src/index.ts:55` re-exports
+ *   `StateFileChangedError` as a value — the clause re-exports the type side of it and nothing
+ *   else. So the clause is what decides what *this* module offers and the declaration only
+ *   decides what shape it has. Taking `class`
  *   from the far end would both mislabel the name and put it back among the call targets
  *   `collect.ts` filters types out of — a re-export that a value import could never reach,
  *   recorded as one a call could land on.
@@ -654,9 +672,16 @@ export function resolveReExports(
  * exposes had to count.
  *
  * So: `core/src/index.ts` is `core`, `core/src/shoham/import.ts` is `core/shoham/import`, and
- * `tools/pr-report/render.ts` — a path with no `src/` segment, which `TEST_ONLY_DIRS` brings in
- * (#123) — is `tools/pr-report/render`, unchanged. The mapping drops the `src/` segment and a
- * root `index`, and nothing else, so no two of the paths this report walks share an answer.
+ * a path with no `src/` segment — `tools/pr-report/render.ts` — comes through as
+ * `tools/pr-report/render`, unchanged. The mapping drops the `src/` segment and a root `index`,
+ * and nothing else, so no two of the paths this report walks share an answer.
+ *
+ * **No `tools/` path reaches here today**, and the case is kept against the day one does.
+ * `TEST_ONLY_DIRS` brings `tools/` in for its test titles alone (#123) — `collect.ts` says
+ * those directories get no module in either graph and no row in the coverage table, and the
+ * titles fold prints the full `file.path` — so nothing currently runs such a path through this
+ * function. The amendment on #125 asked for the case to be checked anyway, because a future
+ * section that does would otherwise inherit the collapse across five roots instead of four.
  *
  * `.tsx` keeps its extension here, as it always did: `web/src/App.tsx` is `web/App.tsx`.
  * Stripping it would collapse a `scheme.ts` and a `scheme.tsx` in one folder into one name,

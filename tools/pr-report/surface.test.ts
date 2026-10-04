@@ -615,16 +615,18 @@ describe("what kind a re-exported name is", () => {
     expect(kindsOf([line])).toEqual(["Variant:type"]);
   });
 
-  it("leaves the signature a placeholder, because the shape is in another module", () => {
-    // Deliberate, and #92 says so out loud rather than silently: following `from` to the
-    // declaration needs every module already read and the package-entry map, which live in
-    // `collect.ts`. `ExportedSymbol.signature` carries the reasoning.
+  it("leaves the signature a placeholder, because `readModule` has only this one file", () => {
+    // About `readModule` alone, and no longer about the report: `resolveReExports` runs over
+    // every module afterwards and replaces both of these with the declaration's signature, so
+    // what is pinned here is that the first pass does not guess. Following `from` needs every
+    // module already read and the package-entry map, neither of which exists while one file is
+    // being parsed. `ExportedSymbol.signature` carries the reasoning.
     expect(
       moduleFromSource("core/src/index.ts", [
         'export type { Variant } from "./state/schema.ts";',
         'export { importRawCrawl } from "./shoham/import.ts";',
       ]).exports.map((e) => `${e.name}:${e.signature}`),
-    ).toEqual(["Variant:(re-exported)", "importRawCrawl:(re-exported)"]);
+    ).toEqual([`Variant:${RE_EXPORTED}`, `importRawCrawl:${RE_EXPORTED}`]);
   });
 
   it("reads a declared alias, interface, class, function and const as itself", () => {
@@ -655,11 +657,12 @@ describe("what kind a re-exported name is", () => {
  * The second pass: what a re-exported name *is* and what shape it has, which is knowable only
  * once every module has been read.
  *
- * #92 left both as placeholders deliberately and said so — `signature` was `"(re-exported)"`
- * for every name a barrel carries, so the report told a reviewer that `core` exports
- * `recordPick` and nothing whatever about what it takes or returns, for the names in
- * `index.ts`, which is precisely where a reader goes to learn what a workspace offers. #124 is
- * that follow-up.
+ * #92 left both as placeholders deliberately and said so. What a reader actually saw is the
+ * shapes fold, which prints a signature for a `type` and for nothing else (`render.ts`): so
+ * `core`'s block listed `type Variant = (re-exported)` and 87 more like it, under the heading
+ * for the file a reader goes to precisely to learn what a workspace offers. #124 is that
+ * follow-up. The function and class kinds it also corrects are invisible in the rendered
+ * report and matter to `collect.ts`'s call targets instead.
  */
 describe("a re-exported name's declaration", () => {
   /** `name:kind:signature` for every export of the module at `path`, after the second pass. */
@@ -892,8 +895,11 @@ describe("naming a module", () => {
   });
 
   it("leaves a `tools/` path alone, since it has no `src/` segment to drop", () => {
-    // The amendment on #125: `TEST_ONLY_DIRS` brought `tools/` into the report (#123), and
-    // `tools/` has `index`-shaped entry points of its own. Nothing here collapses them.
+    // The amendment on #125 asked for this case. No `tools/` path reaches `moduleName` today —
+    // `TEST_ONLY_DIRS` brings those directories in for their titles alone — and `tools/` has no
+    // `index.ts` either; its entry points are `main.ts`. So the two `index.ts` paths below are
+    // hypothetical, and the point of them is that a future `tools/` section would not inherit
+    // the collapse.
     expect(moduleName("tools/pr-report/render.ts")).toBe("tools/pr-report/render");
     expect(moduleName("tools/pr-report/index.ts")).toBe("tools/pr-report/index");
     expect(moduleName("tools/ci/index.ts")).toBe("tools/ci/index");
