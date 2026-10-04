@@ -166,8 +166,10 @@ it("says something when a click's answer is a body it cannot read", async () => 
 
   tile.click();
 
+  // the click's own sentence (#231), and not the week read's: the week is read again and
+  // drawn from that read, so "the week is not your saved work" would be about the wrong thing
   await vi.waitFor(() => {
-    expect(said(mounted)).toContain(t("en", "picksAnswerUnreadable"));
+    expect(said(mounted)).toContain(t("en", "picksSaveAnswerUnreadable"));
   });
 });
 
@@ -186,10 +188,13 @@ it("names no cause an unreadable answer does not carry", async () => {
 
   tile.click();
 
+  // the click's own sentence (#231), and not the week read's: the week is read again and
+  // drawn from that read, so "the week is not your saved work" would be about the wrong thing
   await vi.waitFor(() => {
-    expect(said(mounted)).toContain(t("en", "picksAnswerUnreadable"));
+    expect(said(mounted)).toContain(t("en", "picksSaveAnswerUnreadable"));
   });
   expect(said(mounted)).not.toContain(t("en", "picksUnreadable"));
+  expect(said(mounted)).not.toContain(t("en", "picksAnswerUnreadable"));
   expect(said(mounted)).not.toContain(t("en", "picksStale"));
   expect(said(mounted)).not.toContain(t("en", "apiUnreachable"));
   expect(said(mounted)).not.toContain(t("en", "workspaceNotReady"));

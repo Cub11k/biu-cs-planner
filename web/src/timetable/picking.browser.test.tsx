@@ -90,6 +90,14 @@ let version: number;
 /** Set to answer the next save as a file that changed under the page. */
 let changedUnderneath: boolean;
 /**
+ * Set to answer the next save with a body that is not JSON, at this status, **after** the fake
+ * has accepted it — so a 200 here is a click that landed and whose answer nobody could read,
+ * which is the case #231 is about.
+ */
+let unreadableSave: number | undefined;
+/** How many times the screen told its host that the file's revision may have moved. */
+let edits: number;
+/**
  * Holds the *read* of the Timetable open while the Catalog is served at once, which is the
  * window #111 is about: the screen asks for both in parallel, so the week is clickable
  * before the State File has been read.
@@ -157,6 +165,11 @@ const timetableReads = (): number =>
     (request) => request.method === "GET" && request.pathname.startsWith("/api/timetable"),
   ).length;
 
+/** How many times the header asked whether undo and redo are available. */
+const availabilityAsks = (): number =>
+  sent.filter((request) => request.method === "GET" && request.pathname === "/api/history")
+    .length;
+
 /** One of the fixture's Groups as a Pick, the way a State File on disk would hold it. */
 function pickOf(groupNumber: string, lessonType = "הרצאה"): GroupPick {
   const group = OFFERING.groups.find(
@@ -188,6 +201,8 @@ beforeEach(() => {
   refuse = undefined;
   version = 0;
   changedUnderneath = false;
+  unreadableSave = undefined;
+  edits = 0;
   readHeld = undefined;
   saveHeld = undefined;
   answerHeldFor = undefined;
@@ -273,6 +288,12 @@ beforeEach(() => {
     }
 
     // the two Groups that overlap in this fixture, once both are picked
+    if (unreadableSave !== undefined && (method === "POST" || method === "DELETE")) {
+      const status = unreadableSave;
+      unreadableSave = undefined;
+      return new Response("<!doctype html>", { status, headers: { "content-type": "text/html" } });
+    }
+
     const clashes =
       picks.some((p) => p.lessonType === "הרצאה" && p.groupNumber === "01") &&
       picks.some((p) => p.lessonType === "תרגיל")
@@ -303,7 +324,16 @@ async function openWeek(options: { strict?: boolean } = {}): Promise<HTMLElement
   host = mounted;
   document.body.append(mounted);
   root = createRoot(mounted);
-  const screen = <TimetableScreen language="en" onLanguage={() => {}} today={TODAY} />;
+  const screen = (
+    <TimetableScreen
+      language="en"
+      onLanguage={() => {}}
+      onEdited={() => {
+        edits += 1;
+      }}
+      today={TODAY}
+    />
+  );
   root.render(options.strict === true ? <StrictMode>{screen}</StrictMode> : screen);
 
   const chooser = await vi.waitFor(() => {
@@ -499,11 +529,47 @@ it("says a click was not saved for want of a backup, and not that the picks are 
   expect(mounted.textContent).not.toContain(t("en", "picksUnreadable"));
 });
 
+/**
+ * #231: a click whose answer arrived and could not be read. Driven as a **200** after the fake
+ * accepted the Pick, so the click landed and nobody can tell from the answer — which is why the
+ * sentence may say neither that it was saved nor that it was not, and why the page goes and
+ * looks: the week is read again, the undo buttons are asked about, and the header is told the
+ * revision may have moved. Exactly what a step whose answer could not be read does (#206).
+ */
+it("says whether a click was saved is not known, and goes and looks, when its answer is unreadable", async () => {
+  const mounted = await openWeek();
+  const readsBefore = timetableReads();
+  const asksBefore = availabilityAsks();
+
+  unreadableSave = 200;
+  tileFor(mounted, "01").click();
+
+  await waitForText(mounted, t("en", "picksSaveAnswerUnreadable"));
+  for (const claim of ["picksStale", "picksUnreadable", "picksAnswerUnreadable"] as const) {
+    expect(mounted.textContent, `${claim} claims what this page cannot know`).not.toContain(
+      t("en", claim),
+    );
+  }
+  expect(mounted.textContent).not.toContain("not saved");
+  await vi.waitFor(() => {
+    if (timetableReads() <= readsBefore) throw new Error("the week was never read again");
+    if (availabilityAsks() <= asksBefore) throw new Error("the undo buttons were never asked");
+    if (edits === 0) throw new Error("the header was never told the revision may have moved");
+    // the click landed, and the re-read is what shows it
+    if (!tileFor(mounted, "01").classList.contains("is-picked")) {
+      throw new Error("the re-read never drew the Pick the file holds");
+    }
+  });
+  // the account outlives the re-read: it is about the click, not about the week
+  expect(mounted.textContent).toContain(t("en", "picksSaveAnswerUnreadable"));
+});
+
 /** In Hebrew too, because every new string exists in both languages (`CLAUDE.md`). */
 it.each([
   "picksBackupRefused",
   "historyBackupRefused",
   "settingsBackupRefused",
+  "picksSaveAnswerUnreadable",
 ] as const)(
   "has %s in Hebrew, and not as the English sentence",
   (key) => {
