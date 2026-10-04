@@ -1309,6 +1309,29 @@ describe("the number a reviewer reads as tests", () => {
     expect(markdown).toContain("**core/src/a.test.ts** — 1 test\n");
   });
 
+  it("catches a run that collected one file fewer than the source lists", () => {
+    // #257: one `npm test` run during #242's review reported 75 files where `vitest list` found
+    // 76, and was never reproduced. A run that quietly drops a file is the case this whole
+    // section exists for, so this pins that the report notices it — a run that collected every
+    // file but one, every count it did collect agreeing with the source.
+    const markdown = render(
+      report({
+        tests: [
+          file("core/src/a.test.ts", entry("works")),
+          file("server/src/b.test.ts", entry("serves")),
+          file("web/src/c.browser.test.tsx", entry("draws the week")),
+        ],
+        run: ran({ "core/src/a.test.ts": 1, "server/src/b.test.ts": 1 }),
+      }),
+    );
+
+    expect(markdown).toContain("It ran 2 of the 3 files here");
+    expect(markdown).toContain("1 file was not in it");
+    expect(markdown).toContain(
+      "**web/src/c.browser.test.tsx** — 1 test — not in the run this report was built beside",
+    );
+  });
+
   it("names a file the two sources disagree about, and chooses neither", () => {
     const markdown = render(
       report({
