@@ -1,10 +1,12 @@
 import type { StateFileSave, StateFileVersion } from "@biu-cs-planner/core";
 import {
+  backupsToPrune,
   NotAWorkspaceError,
   requireCatalogRef,
   requireStateFileName,
   StateFileChangedError,
   WORKSPACE_LAYOUT,
+  type BackupRef,
   type StateFileContents,
   type StateFileRef,
   type Workspace,
@@ -36,6 +38,14 @@ import {
  * one of them could be the wrong *kind* of, which is already why it cannot hold the write
  * side of the same file. So no knob, for the reason above, and the answer this double does owe
  * the real one is the other two: **an absent folder lists empty and never refuses.**
+ *
+ * **`.backups/` is held here too** (#67), and to the same behaviour: a save snapshots what it
+ * replaces, the snapshot is pruned by the one retention rule both adapters share, and
+ * `listBackups` answers newest first. The two answers of `listBackups` this cannot give are the
+ * two `list` cannot: a `.backups` that is a plain file and one a mode bit shuts, both of which
+ * need a disk. What it does owe the real one is that **an absent `.backups/` lists empty and
+ * never refuses**, which is asserted here under the same test titles the real adapter's tests
+ * use.
  *
  * **One asymmetry worth naming rather than fixing.** `seed` puts a file in without going
  * through the Workspace Layout check, so a Catalog seeded before `create` is listed here where
@@ -90,6 +100,16 @@ const key = (ref: WorkspaceRef): string => {
 const stored = (data: unknown): unknown => JSON.parse(JSON.stringify(data)) as unknown;
 
 /**
+ * A snapshot as one string, so the same Map trick works for `.backups/` — and the same name
+ * refusal is made, through the same function, because a snapshot's name is a State File's
+ * name and a double that accepted one a disk refuses would prove nothing.
+ */
+const backupKey = (ref: BackupRef): string => {
+  requireStateFileName(ref.name);
+  return `backup:${ref.name}:${ref.takenAt}`;
+};
+
+/**
  * The double's stand-in for a revision, and it is the stored text itself.
  *
  * The real adapter hashes the bytes it read (`server/src/workspace.fs.ts`), and it hashes
@@ -104,9 +124,19 @@ const stored = (data: unknown): unknown => JSON.parse(JSON.stringify(data)) as u
 const revisionOf = (data: unknown): StateFileVersion => JSON.stringify(data) ?? "";
 
 export function memoryWorkspace(
-  options: { created?: boolean } = {},
+  options: {
+    created?: boolean;
+    /**
+     * The clock a snapshot is stamped with. A parameter so the retention cases can be staged
+     * at days apart without waiting for them, which is the same reason the real adapter takes
+     * one (#67). `Date.now` when nothing says otherwise.
+     */
+    now?: () => number;
+  } = {},
 ): MemoryWorkspace {
+  const now = options.now ?? Date.now;
   const files = new Map<string, { ref: WorkspaceRef; data: unknown }>();
+  const snapshots = new Map<string, { ref: BackupRef; data: unknown }>();
   const writes: WorkspaceRef[] = [];
   let folders: WorkspaceFolder[] = options.created ? [...WORKSPACE_LAYOUT] : [];
   const watchers = new Set<WorkspaceChanged>();
@@ -143,6 +173,49 @@ export function memoryWorkspace(
     files.set(at, { ref, data: stored(data) });
     writes.push(ref);
     changed();
+  };
+
+  /**
+   * The snapshots of one State File, newest first, which both `listBackups` and the pruning
+   * read. Ordered here rather than at each caller so the two cannot disagree about which
+   * snapshot is the newest.
+   */
+  const backupsOf = (name: string): { ref: BackupRef; data: unknown }[] =>
+    [...snapshots.values()]
+      .filter((held) => held.ref.name === name)
+      .sort((a, b) => b.ref.takenAt - a.ref.takenAt);
+
+  /**
+   * A snapshot of what a save is about to replace, and then the pruning — the whole of
+   * `.backups/`'s behaviour, in the one place the real adapter also keeps it: inside the save
+   * (`./workspace.ts`).
+   *
+   * **The millisecond is nudged forward past a snapshot that already has it.** Two saves
+   * inside one millisecond would otherwise be one snapshot, the second silently replacing the
+   * first — which is a lost backup, and the one failure this folder exists to prevent. The
+   * real adapter nudges for the same reason: a snapshot's name is its timestamp there, so the
+   * collision is the same collision.
+   *
+   * **Nothing is watched here either.** `.backups/` moves no change count — the real adapter
+   * does not watch it and nothing in it is ever shown — so this deliberately does not call
+   * `changed()`, which is what binds #67 to the watcher ruling in `server/src/workspace.fs.ts`
+   * (#88).
+   */
+  const snapshot = (name: string, data: unknown): void => {
+    let takenAt = now();
+    while (snapshots.has(backupKey({ kind: "backup", name, takenAt }))) takenAt += 1;
+    const ref: BackupRef = { kind: "backup", name, takenAt };
+    snapshots.set(backupKey(ref), { ref, data: stored(data) });
+  };
+
+  /** Deletes what the shared retention rule says may go, and nothing else. */
+  const prune = (name: string): void => {
+    for (const going of backupsToPrune(
+      backupsOf(name).map((held) => held.ref),
+      now(),
+    )) {
+      snapshots.delete(backupKey(going));
+    }
   };
 
   /**
@@ -205,8 +278,26 @@ export function memoryWorkspace(
       if (version !== save.basedOn) {
         throw new StateFileChangedError(ref.name, { basedOn: save.basedOn, found: version });
       }
+      // The snapshot is of what is being replaced and is taken before the replacing, as the
+      // real adapter takes it: a save that left no copy of the file it overwrote would be the
+      // one case `.backups/` exists for. A first save replaces nothing and so copies nothing.
+      if (found !== undefined) snapshot(ref.name, found.data);
       writeFile(ref, save.json);
+      // after the save has landed, because pruning only ever deletes and may not cost a save
+      prune(ref.name);
       return revisionOf(stored(save.json));
+    },
+    async listBackups(ref: StateFileRef): Promise<BackupRef[]> {
+      // The name is refused here as it is everywhere else, through the port's own function:
+      // a snapshot of a name that is not one is a target this will not look for.
+      requireStateFileName(ref.name);
+      // Never a refusal, and `[]` for a Workspace with no `.backups/` yet — the real
+      // adapter's answer for a folder that is not there. The third answer, a folder that
+      // cannot be listed, is out of this double's reach for the reason in its own doc.
+      return backupsOf(ref.name).map((held) => held.ref);
+    },
+    async readBackup(ref: BackupRef): Promise<unknown> {
+      return snapshots.get(backupKey(ref))?.data;
     },
     async watch(onChange): Promise<WorkspaceWatcher> {
       watchers.add(onChange);

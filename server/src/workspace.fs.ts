@@ -3,6 +3,7 @@ import { watch, type FSWatcher } from "node:fs";
 import { mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import {
+  backupsToPrune,
   isStateFileName,
   NotAWorkspaceError,
   requireCatalogRef,
@@ -10,6 +11,7 @@ import {
   StateFileChangedError,
   WORKSPACE_LAYOUT,
   WorkspaceRefusedError,
+  type BackupRef,
   type StateFileContents,
   type StateFileRef,
   type Workspace,
@@ -39,6 +41,28 @@ const DIRECTORY: Record<WorkspaceFolder, string> = {
 /** Literal patterns, never built from data (ADR-0007). */
 const CATALOG_FILE = /^(\d{4})\.json$/;
 const STATE_FILE = /^(.+)\.state\.json$/;
+
+/**
+ * A snapshot in `.backups/`: the State File's name, the moment it was taken, and the same
+ * `.state.json` suffix the file itself carries — `alice.2026-10-04T09-31-07-412Z.state.json`.
+ *
+ * **UTC, and hyphens where an ISO string has colons and a dot.** A colon is a character
+ * Windows refuses in a file name and `isStateFileName` refuses in a State File's, so an
+ * `Date.prototype.toISOString` stamp could not be a file name on every platform this has to
+ * run on. UTC is `backupDay`'s own answer and its doc says why; it also makes the names sort
+ * in the order they were taken, so a reader looking in the folder by hand sees a history.
+ *
+ * `.+` is greedy, so the **last** stamp-shaped segment is read as the timestamp and everything
+ * before it as the name: a State File really may be called `alice.2027`, because
+ * `isStateFileName` allows a dot that is not the first character. A name this adapter would
+ * refuse to write is not listed either, exactly as `list` filters State Files, so this
+ * adapter's own temporary — which starts with a dot — never appears as a snapshot.
+ *
+ * Four digits of year and no more, which is also what `stampOf` writes. A clock set past the
+ * year 9999 would produce a snapshot nothing lists; that is a lost listing rather than a lost
+ * file, and it is written down here rather than guarded against.
+ */
+const BACKUP_FILE = /^(.+)\.(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z\.state\.json$/;
 
 /**
  * The folders a watch covers: the Workspace root, plus these. The layout minus `.backups`,
@@ -90,6 +114,12 @@ const STATE_FILE = /^(.+)\.state\.json$/;
  * writes a State File into the root, which is watched and is reported like any other save.
  * None of the three may add suppression, and each must leave the page able to tolerate its
  * own write.
+ *
+ * **#67 landed and this held.** A snapshot and a pruning now happen inside every save, both
+ * of them in `.backups/`, and `.backups` stayed off this list: the count does not move for
+ * either, so autosave will not be a reload per save. The *restore* is an ordinary guarded
+ * save of the State File at the root, so it is reported exactly as any other save is — which
+ * is what the ruling above says should happen and the opposite of suppression.
  */
 const WATCHED_FOLDERS: WorkspaceFolder[] = ["catalogs", "requirements"];
 
@@ -205,13 +235,62 @@ class UnwritableError extends WorkspaceRefusedError {
  * What a ref is, in the domain's words, for a refusal a student reads. Not the path: see
  * `UnwritableError`.
  */
-const describeRef = (ref: WorkspaceRef): string => {
+const describeRef = (ref: WorkspaceRef | BackupRef): string => {
   switch (ref.kind) {
     case "catalog":
       return `the Catalog for the Academic Year ${ref.academicYear}`;
     case "state":
       return `the State File ${JSON.stringify(ref.name)}`;
+    case "backup":
+      return (
+        `the snapshot of the State File ${JSON.stringify(ref.name)} ` +
+        `taken at ${stampOf(ref.takenAt)}`
+      );
   }
+};
+
+/**
+ * The timestamp in a snapshot's name, built from the UTC fields rather than by slicing
+ * `toISOString()`: that one throws on a date outside its range and widens the year past four
+ * digits beyond 9999, and this has to produce a file name rather than an exception.
+ */
+const stampOf = (takenAt: number): string => {
+  const at = new Date(takenAt);
+  const pad = (value: number, width = 2): string => String(value).padStart(width, "0");
+  return (
+    `${pad(at.getUTCFullYear(), 4)}-${pad(at.getUTCMonth() + 1)}-${pad(at.getUTCDate())}` +
+    `T${pad(at.getUTCHours())}-${pad(at.getUTCMinutes())}-${pad(at.getUTCSeconds())}` +
+    `-${pad(at.getUTCMilliseconds(), 3)}Z`
+  );
+};
+
+/**
+ * The moment a snapshot's name records, or nothing when the name is not a snapshot's. The
+ * digits are read and handed to `Date.UTC`; nothing here is executed or built from what it
+ * read (ADR-0007).
+ */
+const backupFromFileName = (entry: string): BackupRef | undefined => {
+  const parts = BACKUP_FILE.exec(entry);
+  if (parts === null) return undefined;
+  const [, name, year, month, day, hour, minute, second, millisecond] = parts as unknown as
+    string[];
+  if (name === undefined || !isStateFileName(name)) return undefined;
+  const takenAt = Date.UTC(
+    Number(year),
+    Number(month) - 1,
+    Number(day),
+    Number(hour),
+    Number(minute),
+    Number(second),
+    Number(millisecond),
+  );
+  // A name can spell a day that does not exist — `2026-02-31` — and `Date.UTC` rolls it over
+  // into the next month rather than refusing. Round-tripping the stamp is what catches that:
+  // a name this adapter did not write is not a snapshot, and is left alone rather than
+  // listed as a moment it does not name.
+  return stampOf(takenAt) === entry.slice(name.length + 1, -".state.json".length)
+    ? { kind: "backup", name, takenAt }
+    : undefined;
 };
 
 /**
@@ -278,19 +357,34 @@ async function realPathOrAbsent(path: string): Promise<string | undefined> {
   }
 }
 
-export function fileSystemWorkspace(rootPath: string): Workspace {
+export function fileSystemWorkspace(
+  rootPath: string,
+  options: {
+    /**
+     * The clock a snapshot is stamped with. A parameter so the retention rule can be driven
+     * across days in a test without waiting for them; `Date.now` otherwise (#67).
+     */
+    now?: () => number;
+  } = {},
+): Workspace {
   const root = resolve(rootPath);
+  const now = options.now ?? Date.now;
 
   /** Where a kind of file lives: a folder of the layout, or the Workspace root itself. */
-  const folderPath = (ref: { kind: WorkspaceRef["kind"] }): string => {
+  const folderPath = (ref: { kind: WorkspaceRef["kind"] | "backup" }): string => {
     const folder = folderFor(ref);
     return folder === undefined ? root : join(root, DIRECTORY[folder]);
   };
 
-  const filePath = (ref: WorkspaceRef): string => {
+  const filePath = (ref: WorkspaceRef | BackupRef): string => {
     switch (ref.kind) {
       case "catalog":
         return join(folderPath(ref), `${ref.academicYear}.json`);
+      case "backup":
+        // The same name rule as a State File's, because it *is* a State File's name: a
+        // snapshot of a name that could be a path would build a path out of `.backups/`.
+        requireStateFileName(ref.name);
+        return join(folderPath(ref), `${ref.name}.${stampOf(ref.takenAt)}.state.json`);
       case "state":
         // The only ref carrying free text, so the only one that could steer this anywhere
         // but the root. The rule and the refusal are both the port's, so the in-memory double
@@ -311,7 +405,7 @@ export function fileSystemWorkspace(rootPath: string): Workspace {
    * is the leading dot: `isStateFileName` refuses a name starting with one, and `list`
    * filters by the same rule it writes by.
    */
-  const temporaryPath = (ref: WorkspaceRef): string =>
+  const temporaryPath = (ref: WorkspaceRef | BackupRef): string =>
     join(folderPath(ref), `.tmp-${process.pid}-${basename(filePath(ref))}`);
 
   const within = (real: string, realRoot: string): boolean =>
@@ -450,9 +544,72 @@ export function fileSystemWorkspace(rootPath: string): Workspace {
    * save whose current revision cannot be determined is refused rather than compared against
    * an `undefined` that a first save would match (#109).
    */
-  const revisionOnDisk = async (path: string): Promise<StateFileVersion | undefined> => {
+  const onDisk = async (
+    path: string,
+  ): Promise<{ bytes: Uint8Array; version: StateFileVersion } | undefined> => {
     const bytes = await bytesOrAbsent(path);
-    return bytes === undefined ? undefined : revisionOf(bytes);
+    // The bytes come back with the revision because the save needs both and from one read:
+    // the snapshot it writes into `.backups/` is a copy of exactly the bytes this revision
+    // was taken from, and a second read could hash one file and copy another (#67).
+    return bytes === undefined ? undefined : { bytes, version: revisionOf(bytes) };
+  };
+
+  /**
+   * A copy of the bytes a save is about to replace, into `.backups/` (#67; `docs/design.md`,
+   * "Storage").
+   *
+   * **`.backups/` is required to be a folder before anything is written**, with the same
+   * refusal a write into a `catalogs` that is a plain file gets: `missingFolders` asks whether
+   * each part of the Workspace Layout resolves inside the Workspace and not what it *is*, so a
+   * plain `.backups` file makes `status` report ready and would otherwise meet the
+   * filesystem raw here — the second door #121 was filed for, met from a third side.
+   *
+   * **The millisecond is nudged past a name that is already taken.** A snapshot's name *is*
+   * its timestamp, so two saves inside one millisecond would be one file and the second would
+   * silently replace the first. That is a lost backup, which is the one thing this folder
+   * exists to prevent, and the folder is being listed for the pruning anyway.
+   */
+  const snapshot = async (name: string, bytes: Uint8Array): Promise<void> => {
+    await requireLayoutFolder({ kind: "backup" });
+    const taken = new Set(await entriesOrAbsent(folderPath({ kind: "backup" })));
+
+    let takenAt = now();
+    while (taken.has(basename(filePath({ kind: "backup", name, takenAt })))) takenAt += 1;
+
+    const ref: BackupRef = { kind: "backup", name, takenAt };
+    const target = filePath(ref);
+    requireJsonName(target);
+
+    const check = await contained(target);
+    // `requireLayoutFolder` above has already answered for a `.backups` that is the wrong kind
+    // of thing, so arriving here missing means the folder went away in between.
+    if ("missing" in check) throw new NotAWorkspaceError();
+    await writeAtomically(ref, check.path, bytes);
+  };
+
+  /**
+   * Deletes the snapshots of one State File that the shared retention rule says may go, and
+   * nothing else (`backupsToPrune` in the port, whose doc carries the rule and the three cases
+   * where its two halves disagree).
+   *
+   * **It never refuses, and that is deliberate.** It runs after the save has landed, it only
+   * deletes, and a snapshot it could not remove is one too many rather than one too few — so a
+   * `.backups/` that cannot be listed or cannot be written costs an unpruned folder and never
+   * a student's save. The refusal belongs on the way in, where `snapshot` makes it.
+   */
+  const prune = async (name: string): Promise<void> => {
+    try {
+      const entries = (await entriesOrAbsent(folderPath({ kind: "backup" }))) ?? [];
+      const held = entries.flatMap((entry) => {
+        const ref = backupFromFileName(entry);
+        return ref !== undefined && ref.name === name ? [ref] : [];
+      });
+      for (const going of backupsToPrune(held, now())) {
+        await rm(filePath(going), { force: true });
+      }
+    } catch {
+      return;
+    }
   };
 
   /**
@@ -461,10 +618,20 @@ export function fileSystemWorkspace(rootPath: string): Workspace {
    * than truncating it (docs/design.md, "Storage"). Both writes go through this, so neither
    * can lose the cleanup the other has.
    */
-  const writeAtomically = async (ref: WorkspaceRef, target: string, json: string): Promise<void> => {
+  const writeAtomically = async (
+    ref: WorkspaceRef | BackupRef,
+    target: string,
+    /**
+     * The text of a JSON file, or the **bytes** of one. A snapshot is written from the bytes
+     * the save read, so that a backup of a file somebody had written with a BOM is that file
+     * and not a re-encoding of what this adapter decoded (`contentOf`, and the version rule in
+     * `docs/design.md`, "Encoding"): a restore of it must read back as the same revision.
+     */
+    contents: string | Uint8Array,
+  ): Promise<void> => {
     const temporary = temporaryPath(ref);
     try {
-      await writeFile(temporary, json, "utf8");
+      await writeFile(temporary, contents);
       await rename(temporary, target);
     } catch (error) {
       // The cleanup's own failure may not replace the refusal. `force` covers a temporary that
@@ -508,7 +675,9 @@ export function fileSystemWorkspace(rootPath: string): Workspace {
    * raw error swapped for another. The kind of a folder is a question a write asks, and this is
    * where a write asks it.
    */
-  const requireLayoutFolder = async (ref: WorkspaceRef): Promise<void> => {
+  const requireLayoutFolder = async (ref: {
+    kind: WorkspaceRef["kind"] | "backup";
+  }): Promise<void> => {
     const folder = folderFor(ref);
     // `write` is the only caller and `requireCatalogRef` has already run there, so this line is
     // unreachable today and guards a future one — `requireJsonName`'s standing, and its reason.
@@ -675,14 +844,75 @@ export function fileSystemWorkspace(rootPath: string): Workspace {
 
       // as late as it can be made, so that as little as possible happens between the check
       // and the rename it guards
-      const found = await revisionOnDisk(check.path);
-      if (found !== save.basedOn) {
-        throw new StateFileChangedError(ref.name, { basedOn: save.basedOn, found });
+      const replacing = await onDisk(check.path);
+      if (replacing?.version !== save.basedOn) {
+        throw new StateFileChangedError(ref.name, {
+          basedOn: save.basedOn,
+          found: replacing?.version,
+        });
       }
 
+      // The snapshot is of what is about to be replaced, and it is written **before** the
+      // rename: a save that landed and then failed to copy what it overwrote would have
+      // destroyed the very file `.backups/` exists to hold. A first save replaces nothing and
+      // so copies nothing. One extra snapshot of content that is still current — which is what
+      // a failed rename after a written snapshot leaves — is harmless and prunes away.
+      if (replacing !== undefined) await snapshot(ref.name, replacing.bytes);
+
       await writeAtomically(ref, check.path, json);
+      // after the save, because pruning only ever deletes and may not cost a save
+      await prune(ref.name);
       // the revision of what was just written: a read of it would hash these same bytes
       return revisionOf(new TextEncoder().encode(json));
+    },
+
+    /**
+     * The snapshots of one State File, newest first.
+     *
+     * `[]` for a Workspace with no `.backups/` — `usablePath` answers for that, as it does for
+     * `list` — and a refusal for a `.backups` that is there and cannot be listed, which is
+     * `entriesOrAbsent`'s doing and the same third answer `list` has (#129). A `.backups` that
+     * is a plain **file** is that refusal too, with `ENOTDIR` turned into the sentence, which
+     * is the read side of what `snapshot` refuses on the way in.
+     *
+     * Ordered newest first here rather than by name, although the names sort the same way:
+     * what a caller is given is a list of moments, so it is sorted on the moment.
+     */
+    async listBackups(ref: StateFileRef): Promise<BackupRef[]> {
+      // the port's own refusal, before a path is built, exactly as `filePath` makes it
+      requireStateFileName(ref.name);
+
+      const folder = await usablePath(folderPath({ kind: "backup" }));
+      if (folder === undefined) return [];
+
+      const entries = await entriesOrAbsent(folder);
+      if (entries === undefined) return [];
+
+      return entries
+        .flatMap((entry) => {
+          const held = backupFromFileName(entry);
+          return held !== undefined && held.name === ref.name ? [held] : [];
+        })
+        .sort((a, b) => b.takenAt - a.takenAt);
+    },
+
+    /**
+     * What one snapshot holds, and `undefined` when it is not there — absence is not an error,
+     * as for `read` and `readStateFile`, and a snapshot the student has already pruned away is
+     * exactly the absence a stale listing produces.
+     *
+     * No revision, and the port's doc says why: nothing ever saves a snapshot, so there is no
+     * later write for one to guard.
+     */
+    async readBackup(ref: BackupRef): Promise<unknown> {
+      const target = filePath(ref);
+      requireJsonName(target);
+
+      const check = await contained(target);
+      if ("missing" in check) return undefined;
+
+      const bytes = await bytesOrAbsent(check.path);
+      return bytes === undefined ? undefined : contentOf(bytes);
     },
 
     /**
@@ -790,10 +1020,14 @@ export function fileSystemWorkspace(rootPath: string): Workspace {
  * Workspace root — which a State File does, because a Workspace holds one or more of them
  * and the design puts them there (docs/design.md, "Storage").
  */
-function folderFor(ref: { kind: WorkspaceRef["kind"] }): WorkspaceFolder | undefined {
+function folderFor(ref: {
+  kind: WorkspaceRef["kind"] | "backup";
+}): WorkspaceFolder | undefined {
   switch (ref.kind) {
     case "catalog":
       return "catalogs";
+    case "backup":
+      return "backups";
     case "state":
       return undefined;
   }

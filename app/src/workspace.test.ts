@@ -1,10 +1,15 @@
 import { expect, it } from "vitest";
 import {
+  BACKUP_KEEP_DAYS,
+  BACKUP_KEEP_SAVES,
+  backupDay,
+  backupsToPrune,
   isStateFileName,
   NotAWorkspaceError,
   requireCatalogRef,
   requireStateFileName,
   WorkspaceRefusedError,
+  type BackupRef,
 } from "./workspace.ts";
 
 /**
@@ -140,4 +145,204 @@ it("names the part of the layout that is what is wrong, when one part is", () =>
   expect(refusal.message).toMatch(
     /^refusing to write: the Workspace layout does not exist yet — catalogs is there and is not a folder$/,
   );
+});
+
+/**
+ * The retention rule, tested here rather than only through the two adapters, for the reason the
+ * name rule is: **this is the part of the app that deletes a student's data.** A clause no
+ * adapter test happens to reach is a clause that can be relaxed without anything failing, and
+ * the cost of relaxing this one is a snapshot somebody wanted, gone, with no Warning attached
+ * — the guarantee that every domain check is a Warning and the edit goes through does not help
+ * here, because deletion is not a check (#67).
+ *
+ * The rule is one pure function shared by both adapters, so these cases bind both.
+ */
+
+const DAY = 86_400_000;
+/** A Wednesday at noon UTC, so nothing here sits on a day boundary by accident. */
+const NOON = Date.UTC(2026, 9, 7, 12, 0, 0, 0);
+
+const snapshotsAt = (...moments: number[]): BackupRef[] =>
+  moments.map((takenAt) => ({ kind: "backup", name: "alice", takenAt }));
+
+const prunedFrom = (snapshots: BackupRef[], now: number): number[] =>
+  backupsToPrune(snapshots, now)
+    .map((snapshot) => snapshot.takenAt)
+    .sort((a, b) => a - b);
+
+const keptFrom = (snapshots: BackupRef[], now: number): number[] => {
+  const going = new Set(backupsToPrune(snapshots, now).map((snapshot) => snapshot.takenAt));
+  return snapshots
+    .map((snapshot) => snapshot.takenAt)
+    .filter((takenAt) => !going.has(takenAt))
+    .sort((a, b) => a - b);
+};
+
+it("keeps everything while there is little, and the design's two numbers are the design's", () => {
+  expect(BACKUP_KEEP_SAVES).toBe(20);
+  expect(BACKUP_KEEP_DAYS).toBe(30);
+
+  expect(backupsToPrune([], NOON)).toEqual([]);
+  expect(prunedFrom(snapshotsAt(NOON - 1000, NOON - 500, NOON), NOON)).toEqual([]);
+});
+
+/**
+ * The afternoon case, the first of the three #67 names. 200 saves in one day: the count rule
+ * keeps the last 20 and the daily rule keeps that day's newest, which is already among them —
+ * so exactly 20 survive, and the 180 before them go.
+ */
+it("keeps the last 20 of 200 saves in one afternoon, and nothing older of that day", () => {
+  // a minute apart, so all 200 fall inside one UTC day
+  const moments = Array.from({ length: 200 }, (_, index) => NOON - (199 - index) * 60_000);
+
+  const kept = keptFrom(snapshotsAt(...moments), NOON);
+
+  expect(kept).toHaveLength(20);
+  expect(kept).toEqual(moments.slice(-20));
+});
+
+/**
+ * And the half of that case the ticket says the two rules have to settle between them: once
+ * those 20 have aged out of the window, the day they were taken on must still have one.
+ */
+it("still keeps one snapshot of a busy day once its last 20 are no longer the last 20", () => {
+  // 30 saves on one day five days ago, and 25 today. The count rule's last 20 are all
+  // today's, so the busy day has aged out of it entirely — which is the moment the ticket
+  // asks about, and the daily rule is the only thing left that could keep anything of it.
+  const busy = Array.from({ length: 30 }, (_, index) => NOON - 5 * DAY + index * 60_000);
+  const today = Array.from({ length: 25 }, (_, index) => NOON - (24 - index) * 60_000);
+
+  const kept = keptFrom(snapshotsAt(...busy, ...today), NOON);
+
+  // none of the busy day is among the last 20 any more
+  expect(busy.filter((takenAt) => today.includes(takenAt))).toEqual([]);
+  // and it keeps its newest and only its newest
+  const ofBusyDay = kept.filter((takenAt) => backupDay(takenAt) === backupDay(busy[0] as number));
+  expect(ofBusyDay).toEqual([busy[busy.length - 1]]);
+});
+
+/**
+ * The once-a-month case, the second of the three. Age alone never deletes anything: a save from
+ * months ago is kept because it is among the last 20, and the 30-day window not wanting it is
+ * not a reason to take it away.
+ */
+it("keeps a save from months ago because it is among the last 20, not despite its age", () => {
+  // one a month for a year, so every one of them is far outside the 30-day window
+  const monthly = Array.from({ length: 12 }, (_, index) => NOON - (11 - index) * 30 * DAY);
+
+  expect(prunedFrom(snapshotsAt(...monthly), NOON)).toEqual([]);
+  expect(keptFrom(snapshotsAt(...monthly), NOON)).toEqual([...monthly].sort((a, b) => a - b));
+});
+
+/**
+ * The gap case, the third. The window is walked over the snapshots that exist rather than over
+ * 30 calendar days, so a day with nothing saved is simply a day with nothing to keep — and
+ * never a reason to hold on to something older to fill it.
+ */
+it("tolerates a day with no saves rather than keeping something older to fill it", () => {
+  // 25 days apart: the older one is outside the window, the newer inside, and every day
+  // between them is empty. The count rule keeps both, so the age rule is asked on its own by
+  // adding 20 newer saves.
+  const old = NOON - 45 * DAY;
+  const recent = NOON - 20 * DAY;
+  const since = Array.from({ length: 20 }, (_, index) => NOON - 19 * DAY + index * DAY);
+
+  const kept = keptFrom(snapshotsAt(old, recent, ...since), NOON);
+
+  // `old` is past the window and out of the last 20, so it goes; `recent` is inside the
+  // window and stays, although there are 24 empty days between the two
+  expect(kept).not.toContain(old);
+  expect(kept).toContain(recent);
+});
+
+/** One per day, and the one kept is that day's last word rather than its first. */
+it("keeps the newest snapshot of each day inside the window", () => {
+  const dayBefore = [NOON - DAY - 3600_000, NOON - DAY - 60_000, NOON - DAY];
+  // 20 newer saves, all on one day, so the count rule has no opinion about the day before
+  const today = Array.from({ length: 20 }, (_, index) => NOON - (19 - index) * 1000);
+
+  const kept = keptFrom(snapshotsAt(...dayBefore, ...today), NOON);
+
+  expect(kept.filter((takenAt) => backupDay(takenAt) === backupDay(NOON - DAY))).toEqual([
+    dayBefore[2],
+  ]);
+});
+
+/** The window's edge, asserted rather than assumed: 29 days back is in and 30 is out. */
+it("holds the window at 30 days, counted in whole UTC days", () => {
+  const atEdge = (daysAgo: number): number[] => {
+    const older = NOON - daysAgo * DAY;
+    const since = Array.from({ length: BACKUP_KEEP_SAVES }, (_, index) => NOON - index * 1000);
+    return keptFrom(snapshotsAt(older, ...since), NOON);
+  };
+
+  expect(atEdge(29)).toContain(NOON - 29 * DAY);
+  expect(atEdge(30)).not.toContain(NOON - 30 * DAY);
+
+  // and the day number is the UTC one, so two moments either side of local midnight anywhere
+  // are the same day or not by the same arithmetic on both adapters
+  expect(backupDay(Date.UTC(2026, 9, 7, 0, 0, 0, 0))).toBe(backupDay(Date.UTC(2026, 9, 7, 23, 59, 59, 999)));
+  expect(backupDay(Date.UTC(2026, 9, 8, 0, 0, 0, 0))).toBe(backupDay(NOON) + 1);
+});
+
+/**
+ * A clock that has gone backwards — a laptop waking with a bad time, a sync client stamping
+ * ahead — is not a reason to delete anything. The window is the last 30 days *and everything
+ * after now*, so a snapshot dated in the future is that day's keeper rather than an outlier.
+ */
+it("keeps a snapshot dated in the future rather than treating a bad clock as a reason", () => {
+  const ahead = NOON + 5 * DAY;
+  const since = Array.from({ length: BACKUP_KEEP_SAVES }, (_, index) => NOON - index * 1000);
+
+  expect(keptFrom(snapshotsAt(ahead, ...since), NOON)).toContain(ahead);
+});
+
+/**
+ * The property the ticket states as its own criterion, asserted as a property rather than
+ * case by case: **nothing either rule would keep is ever pruned.** Checked against an
+ * independent reading of the two halves, written out here rather than reusing the function
+ * under test, over a spread that makes both halves bite.
+ */
+it("never prunes a snapshot that either rule would keep", () => {
+  const moments: number[] = [];
+  for (let day = 0; day < 60; day++) {
+    // a couple of saves on most days, several on a few, and nothing at all on every seventh
+    if (day % 7 === 3) continue;
+    const saves = day % 11 === 0 ? 6 : 2;
+    for (let index = 0; index < saves; index++) {
+      moments.push(NOON - day * DAY + index * 90_000);
+    }
+  }
+
+  const snapshots = snapshotsAt(...moments);
+  const going = new Set(backupsToPrune(snapshots, NOON).map((snapshot) => snapshot.takenAt));
+
+  const newestFirst = [...moments].sort((a, b) => b - a);
+  const byCount = new Set(newestFirst.slice(0, BACKUP_KEEP_SAVES));
+  const byDay = new Set<number>();
+  const daysSeen = new Set<number>();
+  for (const takenAt of newestFirst) {
+    const day = backupDay(takenAt);
+    if (backupDay(NOON) - day >= BACKUP_KEEP_DAYS || daysSeen.has(day)) continue;
+    daysSeen.add(day);
+    byDay.add(takenAt);
+  }
+
+  for (const takenAt of [...byCount, ...byDay]) {
+    expect(going.has(takenAt), `${takenAt} is kept by a rule and was pruned`).toBe(false);
+  }
+  // and the suite is not vacuous: this spread really does leave snapshots to delete
+  expect(going.size).toBeGreaterThan(0);
+  expect(going.size).toBe(moments.length - new Set([...byCount, ...byDay]).size);
+});
+
+/** The answer is newest first, which is the function's own order and not the input's. */
+it("answers in newest-first order whatever order it was handed", () => {
+  const moments = Array.from({ length: 25 }, (_, index) => NOON - index * DAY * 2);
+  const going = backupsToPrune(snapshotsAt(...moments.slice().reverse()), NOON);
+
+  expect(going.map((snapshot) => snapshot.takenAt)).toEqual(
+    [...going.map((snapshot) => snapshot.takenAt)].sort((a, b) => b - a),
+  );
+  expect(going.length).toBeGreaterThan(0);
 });

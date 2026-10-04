@@ -32,6 +32,17 @@ export {
 } from "./settings.ts";
 // The exam period of one Variant, at the student's own spacing threshold (#164).
 export { readExams, type ExamsResult } from "./exams.ts";
+// The snapshots in `.backups/`: listing them, and putting one back (#67). Taking one is not
+// here — the guarded save does it beneath the port, so `editStateFile` stays the only writer.
+export {
+  listBackups,
+  restoreBackup,
+  RESTORE_LABEL,
+  type BackupSnapshot,
+  type BackupsResult,
+  type RestoreRefusal,
+  type RestoreResult,
+} from "./backups.ts";
 export {
   DEFAULT_STATE_FILE,
   pickGroup,
@@ -50,6 +61,10 @@ export {
   type WorkspaceChangesOptions,
 } from "./changes.ts";
 export {
+  BACKUP_KEEP_DAYS,
+  BACKUP_KEEP_SAVES,
+  backupDay,
+  backupsToPrune,
   isStateFileName,
   NotAWorkspaceError,
   requireCatalogRef,
@@ -57,6 +72,7 @@ export {
   StateFileChangedError,
   WORKSPACE_LAYOUT,
   WorkspaceRefusedError,
+  type BackupRef,
   type CatalogRef,
   type StateFileContents,
   type StateFileRef,

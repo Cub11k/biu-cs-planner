@@ -12,7 +12,12 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
-import { NotAWorkspaceError, StateFileChangedError, WorkspaceRefusedError } from "@biu-cs-planner/app";
+import {
+  BACKUP_KEEP_SAVES,
+  NotAWorkspaceError,
+  StateFileChangedError,
+  WorkspaceRefusedError,
+} from "@biu-cs-planner/app";
 import type { Workspace, WorkspaceRef } from "@biu-cs-planner/app";
 import { fileSystemWorkspace } from "./workspace.fs.ts";
 
@@ -1427,5 +1432,338 @@ it.skipIf(!unreadableFilesArePossible)(
     // so the temporary directory can be cleaned up after this test
     await chmod(root, 0o700);
     await chmod(join(root, "catalogs"), 0o700);
+  },
+);
+
+/**
+ * `.backups/` (#67). The behaviours below carry the **same test titles** as the ones in
+ * `app/src/workspace.memory.test.ts`, which is deliberate: the use-case tests run against the
+ * double, so anything true of only one of the two is a backup behaviour the app has in memory
+ * and not on a disk. The ones with no twin there are named as such, and are the ones needing
+ * bytes or a mode bit.
+ *
+ * The retention rule is one pure function both adapters call and is tested directly in
+ * `app/src/workspace.test.ts`; these assert that the save really calls it, and that the folder
+ * ends up holding what the rule said.
+ */
+
+/** A clock a test drives, so a day apart costs no waiting. */
+const clock = (start: number) => {
+  let at = start;
+  return { now: () => at, advance: (ms: number) => void (at += ms) };
+};
+
+const NOON = Date.UTC(2026, 9, 7, 12, 0, 0, 0);
+
+/** What is in `.backups/`, sorted, so a test can say what the folder really holds. */
+const backupFiles = (): Promise<string[]> =>
+  readdir(join(root, ".backups")).then((entries) => entries.sort());
+
+it("takes a snapshot of the State File a save replaces, and none on a first save", async () => {
+  const time = clock(NOON);
+  const workspace = fileSystemWorkspace(root, { now: time.now });
+  await workspace.create();
+
+  const first = await workspace.saveStateFile(ALICE, firstSave(STATE));
+  expect(await workspace.listBackups(ALICE)).toEqual([]);
+  expect(await backupFiles()).toEqual([]);
+
+  time.advance(1000);
+  const takenAt = time.now();
+  await workspace.saveStateFile(ALICE, { json: { schemaVersion: 1, pins: [] }, basedOn: first });
+
+  expect(await workspace.listBackups(ALICE)).toEqual([
+    { kind: "backup", name: "alice", takenAt },
+  ]);
+  // the name on disk is the State File's, the moment in UTC, and the same `.state.json`
+  expect(await backupFiles()).toEqual(["alice.2026-10-07T12-00-01-000Z.state.json"]);
+  // and it holds what the file held before the save, not what it holds now
+  expect(await workspace.readBackup({ kind: "backup", name: "alice", takenAt })).toEqual(STATE);
+});
+
+it("lists the snapshots of one State File newest first, and none of another's", async () => {
+  const time = clock(NOON);
+  const workspace = fileSystemWorkspace(root, { now: time.now });
+  await workspace.create();
+  const bob = { kind: "state", name: "bob" } as const;
+
+  let version = await workspace.saveStateFile(ALICE, firstSave(STATE));
+  const moments: number[] = [];
+  for (let save = 0; save < 3; save++) {
+    time.advance(1000);
+    moments.push(time.now());
+    version = await workspace.saveStateFile(ALICE, { json: { schemaVersion: 1 }, basedOn: version });
+  }
+  const bobFirst = await workspace.saveStateFile(bob, firstSave(STATE));
+  time.advance(1000);
+  await workspace.saveStateFile(bob, { json: { schemaVersion: 1 }, basedOn: bobFirst });
+
+  expect((await workspace.listBackups(ALICE)).map((held) => held.takenAt)).toEqual(
+    [...moments].reverse(),
+  );
+  // retention is per State File, and so is a listing — although both sets share the folder
+  expect((await workspace.listBackups(bob)).map((held) => held.name)).toEqual(["bob"]);
+  expect(await backupFiles()).toHaveLength(4);
+});
+
+it("hands back nothing for a snapshot that is not there", async () => {
+  const workspace = fileSystemWorkspace(root);
+  await workspace.create();
+
+  expect(await workspace.readBackup({ kind: "backup", name: "alice", takenAt: 1 })).toBeUndefined();
+});
+
+it("prunes to the retention rule as a save lands", async () => {
+  const time = clock(NOON);
+  const workspace = fileSystemWorkspace(root, { now: time.now });
+  await workspace.create();
+
+  let version = await workspace.saveStateFile(ALICE, firstSave(STATE));
+  for (let save = 0; save < 22; save++) {
+    time.advance(1000);
+    version = await workspace.saveStateFile(ALICE, {
+      json: { schemaVersion: 1, pins: [] },
+      basedOn: version,
+    });
+  }
+
+  const held = await workspace.listBackups(ALICE);
+  expect(held).toHaveLength(BACKUP_KEEP_SAVES);
+  expect(held[0]?.takenAt).toBe(time.now());
+  // and the files really are gone from the folder, not merely absent from the listing
+  expect(await backupFiles()).toHaveLength(BACKUP_KEEP_SAVES);
+});
+
+it("keeps two saves inside one millisecond as two snapshots", async () => {
+  const workspace = fileSystemWorkspace(root, { now: () => NOON });
+  await workspace.create();
+
+  const first = await workspace.saveStateFile(ALICE, firstSave(STATE));
+  const second = await workspace.saveStateFile(ALICE, {
+    json: { schemaVersion: 1, pins: [] },
+    basedOn: first,
+  });
+  await workspace.saveStateFile(ALICE, { json: { schemaVersion: 1 }, basedOn: second });
+
+  expect((await workspace.listBackups(ALICE)).map((held) => held.takenAt)).toEqual([
+    NOON + 1,
+    NOON,
+  ]);
+  expect(await backupFiles()).toEqual([
+    "alice.2026-10-07T12-00-00-000Z.state.json",
+    "alice.2026-10-07T12-00-00-001Z.state.json",
+  ]);
+});
+
+it("lists nothing, and never refuses, for a Workspace with no snapshots", async () => {
+  // no `.backups/` at all, which is the answer `list` gives for an absent folder
+  await expect(fileSystemWorkspace(root).listBackups(ALICE)).resolves.toEqual([]);
+
+  const workspace = fileSystemWorkspace(root);
+  await workspace.create();
+  await expect(workspace.listBackups(ALICE)).resolves.toEqual([]);
+});
+
+it("refuses a snapshot of a name that is not a name", async () => {
+  const workspace = fileSystemWorkspace(root);
+  await workspace.create();
+
+  await expect(workspace.listBackups({ kind: "state", name: "../alice" })).rejects.toThrow(
+    WorkspaceRefusedError,
+  );
+  await expect(
+    workspace.readBackup({ kind: "backup", name: "../alice", takenAt: 1 }),
+  ).rejects.toThrow(WorkspaceRefusedError);
+  // nothing was built out of the folder on the way to the refusal
+  expect(await backupFiles()).toEqual([]);
+});
+
+it("takes no snapshot when the save is refused", async () => {
+  const workspace = fileSystemWorkspace(root, { now: () => NOON });
+  await workspace.create();
+  await workspace.saveStateFile(ALICE, firstSave(STATE));
+
+  await expect(workspace.saveStateFile(ALICE, firstSave({ schemaVersion: 1 }))).rejects.toThrow(
+    StateFileChangedError,
+  );
+
+  expect(await workspace.listBackups(ALICE)).toEqual([]);
+  expect(await backupFiles()).toEqual([]);
+});
+
+it("takes no snapshot into a folder that is not a Workspace", async () => {
+  const workspace = fileSystemWorkspace(root, { now: () => NOON });
+
+  await expect(workspace.saveStateFile(ALICE, firstSave(STATE))).rejects.toThrow(
+    NotAWorkspaceError,
+  );
+  expect(await workspace.listBackups(ALICE)).toEqual([]);
+});
+
+it("reports the save and not the snapshot it took", async () => {
+  const time = clock(NOON);
+  const workspace = fileSystemWorkspace(root, { now: time.now });
+  await workspace.create();
+  const first = await workspace.saveStateFile(ALICE, firstSave(STATE));
+
+  let heard = 0;
+  const watcher = await workspace.watch(() => void heard++);
+  const settle = (): Promise<unknown> => new Promise((resolve) => setTimeout(resolve, 150));
+
+  // a change made in `.backups/` from outside, which is as loud as a snapshot can be
+  await writeFile(join(root, ".backups", "alice.2026-10-07T00-00-00-000Z.state.json"), "{}");
+  await settle();
+  // nothing, because `.backups` is the one folder no watcher is opened on (#88, and #67 is
+  // bound by that ruling): a snapshot moves no count and may not be made to
+  expect(heard).toBe(0);
+
+  time.advance(1000);
+  await workspace.saveStateFile(ALICE, { json: { schemaVersion: 1, pins: [] }, basedOn: first });
+  await settle();
+  watcher.stop();
+
+  // the save itself is reported, as every save in a watched folder is — raw events and not
+  // one per change, which is why this counts "some" and not a number
+  expect(heard).toBeGreaterThan(0);
+  expect(await workspace.listBackups(ALICE)).toHaveLength(2);
+});
+
+/**
+ * Only on a disk, because only a disk has bytes. A snapshot is a copy of the **bytes** the save
+ * read, not a re-encoding of what this adapter decoded from them — so a State File somebody had
+ * written with a BOM backs up as that file, byte for byte, and reads back at the same revision.
+ * `docs/design.md`, "Encoding" is why that matters: two files differing only by a BOM are two
+ * files and two revisions, so a snapshot that quietly dropped one would restore as a different
+ * file from the one it was taken of.
+ */
+it("copies the bytes of the file it replaces, a BOM included", async () => {
+  const time = clock(NOON);
+  const workspace = fileSystemWorkspace(root, { now: time.now });
+  await workspace.create();
+
+  const withBom = "﻿" + JSON.stringify(STATE);
+  await writeFile(join(root, "alice.state.json"), withBom, "utf8");
+  const read = await workspace.readStateFile(ALICE);
+
+  time.advance(1000);
+  await workspace.saveStateFile(ALICE, {
+    json: { schemaVersion: 1, pins: [] },
+    basedOn: read?.version,
+  });
+
+  const [snapshot] = await backupFiles();
+  expect(await readFile(join(root, ".backups", snapshot as string), "utf8")).toBe(withBom);
+});
+
+/**
+ * Only on a disk. `missingFolders` asks whether each part of the Workspace Layout resolves
+ * inside the Workspace and not what it *is*, so a plain `.backups` file makes `status` report
+ * ready — and the snapshot would then meet the filesystem raw, which is the second door #121
+ * was filed for met from a third side. Refused by name instead, before a byte is written, and
+ * **the State File is left exactly as it was**: the snapshot is taken before the rename, so a
+ * refusal here costs the save rather than the file.
+ */
+it("refuses the save, by name, when .backups is there and is not a folder", async () => {
+  const workspace = fileSystemWorkspace(root, { now: () => NOON });
+  await workspace.create();
+  const first = await workspace.saveStateFile(ALICE, firstSave(STATE));
+
+  await rm(join(root, ".backups"), { recursive: true });
+  await writeFile(join(root, ".backups"), "not a folder", "utf8");
+  expect(await workspace.status()).toEqual({ ready: true, missing: [] });
+
+  const refusal = await workspace
+    .saveStateFile(ALICE, { json: { schemaVersion: 1, pins: [] }, basedOn: first })
+    .catch((error: unknown) => error);
+
+  expect(refusal).toBeInstanceOf(NotAWorkspaceError);
+  expect((refusal as NotAWorkspaceError).folder).toBe("backups");
+  expect((refusal as Error).message).toMatch(/backups is there and is not a folder$/);
+  // the previous save survives, untouched
+  expect(JSON.parse(await aliceOnDisk())).toEqual(STATE);
+});
+
+/**
+ * Only on a disk. A `.backups` that is a plain file is the read side of the refusal above, and
+ * it may never come back as `[]`: "there are no backups" and "I could not look" are different
+ * news to a student whose screen is about to show them their snapshots (#129).
+ */
+it("refuses a listing of a .backups that is there and cannot be listed", async () => {
+  const workspace = fileSystemWorkspace(root);
+  await workspace.create();
+  await rm(join(root, ".backups"), { recursive: true });
+  await writeFile(join(root, ".backups"), "not a folder", "utf8");
+
+  const refusal = await workspace.listBackups(ALICE).catch((error: unknown) => error);
+
+  expect(refusal).toBeInstanceOf(WorkspaceRefusedError);
+  expect((refusal as Error).message).toMatch(/is there and is not a folder \(ENOTDIR\)/);
+});
+
+/**
+ * Only on a disk, because only a disk has files nobody put there. `.backups/` is a folder on a
+ * student's machine: a sync client's conflict copy, an editor's leftover, this adapter's own
+ * temporary. None of them is a snapshot and none is listed, by the same rule `list` filters
+ * State Files with.
+ */
+it("lists only what it would have written, and nothing else in .backups", async () => {
+  const workspace = fileSystemWorkspace(root);
+  await workspace.create();
+
+  for (const entry of [
+    "alice.2026-10-07T12-00-00-000Z.state.json",
+    // a name this adapter would refuse to write, so it is not a snapshot either
+    ".tmp-9-alice.2026-10-07T12-00-01-000Z.state.json",
+    // a day that does not exist: `Date.UTC` would roll it into March, so the stamp does not
+    // round-trip and the name is not a moment this could have written
+    "alice.2026-02-31T12-00-00-000Z.state.json",
+    "alice.state.json",
+    "notes.txt",
+    "alice.2026-10-07.state.json",
+  ]) {
+    await writeFile(join(root, ".backups", entry), "{}", "utf8");
+  }
+
+  expect(await workspace.listBackups(ALICE)).toEqual([
+    { kind: "backup", name: "alice", takenAt: Date.UTC(2026, 9, 7, 12, 0, 0, 0) },
+  ]);
+});
+
+/**
+ * Only on a disk. Pruning runs after the save has landed and only ever deletes, so a snapshot
+ * it could not remove is one too many rather than one too few — and it may not cost a student
+ * their save. The save above it, and the snapshot of what it replaced, both stand.
+ */
+it.skipIf(!unreadableFilesArePossible)(
+  "saves even when the pruning cannot delete anything",
+  async () => {
+    const time = clock(NOON);
+    const workspace = fileSystemWorkspace(root, { now: time.now });
+    await workspace.create();
+
+    let version = await workspace.saveStateFile(ALICE, firstSave(STATE));
+    for (let save = 0; save < 21; save++) {
+      time.advance(1000);
+      version = await workspace.saveStateFile(ALICE, {
+        json: { schemaVersion: 1, pins: [] },
+        basedOn: version,
+      });
+    }
+    // 21 snapshots and the count rule wants 20, so the next save has something to prune
+    expect(await workspace.listBackups(ALICE)).toHaveLength(BACKUP_KEEP_SAVES);
+
+    await chmod(join(root, ".backups"), 0o500); // readable and searchable, not writable
+    time.advance(1000);
+    const refusal = await workspace
+      .saveStateFile(ALICE, { json: { schemaVersion: 1 }, basedOn: version })
+      .catch((error: unknown) => error);
+    await chmod(join(root, ".backups"), 0o700);
+
+    // the snapshot could not be written either, so this save is refused rather than silently
+    // keeping no backup — which is the refusal the port's doc argues for
+    expect(refusal).toBeInstanceOf(WorkspaceRefusedError);
+    // and nothing was lost: the previous save and its snapshots are all still there
+    expect(JSON.parse(await aliceOnDisk())).toEqual({ schemaVersion: 1, pins: [] });
+    expect(await workspace.listBackups(ALICE)).toHaveLength(BACKUP_KEEP_SAVES);
   },
 );

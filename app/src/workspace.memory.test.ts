@@ -1,6 +1,11 @@
 import { expect, it } from "vitest";
 import { memoryWorkspace } from "./workspace.memory.ts";
-import { NotAWorkspaceError, StateFileChangedError, WorkspaceRefusedError } from "./workspace.ts";
+import {
+  BACKUP_KEEP_SAVES,
+  NotAWorkspaceError,
+  StateFileChangedError,
+  WorkspaceRefusedError,
+} from "./workspace.ts";
 
 /** A save based on no file, which is the claim that the file is not there yet. */
 const firstSave = (data: unknown) => ({ json: data as Record<string, unknown>, basedOn: undefined });
@@ -289,4 +294,172 @@ it("keeps a conflict apart from a refusal about the target itself", async () => 
   expect(error).not.toBeInstanceOf(WorkspaceRefusedError);
   expect((error as StateFileChangedError).basedOn).toBeUndefined();
   expect((error as StateFileChangedError).found).toEqual(expect.any(String));
+});
+
+/**
+ * `.backups/` (#67). Every behaviour below is asserted of the real adapter too, under the
+ * **same test title**, in `server/src/workspace.fs.test.ts` — that is the point of the pair:
+ * the use-case tests run against this double, so a backup behaviour this one invented would be
+ * a backup behaviour the app has only in memory.
+ *
+ * What is deliberately *not* mirrored is named at each place it comes up: this double has no
+ * bytes and no mode bits, so a `.backups` that is a plain file or that cannot be listed is out
+ * of its reach for the reason `MemoryWorkspace`'s doc gives for an unreadable file.
+ *
+ * The retention rule itself is one pure function both adapters call, and it is tested directly
+ * in `./workspace.test.ts`. What these assert is that the save really calls it.
+ */
+
+const ALICE = { kind: "state", name: "alice" } as const;
+
+/** A clock a test drives, so a day apart costs no waiting. */
+const clock = (start: number) => {
+  let at = start;
+  return { now: () => at, advance: (ms: number) => void (at += ms) };
+};
+
+it("takes a snapshot of the State File a save replaces, and none on a first save", async () => {
+  const time = clock(Date.UTC(2026, 9, 7, 12, 0, 0, 0));
+  const workspace = memoryWorkspace({ created: true, now: time.now });
+
+  const first = await workspace.saveStateFile(ALICE, firstSave(STATE));
+  // nothing was replaced, so there is nothing to have copied
+  expect(await workspace.listBackups(ALICE)).toEqual([]);
+
+  time.advance(1000);
+  const takenAt = time.now();
+  await workspace.saveStateFile(ALICE, { json: { schemaVersion: 1, pins: [] }, basedOn: first });
+
+  expect(await workspace.listBackups(ALICE)).toEqual([
+    { kind: "backup", name: "alice", takenAt },
+  ]);
+  // and it holds what the file held before the save, not what it holds now
+  expect(await workspace.readBackup({ kind: "backup", name: "alice", takenAt })).toEqual(STATE);
+});
+
+it("lists the snapshots of one State File newest first, and none of another's", async () => {
+  const time = clock(Date.UTC(2026, 9, 7, 12, 0, 0, 0));
+  const workspace = memoryWorkspace({ created: true, now: time.now });
+  const bob = { kind: "state", name: "bob" } as const;
+
+  let version = await workspace.saveStateFile(ALICE, firstSave(STATE));
+  const moments: number[] = [];
+  for (let save = 0; save < 3; save++) {
+    time.advance(1000);
+    moments.push(time.now());
+    version = await workspace.saveStateFile(ALICE, { json: { schemaVersion: 1 }, basedOn: version });
+  }
+  const bobFirst = await workspace.saveStateFile(bob, firstSave(STATE));
+  time.advance(1000);
+  await workspace.saveStateFile(bob, { json: { schemaVersion: 1 }, basedOn: bobFirst });
+
+  expect((await workspace.listBackups(ALICE)).map((held) => held.takenAt)).toEqual(
+    [...moments].reverse(),
+  );
+  // retention is per State File, and so is a listing
+  expect((await workspace.listBackups(bob)).map((held) => held.name)).toEqual(["bob"]);
+});
+
+it("hands back nothing for a snapshot that is not there", async () => {
+  const workspace = memoryWorkspace({ created: true });
+
+  expect(await workspace.readBackup({ kind: "backup", name: "alice", takenAt: 1 })).toBeUndefined();
+});
+
+it("prunes to the retention rule as a save lands", async () => {
+  const time = clock(Date.UTC(2026, 9, 7, 12, 0, 0, 0));
+  const workspace = memoryWorkspace({ created: true, now: time.now });
+
+  let version = await workspace.saveStateFile(ALICE, firstSave(STATE));
+  // 22 saves after the first, so 22 snapshots are taken and the count rule wants 20
+  for (let save = 0; save < 22; save++) {
+    time.advance(1000);
+    version = await workspace.saveStateFile(ALICE, {
+      json: { schemaVersion: 1, pins: [] },
+      basedOn: version,
+    });
+  }
+
+  const held = await workspace.listBackups(ALICE);
+  // 20 by the count rule, and the newest of the day is among them
+  expect(held).toHaveLength(BACKUP_KEEP_SAVES);
+  expect(held[0]?.takenAt).toBe(time.now());
+});
+
+it("keeps two saves inside one millisecond as two snapshots", async () => {
+  // a clock that never moves, which is the only way to stage this deliberately
+  const stuck = Date.UTC(2026, 9, 7, 12, 0, 0, 0);
+  const workspace = memoryWorkspace({ created: true, now: () => stuck });
+
+  const first = await workspace.saveStateFile(ALICE, firstSave(STATE));
+  const second = await workspace.saveStateFile(ALICE, {
+    json: { schemaVersion: 1, pins: [] },
+    basedOn: first,
+  });
+  await workspace.saveStateFile(ALICE, { json: { schemaVersion: 1 }, basedOn: second });
+
+  // two snapshots and not one silently replacing the other, a millisecond apart by the nudge
+  expect((await workspace.listBackups(ALICE)).map((held) => held.takenAt)).toEqual([
+    stuck + 1,
+    stuck,
+  ]);
+});
+
+it("lists nothing, and never refuses, for a Workspace with no snapshots", async () => {
+  // before the layout exists, which on a disk is the absent `.backups/` that answers `[]`
+  await expect(memoryWorkspace().listBackups(ALICE)).resolves.toEqual([]);
+  await expect(memoryWorkspace({ created: true }).listBackups(ALICE)).resolves.toEqual([]);
+});
+
+it("refuses a snapshot of a name that is not a name", async () => {
+  const workspace = memoryWorkspace({ created: true });
+
+  await expect(workspace.listBackups({ kind: "state", name: "../alice" })).rejects.toThrow(
+    WorkspaceRefusedError,
+  );
+  await expect(
+    workspace.readBackup({ kind: "backup", name: "../alice", takenAt: 1 }),
+  ).rejects.toThrow(WorkspaceRefusedError);
+});
+
+it("takes no snapshot when the save is refused", async () => {
+  const time = clock(Date.UTC(2026, 9, 7, 12, 0, 0, 0));
+  const workspace = memoryWorkspace({ created: true, now: time.now });
+  await workspace.saveStateFile(ALICE, firstSave(STATE));
+
+  // based on there being no file, when there is one: the guard's refusal
+  await expect(workspace.saveStateFile(ALICE, firstSave({ schemaVersion: 1 }))).rejects.toThrow(
+    StateFileChangedError,
+  );
+
+  expect(await workspace.listBackups(ALICE)).toEqual([]);
+});
+
+it("takes no snapshot into a folder that is not a Workspace", async () => {
+  const workspace = memoryWorkspace();
+
+  await expect(workspace.saveStateFile(ALICE, firstSave(STATE))).rejects.toThrow(
+    NotAWorkspaceError,
+  );
+  expect(await workspace.listBackups(ALICE)).toEqual([]);
+});
+
+/**
+ * A snapshot moves no change count, which binds #67 to the watcher ruling (#88): `.backups/`
+ * is the one folder the real adapter does not watch, because nothing in it is ever shown, so
+ * once autosave lands its snapshots would otherwise be a page reload each. The *save* is
+ * reported, exactly as it always was — one event and not two.
+ */
+it("reports the save and not the snapshot it took", async () => {
+  const time = clock(Date.UTC(2026, 9, 7, 12, 0, 0, 0));
+  const workspace = memoryWorkspace({ created: true, now: time.now });
+  const first = await workspace.saveStateFile(ALICE, firstSave(STATE));
+
+  let heard = 0;
+  await workspace.watch(() => void heard++);
+  time.advance(1000);
+  await workspace.saveStateFile(ALICE, { json: { schemaVersion: 1, pins: [] }, basedOn: first });
+
+  expect(await workspace.listBackups(ALICE)).toHaveLength(1);
+  expect(heard).toBe(1);
 });
