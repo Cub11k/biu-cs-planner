@@ -685,17 +685,69 @@ export function render(report: Report): string {
   );
 
   const shapes: string[] = [];
-  let typeCount = 0;
+  // Every shape this fold prints the declaration of, keyed by the pair that identifies it. A
+  // barrel's copy of a name is a pointer at a row only if the row is here, which is why this is
+  // built first and from `from === undefined` alone: a re-export is never a declaration.
+  const declaredShapes = new Set<string>();
+  for (const m of modules) {
+    for (const e of m.exports) {
+      if (e.kind === "type" && e.from === undefined) declaredShapes.add(`${m.path}#${e.name}`);
+    }
+  }
+  let shapeCount = 0;
+  let pointerCount = 0;
+  // The declarations some barrel carries, counted as declarations. `pointerCount` is rows and
+  // this is things, and they differ: six of this repository's types are carried by two barrels
+  // each, so 89 pointers stand for 83 types. The summary says both and calls each what it is —
+  // "89 of them", with the 89 a row count, would be the defect #202 is about surviving on the
+  // pointer half of the same fold.
+  const carriedShapes = new Set<string>();
   for (const m of modules) {
     const types = m.exports.filter((e) => e.kind === "type");
     if (!types.length) continue;
-    typeCount += types.length;
+    // One row per shape and one pointer per barrel that carries it, which is #202. Before this
+    // the fold printed the full `type X = …` under the declaring module and again, identically,
+    // under every barrel re-exporting it — 253 rows for 150 names, 86 of them appearing more
+    // than once with nothing to tell the copies apart. Two identical rows under two headings
+    // invite the reading that there are two things, and the place that reading does damage is
+    // exactly the one a reviewer comes here for: checking what a barrel carries across a layer.
+    //
+    // The barrel keeps a line of its own rather than vanishing from the fold, because a reviewer
+    // who found the name *through* the barrel looks it up under the barrel. So the name is still
+    // here, and the module that declares it is named beside it: one lookup, not a search.
+    //
+    // A re-export with no `declaredIn`, or one whose declaration this fold does not print, keeps
+    // its full row. Those are the chains that leave the repository and the `export type { … }`
+    // of a class — the class is no `type` export at the far end, so there is no row to point at
+    // and dropping the signature would lose the only mention the name gets.
+    const carries = (e: (typeof types)[number]): boolean =>
+      e.declaredIn !== undefined && declaredShapes.has(`${e.declaredIn.path}#${e.declaredIn.name}`);
+    const own = types.filter((e) => !carries(e));
+    const carried = types.filter(carries);
+    shapeCount += own.length;
+    pointerCount += carried.length;
+    for (const e of carried) carriedShapes.add(`${e.declaredIn?.path}#${e.declaredIn?.name}`);
     shapes.push(`**${moduleName(m.path)}**`);
     shapes.push("");
-    shapes.push("```ts");
-    for (const e of types) shapes.push(`type ${e.name} = ${e.signature}`);
-    shapes.push("```");
-    shapes.push("");
+    if (own.length) {
+      shapes.push("```ts");
+      for (const e of own) shapes.push(`type ${e.name} = ${e.signature}`);
+      shapes.push("```");
+      shapes.push("");
+    }
+    if (carried.length) {
+      shapes.push(`Re-exported here, declared elsewhere:`);
+      shapes.push("");
+      for (const e of carried) {
+        // The declared name too where a clause renamed the name on its way through
+        // (`export type { Foo as Bar }`), because `Bar` is what this module offers and `Foo` is
+        // what the row to read is headed.
+        const at = moduleName(e.declaredIn?.path ?? "");
+        const as = e.declaredIn?.name === e.name ? "" : ` (declared \`${e.declaredIn?.name}\`)`;
+        shapes.push(`- \`${e.name}\` — \`${at}\`${as}`);
+      }
+      shapes.push("");
+    }
   }
   if (anyTestOnly) {
     // The fold a reviewer of *this* very change opens, and the one the first draft of #123's fix
@@ -709,7 +761,26 @@ export function render(report: Report): string {
     );
     shapes.push("");
   }
-  out.push(...fold(title("The shapes the data takes", `${typeCount} exported types`), shapes));
+  // Shapes, not rows. The summary used to add the rows up, so it counted a type once per barrel
+  // that re-exported it and told a reader the repository held 253 types where it declares 164,
+  // under 150 distinct names. Three numbers now, each saying which of the three things it counts:
+  // the shapes listed, how many of those a barrel carries, and how many pointers that takes. The
+  // pointers are said because the fold lists them and a count that left them out would be the
+  // same defect in reverse; they are said *apart* from the types because they are not a subset
+  // of them.
+  out.push(
+    ...fold(
+      title(
+        "The shapes the data takes",
+        `${shapeCount} exported types` +
+          (pointerCount
+            ? `, ${carriedShapes.size} of them re-exported by a barrel in ${pointerCount} ` +
+              `place${pointerCount === 1 ? "" : "s"}`
+            : ""),
+      ),
+      shapes,
+    ),
+  );
 
   const claims: string[] = [];
   claims.push("Test titles, verbatim. This is the specification the change is held to.");

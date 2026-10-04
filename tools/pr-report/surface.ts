@@ -77,7 +77,37 @@ export type ExportedSymbol = {
    * string it would have to sniff.
    */
   from?: ExportOrigin;
+  /**
+   * The **end** of the re-export chain `from` is the first step of: the module that declares
+   * the name, and the name it declares it under, which a rename along the way changes.
+   *
+   * Absent on a declaration — there is no chain — and absent on a re-export whose chain this
+   * report could not walk to a declaration it read: one that leaves the repository
+   * (`export { join } from "node:path"`), one that ends at a name the far module does not
+   * export, and one that loops. Those are exactly the cases `signature` keeps `RE_EXPORTED`
+   * for, so the two fields agree by construction rather than by a reader comparing them.
+   *
+   * **It is here so that no reader of the report has to follow the chain itself.** The shapes
+   * fold lists one row per declared type and one pointer per barrel that carries it (#202),
+   * and deciding which of the two a name is needs the far end of the chain. `render.ts` holds
+   * no module map and no package entries, so without this field it would either grow a second
+   * barrel-follower — the thing #124 put `declaringModule` in one place to prevent, and
+   * `tools/pr-review/followers.ts` is the check that keeps it there — or sniff a rendered
+   * string. `resolveReExports` has the answer in hand already and now writes it down.
+   */
+  declaredIn?: DeclarationSite;
 };
+
+/**
+ * Where a name is declared: a repo-relative module path, and the name that module declares it
+ * under.
+ *
+ * The end of a re-export chain, which `declaringModule` answers and `ExportedSymbol.declaredIn`
+ * records. Deliberately **not** an `ExportOrigin`: that is *one step* of a chain and its
+ * `specifier` may be a package name or a `node:` builtin, while this is always a module this
+ * report read and holds a `Module` for.
+ */
+export type DeclarationSite = { path: string; name: string };
 
 /**
  * One step of a re-export, as a pair: the module or package the name comes from, and the name
@@ -579,7 +609,7 @@ export function declaringModule(
   name: string,
   origins: ModuleOrigins,
   seen: Set<string>,
-): { path: string; name: string } | undefined {
+): DeclarationSite | undefined {
   const path = origins.modules.has(ref) ? ref : origins.entries.get(ref);
   if (path === undefined) return undefined;
 
@@ -615,7 +645,8 @@ export function declaringModule(
  *   leaves the placeholder — a defect in the source shows up as a gap here and as a finding in
  *   `tools/pr-review/cycles.ts`, which is what a cycle is reported by.
  * - **`from` itself.** Where a name came from stays recorded as the one step it is; this fills
- *   in what is at the end of the steps, and the call graph still walks them one at a time.
+ *   in what is at the end of the steps — the shape, the kind, and in `declaredIn` the module
+ *   the walk ended at — and the call graph still walks them one at a time.
  * - **A `type` keyword on the clause.** Written of a class — `export type { Refused } from
  *   "./file.ts"`, which no workspace here writes today; `app/src/index.ts:55` re-exports
  *   `StateFileChangedError` as a value — the clause re-exports the type side of it and nothing
@@ -655,7 +686,15 @@ export function resolveReExports(
       const decl = owner && declared.get(`${owner.path}#${owner.name}`);
       if (!decl) return e;
       // The clause's own `type` keyword wins over the declaration's kind, and only over that.
-      return { ...e, kind: e.kind === "type" ? "type" : decl.kind, signature: decl.signature };
+      // `declaredIn` is the `owner` this pass already had to compute, written down rather than
+      // thrown away: it is set on exactly the symbols whose `signature` stops being
+      // `RE_EXPORTED`, so "the chain was walked" is one fact with one field (#202).
+      return {
+        ...e,
+        kind: e.kind === "type" ? "type" : decl.kind,
+        signature: decl.signature,
+        declaredIn: owner,
+      };
     }),
   }));
 }
