@@ -379,7 +379,8 @@ const isDirectory = async (path: string): Promise<boolean> => {
 };
 
 /**
- * Which revision of a State File this is: a SHA-256 of its bytes, as hex.
+ * Which revision of a State File this is: a SHA-256 of its bytes, as hex. ADR-0015 records the
+ * decision and the two alternatives below; this is where it is carried out.
  *
  * **A content hash, ruled by the maintainer on #90 and not an mtime.** The question the
  * external-edit guard asks is "is the file still what I read?", and only the content answers
@@ -395,7 +396,7 @@ const isDirectory = async (path: string): Promise<boolean> => {
  *
  * **And a hash rather than remembering the bytes**, which would need no hash at all and would
  * be enough for a guard that lived only in this adapter. It is not enough for two views of one
- * plan open side by side, which is the workflow this app replaces: the version has to be small
+ * plan open side by side, which is the workflow this app replaces: the revision has to be small
  * enough for a page to hold and hand back on its next save, and the file's content is not.
  *
  * SHA-256 because it is the obvious one available on all three runtimes through `node:crypto`;
@@ -720,7 +721,7 @@ export function fileSystemWorkspace(
     /**
      * The text of a JSON file, or the **bytes** of one. A snapshot is written from the bytes
      * the save read, so that a backup of a file somebody had written with a BOM is that file
-     * and not a re-encoding of what this adapter decoded (`contentOf`, and the version rule in
+     * and not a re-encoding of what this adapter decoded (`contentOf`, and the revision rule in
      * `docs/design.md`, "Encoding"): a restore of it must read back as the same revision.
      */
     contents: string | Uint8Array,
@@ -809,6 +810,12 @@ export function fileSystemWorkspace(
      * write into, met from the other side. Reachable whenever one part of the Workspace Layout is a
      * file and another is genuinely missing, because then `status` is not ready, the student is
      * offered the Workspace Layout, and accepting it lands here (#121).
+     *
+     * **One `mkdir` at a time, and no rollback** (#166). A refusal on `requirements` or
+     * `backups` leaves `catalogs` made, which the port's `create` says is allowed and names
+     * `status()` as the way to see. Rolling back would need to know which `mkdir` made a folder
+     * rather than found it, which `recursive` does not say, and a rollback that guessed wrong
+     * would remove a folder the student already had.
      */
     async create(): Promise<void> {
       for (const folder of WORKSPACE_LAYOUT) {
@@ -942,7 +949,7 @@ export function fileSystemWorkspace(
      * last-saved content itself. That is the scenario `docs/design.md`, "External edits" cares
      * most about, and the answer to it is the refusal: the other writer's bytes are still on
      * disk, unoverwritten, which is the thing worth protecting. Naming it so that nobody reads
-     * `.backups/` as holding every version of the file.
+     * `.backups/` as holding every revision of the file.
      */
     async saveStateFile(ref: StateFileRef, save: StateFileSave): Promise<StateFileVersion> {
       const target = filePath(ref);

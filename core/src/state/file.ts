@@ -66,6 +66,19 @@ export function stateJsonSchema(): Record<string, unknown> {
 /**
  * The path of the first thing Zod objected to, relative to the value it was given, or nothing
  * when it objected to the value itself rather than to a part of it.
+ *
+ * **One field, and deliberately the first, even when Zod objected to several** (#131). An entry
+ * wrong in two places is dropped with an `entry-dropped` Warning naming one of them, and once that
+ * one is fixed the next read drops it again, naming the other. That costs a student who is fixing
+ * a hand-edited file a round trip per broken field, and it is accepted rather than overlooked: the
+ * Warning's job is to say *where to look*, and one field is the more actionable sentence than a
+ * list. Naming every field would also change the shape of `StateFileWarning`, whose `field` is
+ * one string, for every consumer of it, to save round trips the student is iterating through
+ * anyway. "First" is Zod's order, which follows the schema's keys rather than the order the file
+ * wrote them in, so the same broken entry always names the same field.
+ *
+ * `writeStateFile` reads it too, for `StateFileUnwritableError`. There the value is this app's
+ * own and a failure is a bug, so one field is a pointer for a maintainer and nothing more.
  */
 function fieldOf(error: z.ZodError): string | undefined {
   const path = error.issues[0]?.path;
@@ -416,7 +429,7 @@ export class StateFileUnwritableError extends Error {
  *
  * Opaque by intent rather than by the type system: it is a bare alias, so any string passes,
  * and treating it as anything but a token to hand back is a mistake the compiler will not
- * catch. `docs/design.md`, "External edits" has each save carry the version of
+ * catch. `docs/design.md`, "External edits" has each save carry the revision of
  * the file it was based on so the server can refuse an overwrite of a file that changed on
  * disk meanwhile — Dropbox, git, an editor — and what identifies a revision is that guard's
  * decision, not this module's: reading a file is the only way to produce one and this module
@@ -424,8 +437,12 @@ export class StateFileUnwritableError extends Error {
  * `watchWorkspace` serves, both of which are versions of something else (`app/src/changes.ts`
  * says the same thing from the other side).
  *
- * What fills it, decided by #90 and stated here only so nothing has to guess: the Workspace
- * adapter hashes the file's bytes as it reads them (`server/src/workspace.fs.ts`). That is
+ * **The type is named for the wire and the prose word is "revision"** (`CONTEXT.md`, Revision;
+ * ADR-0015). "Version" alone is ambiguous with both of those, so the name stays only because it
+ * is in this package's surface and on the wire, where renaming it is a change to every caller.
+ *
+ * What fills it, decided by #90 and recorded in ADR-0015: the Workspace adapter hashes the
+ * file's bytes as it reads them (`server/src/workspace.fs.ts`). That is
  * outside this module on purpose, and it is also why hashing could not have been done here —
  * `readStateFile` receives already-parsed JSON, so a hash taken in `core` would be a hash of
  * the document this reader *repaired*, and blind to an external edit that only damaged an
@@ -434,8 +451,8 @@ export class StateFileUnwritableError extends Error {
 export type StateFileVersion = string;
 
 /**
- * A save: the JSON to write, and the version of the file it was based on. They are produced
- * together so that no caller has to remember to ask for the version — `write` the JSON alone
+ * A save: the JSON to write, and the revision of the file it was based on. They are produced
+ * together so that no caller has to remember to ask for the revision — `write` the JSON alone
  * and the external-edit guard has nothing to check, which is the overwrite it exists to refuse
  * (ADR-0013). And they are *consumed* together too, since #90: the Workspace port takes this
  * whole value (`Workspace.saveStateFile` in `app/src/workspace.ts`), so there is no way to
@@ -453,17 +470,17 @@ export type StateFileSave = {
  * (`app/src/workspace.ts`), so there is nothing to do here but produce what it stores, which
  * is also what makes the round trip through `parseStateFile` testable without a filesystem.
  *
- * **It takes the version the save is based on** (ADR-0013: the save path is the undo path, so
- * an undo is an ordinary guarded save and needs to carry a version exactly as a first-hand
+ * **It takes the revision the save is based on** (ADR-0013: the save path is the undo path, so
+ * an undo is an ordinary guarded save and needs to carry a revision exactly as a first-hand
  * edit does), and there is deliberately no second way to produce a State File's JSON. The
  * refusal itself is made where the file is — `saveStateFile` in the Workspace port, and both
  * of its adapters — because deciding whether the file is still the revision this was based on
  * means reading the file, which this module cannot do. `undefined` is the claim that the file
  * does not exist, and is refused when it does rather than being a way past the guard.
  *
- * The version *in* the file is the one this build reads, never the one the value arrived
+ * The `schemaVersion` *in* the file is the one this build reads, never the one the value arrived
  * carrying: a file that migrated forward on the way in is written back at the current
- * version, which is what stops the next build from migrating it a second time.
+ * schema version, which is what stops the next build from migrating it a second time.
  *
  * Unlike the reader it is not forgiving, and for the opposite reason. A file is untrusted
  * input, so one unreadable Pick costs a Pick rather than the Variant holding it; the value

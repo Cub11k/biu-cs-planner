@@ -172,6 +172,29 @@ it("drops the Attempts it cannot read and keeps the rest, naming each", () => {
 });
 
 /**
+ * An entry wrong in two fields names one of them, and it is the first in the schema's order
+ * rather than the file's (#131). Ruled "yes, but say so": one field is the more actionable
+ * sentence, and `fieldOf` records why. Each entry below gets `semester` and `status` wrong, one
+ * writing them in the schema's order and one in the reverse, so a reader that named the last
+ * field, or the first one the file wrote, would fail here.
+ */
+it("names the first field an entry is wrong in when it is wrong in two", () => {
+  const result = parseStateFile({
+    schemaVersion: CURRENT_STATE_SCHEMA_VERSION,
+    attempts: [
+      { courseNumber: "89-110", academicYear: 2027, semester: "winter", status: "enrolled" },
+      { status: "enrolled", semester: "winter", academicYear: 2027, courseNumber: "89-230" },
+    ],
+  });
+
+  expect(result.state?.attempts).toEqual([]);
+  expect(result.warnings).toEqual([
+    { kind: "entry-dropped", at: "attempts[0]", field: "semester" },
+    { kind: "entry-dropped", at: "attempts[1]", field: "semester" },
+  ]);
+});
+
+/**
  * The JSON Schema export exists so a State File can be hand-edited, and a list of bare
  * strings where objects belong is what hand-editing gets wrong. No one field is to blame
  * then, so the Warning carries none rather than carrying an empty one for a UI to render as
@@ -792,7 +815,7 @@ it.each([
   for (const field of defaulted) expect(JSON.stringify(first.json)).toContain(`"${field}"`);
 });
 
-it("writes the version this build reads, not the one the value arrived carrying", () => {
+it("writes the schema version this build reads, not the one the value arrived carrying", () => {
   const stale: State = { ...stateOf(fullFile()), schemaVersion: CURRENT_STATE_SCHEMA_VERSION - 1 };
 
   expect(writeStateFile(stale, { basedOn: undefined }).json["schemaVersion"]).toBe(
@@ -801,8 +824,8 @@ it("writes the version this build reads, not the one the value arrived carrying"
 });
 
 /**
- * An old file opens, is edited, and is saved back — at the version this build writes. The
- * stamp itself is pinned by the test above, which hands the writer a stale version directly:
+ * An old file opens, is edited, and is saved back — at the schema version this build writes. The
+ * stamp itself is pinned by the test above, which hands the writer a stale schema version directly:
  * while there is only one schema version, a reader-produced State is already current because
  * `readState` stamps it, so this covers the path rather than the stamp. When a real version 2
  * lands, a fixture at version 1 makes it falsifiable and this is where it joins in.
@@ -831,15 +854,15 @@ it("writes a file that migrated forward on the way in at the current version", (
 });
 
 /**
- * ADR-0013: the save path is the undo path, so a save carries the version of the file it was
+ * ADR-0013: the save path is the undo path, so a save carries the revision of the file it was
  * based on and the external-edit guard applies to an undo exactly as to a first-hand edit.
- * Enforcing the refusal is a later ticket; carrying the version is this one's job.
+ * Enforcing the refusal is a later ticket; carrying the revision is this one's job.
  */
-it("carries the version of the file the save was based on", () => {
+it("carries the revision of the file the save was based on", () => {
   const state = stateOf(fullFile());
 
-  expect(writeStateFile(state, { basedOn: "a-version-of-the-file" })).toMatchObject({
-    basedOn: "a-version-of-the-file",
+  expect(writeStateFile(state, { basedOn: "a-revision-of-the-file" })).toMatchObject({
+    basedOn: "a-revision-of-the-file",
   });
   // Nothing to be based on: the State File does not exist yet, and a file appearing where
   // the save expected none is the same breach as one that changed underneath it.

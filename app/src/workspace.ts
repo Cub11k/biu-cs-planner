@@ -383,7 +383,8 @@ export class NotAWorkspaceError extends WorkspaceRefusedError {
 /**
  * What a State File holds, and which revision that content is.
  *
- * The version is produced by whatever read the file, because that is the only thing that
+ * `version` is the field's name, and what it holds is the State File's **revision** (`CONTEXT.md`;
+ * ADR-0015). The revision is produced by whatever read the file, because that is the only thing that
  * can: `core` is handed already-parsed JSON and performs no I/O, so it never sees what a
  * revision would have to be computed from (`StateFileVersion` in
  * `core/src/state/file.ts`). Each adapter says in its own words what it hashes.
@@ -461,7 +462,28 @@ export type WorkspaceChanged = () => void;
 
 export type Workspace = {
   status(): Promise<WorkspaceStatus>;
-  /** Creates the Workspace Layout. Called only after the student accepts. */
+  /**
+   * Creates the Workspace Layout. Called only after the student accepts.
+   *
+   * **Not transactional, and a refusal does not undo what it made** (#166). An adapter may make
+   * the parts one at a time — the filesystem one does, one `mkdir` each — so a create refused
+   * part way leaves the parts it had already made. What a refused create promises is only that
+   * nothing already standing there was replaced, never that the folder is as it was found.
+   *
+   * **`status()` is how to see what a refused create left**: it reports which parts of the
+   * Workspace Layout are missing, and accepting the Workspace Layout again makes the rest once
+   * whatever refused it is fixed. (A name the Workspace Layout needs that a plain file holds
+   * counts as there and is refused by name on the next create or write, #121.) That is
+   * the reason this need not roll back while a State File write must be atomic: a half-made
+   * Workspace Layout is empty folders, a state the app can describe and recover from, and a
+   * half-written file is neither. A rollback would also have to tell the folders this call made
+   * from the ones that were already there, which `recursive` hides — and removing one that was
+   * already there is the one thing a create must never do.
+   *
+   * The filesystem adapter refuses a part it cannot make with a `WorkspaceRefusedError` naming
+   * it; `createWorkspace` in `./setup.ts` answers that refusal rather than letting it out of the
+   * route, and this is why its answer cannot be "nothing was changed".
+   */
   create(): Promise<void>;
   /**
    * What the Workspace holds of one kind, empty when there is **no folder** to hold it — and
@@ -508,7 +530,7 @@ export type Workspace = {
    * What a State File holds and which revision that is, or undefined when it is not there.
    * Absence is not an error, exactly as for `read`.
    *
-   * This is the half of the external-edit guard that `core` cannot reach: the version has
+   * This is the half of the external-edit guard that `core` cannot reach: the revision has
    * to be produced where the file is, and it travels from here through the use case, the
    * API and the page, back to `saveStateFile`.
    */
@@ -535,8 +557,8 @@ export type Workspace = {
    * one too many rather than one too few, so it never costs a student their save.
    *
    * It takes the whole `StateFileSave` that `core`'s `writeStateFile` produced rather than
-   * the JSON and a version separately. They are produced together so that no caller has to
-   * remember to ask for the version, and this is where they are also *consumed* together:
+   * the JSON and a revision separately. They are produced together so that no caller has to
+   * remember to ask for the revision, and this is where they are also *consumed* together:
    * there is no way to hand a State File's content to a Workspace without the revision it
    * was based on, which is the hole #90 was filed for.
    */

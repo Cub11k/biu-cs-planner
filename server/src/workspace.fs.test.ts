@@ -1292,8 +1292,39 @@ it("refuses to create the Workspace Layout when a name it needs is held by a fil
 
   await expect(workspace.create()).rejects.toThrow(WorkspaceRefusedError);
   await expect(workspace.create()).rejects.toThrow(/catalogs could not be made \(EEXIST\)/);
-  // nothing half-made: the folders it had not reached are still not there
+  // refused on the first part, so the folders it had not reached are still not there; a refusal
+  // further along is a different story, which the next test tells
   expect(await readdir(root)).toEqual(["catalogs"]);
+});
+
+/**
+ * A refusal part way through the Workspace Layout, rather than on its first part (#166). `create`
+ * makes one folder at a time and does not roll back, so the folders made before the refusal stay
+ * made: the port's `create` says so, and names `status()` as the way to see what was left. This
+ * pins both halves of that — the half-made Workspace Layout, and `status()` describing it — and
+ * that accepting the Workspace Layout again, once the obstacle is gone, makes the rest.
+ */
+it("leaves the parts it made when refused part way, and status says which", async () => {
+  await writeFile(join(root, "requirements"), "not a folder");
+  const workspace = fileSystemWorkspace(root);
+
+  await expect(workspace.create()).rejects.toThrow(/requirements could not be made \(EEXIST\)/);
+
+  // `catalogs` came before the refusal and is still there, as a folder; `.backups` came after it
+  // and was never reached; and the file in the way was not replaced
+  expect((await readdir(root)).sort()).toEqual(["catalogs", "requirements"]);
+  expect(await readdir(join(root, "catalogs"))).toEqual([]);
+  expect(await readFile(join(root, "requirements"), "utf8")).toBe("not a folder");
+  // and `status()` describes exactly that: `catalogs` made, `.backups` missing. `requirements` is
+  // not missing, because a name the Workspace Layout needs that is there counts as there — the
+  // `requireLayoutFolder` in the adapter says why — and a write into it is refused by name instead (#121)
+  expect(await workspace.status()).toEqual({ ready: false, missing: ["backups"] });
+
+  // once the obstacle is gone, accepting the Workspace Layout again makes the rest
+  await rm(join(root, "requirements"));
+  await workspace.create();
+  expect(await workspace.status()).toEqual({ ready: true, missing: [] });
+  expect((await readdir(root)).sort()).toEqual([".backups", "catalogs", "requirements"]);
 });
 
 /**
