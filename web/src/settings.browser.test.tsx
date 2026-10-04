@@ -63,6 +63,17 @@ let picks: unknown[];
 let refuseChange: { reason?: string; status?: number } | undefined;
 /** Makes every read refuse: the State File is there and this build cannot read it. */
 let refuseRead: string | undefined;
+/**
+ * Makes the next change answer with a body that is **not JSON**, at this status. Vite's proxy
+ * answers an HTML 500 page for a server that is not running and hono answers a plain-text 404 for
+ * a path only a newer bundle asks for, so this is the shape of both (#207).
+ *
+ * The State File is left exactly as it was, which is the honest fake: whether the change landed
+ * is the thing nobody can establish, so no test may assert it either way.
+ */
+let unreadableChange: { status: number } | undefined;
+/** The same for every read, which is the other place the folded sentence was shown. */
+let unreadableRead: { status: number } | undefined;
 /** Holds the settings GET open, so a test can look at the switch before an answer exists. */
 let settingsHeld: Promise<void> | undefined;
 /** The Workspace's change count, which moving is how the page hears the folder changed. */
@@ -84,6 +95,13 @@ const json = (body: unknown): Response =>
     headers: { "content-type": "application/json" },
   });
 
+/** An answer whose body is not JSON at all: Vite's HTML 500, hono's plain-text 404. */
+const unreadable = (status: number): Response =>
+  new Response("<!doctype html><h1>502 Bad Gateway</h1>", {
+    status,
+    headers: { "content-type": "text/html" },
+  });
+
 const conflict = (body: unknown, status = 409): Response =>
   new Response(JSON.stringify(body), {
     status,
@@ -99,6 +117,11 @@ const settings = () => ({
 
 /** A change, guarded on the revision as the real route is. */
 function change(body: Record<string, unknown>): Response {
+  if (unreadableChange !== undefined) {
+    const { status } = unreadableChange;
+    unreadableChange = undefined;
+    return unreadable(status);
+  }
   if (refuseChange !== undefined) {
     const { reason, status } = refuseChange;
     refuseChange = undefined;
@@ -125,6 +148,8 @@ beforeEach(() => {
   picks = [];
   refuseChange = undefined;
   refuseRead = undefined;
+  unreadableChange = undefined;
+  unreadableRead = undefined;
   settingsHeld = undefined;
   changeCount = 0;
   sent = [];
@@ -146,6 +171,7 @@ beforeEach(() => {
     if (pathname === "/api/settings") {
       if (method === "PATCH") return change((body ?? {}) as Record<string, unknown>);
       if (settingsHeld !== undefined) await settingsHeld;
+      if (unreadableRead !== undefined) return unreadable(unreadableRead.status);
       if (refuseRead !== undefined) return conflict({ reason: refuseRead, warnings: [] });
       return json(settings());
     }
@@ -482,6 +508,117 @@ it("says nothing changed for a refusal that names no reason", async () => {
     expect(said(mounted)).toContain(t("en", "settingsNotDone"));
   });
   expect([ROOT.lang, ROOT.dir]).toEqual(["en", "ltr"]);
+});
+
+/**
+ * **#207's defect, as a student meets it.** An answer the page could not read was folded into
+ * `settingsNotDone` — "Your preference was not changed." — and that arm is reached from the
+ * **served** arm, so an unparseable 200 to a `PATCH` may perfectly well have written. The
+ * sentence asserted the opposite, about a student's own data, in exactly the case where nobody
+ * knows. It is the same defect #197's two reviewers found in the Picks pane.
+ *
+ * A 200, deliberately: a 500 would be a case where it is at least plausible that nothing landed.
+ */
+it("says something true when a change is answered with a body it cannot read", async () => {
+  const mounted = mount();
+  await settingsReady(mounted);
+  unreadableChange = { status: 200 };
+
+  switchFor(mounted).click();
+
+  await vi.waitFor(() => {
+    expect(said(mounted)).toContain(t("en", "settingsAnswerUnreadable"));
+  });
+  // …and not the sentence that claims the file, which is the whole of this ticket
+  expect(said(mounted)).not.toContain(t("en", "settingsNotDone"));
+  expect(said(mounted)).not.toContain(t("en", "settingsStale"));
+  expect(said(mounted)).not.toContain(t("en", "settingsFileUnreadable"));
+  // and the language on screen is unchanged, because nothing readable said it had changed
+  expect([ROOT.lang, ROOT.dir]).toEqual(["en", "ltr"]);
+});
+
+/**
+ * The second half of the first criterion: a refusal the route **named** keeps `settingsNotDone`,
+ * which is true of it — this ticket is "stop one sentence doing two jobs", not "retire it".
+ */
+it("keeps the old sentence for a refusal the route named no reason for", async () => {
+  const mounted = mount();
+  await settingsReady(mounted);
+  refuseChange = {};
+
+  switchFor(mounted).click();
+
+  await vi.waitFor(() => {
+    expect(said(mounted)).toContain(t("en", "settingsNotDone"));
+  });
+  expect(said(mounted)).not.toContain(t("en", "settingsAnswerUnreadable"));
+});
+
+/**
+ * …and the read half, which was folded the same way: `settingsUnread` and `settingsUnreread` both
+ * say the saved preferences could not be read, and nothing in an unparseable body says they were
+ * reached at all. Asserted on a page that has **never** held them, where `settingsUnread` would
+ * at least be right about the defaults on screen and is still wrong about the cause.
+ */
+it("says something true when the preferences are answered with a body it cannot read", async () => {
+  unreadableRead = { status: 500 };
+
+  const mounted = mount();
+
+  await vi.waitFor(() => {
+    expect(said(mounted)).toContain(t("en", "settingsReadAnswerUnreadable"));
+  });
+  expect(said(mounted)).not.toContain(t("en", "settingsUnread"));
+  expect(said(mounted)).not.toContain(t("en", "settingsUnreread"));
+  // the switch is still held shut, because there is no revision to change anything on
+  expect(switchFor(mounted).disabled).toBe(true);
+});
+
+/**
+ * The same sentence on a page that **had** read them, which is where `settingsUnreread` used to
+ * be shown. The two existing sentences split on whether this page ever held the preferences; this
+ * one does not, because what it is about is the answer and not the page.
+ */
+it("says the same thing about an unreadable read on a page that had the preferences", async () => {
+  language = "he";
+  const mounted = mount();
+  await settingsReady(mounted);
+  await vi.waitFor(() => {
+    expect([ROOT.lang, ROOT.dir]).toEqual(["he", "rtl"]);
+  });
+
+  // the server goes away behind the dev proxy, and the watcher's count moves
+  unreadableRead = { status: 500 };
+  changeCount = 1;
+
+  await vi.waitFor(
+    () => {
+      expect(said(mounted)).toContain(t("he", "settingsReadAnswerUnreadable"));
+    },
+    { timeout: 8000, interval: 100 },
+  );
+  expect(said(mounted)).not.toContain(t("he", "settingsUnreread"));
+  expect(said(mounted)).not.toContain(t("he", "settingsUnread"));
+  // Hebrew is still on screen, so nothing claimed defaults were
+  expect([ROOT.lang, ROOT.dir]).toEqual(["he", "rtl"]);
+});
+
+/** In Hebrew too, because a sentence in one language is half a sentence (`CLAUDE.md`). */
+it("says a change it could not read about in Hebrew as well", async () => {
+  language = "he";
+  const mounted = mount();
+  await settingsReady(mounted);
+  await vi.waitFor(() => {
+    expect([ROOT.lang, ROOT.dir]).toEqual(["he", "rtl"]);
+  });
+  unreadableChange = { status: 200 };
+
+  switchFor(mounted).click();
+
+  await vi.waitFor(() => {
+    expect(said(mounted)).toContain(t("he", "settingsAnswerUnreadable"));
+  });
+  expect(said(mounted)).not.toContain(t("en", "settingsAnswerUnreadable"));
 });
 
 /**

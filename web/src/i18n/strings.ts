@@ -233,8 +233,8 @@ const english = {
     "Start the app from a terminal and open the address it prints.",
 
   /**
-   * The app answered and this page could not read the answer (#171, #206). Three sentences for
-   * one cause, because they appear in three places and only one of them is about a click.
+   * The app answered and this page could not read the answer (#171, #206, #207). Five sentences
+   * for one cause, because they appear in five places and only one of them is about a click.
    *
    * What they claim is exactly what is known: an answer arrived, and it was not one this page
    * can read. **Not** that the file changed, that it was unreadable, or that the Workspace
@@ -276,6 +276,30 @@ const english = {
     "The app answered with something this page could not read, so whether anything changed is " +
     "not known here. The app may not be running, or may be a different version from this page " +
     "— start it from a terminal and open the address it prints.",
+  /**
+   * …and the two for the preferences (#207), which had no sentence of their own at all: an answer
+   * the page could not read was folded into `settingsNotDone` for a change and into
+   * `settingsUnread` or `settingsUnreread` for a read.
+   *
+   * All three of those are false of it. `settingsNotDone` says the preference was not changed and
+   * this arm is reached from the **served** arm, so an unparseable 200 to a `PATCH` may perfectly
+   * well have written — the exact sentence #197's reviewers struck out of
+   * `picksAnswerUnreadable`'s draft. The other two say the saved preferences could not be read,
+   * and nothing in an unparseable body says they were reached at all.
+   *
+   * Two and not one, because they answer for two different moments, as `settingsStale` and
+   * `settingsUnread` already do: one is about a change the student asked for, the other about a
+   * page that has no word on their preferences. Neither claims the file was read, written, or
+   * left alone.
+   */
+  settingsAnswerUnreadable:
+    "The app answered with something this page could not read, so whether your preference " +
+    "changed is not known here. The app may not be running, or may be a different version from " +
+    "this page — start it from a terminal and open the address it prints.",
+  settingsReadAnswerUnreadable:
+    "The app answered with something this page could not read, so what is on screen is not " +
+    "known to be your saved preferences. The app may not be running, or may be a different " +
+    "version from this page — start it from a terminal and open the address it prints.",
 
   warningFileUnreadable: "The catalog file is not a catalog this app can read.",
   warningSchemaTooNew: "The catalog was written by a newer version of the app.",
@@ -436,6 +460,14 @@ const hebrew: Record<StringKey, string> = {
     "היישום החזיר תשובה שהדף הזה אינו יודע לקרוא, ולכן לא ידוע כאן אם משהו השתנה. " +
     "ייתכן שהיישום אינו פועל, או שהוא בגרסה אחרת מזו של הדף — הפעילו אותו מהמסוף " +
     "ופתחו את הכתובת שהוא מדפיס.",
+  settingsAnswerUnreadable:
+    "היישום החזיר תשובה שהדף הזה אינו יודע לקרוא, ולכן לא ידוע כאן אם ההעדפה שלכם שונתה. " +
+    "ייתכן שהיישום אינו פועל, או שהוא בגרסה אחרת מזו של הדף — הפעילו אותו מהמסוף " +
+    "ופתחו את הכתובת שהוא מדפיס.",
+  settingsReadAnswerUnreadable:
+    "היישום החזיר תשובה שהדף הזה אינו יודע לקרוא, ולכן לא ידוע אם מה שמוצג הוא ההעדפות " +
+    "השמורות שלכם. ייתכן שהיישום אינו פועל, או שהוא בגרסה אחרת מזו של הדף — הפעילו אותו " +
+    "מהמסוף ופתחו את הכתובת שהוא מדפיס.",
 
   warningFileUnreadable: "הקובץ אינו קטלוג שהיישום יודע לקרוא.",
   warningSchemaTooNew: "הקטלוג נכתב בגרסה חדשה יותר של היישום.",

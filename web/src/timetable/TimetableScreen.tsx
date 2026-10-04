@@ -115,6 +115,20 @@ const SETTINGS_REFUSAL_STRING = {
 } as const satisfies Record<NonNullable<SettingsRefusal>, StringKey>;
 
 /**
+ * What the screen says when a read brought no preferences, and which of the three it was.
+ *
+ * A map rather than the ternary it replaces, and `satisfies` so it is exhaustive: the ternary
+ * said `settingsUnreread` for everything that was not `"never"`, so #207's third value would
+ * have been shown as "what is on screen is the last version this page read" — a claim about a
+ * read that, for an answer nobody could parse, never happened.
+ */
+const SETTINGS_UNREAD_STRING = {
+  never: "settingsUnread",
+  again: "settingsUnreread",
+  "answer-unreadable": "settingsReadAnswerUnreadable",
+} as const satisfies Record<SettingsUnread, StringKey>;
+
+/**
  * The name of a preference, for the `settings-unreadable` Warning to say which one it lost. A `Map`
  * and not a record, because `field` is a `string` on the wire: `core` names whatever field of
  * `settingsSchema` it could not read, and a newer server may name one this build has no word for.
@@ -751,9 +765,7 @@ export function TimetableScreen({
                 <span>{settingsSaid(language, settingsNotice, tokenHeld)}</span>
               )}
               {settingsUnread === undefined ? null : (
-                <span>
-                  {t(language, settingsUnread === "never" ? "settingsUnread" : "settingsUnreread")}
-                </span>
+                <span>{t(language, SETTINGS_UNREAD_STRING[settingsUnread])}</span>
               )}
               {unreadableSettings(settingsWarnings).map((warning) => (
                 <span key={warning.field ?? "all"}>{settingSaid(language, warning)}</span>
@@ -898,6 +910,11 @@ function settingsSaid(
       return notice.reason === undefined
         ? t(language, "settingsNotDone")
         : t(language, SETTINGS_REFUSAL_STRING[notice.reason]);
+    // An answer that arrived and could not be read. Not `settingsNotDone`: "your preference was
+    // not changed" is a claim about the file, and this arm is reached from the served arm too, so
+    // an unparseable 200 to a `PATCH` may perfectly well have written (#207).
+    case "unreadable-answer":
+      return t(language, "settingsAnswerUnreadable");
     case "unauthorized":
       return unauthorizedSaid(language, tokenHeld);
     case "unreachable":

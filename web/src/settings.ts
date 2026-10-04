@@ -94,6 +94,31 @@ export type SettingsResult =
   | { kind: "refused"; reason: SettingsRefusal | undefined; warnings: SettingsWarning[] }
   /** This page has no launch token, so the server will not talk to it (ADR-0004). */
   | { kind: "unauthorized" }
+  /**
+   * The answer arrived and its body is not one this page can read — Vite's HTML 500 when the
+   * server is not running behind the dev proxy, hono's plain-text 404 for a path a newer bundle
+   * asks for (`readBody` in ./body.ts).
+   *
+   * **It used to be folded into `refused` with no reason, and that is #207.** The screen says
+   * that arm as `settingsNotDone` — "Your preference was not changed." — and this arm is reached
+   * from the **served** arm as well as the refused one, so an unparseable 200 to a `PATCH` may
+   * perfectly well have written. A sentence asserting the write did not happen is an affirmative
+   * false statement about a student's own data in exactly the case where nobody knows, which is
+   * the defect #197's two reviewers found in the Picks pane and fixed there. So it is its own
+   * arm, as `timetable/picks.ts` makes it, and the two sentences for it claim nothing either way.
+   *
+   * **A body that is not JSON at all is an answer rather than a crash**, and `readBody` in
+   * ./body.ts is what makes it one. That guard used to be a private copy here; two more copies
+   * were written by hand in `timetable/picks.ts` and `timetable/offerings.ts` and were both still
+   * letting `json()` reject, which is #171 — so there is one of it now and four modules share it.
+   *
+   * Letting `json()` reject was the first version of this module and it was a real bug: the
+   * rejection escaped both callers, so `saving` was never cleared and the language switch stayed
+   * disabled and silent for the life of the page. `useHistory` clears `stepping` in a `finally`
+   * for the same reason; this module does both — it clears the flag *and* turns the body into an
+   * answer, because a disabled control with no sentence is the failure #111 is about.
+   */
+  | { kind: "unreadable-answer" }
   /** The request never arrived: the server is not running, or not running here. */
   | { kind: "unreachable" };
 
@@ -110,27 +135,6 @@ export const FIRST_PAINT_LANGUAGE: Language = "en";
 const languageOf = (served: string): Language | undefined =>
   LANGUAGES.find((known) => known === served);
 
-/**
- * An answer whose body says nothing this module can act on. The floor, and deliberately the
- * floor: what is true of it is that there is nothing here to go on, and it reads as `refused` with
- * no reason — which the screen says as "nothing changed" for a write and "could not be read" for a
- * read, both of which are what the student needs to hear.
- *
- * **A body that is not JSON at all is an answer rather than a crash**, and `readBody` in ./body.ts
- * is what makes it one. That guard used to be a private copy here; two more copies were written by
- * hand in `timetable/picks.ts` and `timetable/offerings.ts` and were both still letting `json()`
- * reject, which is #171 — so there is one of it now and the three modules share it. What each of
- * them then *makes* of an unreadable body still differs, and `timetable/picks.ts` says why it
- * gives that body an arm of its own rather than this one.
- *
- * Letting `json()` reject was the first version of this module and it was a real bug: the
- * rejection escaped both callers, so `saving` was never cleared and the language switch stayed
- * disabled and silent for the life of the page. `useHistory` clears `stepping` in a `finally` for
- * the same reason; this module does both — it clears the flag *and* turns the body into an answer,
- * because a disabled control with no sentence is the failure #111 is about.
- */
-const nothingToGoOn = (): SettingsResult => ({ kind: "refused", reason: undefined, warnings: [] });
-
 /** Every answer read the same way, so one place decides what each status means. */
 async function read(answer: Response & { ok: boolean; status: number }): Promise<SettingsResult> {
   // widened deliberately: the launch token guard rejects before the route runs, so 401 is not
@@ -139,7 +143,7 @@ async function read(answer: Response & { ok: boolean; status: number }): Promise
   if (status === UNAUTHORIZED) return { kind: "unauthorized" };
 
   const answered = await readBody((): Promise<unknown> => answer.json());
-  if (!answered.readable) return nothingToGoOn();
+  if (!answered.readable) return { kind: "unreadable-answer" };
   const body = answered.body;
 
   if (!answer.ok) {
@@ -161,7 +165,7 @@ async function read(answer: Response & { ok: boolean; status: number }): Promise
  * Sends one request and reads the answer **outside** the catch: only the request failing is the
  * server not being there. An answer this module cannot make sense of is a contract problem, and
  * calling it "unreachable" would send the student to look at a server that answered them — so a
- * body that is not JSON comes back as `refused` with no reason (see `nothingToGoOn`) rather than as
+ * body that is not JSON comes back as `unreadable-answer` (see `SettingsResult`) rather than as
  * either a rejection or a lie about where the server is.
  */
 async function ask(
@@ -206,10 +210,15 @@ export async function saveSettings(
  * There is no `moved` arm and that is the point: a language that changed flips the whole document,
  * which is its own account and needs no sentence beside it. What needs saying is a change that did
  * not happen — and a preference change *can* fail, because it is a change to a guarded document.
+ *
+ * …with one arm that is not "did not happen" and must not be said as though it were:
+ * `unreadable-answer` is a change whose answer this page could not read, and whether it landed is
+ * the thing nobody can establish (#207).
  */
 export type SettingsNotice =
   | { kind: "refused"; reason: SettingsRefusal | undefined }
   | { kind: "unauthorized" }
+  | { kind: "unreadable-answer" }
   | { kind: "unreachable" };
 
 export type UseSettingsOptions = {
@@ -255,6 +264,10 @@ export type SettingsUse = {
    *     version it read. Distinguished because the sentence for `"never"` would be **false** here:
    *     a student reading Hebrew whose file was corrupted a moment ago is not looking at defaults,
    *     and telling them they are is the kind of untruth #111 is about.
+   *   - `"answer-unreadable"` — the answer itself could not be read, so the file was not reached
+   *     at all as far as this page can tell. Neither of the other two sentences is true of it:
+   *     both name a read of the preferences that failed, and nothing in an unparseable body says
+   *     the preferences were read (#207).
    */
   unread: SettingsUnread | undefined;
   /**
@@ -281,8 +294,31 @@ export type SettingsUse = {
   ask: () => void;
 };
 
-/** Which of the two things a refused read means; see `SettingsUse.unread`. */
-export type SettingsUnread = "never" | "again";
+/** Which of the three things a read that brought no preferences means; see `SettingsUse.unread`. */
+export type SettingsUnread = "never" | "again" | "answer-unreadable";
+
+/** How a read failed: the two answers that bring no preferences and are not the same news. */
+type ReadFailure = "refused" | "unreadable-answer";
+
+/**
+ * Which sentence a read that brought no preferences owes, out of what the answer was and whether
+ * this page has ever held them.
+ *
+ * A function rather than three ternaries at the return, and taking `known` rather than reading it,
+ * so the decision can be asked without a browser — the whole of the `never`/`again` distinction is
+ * which of two sentences is **false**, and that is worth being able to test directly.
+ */
+export const unreadAfter = (
+  failed: ReadFailure | undefined,
+  everHeld: boolean,
+): SettingsUnread | undefined => {
+  if (failed === undefined) return undefined;
+  // An answer nobody could read says nothing about the file, so neither "you are looking at the
+  // defaults" nor "you are looking at the last version read" is what is true of it: what is true
+  // is that this page has no word on the preferences at all.
+  if (failed === "unreadable-answer") return "answer-unreadable";
+  return everHeld ? "again" : "never";
+};
 
 /** What the page knows about the preferences: only ever set from an answer that carried them. */
 type Known = { language: Language; version: SettingsVersion; warnings: SettingsWarning[] };
@@ -299,8 +335,12 @@ export function useSettings(options: UseSettingsOptions = {}): SettingsUse {
   const { client = api, changes = 0 } = options;
   const [known, setKnown] = useState<Known | undefined>(undefined);
   const [notice, setNotice] = useState<SettingsNotice | undefined>(undefined);
-  /** That the last read came back refused. Which sentence that owes is decided at return. */
-  const [readRefused, setReadRefused] = useState(false);
+  /**
+   * How the last read failed, or `undefined` for *it did not*. A kind and not a flag: a refusal
+   * and an answer this page could not read are two different pieces of news, and until #207 they
+   * were one (`unreadAfter`). Which sentence it owes is still decided at return.
+   */
+  const [readFailed, setReadFailed] = useState<ReadFailure | undefined>(undefined);
   /**
    * The answer a change was refused on, held by identity, so no second change goes out on a
    * revision the file has already moved past.
@@ -346,7 +386,12 @@ export function useSettings(options: UseSettingsOptions = {}): SettingsUse {
     // no `catch` here: a rejection would be a bug in the client, not an answer.
     void fetchSettings(client).then((fresh) => {
       if (shown.current !== mine) return;
-      setReadRefused(fresh.kind === "refused");
+      // Only these two bring no preferences and are news about them. An unauthorized or
+      // unreachable answer is left alone deliberately: the screen already says that once from the
+      // Catalog, and two sentences about one dead server is noise.
+      setReadFailed(
+        fresh.kind === "refused" || fresh.kind === "unreadable-answer" ? fresh.kind : undefined,
+      );
       if (fresh.kind !== "served") return;
       show(fresh);
     });
@@ -404,7 +449,7 @@ export function useSettings(options: UseSettingsOptions = {}): SettingsUse {
     // Computed here rather than stored, so it reads the `known` of this render: a refused read
     // means two different things depending on whether this page ever had the preferences, and a
     // flag set inside the effect would have been deciding that from a stale closure.
-    unread: readRefused ? (known === undefined ? "never" : "again") : undefined,
+    unread: unreadAfter(readFailed, known !== undefined),
     writes,
     ask,
   };
