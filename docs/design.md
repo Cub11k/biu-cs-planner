@@ -140,7 +140,8 @@ The states need to differ in more than one property at once. Border style alone 
 
 - Exams belong to the Offering and are shared by all Groups.
 - Every Moed is checked. A Clash is any two Exams on the same day, whichever Moed each belongs to; students decide what matters.
-- Spacing Warning when Exams are fewer than **3 days** apart (adjustable in settings).
+- Spacing Warning when Exams are fewer than **3 days** apart, adjustable in settings — and the stored setting is what the check is given, never a default standing in for it. The exam period is read per request, from the State File the threshold and the Picks are in plus that year's Catalog, because an Exam belongs to the Offering and no Pick carries one.
+- The threshold is a count of calendar days: **whole, and never negative**. `0` is allowed and means *never warn me about spacing* — the check warns on a gap *fewer* than the threshold and two Exams on one day are a Clash, so zero raises nothing. A write of anything else is refused as the shape of the request it is, before the domain sees it; a State File already holding one still opens, with the field at its default and a Warning naming it, because a bound on a value is not a reason to lose a student's file.
 - v1 draws the exam period as a **vertical rail** in the side pane rather than a list, so the gaps can be felt: one mark per Exam, the distance between marks proportional to the days between them, מועד ב lighter, tight gaps in red.
 
 ### Plan Diff

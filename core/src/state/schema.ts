@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { daySchema, semesterSchema } from "../catalog/schema.ts";
+import { DEFAULT_EXAM_SPACING_DAYS } from "../timetable/exams.ts";
 
 /**
  * A State File is one student's or one scenario's own data: Attempts, Timetables, Pins and
@@ -144,8 +145,34 @@ export const pinSchema = z.object({
 
 export const settingsSchema = z.object({
   language: z.enum(["en", "he"]).default("en"),
-  /** Exams closer together than this raise a spacing Warning; see `docs/design.md`. */
-  examSpacingDays: z.number().default(3),
+  /**
+   * Exams closer together than this many calendar days raise a spacing Warning
+   * (`docs/design.md`, "Exams"). Bounded as a count of days is bounded: whole, and never
+   * negative (#164).
+   *
+   * **`0` is allowed and means "never warn me about spacing".** `checkExams` warns on a gap
+   * *fewer* than this, and two sittings on one day are a Clash rather than a spacing Warning,
+   * so zero raises nothing and is the off switch. `1` happens to mean the same thing, which is
+   * the reason the floor is the number that says so deliberately rather than the one that says
+   * it by accident.
+   *
+   * **A bound here is not a domain check**, and the guardrail that every domain check is a
+   * Warning an edit goes through is untouched by it: this says which values a day count *is*,
+   * the way `pickedMeetingSchema`'s `CLOCK_TIME` says which strings a time is. A State File on
+   * disk holding `-5` therefore still opens — `file.ts` reads the settings one field at a time,
+   * so the field keeps its default and the read carries a `settings-unreadable` Warning naming
+   * it, exactly as a corrupted language does. What is refused is a *write* of such a value, at
+   * the API, as the shape of the request and before the domain ever sees it.
+   *
+   * No ceiling, deliberately: a threshold wider than an exam period warns about every sitting,
+   * which is true and is what a student who asked for it asked for, while `.int()` already
+   * refuses `NaN`, the infinities and anything past `Number.MAX_SAFE_INTEGER` — the values the
+   * arithmetic would be a lie about.
+   *
+   * The default is the check's own constant and not a second `3`: a file that says nothing about
+   * Exam spacing and a `checkExams` call given no threshold have to mean the same thing.
+   */
+  examSpacingDays: z.number().int().min(0).default(DEFAULT_EXAM_SPACING_DAYS),
 });
 
 export const stateSchema = z.object({

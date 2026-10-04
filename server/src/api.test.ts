@@ -246,6 +246,7 @@ it("never names a file path in what it sends back", async () => {
     "/api/catalog/2027/offerings?semester=fall",
     "/api/catalog/2027/offerings/89-110",
     "/api/timetable/2027/fall",
+    "/api/timetable/2027/fall/exams",
   ]) {
     const text = await (await get(path)).text();
     expect(text).not.toContain(root);
@@ -406,6 +407,7 @@ it("refuses every route but the health probe to a request with no token", async 
     "/api/workspace",
     "/api/catalog/2027/offerings?semester=fall",
     "/api/catalog/2027/offerings/89-110",
+    "/api/timetable/2027/fall/exams",
   ]) {
     const response = await api.request(path);
     expect(response.status, path).toBe(401);
@@ -1108,10 +1110,8 @@ it("changes the preference named and leaves the other where it was", async () =>
 });
 
 /**
- * `examSpacingDays` is readable and writable by the same mechanism as the language, which is the
- * ticket's second criterion. **Nothing carries it to `checkExams` yet** — that check takes a
- * `spacingDays` threshold and no caller passes this field to it — so wiring the setting and
- * wiring the check are two different things and this is only the first.
+ * `examSpacingDays` is readable and writable by the same mechanism as the language, which was
+ * #115's second criterion. What it reaches is asserted below, through the exam route #164 added.
  */
 it("reads and writes the Exam spacing by the same route as the language", async () => {
   await post("/api/workspace", {});
@@ -1122,6 +1122,204 @@ it("reads and writes the Exam spacing by the same route as the language", async 
   await expect(chosen.json()).resolves.toMatchObject({ examSpacingDays: 14 });
   restart();
   await expect((await get(SETTINGS)).json()).resolves.toMatchObject({ examSpacingDays: 14 });
+});
+
+/**
+ * #164's bound, at the edge it is a bound on.
+ *
+ * `examSpacingDays` is a count of calendar days, so the values a day count cannot have are
+ * refused rather than stored: `savedSettingsSchema` takes each field's *type* from `core`'s own
+ * `settingsSchema`, which now says whole and not negative, so a body carrying `-5` is not a
+ * settings body and `bodyAs` answers the 400 every malformed settings body gets. **Not a named
+ * 409 and not a clamp**: a clamp would store a number the student did not choose, and a refusal
+ * of its own would be a reason `web`'s screen has to have a sentence for in both languages for a
+ * control that does not exist yet (`docs/design.md` puts no Settings screen in front of this).
+ * What a page reads today is `settingsNotDone` — "Your preference was not changed." / "ההעדפה לא
+ * שונתה." — which `web/src/settings.ts` gives every answer that is not `ok` and carries no
+ * reason, and which is true of this one.
+ *
+ * `0` is allowed, and `core/src/timetable/exams.test.ts` is where what it means is asserted: a
+ * threshold of zero raises no spacing Warning, which is the student turning it off.
+ */
+it("refuses an Exam spacing a number of days cannot be, and stores nothing", async () => {
+  await post("/api/workspace", {});
+
+  for (const examSpacingDays of [-5, -1, 2.5, 1e309]) {
+    const response = await choose({ examSpacingDays });
+    expect(response.status, String(examSpacingDays)).toBe(400);
+    await expect(response.json(), String(examSpacingDays)).resolves.toEqual({
+      error: "not-settings",
+    });
+  }
+
+  // nothing was stored by any of them: there is still no State File to have a revision, and the
+  // preference reads as the default rather than as the last value refused
+  expect(await settingsVersion()).toBeUndefined();
+  await expect((await get(SETTINGS)).json()).resolves.toMatchObject({ examSpacingDays: 3 });
+
+  // and zero goes through, because it is a threshold and not a mistake
+  const off = await choose({ examSpacingDays: 0 });
+  expect(off.status).toBe(200);
+  await expect(off.json()).resolves.toMatchObject({ examSpacingDays: 0 });
+});
+
+/**
+ * A State File that already holds a value the bound refuses still **opens** (#164's second
+ * criterion). A bound in the schema is not a reason to lose a student's file: `core`'s reader
+ * takes the settings one field at a time, so the field keeps its default and the read says which
+ * field it could not read — exactly as it does for a spacing written as `"three"`, asserted
+ * below. The Warning is the whole difference between this and a preference silently back at its
+ * default.
+ */
+it("opens a State File holding an Exam spacing the bound refuses, and says which field", async () => {
+  await post("/api/workspace", {});
+  await writeFile(
+    join(root, "me.state.json"),
+    JSON.stringify({ schemaVersion: 1, settings: { language: "he", examSpacingDays: -5 } }),
+  );
+
+  const response = await get(SETTINGS);
+
+  expect(response.status).toBe(200);
+  await expect(response.json()).resolves.toMatchObject({
+    language: "he",
+    examSpacingDays: 3,
+    warnings: [{ kind: "settings-unreadable", field: "examSpacingDays" }],
+  });
+  // the file is the student's and was not rewritten by the reading of it
+  expect(JSON.parse(await readFile(join(root, "me.state.json"), "utf8"))).toMatchObject({
+    settings: { examSpacingDays: -5 },
+  });
+});
+
+/**
+ * A crawl whose detail records carry Exams, two days apart. The rows are the two Courses
+ * `LECTURE` and `CLASHING` pick, so the Picks below are the ones the rest of this file makes.
+ * Invented, as every fixture here is: no crawled data is committed to this repo (ADR-0006).
+ */
+const EXAM_CRAWL = {
+  rows: [
+    CRAWL.rows[0]!,
+    { ...CRAWL.rows[0]!, code: "89210", name: "אלגברה לינארית", lid: "900001" },
+  ],
+  details: {
+    "89110|סמסטר א'": { terms: [{ type: "מועד א'", date: "21/01/2027", hour: "09:00" }] },
+    "89210|סמסטר א'": { terms: [{ type: "מועד א'", date: "23/01/2027", hour: "09:00" }] },
+  },
+};
+
+const EXAMS = `${TIMETABLE}/exams`;
+
+/** The two Courses of `EXAM_CRAWL` picked, and the exam period that comes back afterwards. */
+const examPeriodAfterPicking = async (): Promise<void> => {
+  await post("/api/workspace", {});
+  const imported = await post("/api/catalog/2027/import", EXAM_CRAWL);
+  expect(imported.status).toBe(200);
+  await expect(imported.json()).resolves.toMatchObject({ summary: { exams: 2 } });
+
+  expect((await post(PICKS, LECTURE)).status).toBe(200);
+  expect((await save(PICKS, CLASHING)).status).toBe(200);
+};
+
+/**
+ * **The criterion the whole of #164 turns on**: a student's stored threshold reaches
+ * `checkExams`. `docs/design.md` has said "fewer than 3 days apart (adjustable in settings)"
+ * since the design was written, and until this route the adjustment changed nothing a student
+ * could see — the setting was readable and writable (#115) and no caller passed it to the check.
+ *
+ * Two Exams two days apart are a spacing Warning at three days and nothing at all at two, and
+ * the only thing that changes between the two reads is the preference in the State File.
+ */
+it("checks the Exams at the threshold the student stored, and changes when they change it", async () => {
+  await examPeriodAfterPicking();
+
+  const atThree = await get(EXAMS);
+  expect(atThree.status).toBe(200);
+  await expect(atThree.json()).resolves.toMatchObject({
+    spacingDays: 3,
+    exams: {
+      sittings: [
+        // the first sitting has nothing before it, which `RailSitting` spells as `undefined` —
+        // and JSON has no `undefined`, so the key is simply absent rather than being sent as a
+        // `null` a page would then have to read as a second way of saying the same thing
+        { courseNumber: "89-110", date: "2027-01-21" },
+        { courseNumber: "89-210", date: "2027-01-23", daysSincePrevious: 2 },
+      ],
+      warnings: [{ kind: "exam-spacing" }, { kind: "exam-spacing" }],
+      coursesWithUnknownExams: 0,
+    },
+    warnings: [],
+    catalogWarnings: [],
+  });
+
+  const chosen = await choose({ examSpacingDays: 2 });
+  expect(chosen.status).toBe(200);
+
+  const atTwo = await get(EXAMS);
+  expect(atTwo.status).toBe(200);
+  await expect(atTwo.json()).resolves.toMatchObject({
+    spacingDays: 2,
+    exams: { warnings: [], coursesWithUnknownExams: 0 },
+  });
+});
+
+/** The other direction, and the Clash the spacing Warning is never a substitute for. */
+it("widens the Exam check when the student widens the threshold, and still reports a Clash", async () => {
+  await examPeriodAfterPicking();
+  await choose({ examSpacingDays: 7 });
+
+  const wide = await get(EXAMS);
+
+  await expect(wide.json()).resolves.toMatchObject({
+    spacingDays: 7,
+    exams: { warnings: [{ kind: "exam-spacing" }, { kind: "exam-spacing" }] },
+  });
+});
+
+/**
+ * A picked Course the Catalog cannot answer for is counted rather than left out, so the rail can
+ * admit the picture is partial, and the Catalog's own Warning says why. Two Warning lists and not
+ * one: `warnings` is about the State File and `catalogWarnings` about the Catalog, whose `kind`s
+ * overlap.
+ */
+it("says how many picked Courses it has no Exams for, and why", async () => {
+  await post("/api/workspace", {});
+  expect((await post(PICKS, LECTURE)).status).toBe(200);
+
+  const response = await get(EXAMS);
+
+  expect(response.status).toBe(200);
+  await expect(response.json()).resolves.toMatchObject({
+    exams: { sittings: [], warnings: [], coursesWithUnknownExams: 1 },
+    warnings: [],
+    catalogWarnings: [{ kind: "no-catalog-for-year", academicYear: 2027 }],
+  });
+});
+
+/**
+ * The exam period is read out of the State File, so it is refused exactly as the week is when
+ * that file cannot be read — and a bad year or Semester is the same 400 the week answers, since
+ * both routes parse their path through `timetableRef`.
+ */
+it("refuses the exam period the way the week does, and never with a 500", async () => {
+  await post("/api/workspace", {});
+  await writeFile(join(root, "me.state.json"), '{"schemaVersion":99}', "utf8");
+
+  const refused = await get(EXAMS);
+  expect(refused.status).toBe(409);
+  await expect(refused.json()).resolves.toMatchObject({
+    reason: "state-file-unreadable",
+    warnings: [{ kind: "schema-version-too-new", found: 99 }],
+  });
+
+  for (const [error, path] of [
+    ["bad-year", "/api/timetable/nineteen/fall/exams"],
+    ["bad-semester", "/api/timetable/2027/winter/exams"],
+  ]) {
+    const response = await get(path!);
+    expect(response.status, path).toBe(400);
+    await expect(response.json(), path).resolves.toEqual({ error });
+  }
 });
 
 /**

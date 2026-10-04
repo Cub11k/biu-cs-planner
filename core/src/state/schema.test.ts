@@ -4,11 +4,13 @@ import {
   blockedTimeSchema,
   CURRENT_STATE_SCHEMA_VERSION,
   groupPickSchema,
+  settingsSchema,
   stateSchema,
   statusSchema,
   type BlockedTime,
   type GroupPick,
 } from "./schema.ts";
+import { DEFAULT_EXAM_SPACING_DAYS } from "../timetable/exams.ts";
 
 it("accepts several Attempts for the same Course in different Semesters", () => {
   const retaken = stateSchema.safeParse({
@@ -139,6 +141,45 @@ it("fills an all-but-empty file in, so a new State File is a version and nothing
     pins: [],
     settings: { language: "en", examSpacingDays: 3 },
   });
+});
+
+/**
+ * #164. The Exam spacing is a number of calendar days a Warning is raised below, and `checkExams`
+ * counts with it — so the values a day count cannot have are refused here rather than reaching
+ * the arithmetic. A negative threshold is a Warning nothing can ever raise, and a fractional one
+ * compares against whole-day gaps and so means the integer above it, worded in a way no student
+ * could predict.
+ *
+ * **Zero is allowed and is a feature, not a hole.** `checkExams` warns when a gap is *fewer* than
+ * the threshold, and same-day sittings are a Clash rather than a spacing Warning, so `0` is
+ * exactly "never warn me about spacing" — the student turning the Warning off. `1` means the same
+ * thing by accident (a gap of 0 days is the Clash), and that is an argument for keeping the floor
+ * at the number that says it on purpose.
+ *
+ * No ceiling, deliberately. A threshold wider than an exam period warns about every sitting, which
+ * is true and is what a student asking for it asked for; `.int()` already refuses `Infinity`,
+ * `NaN` and anything past `Number.MAX_SAFE_INTEGER`, which are the values arithmetic would be a
+ * lie about.
+ */
+it("refuses an Exam spacing a number of days cannot be, and allows zero", () => {
+  const spacing = settingsSchema.shape.examSpacingDays;
+
+  for (const refused of [-5, -1, 2.5, Number.NaN, Infinity, -Infinity, Number.MAX_SAFE_INTEGER + 2]) {
+    expect(spacing.safeParse(refused).success, String(refused)).toBe(false);
+  }
+  for (const allowed of [0, 1, 3, 14, 365]) {
+    expect(spacing.safeParse(allowed).success, String(allowed)).toBe(true);
+  }
+});
+
+/**
+ * One 3, and not two that agree today. The threshold the design settles on lives in the module
+ * that checks it (`../timetable/exams.ts`), and this field defaults to that constant: a file that
+ * says nothing about Exam spacing and a `checkExams` call that is given no threshold have to mean
+ * the same thing, and two literals would be free to drift apart silently.
+ */
+it("defaults the Exam spacing to the one the check itself defaults to", () => {
+  expect(settingsSchema.parse({}).examSpacingDays).toBe(DEFAULT_EXAM_SPACING_DAYS);
 });
 
 it("strips a key it does not know rather than carrying it", () => {
