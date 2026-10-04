@@ -127,8 +127,8 @@ it("counts a file that went away from outside", async () => {
 
 /**
  * A real watcher cannot tell the app's own write from an editor's, so this counts both. The
- * save-time guard that tells them apart — "each save carries the file version it was based
- * on" — is the other half of the design's paragraph and belongs with the writer (#63).
+ * save-time guard that tells them apart — "each save carries the revision of the file it
+ * was based on" — is the other half of the design's paragraph and belongs with the writer (#63).
  */
 it("counts the app's own write, because a watcher cannot tell whose it was", async () => {
   const workspace = memoryWorkspace({ created: true });

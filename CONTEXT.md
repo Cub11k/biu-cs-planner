@@ -118,7 +118,7 @@ The folder holding a student's Catalogs, Requirements Files, State Files and bac
 _Avoid_: project, profile
 
 **Workspace Layout**:
-The folders a Workspace holds: `catalogs/`, `requirements/` and `.backups/`. The app offers to create them on first run and writes nothing until the student accepts. A State File is not in one of them: it sits at the Workspace root, so its name is what tells State Files apart. A Workspace can hold only part of the Workspace Layout, and the parts that are not there are what "not a Workspace" means: the status says both whether the Workspace is ready and which parts are missing, by name, while a refused write names a part only when one part is what is wrong. Not the Suggested Layout, which is about Courses and Semesters and has nothing to do with folders.
+The folders a Workspace holds: `catalogs/`, `requirements/` and `.backups/`. The app offers to create them on first run and writes nothing until the student accepts. A State File is not in one of them: it sits at the Workspace root, so its name is what tells State Files apart. A Workspace can hold only part of the Workspace Layout, and the parts that are not there are what "not a Workspace" means: the status says both whether the Workspace is ready and which parts are missing, by name, while a refused write names a part only when one part is what is wrong. Creating the Workspace Layout is not all-or-nothing: a create refused part way leaves the parts it had already made, replaces nothing that was there, and the status is how to see which parts exist; accepting the Workspace Layout again makes the rest. Not the Suggested Layout, which is about Courses and Semesters and has nothing to do with folders.
 _Avoid_: the layout, folder structure, scaffold
 _In code_: the constant is `WORKSPACE_LAYOUT` and one part of it is a `WorkspaceFolder`, whose members are the bare names `catalogs`, `requirements` and `backups`. The term is Workspace Layout everywhere else, this file and `docs/` included. Only the filesystem adapter maps a member to a folder name, and that is where `backups` becomes `.backups/`: a Workspace being a folder on disk at all is ADR-0003, and that adapter is the one place that knows it.
 
@@ -129,6 +129,11 @@ _Avoid_: api key, secret, session
 **State File**:
 One student's or one scenario's personal data: Attempts, Timetables, Pins and settings.
 _Avoid_: save, profile
+
+**Revision**:
+Which content a State File holds: a SHA-256 hash of the file's bytes as read, BOM included, and not of the document they parse to. Every save carries the Revision it was based on, and a save is refused when the file no longer holds that Revision, because something else wrote it in between: Dropbox, git, an editor or another tab. The page holds the Revision between a read and its next save. A save based on no Revision claims there is no file, and is refused when there is one. Why a content hash, why the bytes and why the page is ADR-0015.
+_Avoid_: version (on its own), mtime, timestamp
+_In code_: the type is `StateFileVersion`, the field the API and the Workspace port hand out is `version`, and the field a save sends back is `basedOn`. These keep "version" because the type is in `core`'s surface and on the wire, and are not renamed. The term is Revision everywhere else, this file and `docs/` included. It is none of the other three versions: not the `schemaVersion` a file records (which build's format it is written in), not the Workspace change count `GET /api/workspace/changes` serves (which restarts at 0 with the server and is compared against nothing), and not a release of the app.
 
 **Device Preference**:
 A display preference belonging to the browser and the screen a student is sitting at rather than to their Plan: kept in that browser's own store, per origin, and never in a State File, whose settings hold the preferences that belong to the person or the document instead. Which side a given preference falls on is ADR-0014, and the ruling is on issue #114. A copy of the Launch Token is kept in the same store and is not a Device Preference.

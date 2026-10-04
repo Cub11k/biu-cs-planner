@@ -30,5 +30,5 @@ Restoring a value cannot drift that way.
 - **One stack covers the document, minus settings.** Language and exam spacing are preferences that
   the control which set them can set back, and folding them in would let undoing a Pick flip the UI
   language.
-- **The save path is the undo path**, so the State File writer takes the version it is based on and
+- **The save path is the undo path**, so the State File writer takes the revision it is based on and
   the external-edit guard applies equally to an undo. A file changed on disk invalidates the stack.

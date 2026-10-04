@@ -71,9 +71,9 @@ export type WorkspaceChanges = {
    * against the last one it saw, so only the movement means anything — never the value,
    * which restarts at 0 with the server.
    *
-   * A count and deliberately not a version. `schemaVersion` on a file and the file version
-   * a save carries (docs/design.md, "External edits") are both versions of one file; this
-   * is neither, and naming it one would invite a save to compare against it.
+   * A count and deliberately not a version. `schemaVersion` on a file and the revision a
+   * save carries (docs/design.md, "External edits"; ADR-0015) both identify something about one
+   * file; this is neither, and naming it one would invite a save to compare against it.
    *
    * **Every burst, whoever caused it**, the app's own saves included — see the ruling above.
    * A poller that has just written the Workspace itself will see this move, and is expected

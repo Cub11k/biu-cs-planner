@@ -172,6 +172,29 @@ it("drops the Attempts it cannot read and keeps the rest, naming each", () => {
 });
 
 /**
+ * An entry wrong in two fields names one of them, and it is the first in the schema's order
+ * rather than the file's (#131). Ruled "yes, but say so": one field is the more actionable
+ * sentence, and `fieldOf` records why. Each entry below gets `semester` and `status` wrong, one
+ * writing them in the schema's order and one in the reverse, so a reader that named the last
+ * field, or the first one the file wrote, would fail here.
+ */
+it("names the first field an entry is wrong in when it is wrong in two", () => {
+  const result = parseStateFile({
+    schemaVersion: CURRENT_STATE_SCHEMA_VERSION,
+    attempts: [
+      { courseNumber: "89-110", academicYear: 2027, semester: "winter", status: "enrolled" },
+      { status: "enrolled", semester: "winter", academicYear: 2027, courseNumber: "89-230" },
+    ],
+  });
+
+  expect(result.state?.attempts).toEqual([]);
+  expect(result.warnings).toEqual([
+    { kind: "entry-dropped", at: "attempts[0]", field: "semester" },
+    { kind: "entry-dropped", at: "attempts[1]", field: "semester" },
+  ]);
+});
+
+/**
  * The JSON Schema export exists so a State File can be hand-edited, and a list of bare
  * strings where objects belong is what hand-editing gets wrong. No one field is to blame
  * then, so the Warning carries none rather than carrying an empty one for a UI to render as

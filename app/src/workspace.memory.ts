@@ -114,12 +114,12 @@ const backupKey = (ref: BackupRef): string => {
  * The double's stand-in for a revision, and it is the stored text itself.
  *
  * The real adapter hashes the bytes it read (`server/src/workspace.fs.ts`), and it hashes
- * rather than remembers because the version has to be small enough for a browser to hold
+ * rather than remembers because the revision has to be small enough for a browser to hold
  * and hand back on the next save. This one has no browser and no bytes, so it can afford
  * the limit case of the same idea: a revision that *is* the content answers "is the file
  * still what I read?" with no collisions at all, which is the property every test here
  * turns on. Nothing may read the string — it is opaque to everything but a comparison, as
- * `StateFileVersion` says — and a double whose versions were a counter would have hidden
+ * `StateFileVersion` says — and a double whose revisions were a counter would have hidden
  * the two-tab lost update this guard exists for.
  */
 const revisionOf = (data: unknown): StateFileVersion => JSON.stringify(data) ?? "";

@@ -7,5 +7,5 @@ All data (Catalogs, Requirements Files, State Files) lives as JSON files in a Wo
 - Every edit autosaves, so the app has to protect against lost work:
   - undo/redo within the session
   - rotating backups in `.backups/` inside the Workspace, so wiping the folder wipes everything
-  - version-checked saves that refuse to overwrite a file changed externally (Dropbox, git, an editor)
+  - version-checked saves that refuse to overwrite a file changed externally (Dropbox, git, an editor); what a version is — a State File's revision, a hash of its bytes — is [ADR-0015](0015-a-revision-is-a-content-hash-the-page-carries.md)
 - The server watches the Workspace folder rather than individual files, because editors save by writing a new file and renaming it, which breaks watches on single files.
