@@ -15,19 +15,25 @@
  * the drift that ADR was written to end (#142).
  *
  * What a reader of *this* module needs from that decision is the shape it leaves here. The
- * value sits under `SCHEME_STORAGE_KEY` in `localStorage`, per browser and per origin.
- * Nothing reads it as a value beyond the control that sets it: it becomes an attribute on
- * `<html>` and the stylesheet does the rest. And every way of not knowing it — no key, an
- * unrecognised one, a store that throws, no browser at all — is the one `"system"` state
- * rather than a third palette, which is what makes losing the value cost a click.
+ * value sits under `SCHEME_STORAGE_KEY` in `localStorage`, per browser and per origin. Every
+ * read of it is inside `web`, and each one narrows it, stamps it, or shows it as a word, never
+ * as input to anything: what it becomes is an attribute on `<html>`, and the stylesheet does
+ * the rest. And every way of not knowing it — no key, an unrecognised one, a store that
+ * throws, no browser at all — is the one `"system"` state rather than a third palette, which
+ * is what makes losing the value cost a click.
  *
- * Four places read that store, and they have to agree. The blocking stamp in
- * `web/index.html` runs before the first paint, `main.tsx` narrows the same key before React
- * mounts, `watchScheme` below re-reads it when another tab writes (#146), and `SchemeControl`
- * reads it for the word it shows — at render for the first paint of the control and again at
- * commit, because by then the first answer can be out of date (#168). `asSchemeChoice` stays
- * the single place a value from outside becomes a choice: the inline stamp keeps that true by
- * narrowing nothing at all, and `scheme.test.ts` fails if it starts to.
+ * Every reader of that store has to agree with the others, and this is the whole list. The
+ * blocking stamp in `web/index.html` reads the key directly before the first paint and narrows
+ * nothing; `main.tsx` reads it through `storedScheme` and stamps it narrowed before React
+ * mounts; `onSchemeChanged` below re-reads the store on a `storage` event rather than trusting
+ * what the event carries, which is how `watchScheme` re-stamps the document (#146) and how
+ * `SchemeControl` is told another tab chose; and `SchemeControl` reads it through
+ * `storedScheme` twice more for the word it shows — at render, so the control's first paint has
+ * one, and again in its mount effect, because by then the first answer can be out of date
+ * (#168). No number is given because `SchemeControl` reads twice: a count here would be true
+ * only if a *place* meant a module. `asSchemeChoice` stays the single place a value from
+ * outside becomes a choice: the inline stamp keeps that true by narrowing nothing at all, and
+ * `scheme.test.ts` fails if it starts to.
  *
  * **This module owns the attribute, and every stamp carries what the store says now.** The
  * three writers are `main.tsx` once at startup, `watchScheme` on an event it answers by
