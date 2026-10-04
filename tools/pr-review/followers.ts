@@ -45,8 +45,16 @@ export type Follower = { path: string; name: string };
  */
 export const FOLLOWER_HOME = "tools/pr-report/surface.ts";
 
-/** Directories no check reads: build output, dependencies, and the repository's own metadata. */
-const SKIP = new Set(["node_modules", "dist", "coverage", ".git", ".sessions", "pr-report.md"]);
+/**
+ * Directory names this check does not descend into: dependencies, build output, the coverage
+ * run's files, the repository's own metadata, and the session transcripts `.gitignore` keeps
+ * untracked. Matched whole, like `collect.ts`'s own `SKIP`, so a `distant/` is not a `dist`.
+ *
+ * Nothing else is excluded. A file is read because the tree holds it, which is the difference
+ * between this and the five-filename canary: there is no list of files anywhere, and a `.ts`
+ * added tomorrow is covered the day it is written.
+ */
+const SKIP = new Set(["node_modules", "dist", "coverage", ".git", ".sessions"]);
 
 /**
  * The two halves of a re-export origin, as the property names a follower reads them by.
