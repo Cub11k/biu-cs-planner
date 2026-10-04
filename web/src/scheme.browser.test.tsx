@@ -259,7 +259,8 @@ async function openControl(
   root.render(<SchemeControl language={language} />);
 
   // `render` schedules the work rather than doing it, so the control is waited for. Its
-  // effect — the stamp on `<html>` — lands after the paint that follows.
+  // mount effect — which subscribes to the store and re-reads it, and stamps nothing at all
+  // since #168 — runs with the commit that puts the `<select>` here.
   const select = await vi.waitFor(() => {
     const found = into.querySelector("select");
     if (found === null) throw new Error("the control rendered no select");
@@ -373,11 +374,29 @@ describe("the attribute while the control mounts", () => {
      * the control has read the store and nothing has committed, and reaching it is the whole
      * of what the test is for.
      */
+    /**
+     * What rendered, in the order React rendered it.
+     *
+     * `committedAlready` proves no commit had happened when the choice landed. It does *not*
+     * prove the control had already read the store, and that is the premise the whole test
+     * rests on — React rendering siblings in tree order. If that ever stopped holding, the
+     * choice would land *before* the control's read, the "stale" value the old effect carried
+     * would be the new one, and this test would go quietly vacuous again, which is exactly the
+     * trap its first version fell into. So the premise is asserted rather than assumed: a
+     * marker renders ahead of the control and the write happens behind it.
+     */
+    const rendered: string[] = [];
+    const Ahead = (): null => {
+      if (!rendered.includes("ahead")) rendered.push("ahead");
+      return null;
+    };
+
     let committedAlready: boolean | undefined;
     const chosenElsewhere = (): void => {
       if (committedAlready !== undefined) return;
       // Nothing is on the screen, so no effect has run; the control's render is behind us.
       committedAlready = mounted.querySelector("select") !== null;
+      rendered.push("chose");
       // Another tab chose dark, and the watcher `main.tsx` starts before `createRoot` has
       // put it on the document. (Whether the browser really delivers such an event, and to
       // whom, is the second-tab test below; what matters here is the moment, and a moment
@@ -392,6 +411,7 @@ describe("the attribute while the control mounts", () => {
 
     root.render(
       <>
+        <Ahead />
         <SchemeControl language="en" />
         <InTheWindow />
       </>,
@@ -406,6 +426,10 @@ describe("the attribute while the control mounts", () => {
     // The window was reached, and reached before the commit. Without this the test could pass
     // on a React that committed as it rendered, where there is no race to lose.
     expect(committedAlready).toBe(false);
+    // …and reached after the control, which is what makes the value its render captured the
+    // *older* one. Siblings render in tree order, so a marker ahead of the control must have
+    // run before the write behind it.
+    expect(rendered).toEqual(["ahead", "chose"]);
 
     // And the newer choice survived the commit: the effect reads the store rather than the
     // `choice` its render captured, and stamps nothing either way.
@@ -710,9 +734,10 @@ describe("the first paint, before any module has run", () => {
     expect(blocked.documentElement.dataset["stampError"]).toBeUndefined();
 
     // `SchemeControl` reached the screen too, which is the other half of the same exposure:
-    // it calls `schemeStore()` twice itself, and those calls were unreachable only because
-    // `main.tsx` died first. The guard is in the shared seam, so one fix covers both, and
-    // this is what says so rather than a comment claiming it.
+    // it calls `schemeStore()` three times itself — at render, in its mount effect, and in
+    // its `change` handler — and those calls were unreachable only because `main.tsx` died
+    // first. The guard is in the shared seam, so one fix covers both, and this is what says
+    // so rather than a comment claiming it.
     await vi.waitFor(() => {
       const control = blocked.querySelector("select");
       if (control === null) throw new Error("the scheme control never reached the screen");

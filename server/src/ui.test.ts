@@ -154,6 +154,14 @@ describe("the entry document the build produces", () => {
     // Vite's own API rather than a spawned `npm run build`: the same `web/vite.config.ts` is
     // read, and the output goes to a temporary folder instead of `web/dist`, so running the
     // suite neither depends on nor disturbs whatever is already built in the tree.
+    //
+    // `vite` is declared by `web` and not by `server`, and this resolves it through the npm
+    // workspace's hoisted `node_modules` — which `vitest`, a root devDependency, also requires
+    // as a peer, so a tree that can run this suite at all has it. Imported dynamically because
+    // it is a test's build tool rather than anything `server` ships: a specifier at the top of
+    // this file would read as `server` depending on Vite, and `erasableSyntaxOnly` keeps no
+    // type-only shelter for a value import. If it ever stops resolving, this hook throws and
+    // the block fails loudly rather than skipping.
     const { build } = await import("vite");
     await build({ root: WEB, logLevel: "warn", build: { outDir: built, emptyOutDir: true } });
 
