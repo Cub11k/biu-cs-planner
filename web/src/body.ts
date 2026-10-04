@@ -30,6 +30,13 @@
 /**
  * A body that was read, or an answer this page could not read at all.
  *
+ * **`readable: true` means a JSON object**, and nothing less (#230). Every route this page calls
+ * answers with one, and every caller reads a field straight off it — `body.label`,
+ * `"warnings" in body` — outside any `try`. So a body that is JSON and not an object is an
+ * answer this page cannot read, exactly as one that is not JSON at all: `null` used to come back
+ * `readable: true`, and each of those reads then threw on it, the rejection was swallowed, and
+ * the student was told nothing — the silence #206 closed, reached by another input.
+ *
  * `readable: false` is an **answer** and not a crash, which is the whole of #171. In
  * development `web/vite.config.ts` proxies `/api` to the server, and Vite answers with an
  * HTML 500 page when the target refuses the connection — so "the server is not running"
@@ -56,12 +63,20 @@ export type AnswerBody<T> = { readable: true; body: T } | { readable: false };
  * `answer.json()` had.
  */
 export async function readBody<T>(read: () => Promise<T>): Promise<AnswerBody<T>> {
+  let body: T;
   try {
-    return { readable: true, body: await read() };
+    body = await read();
   } catch {
     return { readable: false };
   }
+  // `null`, a number, a string, a boolean or an array: JSON, and still not a body any caller
+  // can read a field off (#230). Refused here, once, rather than guarded at five call sites.
+  return isObject(body) ? { readable: true, body } : { readable: false };
 }
+
+/** A JSON object: not `null`, not an array, and not a primitive. */
+const isObject = (value: unknown): boolean =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /**
  * The launch token guard's refusal (ADR-0004).

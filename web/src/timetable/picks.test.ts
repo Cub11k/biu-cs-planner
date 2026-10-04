@@ -243,3 +243,21 @@ it("still reads a 401 as having no token, whatever body the guard sent", async (
 
   await expect(fetchTimetable(api, FALL_2027)).resolves.toEqual({ kind: "unauthorized" });
 });
+
+/**
+ * A body of JSON `null`, served and refused (#230). `readBody` used to call it readable, and
+ * `read` then threw on `refused.body.reason` or `body.variantName` outside any `try`, so the
+ * promise rejected and the screen had nothing to say. Every function here reads through `read`,
+ * so all three are asked.
+ */
+it.each([200, 409])("makes an answer of a %i whose body is null", async (status) => {
+  const { api } = client(() => Response.json(null, { status }));
+
+  await expect(fetchTimetable(api, FALL_2027)).resolves.toEqual({ kind: "unreadable-answer" });
+  await expect(recordPick(api, FALL_2027, LECTURE, VERSION)).resolves.toEqual({
+    kind: "unreadable-answer",
+  });
+  await expect(
+    removePick(api, FALL_2027, { courseNumber: "89-110", lessonType: "הרצאה" }, VERSION),
+  ).resolves.toEqual({ kind: "unreadable-answer" });
+});

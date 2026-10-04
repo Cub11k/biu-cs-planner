@@ -255,3 +255,13 @@ it("reads a 401 with an unparseable body as this page having no launch token", a
 
   expect(await takeStep(api, "undo", VERSION)).toEqual({ kind: "unauthorized" });
 });
+
+/**
+ * A body of JSON `null`, served and refused (#230): `body.label` and `body.warnings` both threw
+ * on it, outside any `try`, which is the silence #206 closed reached by another input.
+ */
+it.each([200, 409])("reads a %i whose body is null as unreadable", async (status) => {
+  const { api } = client(() => Response.json(null, { status }));
+
+  await expect(takeStep(api, "undo", VERSION)).resolves.toEqual({ kind: "unreadable-answer" });
+});

@@ -253,3 +253,16 @@ it("reads a 401 with an unparseable body as this page having no launch token", a
 
   expect(await fetchSettings(api)).toEqual({ kind: "unauthorized" });
 });
+
+/**
+ * A body of JSON `null`, served and refused (#230): `served.language` and `refused.reason` both
+ * threw on it, outside any `try`, and the language switch was left with no account.
+ */
+it.each([200, 409])("reads a %i whose body is null as unreadable", async (status) => {
+  const { api } = client(() => Response.json(null, { status }));
+
+  await expect(fetchSettings(api)).resolves.toEqual({ kind: "unreadable-answer" });
+  await expect(saveSettings(api, { language: "he" }, VERSION)).resolves.toEqual({
+    kind: "unreadable-answer",
+  });
+});
