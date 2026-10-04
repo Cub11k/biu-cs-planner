@@ -285,11 +285,16 @@ const nTests = (n: number): string => `${n} ${n === 1 ? "test" : "tests"}`;
  * today and is a parser that will meet a table it cannot read, and this is what notices.
  *
  * **Per file, and scoped by which files the run ran.** The run behind this report is the
- * coverage run, which is the node project alone, so its total is *smaller than the suite* by the
- * browser project. Comparing the two totals would therefore report a disagreement on every
- * tree and mean nothing. Compared file by file, the files the run did not run are named as
- * unchecked and the files it did run are checked exactly — which is the difference between
- * saying which run and presenting one run's number as another's.
+ * coverage run. It was the node project alone until #163, and its total was then *smaller than
+ * the suite* by the browser project, so comparing the two totals would have reported a
+ * disagreement on every tree and meant nothing. Compared file by file, the files the run did
+ * not run are named as unchecked and the files it did run are checked exactly — which is the
+ * difference between saying which run and presenting one run's number as another's.
+ *
+ * Since #163 that run is both projects, so a file it did not run is no longer the expected
+ * shape of the page but a run that came up short, and #257 is the observation that one once
+ * did. That is why the files are named as well as counted (`missing`), and why the summary row
+ * leads with them.
  */
 /**
  * Whether a run's count for one file confirms the source's.
@@ -310,6 +315,12 @@ type RunCheck = {
   ran: { files: number; tests: number };
   /** Files this report lists that the run did not run, and what the source counts in them. */
   unrun: { files: number; tests: number };
+  /**
+   * The same files by name, sorted. A run that collects fewer files than the source lists is
+   * the one failure this section cannot afford to describe quietly (#257), and a count without
+   * the names would send a reader to open every fold to find which.
+   */
+  missing: string[];
   /** Files where the two readings differ, each with both numbers. */
   disagree: Array<{ path: string; source: string; run: number }>;
   /** Test files the run ran that this report lists nowhere — a hole in its own walk. */
@@ -332,16 +343,26 @@ function runCheck(tests: readonly TestFile[], run: TestRun | undefined): RunChec
 
   const empty = { files: 0, tests: 0 };
   if (!run?.available) {
-    return { available: false, ran: empty, unrun: empty, disagree: [], unlisted: [], byFile };
+    return {
+      available: false,
+      ran: empty,
+      unrun: empty,
+      missing: [],
+      disagree: [],
+      unlisted: [],
+      byFile,
+    };
   }
 
   const ran = { files: 0, tests: 0 };
   const unrun = { files: 0, tests: 0 };
+  const missing: string[] = [];
   const disagree: RunCheck["disagree"] = [];
   for (const [path, { totals, collected }] of byFile) {
     if (collected === undefined) {
       unrun.files += 1;
       unrun.tests += totals.tests;
+      missing.push(path);
       continue;
     }
     ran.files += 1;
@@ -359,7 +380,7 @@ function runCheck(tests: readonly TestFile[], run: TestRun | undefined): RunChec
   // which is the defect this whole section exists to remove. It happens when the file is left
   // over from another tree or another root, so the paths do not match: `unlisted` then names
   // what it did run, and `available` is false because nothing here was checked.
-  return { available: ran.files > 0, ran, unrun, disagree, unlisted, byFile };
+  return { available: ran.files > 0, ran, unrun, missing: missing.sort(), disagree, unlisted, byFile };
 }
 
 /**
@@ -459,18 +480,32 @@ export function render(report: Report): string {
   }
   // Worded without "of them" for the same reason: this row is read wherever it sits, and a
   // pronoun in it would bind to whichever number the table happens to put above it.
+  //
+  // **A run short of files is said here first, and in bold** (#257). Until then this row read
+  // "agrees on every one" for a run that skipped a file outright, because agreement is judged
+  // only over the files a run ran: the gap was in a paragraph below and on the file's entry
+  // inside a fold, which is describing it rather than saying it. A run that quietly collects
+  // one file fewer is the failure that would make this whole cross-check agree with itself and
+  // be wrong, so it outranks a disagreement about a count and is never a clause after one.
+  const disagreeing = `${checked.disagree.length} ${checked.disagree.length === 1 ? "file" : "files"}`;
   out.push(
     !checked.available
       ? checked.unlisted.length
         ? "| A run to check it against | a run left a count, but it ran none of the files " +
           "listed here — see below |"
         : "| A run to check it against | none — no test run left its own count beside this report |"
-      : checked.disagree.length
-        ? `| A run to check it against | **it disagrees on ${checked.disagree.length} ` +
-            `${checked.disagree.length === 1 ? "file" : "files"}** — named below |`
-        : `| A run to check it against | ${nTests(checked.ran.tests)} across the ` +
-            `${checked.ran.files} ${checked.ran.files === 1 ? "file" : "files"} it ran, and it ` +
-            `agrees on every one |`,
+      : checked.unrun.files
+        ? `| A run to check it against | **the run collected ${checked.ran.files} ` +
+            `${checked.ran.files === 1 ? "file" : "files"}, fewer than the ${tests.length} the ` +
+            `source lists** — ${checked.unrun.files === 1 ? "the missing one is" : `the ${checked.unrun.files} missing are`} ` +
+            `named below` +
+            (checked.disagree.length ? `, and it disagrees on ${disagreeing} it did run` : "") +
+            " |"
+        : checked.disagree.length
+          ? `| A run to check it against | **it disagrees on ${disagreeing}** — named below |`
+          : `| A run to check it against | ${nTests(checked.ran.tests)} across the ` +
+              `${checked.ran.files} ${checked.ran.files === 1 ? "file" : "files"} it ran, and it ` +
+              `agrees on every one |`,
   );
   if (t) {
     out.push(`| Statements | \`${bar(t.statements)}\` ${t.statements}% |`);
@@ -485,9 +520,9 @@ export function render(report: Report): string {
   out.push("");
 
   // Which run, said in the report rather than left for a reader to assume. The run behind this
-  // report is the coverage run and the coverage run is the node project, so its total is
-  // smaller than the suite's by the browser project. Naming that is the difference between a
-  // cross-check and a second misleading number: a node-only count printed beside a whole-tree
+  // report is the coverage run, which may still be smaller than the suite — a `--project node`
+  // run by hand, or one that came up short. Naming that is the difference between a
+  // cross-check and a second misleading number: a partial count printed beside a whole-tree
   // count, with nothing saying which was which, would replace #140's defect rather than fix it.
   if (!checked.available) {
     out.push(
@@ -538,6 +573,20 @@ export function render(report: Report): string {
                 `check takes: every file the source was parsed for was also executed, so the ` +
                 `count above is not a parser's reading that nothing tried.`)),
     );
+    out.push("");
+  }
+  if (checked.available && checked.missing.length) {
+    // Named outside every fold, beside the paragraph that counts them, rather than only as a
+    // mark on each file's own entry: the summary row above sends the reader here.
+    out.push(
+      `**The run collected fewer files than the source lists.** ` +
+        `${checked.missing.length === 1 ? "This file holds" : "These files hold"} tests the ` +
+        "source counts and the run never collected. A run that ran part of the suite on purpose " +
+        "explains that; a run that was meant to be the whole suite and is not is the failure " +
+        "this cross-check exists to catch, so neither reading is chosen here:",
+    );
+    out.push("");
+    for (const path of checked.missing) out.push(`- \`${path}\``);
     out.push("");
   }
   if (checked.disagree.length) {

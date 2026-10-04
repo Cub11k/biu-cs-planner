@@ -1254,9 +1254,14 @@ describe("the number a reviewer reads as tests", () => {
       }),
     );
 
+    // The row says the run was short before anything else (#257). It used to read "4 tests
+    // across the 1 file it ran, and it agrees on every one" here, which is agreement over the
+    // files that ran, said where a reader takes it for the suite.
     expect(summary(markdown)).toContain(
-      "| A run to check it against | 4 tests across the 1 file it ran, and it agrees on every one |",
+      "| A run to check it against | **the run collected 1 file, fewer than the 2 the source " +
+        "lists** — the missing one is named below |",
     );
+    expect(summary(markdown)).not.toContain("agrees on every one");
     // The row carries no pronoun, so it reads the same wherever the table puts it.
     expect(summary(markdown)).not.toContain("of them, across");
     expect(markdown).toContain("that run is **not the whole suite**");
@@ -1330,6 +1335,67 @@ describe("the number a reviewer reads as tests", () => {
     expect(markdown).toContain(
       "**web/src/c.browser.test.tsx** — 1 test — not in the run this report was built beside",
     );
+  });
+
+  it("says so in the summary row, in bold, rather than agreeing over the files that ran", () => {
+    // The ruling on #257: make the case loud. The row is the part of the comment read at a
+    // glance, and before this it said "agrees on every one" of the two files that ran while a
+    // third was missing — true of what it checked, and the opposite of what a reader took away.
+    const markdown = render(
+      report({
+        tests: [
+          file("core/src/a.test.ts", entry("works")),
+          file("server/src/b.test.ts", entry("serves")),
+          file("web/src/c.browser.test.tsx", entry("draws the week")),
+        ],
+        run: ran({ "core/src/a.test.ts": 1, "server/src/b.test.ts": 1 }),
+      }),
+    );
+
+    expect(summary(markdown)).toContain(
+      "| A run to check it against | **the run collected 2 files, fewer than the 3 the source " +
+        "lists** — the missing one is named below |",
+    );
+    expect(summary(markdown)).not.toContain("agrees on every one");
+    // And named outside every fold, where the row sends the reader.
+    const named = markdown.slice(0, markdown.indexOf("<details>", markdown.indexOf("**Which run.**")));
+    expect(named).toContain("**The run collected fewer files than the source lists.**");
+    expect(named).toContain("- `web/src/c.browser.test.tsx`");
+    expect(named).not.toContain("- `core/src/a.test.ts`");
+  });
+
+  it("counts several missing files, and still says a disagreement it found as well", () => {
+    const markdown = render(
+      report({
+        tests: [
+          file("core/src/a.test.ts", parameterised("handles %s", 4)),
+          file("server/src/b.test.ts", entry("serves")),
+          file("web/src/c.browser.test.tsx", entry("draws the week")),
+        ],
+        run: ran({ "core/src/a.test.ts": 3 }),
+      }),
+    );
+
+    expect(summary(markdown)).toContain(
+      "| A run to check it against | **the run collected 1 file, fewer than the 3 the source " +
+        "lists** — the 2 missing are named below, and it disagrees on 1 file it did run |",
+    );
+    expect(markdown).toContain("These files hold tests the source counts and the run never collected");
+    expect(markdown).toContain("- `server/src/b.test.ts`\n- `web/src/c.browser.test.tsx`");
+    expect(markdown).toContain("**Where they disagree.**");
+  });
+
+  it("names no missing file when the run collected every one", () => {
+    const markdown = render(
+      report({
+        tests: [file("core/src/a.test.ts", entry("works"))],
+        run: ran({ "core/src/a.test.ts": 1 }),
+      }),
+    );
+
+    expect(summary(markdown)).toContain("agrees on every one");
+    expect(markdown).not.toContain("fewer than");
+    expect(markdown).not.toContain("**The run collected fewer files than the source lists.**");
   });
 
   it("names a file the two sources disagree about, and chooses neither", () => {
