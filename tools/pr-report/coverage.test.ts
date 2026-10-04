@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { readTestRun } from "./coverage.ts";
+import { readCoverage, readTestRun } from "./coverage.ts";
 
 /**
  * What a real test run left behind, read back.
@@ -41,6 +41,179 @@ const reporterJson = (files: Array<{ name: string; tests: number }>): string =>
       })),
     })),
   });
+
+
+/**
+ * A coverage summary — and optionally the detailed report beside it — written into a throwaway
+ * root, then read the way the report reads them.
+ *
+ * `readCoverage` derives the second path from the first by name, so the summary has to be called
+ * `coverage-summary.json` for this to exercise the real pairing rather than a path it was handed.
+ */
+function coverageFrom(
+  summary: string | undefined,
+  final?: string,
+  root = "/repo",
+): ReturnType<typeof readCoverage> {
+  const dir = mkdtempSync(join(tmpdir(), "pr-report-coverage-"));
+  try {
+    const summaryPath = join(dir, "coverage-summary.json");
+    if (summary !== undefined) writeFileSync(summaryPath, summary, "utf8");
+    if (final !== undefined) writeFileSync(join(dir, "coverage-final.json"), final, "utf8");
+    return readCoverage(summaryPath, root);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** The shape vitest's json-summary writes, reduced to what is read. */
+const metric = (pct: number, total = 10, covered = 10): Record<string, number> => ({ pct, total, covered });
+
+const summaryJson = (entries: Record<string, number>): string =>
+  JSON.stringify(
+    Object.fromEntries(
+      Object.entries(entries).map(([file, pct]) => [
+        file,
+        { statements: metric(pct), branches: metric(pct), functions: metric(pct), lines: metric(pct, 10, 7) },
+      ]),
+    ),
+  );
+
+describe("reading what a run measured", () => {
+  it("reads every file's row, by the path the report knows it as", () => {
+    const coverage = coverageFrom(
+      summaryJson({ total: 80, "/repo/core/src/a.ts": 100, "/repo/web/src/b.ts": 50 }),
+    );
+
+    expect(coverage.available).toBe(true);
+    // `total` is lifted out rather than left as a file called "total", which would otherwise
+    // render as a module with a suspiciously round coverage.
+    expect(coverage.total?.statements).toBe(80);
+    expect([...coverage.byFile.keys()]).toEqual(["core/src/a.ts", "web/src/b.ts"]);
+    expect(coverage.byFile.get("web/src/b.ts")).toEqual({
+      statements: 50,
+      branches: 50,
+      functions: 50,
+      lines: 50,
+      // Counted, not a percentage: 10 lines of which 7 are covered.
+      uncoveredLines: 3,
+    });
+  });
+
+  it("is available without a total, rather than withholding the rows it did read", () => {
+    const coverage = coverageFrom(summaryJson({ "/repo/core/src/a.ts": 100 }));
+
+    expect(coverage.available).toBe(true);
+    expect(coverage.total).toBeUndefined();
+    expect(coverage.byFile.size).toBe(1);
+  });
+
+  it("says nothing is available when no run left a summary", () => {
+    const coverage = coverageFrom(undefined);
+
+    expect(coverage).toEqual({ available: false, byFile: new Map(), deadFunctions: [] });
+  });
+
+  it("says nothing is available for a summary it cannot parse", () => {
+    // A run killed while writing leaves a truncated file. Throwing here would turn a
+    // half-finished test run into no report at all, where the report's whole purpose is to say
+    // what is known and what is not.
+    const coverage = coverageFrom('{"total": {"statements": {"pct": 80}');
+
+    expect(coverage.available).toBe(false);
+    expect(coverage.byFile.size).toBe(0);
+  });
+
+  it("says nothing is available for json of the wrong shape", () => {
+    for (const contents of ["null", "[]", '"a string"', "7"]) {
+      expect(coverageFrom(contents).available).toBe(false);
+    }
+  });
+
+  it("reads 0 for a metric that is missing or not a number, and skips an entry that is not a row", () => {
+    const coverage = coverageFrom(
+      JSON.stringify({
+        "/repo/a.ts": { statements: { pct: 90 }, lines: "not a metric" },
+        "/repo/b.ts": { statements: { pct: "90%" } },
+        "/repo/c.ts": null,
+        "/repo/d.ts": [],
+      }),
+    );
+
+    expect(coverage.byFile.get("a.ts")).toEqual({
+      statements: 90,
+      branches: 0,
+      functions: 0,
+      lines: 0,
+      uncoveredLines: 0,
+    });
+    // A percentage read as a string would render as `90%%` and sort as text; 0 is wrong in a way
+    // a reader can see, which a silent string is not.
+    expect(coverage.byFile.get("b.ts")?.statements).toBe(0);
+    expect([...coverage.byFile.keys()]).toEqual(["a.ts", "b.ts"]);
+  });
+
+  it("keeps a path outside the root, with the `../` that says so", () => {
+    // It can only come from a `coverage/` belonging to another tree. Such a path matches no
+    // module, so `collect` counts it in nothing and it cannot inflate a percentage or hide an
+    // unmeasured module — and keeping it visible is how a reader notices the wrong tree at all.
+    const coverage = coverageFrom(summaryJson({ "/elsewhere/src/a.ts": 100 }), undefined, "/repo");
+
+    expect([...coverage.byFile.keys()]).toEqual(["../elsewhere/src/a.ts"]);
+  });
+
+  it("names the functions the run never entered, and not the ones it did", () => {
+    const coverage = coverageFrom(
+      summaryJson({ "/repo/a.ts": 50 }),
+      JSON.stringify({
+        "/repo/a.ts": {
+          fnMap: {
+            "0": { name: "ran", decl: { start: { line: 4 } } },
+            "1": { name: "neverRan", decl: { start: { line: 11 } } },
+          },
+          f: { "0": 3, "1": 0 },
+        },
+      }),
+    );
+
+    expect(coverage.deadFunctions).toEqual([{ file: "a.ts", name: "neverRan", line: 11 }]);
+  });
+
+  it("names the dead functions even where the summary is absent, because one run wrote both", () => {
+    const coverage = coverageFrom(
+      undefined,
+      JSON.stringify({
+        "/repo/a.ts": { fnMap: { "0": { name: "neverRan", decl: { start: { line: 2 } } } }, f: { "0": 0 } },
+      }),
+    );
+
+    expect(coverage.available).toBe(false);
+    expect(coverage.deadFunctions).toEqual([{ file: "a.ts", name: "neverRan", line: 2 }]);
+  });
+
+  it("reads no dead functions from a detailed report it cannot parse, rather than throwing", () => {
+    const coverage = coverageFrom(summaryJson({ "/repo/a.ts": 50 }), '{"/repo/a.ts": {"fnMap":');
+
+    expect(coverage.available).toBe(true);
+    expect(coverage.deadFunctions).toEqual([]);
+  });
+
+  it("survives a detailed report whose entries are the wrong shape", () => {
+    const coverage = coverageFrom(
+      summaryJson({ "/repo/a.ts": 50 }),
+      JSON.stringify({
+        "/repo/a.ts": null,
+        "/repo/b.ts": { fnMap: "not a map", f: {} },
+        "/repo/c.ts": { fnMap: { "0": { name: "x", decl: { start: { line: 1 } } } } },
+        "/repo/d.ts": { fnMap: { "0": null, "1": { name: "", decl: null } }, f: { "0": 0, "1": 0 } },
+      }),
+    );
+
+    // `c.ts` carries no `f`, so nothing there is claimed as never entered: a missing hit count is
+    // not the claim "zero hits". `d.ts`'s unnamed entry is named rather than left blank.
+    expect(coverage.deadFunctions).toEqual([{ file: "d.ts", name: "(anonymous)", line: 0 }]);
+  });
+});
 
 describe("reading what a run collected", () => {
   it("counts the tests each file collected, by the path the report knows it as", () => {

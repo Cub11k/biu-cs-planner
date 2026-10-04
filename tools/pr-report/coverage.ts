@@ -8,6 +8,19 @@ import { relative } from "node:path";
  * writes: `readTestRun` below reads the run's own count of the tests it collected, from the
  * same directory and the same run. They belong together because they are the same evidence —
  * one file states what the run executed, the other how many tests it had to execute it with.
+ *
+ * **They are reached differently on purpose, and that was ruled rather than inherited (#176).**
+ * `readCoverage` is called inside `collect()`; `readTestRun` is called by `tools/pr-report/main.ts`,
+ * so `Report.run` is optional where `Report.coverage` is not. Moving it into `collect()` is three
+ * lines and was not done: `collect()` is shared with `tools/pr-review`, which reads the source for
+ * its graphs and runs no tests at all. An optional field says "this caller did not ask", which is
+ * what is true of the review; a required one would hand it `{ available: false, tests: 0 }`, a
+ * present-but-empty value that has to be read before it can be disbelieved. The symmetry argument
+ * is real — `collect()` already pays for a `readCoverage` the review never looks at — but that is
+ * an existing cost to leave alone, not a reason to add a second one and weaken a type to match it.
+ *
+ * Both readers read a file that may be absent, truncated or from another tree, and neither throws
+ * for it. A run killed part-way must cost the report its numbers, not the whole report.
  */
 export type FileCoverage = {
   statements: number;
@@ -25,15 +38,48 @@ export type Coverage = {
   deadFunctions: Array<{ file: string; name: string; line: number }>;
 };
 
-const pct = (m: { pct: number } | undefined): number => (m ? m.pct : 0);
+/**
+ * `JSON.parse` of a file that may not be there and may not be whole, as data and never as code
+ * (ADR-0007). `undefined` is "nothing readable here", and each caller turns that into its own
+ * "not available" answer rather than into a zero.
+ */
+function parseFile(path: string): unknown {
+  if (!existsSync(path)) return undefined;
+  try {
+    return JSON.parse(readFileSync(path, "utf8")) as unknown;
+  } catch {
+    return undefined;
+  }
+}
 
-const shape = (entry: Record<string, { pct: number; total: number; covered: number }>): FileCoverage => ({
-  statements: pct(entry["statements"]),
-  branches: pct(entry["branches"]),
-  functions: pct(entry["functions"]),
-  lines: pct(entry["lines"]),
-  uncoveredLines: (entry["lines"]?.total ?? 0) - (entry["lines"]?.covered ?? 0),
-});
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+
+/** A number, or 0 — `NaN` and `Infinity` included, since both would render as a percentage. */
+const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+
+const pct = (entry: Record<string, unknown>, key: string): number => {
+  const metric = entry[key];
+  return isRecord(metric) ? num(metric["pct"]) : 0;
+};
+
+/**
+ * One file's row. Every field is checked for the shape it is read as, so a reporter that changes
+ * costs the fields that changed and not the report: a missing metric reads as 0, which the table
+ * shows as 0% rather than as a blank a reviewer would read as "fine".
+ */
+const shape = (entry: Record<string, unknown>): FileCoverage => {
+  const lines = entry["lines"];
+  const total = isRecord(lines) ? num(lines["total"]) : 0;
+  const covered = isRecord(lines) ? num(lines["covered"]) : 0;
+  return {
+    statements: pct(entry, "statements"),
+    branches: pct(entry, "branches"),
+    functions: pct(entry, "functions"),
+    lines: pct(entry, "lines"),
+    uncoveredLines: total - covered,
+  };
+};
 
 /**
  * v8's detailed report carries a map of every function it instrumented and how many
@@ -41,35 +87,57 @@ const shape = (entry: Record<string, { pct: number; total: number; covered: numb
  * a function reached through a seam is exercised, whichever test called it.
  */
 function deadFunctionsFrom(finalPath: string, root: string): Coverage["deadFunctions"] {
-  if (!existsSync(finalPath)) return [];
-  const raw = JSON.parse(readFileSync(finalPath, "utf8")) as Record<
-    string,
-    { fnMap: Record<string, { name: string; decl: { start: { line: number } } }>; f: Record<string, number> }
-  >;
+  const raw = parseFile(finalPath);
+  if (!isRecord(raw)) return [];
+
   const dead: Coverage["deadFunctions"] = [];
   for (const [file, entry] of Object.entries(raw)) {
-    for (const [key, fn] of Object.entries(entry.fnMap ?? {})) {
-      if ((entry.f ?? {})[key] === 0) {
-        dead.push({ file: relative(root, file), name: fn.name, line: fn.decl.start.line });
-      }
+    if (!isRecord(entry)) continue;
+    const fnMap = entry["fnMap"];
+    if (!isRecord(fnMap)) continue;
+    const hits = isRecord(entry["f"]) ? entry["f"] : {};
+
+    for (const [key, fn] of Object.entries(fnMap)) {
+      // Exactly zero, not falsy: a function entered no times is the claim, and `undefined` from
+      // a shape that does not carry `f` is not that claim.
+      if (hits[key] !== 0 || !isRecord(fn)) continue;
+
+      const decl = fn["decl"];
+      const start = isRecord(decl) ? decl["start"] : undefined;
+      dead.push({
+        file: relative(root, file),
+        // An arrow assigned to nothing has no name in `fnMap`, and "" in a list of names a
+        // reviewer is meant to look up reads as a rendering fault rather than as a fact.
+        name: typeof fn["name"] === "string" && fn["name"] !== "" ? fn["name"] : "(anonymous)",
+        line: isRecord(start) ? num(start["line"]) : 0,
+      });
     }
   }
   return dead;
 }
 
 export function readCoverage(summaryPath: string, root: string): Coverage {
+  // The two files are one run's output, so the dead-function list is read even where the summary
+  // is not: a reader who has one of them should not lose the other.
   const dead = deadFunctionsFrom(summaryPath.replace("coverage-summary.json", "coverage-final.json"), root);
-  if (!existsSync(summaryPath)) return { available: false, byFile: new Map(), deadFunctions: dead };
 
-  const raw = JSON.parse(readFileSync(summaryPath, "utf8")) as Record<string, never>;
+  const raw = parseFile(summaryPath);
+  if (!isRecord(raw)) return { available: false, byFile: new Map(), deadFunctions: dead };
+
   const byFile = new Map<string, FileCoverage>();
   let total: FileCoverage | undefined;
 
   for (const [key, entry] of Object.entries(raw)) {
+    if (!isRecord(entry)) continue;
     if (key === "total") {
       total = shape(entry);
       continue;
     }
+    // A key outside `root` keeps its `../` prefix rather than being dropped or rebased. It can
+    // only come from a `coverage/` left by another tree, and such a path matches no module, so
+    // `collect` counts it in nothing: it cannot inflate a percentage or hide an unmeasured
+    // module. Kept visible, because silently discarding rows is how a summary from the wrong
+    // tree comes to look like a summary from this one.
     byFile.set(relative(root, key), shape(entry));
   }
 
