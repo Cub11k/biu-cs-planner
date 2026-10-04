@@ -201,6 +201,21 @@ const carriedShapes = (markdown: string): string[] =>
       return [`${found[1]} -> ${found[2]}${found[3] ? ` as ${found[3]}` : ""}`];
     });
 
+/**
+ * The declaration a pointer names, as `module#name`, so two barrels carrying one type collapse
+ * to the one type they both carry.
+ *
+ * Read back out of the rendered pointer — the module it names, and the declared name, which is
+ * the `as` tail where a clause renamed it and the pointer's own name otherwise. That is the walk
+ * a reader does when they follow one, and the summary's middle number has to be the count of
+ * what they land on.
+ */
+const declarationPointedAt = (pointer: string): string => {
+  const [name, target] = pointer.split(" -> ");
+  const [at, declared] = (target ?? "").split(" as ");
+  return `${at}#${declared ?? name}`;
+};
+
 /** The module each row of the coverage table names, in the order the table lists them. */
 function coverageRows(markdown: string): string[] {
   const body = folds(markdown).find((f) => f.summary.includes("Coverage, file by file"))?.body;
@@ -935,7 +950,7 @@ describe("a type a barrel carries", () => {
     ]);
     expect(carriedShapes(markdown)).toEqual(["Variant -> core/state/schema"]);
     expect(shapesSummary(markdown)).toContain(
-      "2 exported types, 1 of them re-exported by a barrel",
+      "2 exported types, 1 of them re-exported by a barrel in 1 place",
     );
   });
 
@@ -944,7 +959,7 @@ describe("a type a barrel carries", () => {
     // it declares 150. The pointers are counted too and said apart from the shapes, because a
     // count that silently dropped them would be the same defect the other way round.
     expect(shapesSummary(render(carried()))).toContain(
-      "1 exported types, 1 of them re-exported by a barrel",
+      "1 exported types, 1 of them re-exported by a barrel in 1 place",
     );
   });
 
@@ -1106,15 +1121,25 @@ describe("this repository", () => {
   });
 
   it("counts, in its own summary, exactly what the fold lists", () => {
-    // Both numbers, against the rendered lines rather than against the loop that wrote them.
+    // All three numbers, each derived from the rendered lines rather than from the loop that
+    // wrote them — and the middle one derived *differently* from the last, which is the point.
+    // Both reviewers of #202 caught the summary reading "89 of them", a row count presented as
+    // a subset of the types: the 89 pointers stand for 83 declarations, because six types are
+    // carried by two barrels each. A test that compared the summary against the pointer count
+    // would have locked that in, so this one collapses the pointers to the declarations they
+    // name, exactly as a reader following them would.
     const markdown = render(collect(ROOT));
     const rows = shapeRows(markdown).length;
-    const pointers = carriedShapes(markdown).length;
+    const pointers = carriedShapes(markdown);
+    const carried = new Set(pointers.map(declarationPointedAt));
 
     expect(rows).toBeGreaterThan(100);
-    expect(pointers).toBeGreaterThan(50);
+    expect(pointers.length).toBeGreaterThan(50);
+    // The gap is real on this tree, so the assertion below is not two spellings of one number.
+    expect(carried.size).toBeLessThan(pointers.length);
     expect(shapesSummary(markdown)).toContain(
-      `${rows} exported types, ${pointers} of them re-exported by a barrel`,
+      `${rows} exported types, ${carried.size} of them re-exported by a barrel in ` +
+        `${pointers.length} places`,
     );
   });
 

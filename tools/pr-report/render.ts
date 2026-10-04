@@ -695,7 +695,13 @@ export function render(report: Report): string {
     }
   }
   let shapeCount = 0;
-  let carriedCount = 0;
+  let pointerCount = 0;
+  // The declarations some barrel carries, counted as declarations. `pointerCount` is rows and
+  // this is things, and they differ: six of this repository's types are carried by two barrels
+  // each, so 89 pointers stand for 83 types. The summary says both and calls each what it is —
+  // "89 of them", with the 89 a row count, would be the defect #202 is about surviving on the
+  // pointer half of the same fold.
+  const carriedShapes = new Set<string>();
   for (const m of modules) {
     const types = m.exports.filter((e) => e.kind === "type");
     if (!types.length) continue;
@@ -719,7 +725,8 @@ export function render(report: Report): string {
     const own = types.filter((e) => !carries(e));
     const carried = types.filter(carries);
     shapeCount += own.length;
-    carriedCount += carried.length;
+    pointerCount += carried.length;
+    for (const e of carried) carriedShapes.add(`${e.declaredIn?.path}#${e.declaredIn?.name}`);
     shapes.push(`**${moduleName(m.path)}**`);
     shapes.push("");
     if (own.length) {
@@ -755,15 +762,21 @@ export function render(report: Report): string {
     shapes.push("");
   }
   // Shapes, not rows. The summary used to add the rows up, so it counted a type once per barrel
-  // that re-exported it and told a reader the repository held 253 types where it declares 150.
-  // The pointers are counted too and said separately, because they are the other half of what
-  // the fold lists and a count that silently left them out would be the same defect in reverse.
+  // that re-exported it and told a reader the repository held 253 types where it declares 164,
+  // under 150 distinct names. Three numbers now, each saying which of the three things it counts:
+  // the shapes listed, how many of those a barrel carries, and how many pointers that takes. The
+  // pointers are said because the fold lists them and a count that left them out would be the
+  // same defect in reverse; they are said *apart* from the types because they are not a subset
+  // of them.
   out.push(
     ...fold(
       title(
         "The shapes the data takes",
         `${shapeCount} exported types` +
-          (carriedCount ? `, ${carriedCount} of them re-exported by a barrel` : ""),
+          (pointerCount
+            ? `, ${carriedShapes.size} of them re-exported by a barrel in ${pointerCount} ` +
+              `place${pointerCount === 1 ? "" : "s"}`
+            : ""),
       ),
       shapes,
     ),

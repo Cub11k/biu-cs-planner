@@ -101,6 +101,63 @@ describe("a second module that follows a re-export chain", () => {
     expect(followers({ "core/src/x.ts": underAnyName })).toEqual(["core/src/x.ts#x"]);
   });
 
+  it("is seen however the function itself is spelled", () => {
+    // The four shapes a reviewer of #203 showed the first draft was blind to. Each is a full
+    // walk — it reads the origin's two halves and advances — and each was written a way the
+    // draft's `named` did not recognise, so a second walk parked as a method on a resolver
+    // class was invisible while the rule claimed "anywhere else is a finding".
+    const method = lines(
+      "export class Barrels {",
+      "  whereDeclared(ref, named, origins) {",
+      "    const step = origins.modules.get(ref)?.get(named);",
+      // Through a receiver, which is how a method reaches itself.
+      "    return step ? this.whereDeclared(step.specifier, step.name, origins) : ref;",
+      "  }",
+      "}",
+    );
+    const objectLiteral = lines(
+      "export const walk = {",
+      "  trace(at, origins) {",
+      "    for (;;) {",
+      "      const step = origins.modules.get(at.specifier)?.get(at.name);",
+      "      if (!step) return at;",
+      "      at = { specifier: step.specifier, name: step.name };",
+      "    }",
+      "  },",
+      "};",
+    );
+    const anonymousDefault = lines(
+      "export default function (at, origins) {",
+      "  for (;;) {",
+      "    const step = origins.modules.get(at.specifier)?.get(at.name);",
+      "    if (!step) return at;",
+      "    at = { specifier: step.specifier, name: step.name };",
+      "  }",
+      "}",
+    );
+    const namedExpression = lines(
+      "exports.trace = function go(ref, named, origins) {",
+      "  const step = origins.modules.get(ref)?.get(named);",
+      "  return step ? go(step.specifier, step.name, origins) : ref;",
+      "};",
+    );
+
+    expect(
+      followers({
+        "app/src/method.ts": method,
+        "app/src/object.ts": objectLiteral,
+        "app/src/default.ts": anonymousDefault,
+        "app/src/expression.ts": namedExpression,
+      }),
+    ).toEqual([
+      "app/src/method.ts#whereDeclared",
+      "app/src/object.ts#trace",
+      // An anonymous default is reported under the name it is imported by.
+      "app/src/default.ts#default",
+      "app/src/expression.ts#go",
+    ]);
+  });
+
   it("is a finding, where a follower at home is not", () => {
     // The rule is one module, so the walk's own module is quiet however many functions in it
     // read a chain — `resolveReExports` iterates over the same pair beside `declaringModule`
@@ -173,11 +230,31 @@ describe("this repository", () => {
     // The rule, against the tree rather than against a fixture. `strayFollowers` empty is the
     // clean state, exactly as `forbiddenEdges` returning `[]` is; a second follower written
     // anywhere under this root fails here and nowhere else.
+    //
+    // **No name is asserted.** A draft of this ended with
+    // `expect(found.map((f) => f.name)).toContain("declaringModule")`, and a reviewer of #203
+    // renamed the real walk to check the criterion: the two assertions below passed, and that
+    // third one failed — a red suite at an identifier, in the file whose whole subject is that
+    // no identifier is searched for. The two lines that remain are the rule, and they are
+    // indifferent to what the walk is called.
+    const sources = readSources(ROOT);
+    const found = reExportFollowers(sources);
+
+    expect(strayFollowers(sources)).toEqual([]);
+    expect(new Set(found.map((f) => f.path))).toEqual(new Set([FOLLOWER_HOME]));
+    expect(found.length).toBeGreaterThan(0);
+  });
+
+  it("over-reports inside the walk's own module, which is the direction it errs in", () => {
+    // Three functions in `FOLLOWER_HOME` match and one walk exists: `readModule` reads an
+    // origin's two halves off each export clause and loops over the statements, and calls
+    // `declaringModule` nowhere. Asserted rather than left implicit, because the module claims
+    // to over-report and a claim about a rule's failure direction should fail if it stops being
+    // true. `strayFollowers` reports none of them, so the cost is paid by nobody today.
     const found = reExportFollowers(readSources(ROOT));
 
-    expect(strayFollowers(readSources(ROOT))).toEqual([]);
-    expect(new Set(found.map((f) => f.path))).toEqual(new Set([FOLLOWER_HOME]));
-    expect(found.map((f) => f.name)).toContain("declaringModule");
+    expect(found.length).toBeGreaterThan(1);
+    expect(found.every((f) => f.path === FOLLOWER_HOME)).toBe(true);
   });
 
   it("reads the whole tree and not a list of files", () => {
