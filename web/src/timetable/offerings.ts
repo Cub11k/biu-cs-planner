@@ -6,7 +6,8 @@
  * answer the API can give, can be tested against a fake fetch.
  */
 import type { InferRequestType, InferResponseType } from "hono/client";
-import { readBody, type createApiClient } from "../api.ts";
+import type { createApiClient } from "../api.ts";
+import { readBody, UNAUTHORIZED } from "../body.ts";
 import type { Offering, Semester } from "./catalog.ts";
 
 export type ApiClient = ReturnType<typeof createApiClient>;
@@ -21,9 +22,6 @@ type ServedCatalog = Extract<Answer, { offerings: unknown }>;
 /** Why no Catalog was served. The API sends these with every answer that has none. */
 export type CatalogWarning = Extract<Answer, { warnings: unknown }>["warnings"][number];
 
-/** The guard answers before the route does, so its status is not one of the route's. */
-const UNAUTHORIZED = 401;
-
 export type OfferingsResult =
   | { kind: "served"; offerings: Offering[] }
   /**
@@ -37,7 +35,7 @@ export type OfferingsResult =
   /**
    * The answer arrived and its body is not one this page can read — Vite's HTML 500 when the
    * server is not running behind the dev proxy, hono's plain-text 404 for a path a newer
-   * bundle asks for (`readBody` in ../api.ts). Its own arm and not `refused` with no
+   * bundle asks for (`readBody` in ../body.ts). Its own arm and not `refused` with no
    * Warnings, because that is the shape `isAbsence` reads as "this year has no Catalog yet" —
    * an affirmative claim about the student's folder that nothing here knows (#171).
    */

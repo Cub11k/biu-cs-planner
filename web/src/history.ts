@@ -15,6 +15,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api.ts";
+import { UNAUTHORIZED } from "./body.ts";
 import type { ApiClient } from "./changes.ts";
 import type { InferRequestType, InferResponseType } from "hono/client";
 
@@ -74,9 +75,6 @@ export type HistoryStep =
   | { kind: "unauthorized" }
   /** The request never arrived: the server is not running, or not running here. */
   | { kind: "unreachable" };
-
-/** The guard answers before the route does, so its status is not one of the route's. */
-const UNAUTHORIZED = 401;
 
 /** A body that is neither shape the routes send. Neither flag is claimed from it. */
 const unnamed = (warnings: HistoryWarning[]): HistoryStep => ({

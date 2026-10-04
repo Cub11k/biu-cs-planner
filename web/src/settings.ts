@@ -33,7 +33,8 @@
  *     is a change to `core`'s schema and belongs in its own ticket.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, readBody } from "./api.ts";
+import { api } from "./api.ts";
+import { readBody, UNAUTHORIZED } from "./body.ts";
 import type { ApiClient } from "./changes.ts";
 import { LANGUAGES, type Language } from "./i18n/strings.ts";
 import type { InferRequestType, InferResponseType } from "hono/client";
@@ -96,9 +97,6 @@ export type SettingsResult =
   /** The request never arrived: the server is not running, or not running here. */
   | { kind: "unreachable" };
 
-/** The guard answers before the route does, so its status is not one of the route's. */
-const UNAUTHORIZED = 401;
-
 /**
  * The language the first render is in, before any State File has been read.
  *
@@ -118,7 +116,7 @@ const languageOf = (served: string): Language | undefined =>
  * no reason — which the screen says as "nothing changed" for a write and "could not be read" for a
  * read, both of which are what the student needs to hear.
  *
- * **A body that is not JSON at all is an answer rather than a crash**, and `readBody` in ./api.ts
+ * **A body that is not JSON at all is an answer rather than a crash**, and `readBody` in ./body.ts
  * is what makes it one. That guard used to be a private copy here; two more copies were written by
  * hand in `timetable/picks.ts` and `timetable/offerings.ts` and were both still letting `json()`
  * reject, which is #171 — so there is one of it now and the three modules share it. What each of

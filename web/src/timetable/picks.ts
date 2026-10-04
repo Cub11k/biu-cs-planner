@@ -8,7 +8,7 @@
  * "Architecture").
  */
 import type { InferRequestType, InferResponseType } from "hono/client";
-import { readBody } from "../api.ts";
+import { readBody, UNAUTHORIZED } from "../body.ts";
 import type { ApiClient } from "./offerings.ts";
 import type { Semester } from "./catalog.ts";
 
@@ -53,9 +53,6 @@ export type StateWarning = Extract<Answer, { reason: unknown }>["warnings"][numb
  */
 export type StateFileVersion = ServedTimetable["version"];
 
-/** The guard answers before the route does, so its status is not one of the route's. */
-const UNAUTHORIZED = 401;
-
 export type TimetableResult =
   | {
       kind: "served";
@@ -77,7 +74,7 @@ export type TimetableResult =
   /**
    * The answer arrived and its body is not one this page can read — Vite's HTML 500 when the
    * server is not running behind the dev proxy, hono's plain-text 404 for a path a newer
-   * bundle asks for (`readBody` in ../api.ts).
+   * bundle asks for (`readBody` in ../body.ts).
    *
    * Its own arm and not `refused` with no reason, which is what `settings.ts` makes of the
    * same body. That arm's sentence here is `picksUnreadable` — "your saved picks could not be
