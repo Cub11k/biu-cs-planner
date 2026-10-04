@@ -30,10 +30,10 @@
  * `SchemeControl` is told another tab chose; and `SchemeControl` reads it through
  * `storedScheme` twice more for the word it shows — at render, so the control's first paint has
  * one, and again in its mount effect, because by then the first answer can be out of date
- * (#168). No number is given because `SchemeControl` reads twice: a count here would be true
- * only if a *place* meant a module. `asSchemeChoice` stays the single place a value from
- * outside becomes a choice: the inline stamp keeps that true by narrowing nothing at all, and
- * `scheme.test.ts` fails if it starts to.
+ * (#168). No number is given: `SchemeControl` reads twice, so a number here has to say whether
+ * it counts modules or reads, and the one that used to be here said neither. `asSchemeChoice`
+ * stays the single place a value from outside becomes a choice: the inline stamp keeps that
+ * true by narrowing nothing at all, and `scheme.test.ts` fails if it starts to.
  *
  * **This module owns the attribute, and every stamp carries what the store says now.** The
  * three writers are `main.tsx` once at startup, `watchScheme` on an event it answers by
