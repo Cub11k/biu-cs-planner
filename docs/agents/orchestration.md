@@ -42,8 +42,8 @@ These hold regardless of what the table says:
   files most likely to be written outside a lane are the ones a lane table never thinks to list.
   **When no agent can be given one, the brief says so**, and the amendment is left to the
   orchestrator after the merge — as its own ticket, worktree and pull request, because the main
-  checkout stays on `dev` and holds no feature work (`worktrees.md`). On 2026-10-04 three of
-  the four agents edited `docs/adr/` with no row naming it, each edit correct and each one declared:
+  checkout stays on `dev` and holds no feature work (`worktrees.md`). On 2026-10-04 three of the
+  four agents edited `docs/adr/` with no row naming it, each edit correct and each one declared:
   PR #194 and PR #195 both amended `0014-where-a-preference-is-kept.md` — at its line 32 and its
   line 11, missing each other by luck of line numbers — and PR #197 amended
   `0004-localhost-auth-bearer-token.md`. #110 records the same thing in the run of 2026-09-24: #103
@@ -51,11 +51,11 @@ These hold regardless of what the table says:
   "outside every lane. Deliberately left rather than raced." Twice is a pattern.
 - **Prefix every scratch file with your ticket number *and* something that identifies you within
   the ticket, which no other writer in it is using** — `182-review-1-graphs.ts`, not
-  `182-graphs.ts`. The scratchpad is shared across
-  agents and sessions. A run in September 2026 had two scratch files overwritten mid-task by a
-  sibling agent, and one measurement briefly reported another worktree's numbers as its own. The
-  ticket number separates tickets, and a parent and its two reviewers are one ticket: all three
-  derive the same prefix and then reach for the same obvious stem — `graphs`, `counts`, `baseline`.
+  `182-graphs.ts`. The scratchpad is shared across agents and sessions. A run in September 2026 had
+  two scratch files overwritten mid-task by a sibling agent, and one measurement briefly reported
+  another worktree's numbers as its own. The ticket number separates tickets, and a parent and its
+  two reviewers are one ticket: all three derive the same prefix and then reach for the same obvious
+  stem — `graphs`, `counts`, `baseline`.
   On 2026-10-04 #182's agent followed the rule exactly and told both its reviewers to, and one of
   them overwrote the parent's `182-graphs.ts`; the parent noticed because the output was not in the
   format it had written, re-ran its graph checks from a uniquely named file, and reported the
