@@ -38,13 +38,13 @@
  * **This module owns the attribute, and every stamp carries what the store says now.** The
  * three writers in `web/src` are `main.tsx` once at startup, `watchScheme` on an event it
  * answers by re-reading, and `chooseScheme` at the moment it writes the store itself. The
- * blocking stamp in `web/index.html` writes it first, unnarrowed and before any module
- * runs, and `main.tsx` then stamps the narrowed value over it. No component
- * stamps, so no stamp can carry a value read during an earlier render — which is what #168
- * was: `SchemeControl`'s mount effect applied the choice its `useState` initialiser had read,
- * and a choice arriving from another tab in the window between that render and its commit was
- * applied by the watcher and then overwritten with the older one. A component asks the store
- * and shows the answer, and `scheme.test.ts` fails if one calls `applyScheme` again.
+ * blocking stamp in `web/index.html` writes it first when the key is set, unnarrowed and
+ * before any module runs, and `main.tsx` then replaces it with the narrowed value. No
+ * component stamps, so no stamp can carry a value read during an earlier render — which is
+ * what #168 was: `SchemeControl`'s mount effect applied the choice its `useState` initialiser
+ * had read, and a choice arriving from another tab in the window between that render and its
+ * commit was applied by the watcher and then overwritten with the older one. A component asks
+ * the store and shows the answer, and `scheme.test.ts` fails if one calls `applyScheme` again.
  *
  * Everything here takes the browser and the element as arguments rather than reaching for
  * `window` or `document`, which is what lets it be tested without either.
@@ -242,9 +242,9 @@ export type SchemeChangeTarget = {
  * `newValue` is deliberately ignored and the store is read again instead. That keeps
  * `storedScheme` the only reader of the key among the modules `web/src` ships, and
  * `asSchemeChoice` the only narrowing anywhere. The one shipped reader outside those modules
- * is the blocking stamp in `web/index.html`, which the module header lists: a classic script
- * cannot import either function, so it reads the key itself and narrows nothing, and the
- * narrowing keeps its one home. The re-read also makes the handler idempotent, so a second
+ * is the blocking stamp in `web/index.html`, which the module header lists: a script that has
+ * to block cannot import either function, so it reads the key itself and narrows nothing,
+ * and the narrowing keeps its one home. The re-read also makes the handler idempotent, so a second
  * event for the same value stamps the same attribute; and it makes a spurious event
  * harmless, which matters because `storage` also fires for `sessionStorage` — an event
  * carrying this key from some other area still ends in the answer `localStorage` gives. A
