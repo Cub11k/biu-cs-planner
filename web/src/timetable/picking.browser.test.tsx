@@ -935,6 +935,39 @@ it("sends the rest of the queue on the re-read, not on the revision just refused
 });
 
 /**
+ * The same wait, after an answer nobody could read (#231). A **200** that landed: the file moved
+ * to v1 and the page could not tell. Firing the next held click at v0 would be refused
+ * `state-file-changed`, so the student would read that their click was not saved because of a
+ * file change their own first click had made. It waits for the re-read instead.
+ */
+it("sends the rest of the queue on the re-read after an answer it could not read", async () => {
+  const release = holdTheRead();
+  const mounted = await openWeek();
+
+  tileFor(mounted, "01").click();
+  tileFor(mounted, "03", "Tirgul").click();
+  await waitForText(mounted, STILL_LOADING);
+
+  unreadableSave = 200;
+  release();
+
+  await vi.waitFor(() => {
+    if (!tileFor(mounted, "03", "Tirgul").classList.contains("is-picked")) {
+      throw new Error("the click behind the unreadable answer was not saved");
+    }
+  });
+  const recorded = sent.filter((request) => request.method === "POST");
+  expect(recorded.map((request) => request.body)).toMatchObject([
+    { groupNumber: "01", basedOn: "v0" },
+    // on the revision the re-read brought, which the first click's landing had moved
+    { groupNumber: "03", basedOn: "v1" },
+  ]);
+  // both landed, and nothing says a click was refused for a change the page itself made
+  expect(tileFor(mounted, "01").classList.contains("is-picked")).toBe(true);
+  expect(mounted.textContent).not.toContain(FILE_CHANGED);
+});
+
+/**
  * Two saves can be in flight at once now — a held click draining while the student clicks
  * again — and the second is refused because the first moved the file. If the success clears
  * the refusal's notice, the refused click is dropped with no account at all: #111's own
