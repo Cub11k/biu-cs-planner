@@ -1,7 +1,7 @@
 import { UNRESOLVED, type CallEdge } from "./calls.ts";
 import type { Coverage, TestRun } from "./coverage.ts";
 import type { ImportKind, Module } from "./surface.ts";
-import { mergeImports, moduleName, packageWorkspace } from "./surface.ts";
+import { graphLabel, mergeImports, moduleName, packageWorkspace } from "./surface.ts";
 import { totalTests, type TestFile, type TestTotals } from "./tests.ts";
 
 export type Report = {
@@ -206,7 +206,10 @@ function moduleMap(modules: Module[]): string {
   const lines = ["flowchart LR"];
   for (const [workspace, mods] of byWorkspace) {
     lines.push(`  subgraph ${id(workspace)}["${workspace}"]`);
-    for (const m of mods) lines.push(`    ${id(m.path)}["${esc(moduleName(m.path))}"]`);
+    // `graphLabel`, not `moduleName`: the node sits inside a subgraph labelled with the
+    // workspace, which is where the disambiguation #125 is about already comes from. Repeating
+    // it on the node would read as `core` inside a box called `core`.
+    for (const m of mods) lines.push(`    ${id(m.path)}["${esc(graphLabel(m.path))}"]`);
     lines.push("  end");
   }
   for (const edge of drawnEdges(modules)) {
@@ -228,6 +231,8 @@ function moduleMap(modules: Module[]): string {
  */
 function logicFlow(edges: CallEdge[]): string {
   if (!edges.length) return "flowchart LR\n  none[\"no internal calls found\"]";
+  // `moduleName`, the qualified spelling: this graph draws no workspace boxes, so a node
+  // labelled `index.createApi` would be the same collapse #125 is about one scope down.
   const label = (ref: string): string => {
     const [path, fn] = ref.split("#");
     return path === UNRESOLVED

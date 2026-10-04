@@ -642,7 +642,52 @@ export function resolveReExports(
   }));
 }
 
-export const moduleName = (path: string): string =>
+/**
+ * The name a *section* of the report calls a module: the workspace, then the path inside it,
+ * and the workspace alone for its entry point.
+ *
+ * **It has to tell two modules with the same basename apart, and that is the whole of #125.**
+ * Every workspace's entry point is `src/index.ts`, so stripping the workspace off reduced
+ * `core/src/index.ts`, `app/src/index.ts` and `server/src/index.ts` to the one word `index` —
+ * and once #101 gave those sections real content the report carried three folds headed
+ * `**index**` with nothing but sort order to tell them apart. A reader looking for what `app`
+ * exposes had to count.
+ *
+ * So: `core/src/index.ts` is `core`, `core/src/shoham/import.ts` is `core/shoham/import`, and
+ * `tools/pr-report/render.ts` — a path with no `src/` segment, which `TEST_ONLY_DIRS` brings in
+ * (#123) — is `tools/pr-report/render`, unchanged. The mapping drops the `src/` segment and a
+ * root `index`, and nothing else, so no two of the paths this report walks share an answer.
+ *
+ * `.tsx` keeps its extension here, as it always did: `web/src/App.tsx` is `web/App.tsx`.
+ * Stripping it would collapse a `scheme.ts` and a `scheme.tsx` in one folder into one name,
+ * which is the defect this function exists to not have.
+ *
+ * `graphLabel` is the other spelling, for the one caller that has the workspace in hand
+ * already.
+ */
+export const moduleName = (path: string): string => {
+  const bare = path.replace(/\.ts$/, "");
+  const inWorkspace = /^([^/]+)\/src\/(.*)$/.exec(bare);
+  const workspace = inWorkspace?.[1];
+  const rest = inWorkspace?.[2];
+  if (workspace === undefined || rest === undefined) return bare;
+  return rest === "index" ? workspace : `${workspace}/${rest}`;
+};
+
+/**
+ * The name a *graph node* calls a module: the path inside its workspace, and nothing of the
+ * workspace itself.
+ *
+ * Diverged from `moduleName` deliberately, and this is the caller #125 said to check: the
+ * module map draws every node inside a `subgraph` labelled with the workspace, so the
+ * workspace is already on the screen beside the node and repeating it would read as
+ * `core` inside a box called `core`. Shortness is what a flowchart label is judged on, and
+ * ambiguity is what the box already answers.
+ *
+ * Every other caller — a fold heading, a coverage row, a call-graph node, none of which sits
+ * inside a workspace box — takes `moduleName`.
+ */
+export const graphLabel = (path: string): string =>
   path.replace(/^[^/]+\/src\//, "").replace(/\.ts$/, "");
 
 /**

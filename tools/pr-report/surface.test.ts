@@ -4,7 +4,9 @@ import { dirname, join, resolve } from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import {
+  graphLabel,
   mergeImports,
+  moduleName,
   packageWorkspace,
   readModule,
   resolveReExports,
@@ -861,5 +863,54 @@ describe("a re-exported name's declaration", () => {
     );
 
     expect(defining).toEqual(["surface.ts"]);
+  });
+});
+
+/**
+ * What the report calls a module, in the two places it has to be called something: a section
+ * heading, where it must be unique, and a graph node, where it must be short.
+ */
+describe("naming a module", () => {
+  it("names a workspace's entry point after the workspace", () => {
+    // #125: every workspace's barrel is `src/index.ts`, and stripping the workspace off left
+    // three sections of one report headed `index`.
+    expect(moduleName("core/src/index.ts")).toBe("core");
+    expect(moduleName("app/src/index.ts")).toBe("app");
+    expect(moduleName("server/src/index.ts")).toBe("server");
+  });
+
+  it("tells two modules sharing a basename apart, which is the defect", () => {
+    const sharing = ["core/src/index.ts", "app/src/index.ts", "core/src/state/schema.ts", "core/src/catalog/schema.ts"];
+    const named = sharing.map(moduleName);
+
+    expect(named).toEqual(["core", "app", "core/state/schema", "core/catalog/schema"]);
+    expect(new Set(named).size).toBe(sharing.length);
+  });
+
+  it("names a module inside a workspace by its path within it", () => {
+    expect(moduleName("core/src/shoham/import.ts")).toBe("core/shoham/import");
+  });
+
+  it("leaves a `tools/` path alone, since it has no `src/` segment to drop", () => {
+    // The amendment on #125: `TEST_ONLY_DIRS` brought `tools/` into the report (#123), and
+    // `tools/` has `index`-shaped entry points of its own. Nothing here collapses them.
+    expect(moduleName("tools/pr-report/render.ts")).toBe("tools/pr-report/render");
+    expect(moduleName("tools/pr-report/index.ts")).toBe("tools/pr-report/index");
+    expect(moduleName("tools/ci/index.ts")).toBe("tools/ci/index");
+  });
+
+  it("keeps a `.tsx` extension, because dropping it would collapse a pair", () => {
+    // `web/src/scheme.ts` and a hypothetical `scheme.tsx` in the same folder are two modules.
+    // Stripping `.tsx` would give them one name, which is the defect this function is for.
+    expect(moduleName("web/src/App.tsx")).toBe("web/App.tsx");
+    expect(moduleName("web/src/scheme.ts")).toBe("web/scheme");
+  });
+
+  it("keeps a graph node label short, which is the other caller and the other trade-off", () => {
+    // A node is drawn inside a `subgraph` labelled with the workspace, so the workspace is
+    // already beside it. #125 asked whether one spelling serves both callers; it does not.
+    expect(graphLabel("core/src/index.ts")).toBe("index");
+    expect(graphLabel("core/src/shoham/import.ts")).toBe("shoham/import");
+    expect(graphLabel("tools/pr-report/render.ts")).toBe("tools/pr-report/render");
   });
 });
