@@ -249,11 +249,11 @@ const english = {
    * plain-text 404 for a path only a newer bundle asks for.
    *
    * **Not one of the five says whether anything was saved**, and `picksAnswerUnreadable` is the
-   * one that had to be talked out of it. `read` in `timetable/picks.ts` reaches this arm from the served arm
-   * as well as the refused one, so an unparseable **200** to a Pick gets this sentence and that
-   * write may perfectly well have landed — and the same sentence is shown for the week's own
-   * read, where nothing was attempted at all. What holds in every one of those is that the week
-   * on screen is not known to be the file, so that is all it says.
+   * one that had to be talked out of it. `read` in `timetable/picks.ts` reaches this arm from the
+   * served arm as well as the refused one, so an unparseable **200** to a Pick gets this sentence
+   * and that write may perfectly well have landed — and the same sentence is shown for the
+   * week's own read, where nothing was attempted at all. What holds in every one of those is
+   * that the week on screen is not known to be the file, so that is all it says.
    */
   catalogAnswerUnreadable:
     "The app answered with something this page could not read, so the catalog is not shown. " +

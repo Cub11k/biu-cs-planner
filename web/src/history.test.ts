@@ -59,7 +59,13 @@ it("says nothing about the buttons when the server does not answer that question
   // And the poll keeps its silence for a body that is not JSON at all, deliberately: this is
   // an ask and nobody pressed anything, so there is nothing the student is owed an account of
   // (#171's rule, kept by #206). The two steps below are acts and get one.
-  const unreadable = client(() => new Response("<h1>500</h1>", { status: 500 }));
+  //
+  // **A 200, and the status is the whole of whether this assertion tests anything.** It was
+  // written as a 500 and could not fail for the reason above it: `fetchAvailability` returns on
+  // `!answer.ok` before `json()` is ever called, so a 500 exercises the same branch the 401 two
+  // lines up already does and the body guard is never reached. Found by #209's reviewer, which
+  // proved it by moving the body read outside the catch and watching all 23 tests here still pass.
+  const unreadable = client(() => new Response("<h1>200</h1>", { status: 200 }));
   expect(await fetchAvailability(unreadable.api)).toBeUndefined();
 });
 

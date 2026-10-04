@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { readBody, UNAUTHORIZED } from "./body.ts";
+import { readBody } from "./body.ts";
 
 /**
  * Reading one answer's body, and the one status the contract does not describe.
@@ -42,15 +42,4 @@ it("hands back a body that is JSON but says nothing", async () => {
     readable: true,
     body: null,
   });
-});
-
-/**
- * The status the five sites compare against — four `read` functions and `changes.ts`'s poll
- * closure — measured against a real `Response`
- * rather than against the literal they each used to write — which is the only way this can fail
- * for the reason it is named after. `expect(UNAUTHORIZED).toBe(401)` restates the declaration and
- * would pass for any number both sides agreed on.
- */
-it("is the status a refused launch token actually arrives with", () => {
-  expect(new Response("", { status: 401 }).status).toBe(UNAUTHORIZED);
 });

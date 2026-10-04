@@ -68,8 +68,15 @@ export async function readBody<T>(read: () => Promise<T>): Promise<AnswerBody<T>
  *
  * One of it, for the five sites that each wrote their own (#208) — the four `read` functions in
  * `settings.ts`, `history.ts`, `timetable/picks.ts` and `timetable/offerings.ts`, and the poll
- * closure in `changes.ts`. The status is widened to `number` at every one of them deliberately: the guard answers before the route does, so
- * 401 is not among the answers the contract knows about, and nothing in `ApiType` will ever
- * narrow a comparison against it.
+ * closure in `changes.ts`. The status is widened to `number` at every one of them deliberately:
+ * the guard answers before the route does, so 401 is not among the answers the contract knows
+ * about, and nothing in `ApiType` will ever narrow a comparison against it.
+ *
+ * **Nothing in `body.test.ts` pins this number, and nothing there could.** A test beside it can
+ * only restate the declaration — `expect(UNAUTHORIZED).toBe(401)`, or the same literal wrapped
+ * in a `Response`, which adds an assertion that the platform keeps its own status and none about
+ * this code. What pins it is the five sites' own tests: each has a case that answers 401 and
+ * expects `unauthorized`, and setting this to 403 fails 17 of them across seven files. A test
+ * claiming otherwise was written here and removed (#209's reviewer).
  */
 export const UNAUTHORIZED = 401;
