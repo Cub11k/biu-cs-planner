@@ -66,6 +66,7 @@ export {
   backupDay,
   backupsToPrune,
   isStateFileName,
+  BackupRefusedError,
   NotAWorkspaceError,
   requireBackupRef,
   requireCatalogRef,

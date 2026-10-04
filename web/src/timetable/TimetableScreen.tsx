@@ -72,6 +72,8 @@ const REFUSAL_STRING = {
   "state-file-unreadable": "picksUnreadable",
   "state-file-changed": "picksStale",
   "workspace-refused": "picksUnreadable",
+  // The State File read fine and the backup could not be made, so not `picksUnreadable` (#229).
+  "backup-refused": "picksBackupRefused",
 } as const satisfies Record<NonNullable<StateRefusal>, StringKey>;
 
 /**
@@ -79,8 +81,8 @@ const REFUSAL_STRING = {
  * contract, so a reason added to `server/src/history.ts` is a compile error here rather than
  * a refusal the student never hears about.
  *
- * Four of the eight are the edit refusals an undo inherits by going through the same save
- * path (ADR-0013), and three of those four get their own sentence rather than the Pick's:
+ * Five of the nine are the edit refusals an undo inherits by going through the same save
+ * path (ADR-0013), and four of those five get their own sentence rather than the Pick's:
  * `picksStale` is an account of a click that was not saved, and a student who pressed Undo
  * did not click a Group. `workspace-not-ready` is the exception — "this folder is not a
  * workspace yet, so nothing can be saved in it" is the whole truth for either.
@@ -94,6 +96,7 @@ const HISTORY_REFUSAL_STRING = {
   "state-file-unreadable": "historyUnreadable",
   "workspace-refused": "historyUnreadable",
   "workspace-not-ready": "workspaceNotReady",
+  "backup-refused": "historyBackupRefused",
 } as const satisfies Record<NonNullable<HistoryRefusal>, StringKey>;
 
 /**
@@ -113,6 +116,7 @@ const SETTINGS_REFUSAL_STRING = {
   "state-file-unreadable": "settingsFileUnreadable",
   "state-file-changed": "settingsStale",
   "workspace-refused": "settingsFileRefused",
+  "backup-refused": "settingsBackupRefused",
 } as const satisfies Record<NonNullable<SettingsRefusal>, StringKey>;
 
 /**

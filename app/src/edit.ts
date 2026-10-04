@@ -7,7 +7,12 @@ import {
   type StateFileVersion,
   type StateFileWarning,
 } from "@biu-cs-planner/core";
-import { StateFileChangedError, WorkspaceRefusedError, type Workspace } from "./workspace.ts";
+import {
+  BackupRefusedError,
+  StateFileChangedError,
+  WorkspaceRefusedError,
+  type Workspace,
+} from "./workspace.ts";
 
 /**
  * Editing a State File: read it, apply a pure `state -> state` function from `core`, save
@@ -157,7 +162,16 @@ export type EditRefusal =
    * the one refusal that exists for that reason.
    */
   | "state-file-changed"
-  | "workspace-refused";
+  | "workspace-refused"
+  /**
+   * The save could not first keep a backup of what it would replace, so it saved nothing
+   * (#229). **Not about the State File**, which read perfectly well — the one refusal in this
+   * union that is not about the document the student is looking at, and its own arm for that
+   * reason: folded into `workspace-refused`, it reached the page as "your saved picks could not
+   * be read" while the week was on screen showing them. `BackupRefusedError` in
+   * `./workspace.ts` is how it is told apart.
+   */
+  | "backup-refused";
 
 export type EditOutcome =
   /** `version` is the revision this save wrote: what the caller's next save is based on. */
@@ -317,6 +331,10 @@ export async function editStateFile(
     // checked first, because the two ask the student for different things.
     if (error instanceof StateFileChangedError) {
       return { kind: "refused", reason: "state-file-changed", warnings: loaded.warnings };
+    }
+    // Before the base class it extends, or it would be worded as the State File's refusal.
+    if (error instanceof BackupRefusedError) {
+      return { kind: "refused", reason: "backup-refused", warnings: loaded.warnings };
     }
     if (error instanceof WorkspaceRefusedError) {
       return { kind: "refused", reason: "workspace-refused", warnings: loaded.warnings };

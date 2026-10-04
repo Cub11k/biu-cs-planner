@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import {
   BACKUP_KEEP_SAVES,
+  BackupRefusedError,
   NotAWorkspaceError,
   StateFileChangedError,
   WorkspaceRefusedError,
@@ -1687,8 +1688,11 @@ it("refuses the save, by name, when .backups is there and is not a folder", asyn
     .saveStateFile(ALICE, { json: { schemaVersion: 1, pins: [] }, basedOn: first })
     .catch((error: unknown) => error);
 
-  expect(refusal).toBeInstanceOf(NotAWorkspaceError);
-  expect((refusal as NotAWorkspaceError).folder).toBe("backups");
+  // a refusal of the backup and not of the State File (#229), carrying the refusal it was
+  expect(refusal).toBeInstanceOf(BackupRefusedError);
+  const cause = (refusal as Error).cause;
+  expect(cause).toBeInstanceOf(NotAWorkspaceError);
+  expect((cause as NotAWorkspaceError).folder).toBe("backups");
   expect((refusal as Error).message).toMatch(/backups is there and is not a folder$/);
   // the previous save survives, untouched
   expect(JSON.parse(await aliceOnDisk())).toEqual(STATE);
@@ -1778,8 +1782,9 @@ it.skipIf(!unreadableFilesArePossible)(
     await chmod(join(root, ".backups"), 0o700);
 
     // the snapshot could not be written either, so this save is refused rather than silently
-    // keeping no backup — which is the refusal the port's doc argues for
-    expect(refusal).toBeInstanceOf(WorkspaceRefusedError);
+    // keeping no backup — which is the refusal the port's doc argues for, and named as the
+    // backup's so the page does not word it as the State File's (#229)
+    expect(refusal).toBeInstanceOf(BackupRefusedError);
     // and nothing was lost: the previous save and its snapshots are all still there
     expect(JSON.parse(await aliceOnDisk())).toEqual({ schemaVersion: 1, pins: [] });
     expect(await workspace.listBackups(ALICE)).toHaveLength(BACKUP_KEEP_SAVES);

@@ -3,6 +3,7 @@ import { watch, type FSWatcher } from "node:fs";
 import { mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import {
+  BackupRefusedError,
   backupsToPrune,
   isStateFileName,
   NotAWorkspaceError,
@@ -974,7 +975,15 @@ export function fileSystemWorkspace(
       // destroyed the very file `.backups/` exists to hold. A first save replaces nothing and
       // so copies nothing. One extra snapshot of content that is still current — which is what
       // a failed rename after a written snapshot leaves — is harmless and prunes away.
-      if (replacing !== undefined) await snapshot(ref.name, replacing.bytes);
+      //
+      // A refusal out of the snapshot is said to be one (#229): nothing about the State File
+      // was wrong, and a caller that could not tell this from an unreadable one told the
+      // student their saved picks could not be read.
+      if (replacing !== undefined) {
+        await snapshot(ref.name, replacing.bytes).catch((error: unknown) => {
+          throw error instanceof WorkspaceRefusedError ? new BackupRefusedError(error) : error;
+        });
+      }
 
       await writeAtomically(ref, check.path, json);
       // after the save, because pruning only ever deletes and may not cost a save

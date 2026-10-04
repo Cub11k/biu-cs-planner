@@ -381,6 +381,30 @@ export class NotAWorkspaceError extends WorkspaceRefusedError {
 }
 
 /**
+ * A save refused because the snapshot it takes into `.backups/` could not be made — and not
+ * because of anything about the State File being saved (#229).
+ *
+ * `saveStateFile` copies what it is about to replace before it replaces it, and refuses the
+ * save when the copy cannot be made (its doc says why). Every refusal out of that step used
+ * to arrive as a bare `WorkspaceRefusedError`, indistinguishable from a State File that
+ * cannot be read or written, so `app/src/edit.ts` worded it as one and the page told the
+ * student their saved picks could not be read — about a file that had read perfectly well.
+ * This subclass is how the one case is told apart: an adapter raises it for whatever went
+ * wrong in the snapshot step, with its own refusal on `cause` and that refusal's sentence as
+ * its message, so nothing it said is lost.
+ *
+ * **Still a `WorkspaceRefusedError`**, so every caller that answers one keeps answering this
+ * one, and `name` is left as the base class's for `NotAWorkspaceError`'s reason. Nothing is
+ * written when it is raised: the snapshot is taken before the rename, so the State File is
+ * the one the save found.
+ */
+export class BackupRefusedError extends WorkspaceRefusedError {
+  constructor(refusal: WorkspaceRefusedError) {
+    super(refusal.message, { cause: refusal });
+  }
+}
+
+/**
  * What a State File holds, and which revision that content is.
  *
  * The version is produced by whatever read the file, because that is the only thing that

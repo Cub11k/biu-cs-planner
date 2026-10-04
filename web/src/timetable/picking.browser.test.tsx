@@ -17,6 +17,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import "../index.css";
 import type { Offering } from "./catalog.ts";
 import type { GroupPick } from "./picks.ts";
+import { t } from "../i18n/strings.ts";
 import { TimetableScreen } from "./TimetableScreen.tsx";
 
 /** October 2026: the Fall Semester of Academic Year 2027, which is what the fixture is. */
@@ -482,6 +483,34 @@ it("says the folder is not a workspace rather than that nothing is picked", asyn
   });
   expect(mounted.textContent).not.toContain("Nothing picked yet");
 });
+
+/**
+ * #229 as the student meets it: the State File read perfectly well and the save could not first
+ * make its backup. The sentence says that and nothing else — not that the saved Picks could not
+ * be read, which was what this refusal used to reach.
+ */
+it("says a click was not saved for want of a backup, and not that the picks are unreadable", async () => {
+  const mounted = await openWeek();
+
+  refuse = { reason: "backup-refused", warnings: [] };
+  tileFor(mounted, "01").click();
+
+  await waitForText(mounted, t("en", "picksBackupRefused"));
+  expect(mounted.textContent).not.toContain(t("en", "picksUnreadable"));
+});
+
+/** In Hebrew too, because every new string exists in both languages (`CLAUDE.md`). */
+it.each([
+  "picksBackupRefused",
+  "historyBackupRefused",
+  "settingsBackupRefused",
+] as const)(
+  "has %s in Hebrew, and not as the English sentence",
+  (key) => {
+    expect(t("he", key)).not.toBe(t("en", key));
+    expect(t("he", key)).toMatch(/[\u0590-\u05FF]/);
+  },
+);
 
 /**
  * #111, the window itself: the Catalog is served at once and the read of the State File is

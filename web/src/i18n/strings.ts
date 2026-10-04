@@ -103,9 +103,21 @@ const english = {
   /** The file, or the folder, could not be read at all. Nothing was written. */
   historyUnreadable: "The file your work is saved in could not be read, so nothing changed.",
   /**
+   * The save could not first make its backup, so it wrote nothing (#229). Three of these, one
+   * per pane, ending as that pane's other refusals end; the first half is shared and is the
+   * whole of what the reason says.
+   *
+   * **Not `picksUnreadable` or `historyUnreadable`**, which is what this used to reach: the
+   * State File read perfectly well, and it is the backup that could not be made. Nor does it
+   * say why the backup failed, or where backups are kept — the reason carries neither, and a
+   * folder named here would be a path in all but spelling (#216).
+   */
+  historyBackupRefused:
+    "The app could not make a backup of your saved work before changing it, so nothing changed.",
+  /**
    * A refusal the route named no reason for. The floor, and deliberately the floor: what is
-   * true of it is that nothing happened, and naming one of the eight causes would be wrong
-   * in the other seven. `picksHeldLost` is the same shape for the same reason.
+   * true of it is that nothing happened, and naming one of the nine causes would be wrong
+   * in the other eight. `picksHeldLost` is the same shape for the same reason.
    */
   historyNotDone: "Nothing changed.",
 
@@ -148,10 +160,14 @@ const english = {
   settingsFileRefused:
     "The file your preferences are saved in could not be read or written, so your preference was " +
     "not changed.",
+  /** `historyBackupRefused`'s sentence, for a preference. */
+  settingsBackupRefused:
+    "The app could not make a backup of your saved work before changing it, so your preference " +
+    "was not changed.",
   /**
    * A refusal the route named no reason for: an answer the contract has and this client cannot
-   * provoke. What is true of it is that nothing happened, and naming one of the four causes would
-   * be wrong in the other three — `historyNotDone` is the same shape for the same reason.
+   * provoke. What is true of it is that nothing happened, and naming one of the five causes would
+   * be wrong in the other four — `historyNotDone` is the same shape for the same reason.
    */
   settingsNotDone: "Your preference was not changed.",
   /**
@@ -344,6 +360,10 @@ const english = {
   picksStale:
     "The file changed since this page read it, so your click was not saved. " +
     "The week is the file as it is now — click again if you still want it.",
+  /** `historyBackupRefused`'s sentence, for a click on a Group. */
+  picksBackupRefused:
+    "The app could not make a backup of your saved work before changing it, so your click was " +
+    "not saved.",
   /**
    * A click made before the saved Picks had arrived. It is kept rather than sent on a
    * guess about a file the page has not read, so this says where it went (#111).
@@ -427,6 +447,8 @@ const hebrew: Record<StringKey, string> = {
     "הדף הציג גרסה ישנה יותר של העבודה השמורה, ולכן לא השתנה דבר. " +
     "הדף קרא את הקובץ מחדש — נסו שוב.",
   historyUnreadable: "לא ניתן היה לקרוא את הקובץ שבו נשמרת העבודה שלכם, ולכן לא השתנה דבר.",
+  historyBackupRefused:
+    "היישום לא הצליח ליצור גיבוי של העבודה השמורה שלכם לפני שינויה, ולכן לא השתנה דבר.",
   historyNotDone: "לא השתנה דבר.",
 
   settingsStale:
@@ -436,6 +458,8 @@ const hebrew: Record<StringKey, string> = {
     "לא ניתן היה לקרוא את הקובץ שבו נשמרות ההעדפות שלכם, ולכן ההעדפה לא שונתה.",
   settingsFileRefused:
     "לא ניתן היה לקרוא או לכתוב את הקובץ שבו נשמרות ההעדפות שלכם, ולכן ההעדפה לא שונתה.",
+  settingsBackupRefused:
+    "היישום לא הצליח ליצור גיבוי של העבודה השמורה שלכם לפני שינויה, ולכן ההעדפה לא שונתה.",
   settingsNotDone: "ההעדפה לא שונתה.",
   settingsUnread:
     "לא ניתן היה לקרוא את ההעדפות השמורות שלכם, ולכן היישום מציג את ברירות המחדל " +
@@ -512,6 +536,8 @@ const hebrew: Record<StringKey, string> = {
   picksStale:
     "הקובץ השתנה מאז שהדף קרא אותו, ולכן הלחיצה לא נשמרה. " +
     "השבוע מוצג כפי שהקובץ נראה עכשיו — לחצו שוב אם עדיין תרצו את הבחירה.",
+  picksBackupRefused:
+    "היישום לא הצליח ליצור גיבוי של העבודה השמורה שלכם לפני שינויה, ולכן הלחיצה לא נשמרה.",
   picksHeld: "הבחירות השמורות עדיין נטענות. הלחיצה שלכם ממתינה להן.",
   picksHeldLost: "הלחיצה שלכם לא נשמרה.",
 
