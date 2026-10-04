@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
@@ -1737,9 +1737,14 @@ it("names no path in either answer, and no State File", async () => {
  * the routes below the Catalog ones could not leak a path today and are here as the guard for the
  * next one that carries a message out.
  */
-const namesNoPath = (body: string, where: string): void => {
-  // the absolute path, which is what `requireJsonName` used to word itself with
+const namesNoPath = async (body: string, where: string): Promise<void> => {
+  // the absolute path, which is what `requireJsonName` used to word itself with — and the
+  // **resolved** one beside it, because `contained` and `usablePath` work on `realpath` output. A
+  // test root that is itself a symlink would otherwise let a leak of the resolved root through,
+  // and `mkdtemp(tmpdir())` is a symlink on macOS (`/var` → `/private/var`), where the two differ
+  // for every test in this file.
   expect(body, where).not.toContain(root);
+  expect(body, where).not.toContain(await realpath(root));
   // and the Workspace-relative one, which is how every other refusal in the adapter read: a
   // leading `./` is the whole of what made `./catalogs/2027.json` a path rather than a sentence
   expect(body, where).not.toContain("./");
@@ -1747,6 +1752,11 @@ const namesNoPath = (body: string, where: string): void => {
   expect(body, where).not.toContain(".backups");
   expect(body, where).not.toContain("catalogs/");
   expect(body, where).not.toContain("requirements/");
+  // the temporary a write goes through, whose name carries the pid and the real file's name. No
+  // refusal mentions it today — `UnwritableError` names the ref — and `.json` would catch the
+  // whole name, but not a truncation of it, and this is the string whose appearance would mean
+  // the adapter had started talking about its own files.
+  expect(body, where).not.toContain(".tmp-");
 };
 
 /**
@@ -1770,7 +1780,7 @@ it("names no path in a refusal when a Catalog cannot be read, on all four routes
   const listedBody = await listed.text();
   // the setup asserted rather than assumed: this is the refusal and not some other answer
   expect(JSON.parse(listedBody)).toMatchObject({ warnings: [{ kind: "workspace-refused" }] });
-  namesNoPath(listedBody, "GET offerings");
+  await namesNoPath(listedBody, "GET offerings");
   // **and it still says something true.** The other half of #216: a path removed with nothing
   // put in its place would leave a page unable to tell the student which file to go and look
   // at. `reason` is the refusal's own sentence (`app/src/queries.ts`), and it names the Catalog
@@ -1787,7 +1797,7 @@ it("names no path in a refusal when a Catalog cannot be read, on all four routes
 
   const one = await get("/api/catalog/2027/offerings/89-110");
   expect(one.status).toBe(409);
-  namesNoPath(await one.text(), "GET one offering");
+  await namesNoPath(await one.text(), "GET one offering");
 
   const exams = await get(EXAMS);
   expect(exams.status).toBe(200);
@@ -1795,11 +1805,11 @@ it("names no path in a refusal when a Catalog cannot be read, on all four routes
   expect(JSON.parse(examsBody)).toMatchObject({
     catalogWarnings: [{ kind: "workspace-refused" }],
   });
-  namesNoPath(examsBody, "GET exams");
+  await namesNoPath(examsBody, "GET exams");
 
   const imported = await post("/api/catalog/2027/import", CRAWL);
   expect(imported.status).toBe(409);
-  namesNoPath(await imported.text(), "POST import");
+  await namesNoPath(await imported.text(), "POST import");
 });
 
 /**
@@ -1825,7 +1835,7 @@ it("names no path when a Catalog resolves outside the Workspace", async () => {
       expect(JSON.parse(body), path).toMatchObject({ warnings: [{ kind: "workspace-refused" }] });
       expect(body, path).not.toContain("leaked");
       expect(body, path).not.toContain(outside);
-      namesNoPath(body, path);
+      await namesNoPath(body, path);
     }
   } finally {
     await rm(outside, { recursive: true, force: true });
@@ -1851,7 +1861,7 @@ it("names no path when the folder holding the Catalogs resolves outside the Work
     const body = await refused.text();
     expect(JSON.parse(body)).toMatchObject({ warnings: [{ kind: "workspace-refused" }] });
     expect(body).not.toContain(outside);
-    namesNoPath(body, "GET offerings");
+    await namesNoPath(body, "GET offerings");
   } finally {
     await rm(outside, { recursive: true, force: true });
   }
@@ -1902,7 +1912,7 @@ it("names no path in a refusal when the State File cannot be read, on every rout
     const body = await answer.text();
     // the refusal and not some other 409: every one of these is the port's, worded by `app`
     expect(JSON.parse(body), where).toMatchObject({ reason: "workspace-refused" });
-    namesNoPath(body, where);
+    await namesNoPath(body, where);
   }
 
   // and the file the refusals were about is exactly as it was left
@@ -1939,7 +1949,7 @@ it("names no path when the Workspace Layout cannot be created", async () => {
   expect(refused.status).toBe(409);
   const body = await refused.text();
   expect(JSON.parse(body)).toEqual({ reason: "workspace-refused" });
-  namesNoPath(body, "POST workspace");
+  await namesNoPath(body, "POST workspace");
 });
 
 it("names no path when the snapshots folder is there and cannot be listed", async () => {
@@ -1955,5 +1965,5 @@ it("names no path when the snapshots folder is there and cannot be listed", asyn
   expect(refused.status).toBe(409);
   const body = await refused.text();
   expect(JSON.parse(body)).toEqual({ reason: "workspace-refused" });
-  namesNoPath(body, "GET backups");
+  await namesNoPath(body, "GET backups");
 });

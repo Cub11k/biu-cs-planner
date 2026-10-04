@@ -2048,6 +2048,11 @@ it("names no path in any refusal it can make, over every operation of the port",
       expect(message, where).not.toContain(".json");
       expect(message, where).not.toContain(".backups");
       expect(message, where).not.toContain("catalogs/");
+      // the temporary a write goes through, whose name carries the pid and the real file's name.
+      // `UnwritableError` names the ref, and this is the string that would appear if it named the
+      // file it had actually been trying to write — which is the obvious thing to reach for when
+      // a write refusal is next made more specific.
+      expect(message, where).not.toContain(".tmp-");
       // the subject is said in the domain's words instead, so a caller that may not know the
       // Workspace has files in it still learns which thing was refused
       expect(message, where).toMatch(/Workspace|Catalog|State File|snapshot/);
