@@ -916,6 +916,29 @@ describe("a type a barrel carries", () => {
     ]);
   });
 
+  it("prints a module's own shapes above the names it only carries", () => {
+    // Both in one block, which `core/shoham/details` is on the real tree: a `DetailKey` it
+    // declares, and `RawDetail` it re-exports from `core/shoham/raw-crawl`.
+    const mixed = carried();
+    mixed.modules[0] = {
+      ...mixed.modules[0]!,
+      exports: [
+        { name: "DetailKey", kind: "type", signature: "{ courseNumber: string }" },
+        ...mixed.modules[0]!.exports,
+      ],
+    };
+    const markdown = render(mixed);
+
+    expect(shapeRows(markdown)).toEqual([
+      "type DetailKey = { courseNumber: string }",
+      "type Variant = { name: string }",
+    ]);
+    expect(carriedShapes(markdown)).toEqual(["Variant -> core/state/schema"]);
+    expect(shapesSummary(markdown)).toContain(
+      "2 exported types, 1 of them re-exported by a barrel",
+    );
+  });
+
   it("counts shapes rather than rows, which is the other half of the defect", () => {
     // The summary added the rows up, so it told a reader the repository held 253 types where
     // it declares 150. The pointers are counted too and said apart from the shapes, because a
