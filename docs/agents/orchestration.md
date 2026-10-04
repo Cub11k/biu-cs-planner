@@ -19,7 +19,7 @@ of them can see coming, because neither can read the other's uncommitted work.
 
 The table belongs in the brief, not in this file: it is rewritten for every run.
 
-Three things hold regardless of what the table says:
+These hold regardless of what the table says:
 
 - **Other worktrees are not yours.** `git worktree list` will show them. Never run a command
   with `-C` pointing at another worktree, and never run a repo-wide command from the main
@@ -31,6 +31,20 @@ Three things hold regardless of what the table says:
   a repo this size some parents still name a file in common — `issue-tracker.md` says so, and says
   not to answer it by splitting a parent back into atoms. Sequence them across runs instead. Do not
   put both in one table and hope the overlapping file is one neither of them reaches.
+- **The table names `CONTEXT.md` and every `docs/adr/` file the run expects to be touched**, each
+  one assigned to **at most one** agent. There is one `CONTEXT.md` and one `docs/adr/` for the whole
+  repo (`domain.md`, "Layout: single-context"), so two agents amending the record are two agents in
+  one file, which the top of this section already rules out. A table does not arrive at those files
+  on its own: an implementer reaches for the record *because* its own commit just made the record
+  false, and `CLAUDE.md` asks for exactly that — so the files most likely to be written outside a
+  lane are the ones a lane table never thinks to list. **When no agent can be given one, the brief
+  says so**, and the amendment is left to the orchestrator after the merge. On 2026-10-04 three of
+  the four agents edited `docs/adr/` with no row naming it, each edit correct and each one declared:
+  PR #194 and PR #195 both amended `0014-where-a-preference-is-kept.md` — at its line 32 and its
+  line 11, missing each other by luck of line numbers — and PR #197 amended
+  `0004-localhost-auth-bearer-token.md`. #110 records the same thing in the run of 2026-09-24: #103
+  landed "in a run with four other agents, two of them writing in `docs/adr/`", with `CONTEXT.md`
+  "outside every lane. Deliberately left rather than raced." Twice is a pattern.
 - **Prefix every scratch file with your ticket number.** The scratchpad is shared across agents
   and sessions. A run in September 2026 had two scratch files overwritten mid-task by a sibling
   agent, and one measurement briefly reported another worktree's numbers as its own. Never trust
