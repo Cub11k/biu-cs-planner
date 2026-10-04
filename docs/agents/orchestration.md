@@ -112,6 +112,18 @@ September 2026 (#136, #137, #153), and one of them then took two mutation result
 had silently reverted before catching it and re-running from a committed tree. All three caught it
 themselves and reported it unprompted. Commit, then mutate, then revert.
 
+**The restore has to name `HEAD:` — `git show :<path>` reads the index.** One character apart, and
+the index form is the one that can hand back something you did not ask for: `git stash` followed by
+`git stash pop` restores the working tree and leaves the **index at `HEAD`**, so a later
+`git show :<path> > <path>` writes the committed file over your work while reading exactly like
+`git show HEAD:<path>`, the revert the next paragraph names. On 2026-10-04 #209's agent lost an
+uncommitted `web/src/history.ts` that way and re-applied it from its own patch script. It was
+following the rule as written: the file named two spellings and the one sitting between them
+behaves like neither. The occurrence is recorded on #226; PR #222, which that run landed as, does
+not mention it. The conclusion is the one the paragraph above already draws, reached by a different
+command — restore only from something you committed, and check that the thing you restore from is
+the thing you think it is.
+
 **Revert with `git show HEAD:<path> > <path>`.** It writes the committed content back over the file,
 which is all the step needs, and it is the form that runs when `git checkout -- <file>` does not.
 The redirect overwrites the working file exactly as `checkout` does, so it is no safer with
