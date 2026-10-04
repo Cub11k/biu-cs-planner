@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
-import { memoryWorkspace } from "./workspace.memory.ts";
+import { memoryWorkspace, type MemoryWorkspace } from "./workspace.memory.ts";
 import { importCrawl } from "./catalog.ts";
+import { WorkspaceRefusedError, type Workspace } from "./workspace.ts";
 
 const CRAWL = {
   rows: [
@@ -78,5 +79,43 @@ it("refuses to overwrite a stored Catalog it cannot read, rather than losing it"
 
   expect(result.stored).toBe(false);
   expect(result.stored === false && result.reason).toBe("stored-catalog-unreadable");
+  expect(workspace.written()).toEqual([]);
+});
+
+/**
+ * The port's third answer to a read: not the bytes and not absence, but a file that is there
+ * whose bytes cannot be got at — a mode bit, a directory in its place, failing hardware (#109).
+ *
+ * The refusal is injected rather than produced, as `cannotBeRead` in `./edit.test.ts` injects
+ * it and for the same reason: the double has no unreadable files and is deliberately given no
+ * knob for one, so what is under test here is the mapping, and the adapter that raises it for
+ * real is tested against a real folder (`server/src/workspace.fs.test.ts`).
+ */
+const cannotBeRead = (workspace: MemoryWorkspace): Workspace => ({
+  ...workspace,
+  read: () =>
+    Promise.reject(
+      new WorkspaceRefusedError("refusing catalogs/2027.json: it is there and cannot be read (EISDIR)"),
+    ),
+});
+
+/**
+ * #116 where it reaches this use case, and #130's third ask.
+ *
+ * The test above is a stored Catalog whose **bytes** are not a Catalog. This one is a stored
+ * Catalog the port refuses outright, which used to come back as `undefined` — indistinguishable
+ * from a year with no Catalog at all — so the import merged into nothing and wrote the result
+ * over a year's Offerings it had never read. The hole was closed in the adapter and in the port's
+ * contract; until now this use case's own test file said nothing about it, so nothing here
+ * failed if the `catch` above `parseCatalogFile` were dropped.
+ */
+it("refuses an import when the stored Catalog cannot be read at all, and writes nothing", async () => {
+  const workspace = memoryWorkspace({ created: true });
+
+  const result = await importCrawl(cannotBeRead(workspace), CRAWL, { academicYear: 2027 });
+
+  expect(result.stored).toBe(false);
+  expect(result.stored === false && result.reason).toBe("workspace-refused");
+  // and nothing was merged into nothing and written over it
   expect(workspace.written()).toEqual([]);
 });

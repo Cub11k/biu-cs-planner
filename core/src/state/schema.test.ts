@@ -4,11 +4,13 @@ import {
   blockedTimeSchema,
   CURRENT_STATE_SCHEMA_VERSION,
   groupPickSchema,
+  settingsSchema,
   stateSchema,
   statusSchema,
   type BlockedTime,
   type GroupPick,
 } from "./schema.ts";
+import { DEFAULT_EXAM_SPACING_DAYS } from "../timetable/exams.ts";
 
 it("accepts several Attempts for the same Course in different Semesters", () => {
   const retaken = stateSchema.safeParse({
@@ -139,6 +141,37 @@ it("fills an all-but-empty file in, so a new State File is a version and nothing
     pins: [],
     settings: { language: "en", examSpacingDays: 3 },
   });
+});
+
+/**
+ * #164's bound, and the values it is a bound against. Why it has this shape — what `0` means, why
+ * there is no ceiling, and why a State File already holding a refused value still opens — is
+ * argued once, on the field in `./schema.ts`, and deliberately not again here.
+ *
+ * The infinities and `NaN` are handed to the schema directly, which is the only place they can be
+ * tested from: JSON can write neither, so no request body can carry one — `JSON.stringify` turns
+ * both into `null`, which this refuses too.
+ */
+it("refuses an Exam spacing a number of days cannot be, and allows zero", () => {
+  const spacing = settingsSchema.shape.examSpacingDays;
+
+  const refusals = [-5, -1, 2.5, Number.NaN, Infinity, -Infinity, Number.MAX_SAFE_INTEGER + 2, null];
+  for (const refused of refusals) {
+    expect(spacing.safeParse(refused).success, String(refused)).toBe(false);
+  }
+  for (const allowed of [0, 1, 3, 14, 365]) {
+    expect(spacing.safeParse(allowed).success, String(allowed)).toBe(true);
+  }
+});
+
+/**
+ * One 3, and not two that agree today. The threshold the design settles on lives in the module
+ * that checks it (`../timetable/exams.ts`), and this field defaults to that constant: a file that
+ * says nothing about Exam spacing and a `checkExams` call that is given no threshold have to mean
+ * the same thing, and two literals would be free to drift apart silently.
+ */
+it("defaults the Exam spacing to the one the check itself defaults to", () => {
+  expect(settingsSchema.parse({}).examSpacingDays).toBe(DEFAULT_EXAM_SPACING_DAYS);
 });
 
 it("strips a key it does not know rather than carrying it", () => {

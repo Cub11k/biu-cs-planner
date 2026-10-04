@@ -8,6 +8,7 @@ import {
   importCrawl,
   listOfferings,
   pickGroup,
+  readExams,
   readSettings,
   readTimetable,
   removeGroupPick,
@@ -428,6 +429,60 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
       // claim a first save carries. It says nothing about where the file is (ADR-0002): it is
       // a hash of its content, and a caller can do nothing with it but hand it back.
       return c.json({ ...result.view, version: result.version, warnings: result.warnings });
+    })
+
+    /**
+     * One Semester's exam period: the sittings in date order, the Exam Clashes among them and
+     * the spacing Warnings — at the threshold **this student stored** (#164).
+     *
+     * `docs/design.md` has said "fewer than 3 days apart (adjustable in settings)" since the
+     * design was written, and until this route the adjustment changed nothing a student could
+     * see: `examSpacingDays` was readable and writable (#115) and no caller passed it to
+     * `checkExams`. `app/src/exams.ts` is that caller and this is where its answer comes out.
+     *
+     * **A route beside the week rather than a field on it.** An Exam belongs to the Offering and
+     * is shared by all its Groups (CONTEXT.md), so this answer needs the Catalog as well as the
+     * State File, while a Pick needs neither — and `TimetableView` is what every write route
+     * answers with, so folding the exam period in would put a Catalog read behind every Pick and
+     * every undo. The exam rail is its own panel in the side pane (`docs/design.md`, "Screens"),
+     * and this is its own read of its own two files.
+     *
+     * Domain operations and no file path, as everywhere: a year and a Semester name it, and which
+     * Catalog or State File holds the answer is the Workspace adapter's business (ADR-0002).
+     *
+     * Three lists of Warnings and not one, because they are about three things: the Exam Clashes
+     * and spacing live under `exams`, where they are the domain's own answer; `warnings` is about
+     * the State File the Picks and the threshold came from; `catalogWarnings` is about the
+     * Catalog the Exams came from. The State File's and the Catalog's `kind`s overlap — a
+     * `file-unreadable` is each file's way of being unreadable — so merging them would lose which
+     * file a student has to go and look at.
+     *
+     * A refusal is the named 409 the week answers with, and for the same reason: the Picks and
+     * the threshold are in the State File, so a State File that cannot be read leaves no question
+     * to answer. A Catalog that cannot be served is **not** a refusal — it is an exam period
+     * nobody has published, which comes back as a Warning and a rail that admits it is partial.
+     */
+    .get("/api/timetable/:year/:semester/exams", async (c) => {
+      const ref = timetableRef(c);
+      if (!ref.ok) return c.json({ error: ref.error }, 400);
+
+      const result = await readExams(workspace, ref.at);
+      if (result.kind === "refused") {
+        return c.json({ reason: result.reason, warnings: result.warnings }, 409);
+      }
+
+      return c.json({
+        // named as the week's answer names it, so a page can see that the rail it draws and the
+        // grid beside it are about one Variant
+        variantName: result.variantName,
+        exams: result.exams,
+        // what "too close" means here, so whatever draws the rail says the student's own number
+        // rather than repeating a default it would be free to get wrong
+        spacingDays: result.spacingDays,
+        version: result.version,
+        warnings: result.warnings,
+        catalogWarnings: result.catalogWarnings,
+      });
     })
 
     /**

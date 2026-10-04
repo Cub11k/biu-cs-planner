@@ -99,6 +99,32 @@ it("takes the threshold as a parameter, so raising it warns about a wider gap", 
   ]);
 });
 
+/**
+ * What `0` means, asserted where it is decided (#164). `settingsSchema` accepts a stored `0`
+ * because it is the student turning the spacing Warning off, and this is the arithmetic that
+ * makes that true: nothing is fewer than zero days from anything, and a gap of zero days is a
+ * Clash, which is reported as one and was never a spacing Warning. A floor of `0` therefore
+ * costs the student no Warning they would otherwise have had.
+ */
+it("raises no spacing Warning at a threshold of zero, but still reports the Clash", () => {
+  const offerings = [
+    offering("89-110", [{ moed: "מועד א", date: "2027-01-21" }]),
+    offering("89-112", [{ moed: "מועד א", date: "2027-01-22" }]),
+    offering("89-114", [{ moed: "מועד א", date: "2027-01-22" }]),
+  ];
+
+  const off = checkExams(offerings, { spacingDays: 0 });
+
+  expect(off.warnings.map((w) => w.kind)).toEqual(["exam-clash"]);
+  // and the same Exams at the design's threshold are that Clash plus a spacing Warning each
+  expect(checkExams(offerings).warnings.map((w) => w.kind)).toEqual([
+    "exam-clash",
+    "exam-spacing",
+    "exam-spacing",
+    "exam-spacing",
+  ]);
+});
+
 it("tells an Exam how many others crowd it, not which pairs are tight", () => {
   // Every one of the three is within three days of both the others, which as a list of
   // pairs would be three Warnings saying the same thing about the same week.

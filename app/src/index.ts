@@ -30,6 +30,8 @@ export {
   type SettingsOptions,
   type SettingsResult,
 } from "./settings.ts";
+// The exam period of one Variant, at the student's own spacing threshold (#164).
+export { readExams, type ExamsResult } from "./exams.ts";
 export {
   DEFAULT_STATE_FILE,
   pickGroup,

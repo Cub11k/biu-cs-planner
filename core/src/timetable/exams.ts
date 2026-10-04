@@ -7,7 +7,12 @@ import type { Exam } from "../catalog/schema.ts";
  * strings — no I/O, no wall clock, and no branch on what a `moed` happens to be called.
  */
 
-/** The spacing the design settles on, and what a setting should default to. */
+/**
+ * The spacing the design settles on, and what the setting defaults to: `settingsSchema`'s
+ * `examSpacingDays` takes its default from here (`../state/schema.ts`), so a State File that
+ * says nothing about Exam spacing and a call below that is given no threshold cannot come to
+ * mean two different numbers (#164).
+ */
 export const DEFAULT_EXAM_SPACING_DAYS = 3;
 
 /**
@@ -58,7 +63,18 @@ export interface ExamCheck {
 }
 
 export interface ExamCheckOptions {
-  /** Exams fewer than this many days apart are a spacing Warning. */
+  /**
+   * Exams fewer than this many days apart are a spacing Warning. `0` raises none at all, which
+   * is a student turning the Warning off: a gap of zero days is a Clash and is reported as one.
+   *
+   * **Still optional, and the default still reachable** (#164). The app passes the student's
+   * stored threshold on every call it makes — `app/src/exams.ts`, and `settingsSchema` gives the
+   * field a non-null default, so that path never omits it. This stays optional because the
+   * generator ranks combinations by Exam spacing before any State File is involved
+   * (`docs/design.md`, "Generator"), and because a pure function in `core` may not require its
+   * caller to have read a file. A caller that omits it asks for the design's spacing, which is
+   * the same constant the setting defaults to.
+   */
   spacingDays?: number;
 }
 
