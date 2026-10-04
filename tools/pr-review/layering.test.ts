@@ -5,7 +5,8 @@ import { describe, expect, it } from "vitest";
 import { collect } from "../pr-report/collect.ts";
 import { readModule, type ImportRef, type Module } from "../pr-report/surface.ts";
 import { readTestFile, type TestFile } from "../pr-report/tests.ts";
-import { LAYERS, WORKSPACES, explain, forbiddenEdges, summarise } from "./layering.ts";
+import { readSources } from "./followers.ts";
+import { LAYERS, TOOLS, WORKSPACES, explain, forbiddenEdges, summarise } from "./layering.ts";
 
 const ROOT = resolve(import.meta.dirname, "../..");
 
@@ -137,10 +138,11 @@ describe("edges the rule allows", () => {
     ).toEqual([]);
   });
 
-  it("says nothing about a file outside the four workspaces", () => {
-    // `tools/` is not governed by this rule: it reads all four on purpose.
+  it("says nothing about a file outside the four workspaces and `tools/`", () => {
+    // The root's own config is in neither, and is the real example of such a file. This used
+    // to be written with a `tools/` path, which is the hole #255 closed.
     expect(
-      broken([module("tools/pr-review/main.ts", { packages: ["@biu-cs-planner/core"] })]),
+      broken([module("vitest.config.ts", { packages: ["@biu-cs-planner/core"] })]),
     ).toEqual([]);
   });
 
@@ -471,6 +473,109 @@ describe("a test's build toolchain", () => {
   });
 });
 
+describe("`tools/`, which is no workspace and is judged anyway", () => {
+  // #255. The ruling on #210 lets a test drive `web`'s build toolchain "in any workspace and
+  // in `tools/`", and `tools/package/shipped.test.ts` does exactly that — while `judge` looked
+  // `tools` up among the four, found nothing, and skipped every import written there. Each case
+  // is written from real source, through the reader the report uses, for the reason the
+  // toolchain cases above are.
+
+  it("catches a `tools/` test reaching into web's source", () => {
+    const reaching = testFromSource(
+      "tools/package/shipped.test.ts",
+      [
+        'import { expect, it } from "vitest";',
+        'import { SCHEME_KEY } from "../../web/src/scheme.ts";',
+        'it("knows the key", () => expect(SCHEME_KEY).toBeDefined());',
+      ].join("\n"),
+    );
+    expect(broken([], [reaching])).toEqual(["tools → web"]);
+  });
+
+  it("catches a `tools/` module doing it, by path or by package name", () => {
+    const byPath = moduleFromSource(
+      "tools/package/stage.ts",
+      ['import { SCHEME_KEY } from "../../web/src/scheme.ts";', "export const k = SCHEME_KEY;"].join(
+        "\n",
+      ),
+    );
+    const byName = moduleFromSource(
+      "tools/package/stage.ts",
+      ['import type { ApiType } from "@biu-cs-planner/server";', "export type A = ApiType;"].join(
+        "\n",
+      ),
+    );
+    // Sorted by what is imported, so the package name comes first.
+    expect(broken([byPath, byName])).toEqual(["tools → server", "tools → web"]);
+  });
+
+  it("names the file, the import and the rule, as for any other edge", () => {
+    const [edge] = forbiddenEdges([], [testFile("tools/package/shipped.test.ts", ["web/src/scheme.ts"])]);
+    expect(edge).toMatchObject({
+      from: "tools/package/shipped.test.ts",
+      fromWorkspace: "tools",
+      imported: "web/src/scheme.ts",
+      toWorkspace: "web",
+      kind: "direction",
+      rule: TOOLS.rule,
+    });
+    expect(edge && explain(edge)).toBe(
+      "`tools/package/shipped.test.ts` imports `web/src/scheme.ts`; `tools` may not import " +
+        `\`web\` — ${TOOLS.rule}.`,
+    );
+  });
+
+  it("says nothing about the toolchain, the compiler, or another `tools/` module", () => {
+    // Everything `tools/` legitimately imports. The test file's package imports are not
+    // recorded at all (the blind spot `forbiddenEdges` lists), so the module form — which does
+    // record them — is the one that shows the rule itself staying quiet.
+    const drives = testFromSource(
+      "tools/package/shipped.test.ts",
+      [
+        'import { expect, it } from "vitest";',
+        'import { stage } from "./stage.ts";',
+        'import { collect } from "../pr-report/collect.ts";',
+        'it("builds", async () => {',
+        '  const vite = await import("vite");',
+        "  expect(vite && stage && collect).toBeTruthy();",
+        "});",
+      ].join("\n"),
+    );
+    const reads = moduleFromSource(
+      "tools/pr-report/surface.ts",
+      [
+        'import ts from "typescript";',
+        'import { build } from "vite";',
+        'import { readFileSync } from "node:fs";',
+        'import type { TestFile } from "./tests.ts";',
+        'import { forbiddenEdges } from "../pr-review/layering.ts";',
+        "export const all = [ts, build, readFileSync, forbiddenEdges];",
+        "export type T = TestFile;",
+      ].join("\n"),
+    );
+    expect(drives.targets.map((t) => t.specifier)).toEqual([
+      "tools/package/stage.ts",
+      "tools/pr-report/collect.ts",
+    ]);
+    expect(reads.packages.map((p) => p.specifier)).toEqual(["typescript", "vite"]);
+    expect(forbiddenEdges([reads], [drives])).toEqual([]);
+  });
+
+  it("leaves the four workspaces' own answers as they were", () => {
+    // The same `server` test that the toolchain cases above judge, alongside a `tools/` one:
+    // adding an importer must not change what the four are told.
+    expect(
+      broken(
+        [module("web/src/App.tsx", { packages: ["@biu-cs-planner/core"] })],
+        [
+          testFile("server/src/ui.test.ts", ["web/src/scheme.ts"]),
+          testFile("tools/package/shipped.test.ts", ["web/src/scheme.ts"]),
+        ],
+      ),
+    ).toEqual(["server → web", "tools → web", "web → core"]);
+  });
+});
+
 describe("real source text", () => {
   it("becomes a finding, through the same reader the report uses", () => {
     const reaching = moduleFromSource(
@@ -617,5 +722,22 @@ describe("this repository", () => {
     // from, so a rule-breaking import fails `npm test` and not only the PR comment.
     const derived = collect(ROOT);
     expect(forbiddenEdges(derived.modules, derived.tests).map(explain)).toEqual([]);
+  });
+
+  it("points every import under `tools/` the way its rule says, modules as well as tests", () => {
+    // `collect` hands over `tools/`'s test files and none of its other modules, so this reads
+    // those itself — every `.ts` under `tools/` that is not a test, found by the same whole-tree
+    // walk the follower check uses rather than by a list that would go stale. A module there
+    // importing `web/src/…` fails here, in `npm test` (#255).
+    const derived = collect(ROOT);
+    const modules = readSources(ROOT)
+      .filter((source) => source.path.startsWith("tools/") && !/\.test\.tsx?$/.test(source.path))
+      .map((source) => readModule(join(ROOT, source.path), ROOT));
+    const tests = derived.tests.filter((test) => test.path.startsWith("tools/"));
+
+    // That both lists hold something is what makes the empty answer below mean anything.
+    expect(modules.length).toBeGreaterThan(10);
+    expect(tests.length).toBeGreaterThan(10);
+    expect(forbiddenEdges(modules, tests).map(explain)).toEqual([]);
   });
 });
