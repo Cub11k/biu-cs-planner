@@ -95,6 +95,42 @@ composed parent is not a `wayfinder:map`: a map is a standing document with Fog 
 Decisions-so-far that outlives its children, while a parent is one unit of work that closes with
 them.
 
+### Verify the links from GitHub, not from the body you wrote
+
+Once the pull request exists, ask GitHub what it recorded:
+
+```sh
+gh pr view <n> --json closingIssuesReferences --jq '[.closingIssuesReferences[].number]'
+```
+
+The expected answer is the parent and every child. The body is an input; this list is the state,
+and the two can disagree — the same distinction "Verify a creation by number, not by a listing" in
+`orchestration.md` draws, one level in.
+
+**The spelling being right is not the link being right.** On 2026-10-04 PR #223 carried
+`Closes #205`, `Closes #202`, `Closes #203` and `Closes #204`, each with the keyword on its own
+line and outside any code fence, and none of its six commit messages put a closing keyword before
+a number. GitHub registered it as closing exactly one issue, the already-closed **#125**, and the
+four written on purpose were not among them. Re-writing the body did not change it, and all four
+children had to be closed by hand after the merge, with the reason on each (#202, #203, #204,
+#205). The other pull requests merged in the same batch registered correctly — #221 its parent
+#201 and all three children, #222 its parent #209 and all three, #224 its parent #181 and both,
+and #220 the one parentless ticket (#213) it closed — so this was one pull request's links, not a
+rule that does not work. #191's spelling rule stands unchanged; checking the list is the step it
+never covered.
+
+**A closing keyword in ordinary prose is a closing reference too.** #223's body also contains the
+sentence "a dated amendment on the closed #125", and `closed` is one of GitHub's keywords, so that
+phrase is where the #125 link came from — the note on #205's thread calls it "a mention, no
+keyword", and it is not one. Nothing is explained by that about the four that went missing, but two
+things follow for anyone writing a body: a sentence that puts `closes`, `fixed` or `resolved` next
+to a number would close that issue on merge, and a link you did not intend in the list is evidence
+the list is worth reading rather than evidence GitHub invented something.
+
+**When the list disagrees with the body, close the missing issues by hand after the merge**, with
+the reason on each, as #202 through #205 record. Do not wait for a re-parse to repair it, and do
+not carry the conclusion to the next pull request in either direction: check its list too.
+
 ### The lane test
 
 Two atomic asks belong in one ticket when **the files they would write overlap, or sit in the same
