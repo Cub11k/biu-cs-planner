@@ -396,6 +396,81 @@ describe("test files", () => {
   });
 });
 
+describe("a test's build toolchain", () => {
+  // The ruling on #210, pinned mechanically. `server/src/ui.test.ts` and
+  // `tools/package/shipped.test.ts` both drive `web`'s build toolchain through Vite's
+  // JavaScript API, and the module doc says why that is allowed. These are the half of it a
+  // test can hold: this check stays quiet about the toolchain, and still catches a test that
+  // reaches past it into `web`'s source. Written from real source rather than from object
+  // literals, so a change in `tools/pr-report` cannot make them pass vacuously.
+
+  it("says nothing about a server test importing vite, whichever way it is written", () => {
+    const toolchain = testFromSource(
+      "server/src/ui.test.ts",
+      [
+        'import { build } from "vite";',
+        'import { expect, it } from "vitest";',
+        'it("builds", async () => expect(await build({})).toBeDefined());',
+      ].join("\n"),
+    );
+    // `vite` is not one of the four workspaces, so it is outside what this judges — and a
+    // test's package imports are not recorded at all, so there is nothing to judge either.
+    expect(toolchain.targets).toEqual([]);
+    expect(forbiddenEdges([], [toolchain])).toEqual([]);
+  });
+
+  it("records nothing for the dynamic import the real test writes", () => {
+    const dynamic = testFromSource(
+      "server/src/ui.test.ts",
+      [
+        'import { expect, it } from "vitest";',
+        'it("builds", async () => {',
+        '  const { build } = await import("vite");',
+        "  expect(build).toBeDefined();",
+        "});",
+      ].join("\n"),
+    );
+    expect(dynamic.targets).toEqual([]);
+    expect(forbiddenEdges([], [dynamic])).toEqual([]);
+  });
+
+  it("still catches a test that reaches past the toolchain into web's source", () => {
+    // The boundary the ruling does not cross: driving the build is allowed, knowing `web`'s
+    // modules is not, and the reason `server/src/ui.test.ts` takes its two literals out of
+    // `web/index.html` by reading the file instead of importing `scheme.ts`.
+    const reaching = testFromSource(
+      "server/src/ui.test.ts",
+      [
+        'import { expect, it } from "vitest";',
+        'import { SCHEME_KEY } from "../../web/src/scheme.ts";',
+        'it("knows the key", () => expect(SCHEME_KEY).toBeDefined());',
+      ].join("\n"),
+    );
+    expect(broken([], [reaching])).toEqual(["server → web"]);
+  });
+
+  it("stays quiet for a shipped module importing it too, which no check can catch", () => {
+    const shipping = moduleFromSource(
+      "server/src/ui.ts",
+      ['import { build } from "vite";', "export const rebuild = () => build({});"].join("\n"),
+    );
+    // `vite` *is* recorded here — `modules` keeps a module's package imports, unlike a test's
+    // — and is still judged quiet, because this check reads direction between the four
+    // workspaces and nothing else. So "a module that ships may not" is a sentence for a
+    // reviewer rather than a guard, which the module doc says instead of implying otherwise.
+    expect(shipping.packages.map((one) => one.specifier)).toEqual(["vite"]);
+    expect(forbiddenEdges([shipping], [])).toEqual([]);
+  });
+
+  it("leaves the real server/src/ui.test.ts clean, which is the file ruled on", () => {
+    // Not a copy of it: the file itself, through the reader the report uses. Its only
+    // recorded target is in its own workspace, so the build it drives costs it no edge.
+    const ui = readTestFile(join(ROOT, "server/src/ui.test.ts"), ROOT);
+    expect(ui.targets.map((target) => target.specifier)).toEqual(["server/src/ui.ts"]);
+    expect(forbiddenEdges([], [ui])).toEqual([]);
+  });
+});
+
 describe("real source text", () => {
   it("becomes a finding, through the same reader the report uses", () => {
     const reaching = moduleFromSource(
