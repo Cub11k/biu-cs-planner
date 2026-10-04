@@ -234,10 +234,13 @@ export type TimetableScreenProps = {
    */
   settingsWarnings?: readonly SettingsWarning[];
   /**
-   * That the preferences could not be read, and which of the two things that means: `"never"` —
-   * the language on screen is the schema's default and the switch beside it is disabled; `"again"`
-   * — it is the last version this page read. Two sentences, because the first would be false in
-   * the second case (`../settings.ts`).
+   * That the page has no word on the preferences, and which of the three things that means:
+   * `"never"` — the language on screen is the schema's default and the switch beside it is
+   * disabled; `"again"` — it is the last version this page read; `"answer-unreadable"` — the
+   * answer itself could not be read, so the file was not reached at all as far as this page can
+   * tell. Three sentences, because each of the other two would be false of at least one of the
+   * rest: the first claims defaults are on screen, and the first two both claim a read of the
+   * preferences that an unparseable body says nothing about (`../settings.ts`, #207).
    */
   settingsUnread?: SettingsUnread | undefined;
   /**
