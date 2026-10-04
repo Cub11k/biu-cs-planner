@@ -101,7 +101,7 @@ _Avoid_: offering, availability
 
 **Suggested Layout**:
 The department's recommended placement of Courses by study year and Semester, relative to the Cohort.
-_Avoid_: template, default plan
+_Avoid_: template, default plan, the layout (which is the Workspace Layout)
 
 **Assignment**:
 The Requirement a passed or planned Course counts toward, computed by the solver unless Pinned.
@@ -116,6 +116,11 @@ _Avoid_: lock
 **Workspace**:
 The folder holding a student's Catalogs, Requirements Files, State Files and backups.
 _Avoid_: project, profile
+
+**Workspace Layout**:
+The folders a Workspace holds: `catalogs/`, `requirements/` and `.backups/`. The app offers to create them on first run and writes nothing until the student accepts. A State File is not in one of them: it sits at the Workspace root, so its name is what tells State Files apart. A Workspace can hold only part of the Workspace Layout, and which parts are missing is what "not a Workspace" means — they are reported by name rather than as one verdict. Not the Suggested Layout, which is about Courses and Semesters and has nothing to do with folders.
+_Avoid_: the layout, folder structure, scaffold
+_In code_: the constant is `WORKSPACE_LAYOUT` and one part of it is a `WorkspaceFolder`, whose members are the bare names `catalogs`, `requirements` and `backups`. The term is Workspace Layout everywhere else, this file and `docs/` included. Only the filesystem adapter maps a member to a folder name, and that is where `backups` becomes `.backups/`: a Workspace being a folder on disk at all is ADR-0003, and that adapter is the one place that knows it.
 
 **Launch Token**:
 The secret the server is started with and every request must carry, delivered to the page in the fragment of the URL the launcher prints. It is kept in the user config directory, never in the Workspace: one per user account on the machine, stable across restarts so a bookmark keeps working, and replaced by `biu-cs-planner rotate-token`, or by deleting the file, which the next launch replaces with a fresh one. Replacing the file is the whole of the revocation — nothing expires a Launch Token and nothing keeps a list of retired ones — and a server that is already running keeps accepting the retired one until it exits.
