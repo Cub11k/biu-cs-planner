@@ -339,10 +339,12 @@ it("takes a cleared store as a change to this key, because it is one", () => {
 });
 
 it("reads the store back rather than trusting the event, so it cannot be told a lie", () => {
-  // The event this watcher gets carries no value at all, and it still lands on the truth.
-  // That is what keeps `storedScheme` the only reader of the key and `asSchemeChoice` the
-  // only narrowing — and it makes a spurious event harmless, which matters because a
-  // `storage` event also fires for `sessionStorage`.
+  // The event this watcher gets carries no value at all, and it still lands on the truth:
+  // the store is read again and narrowed, so a value no palette matches is no choice here,
+  // just as it is once `main.tsx` has narrowed it at startup. That also makes a spurious
+  // event harmless, which matters because a `storage` event also fires for `sessionStorage`.
+  // Why the watcher re-reads rather than trusting `newValue` is `watchScheme`'s doc, and is
+  // not copied here.
   const { browser, held } = storage({ [SCHEME_STORAGE_KEY]: "solarized" });
   const { stamp, attributes } = element();
   const other = tab();
@@ -475,9 +477,9 @@ it("stamps the scheme before the first paint without a second copy of the narrow
   expect(body).toContain(SCHEME_ATTRIBUTE);
 
   // And it decides nothing about the value. `asSchemeChoice` is the single place a value from
-  // outside becomes a choice; the stamp cannot import it, so instead of copying the rule it
-  // narrows nothing and hands the string to `index.css`, which knows two values and treats the
-  // rest as no attribute at all.
+  // outside becomes a choice; the stamp has to block, so it cannot import it, and instead of
+  // copying the rule it narrows nothing and hands the string to `index.css`, which knows two
+  // values and treats the rest as no attribute at all.
   //
   // Naming the two schemes is the obvious way to copy the rule, so that is checked first —
   // but it is not the only way, and a scan for those three words would be walked straight
@@ -532,11 +534,12 @@ it("starts that watcher, and narrows the stamp, from the entry module", () => {
 /**
  * One owner for `data-theme`, which is the invariant #168 asked for in the code.
  *
- * `scheme.ts` holds every stamp and `main.tsx` makes the one at startup. A component that
- * stamped as well would be the defect back: its effect runs at commit with whatever its render
- * captured, so a choice arriving from another tab in between is applied by the watcher and then
- * overwritten by the older value. This is the same shape as the `var(--dark-` rule below —
- * a rule only a comment states is a rule until someone is in a hurry.
+ * Inside `web/src`, `scheme.ts` holds every stamp and `main.tsx` makes the one at startup; the
+ * only stamp outside it is `index.html`'s, which the tests here that read `ENTRY_DOCUMENT`
+ * check. A component that stamped as well would be the defect back: its effect runs at commit
+ * with whatever its render captured, so a choice arriving from another tab in between is
+ * applied by the watcher and then overwritten by the older value. This is the same shape as the
+ * `var(--dark-` rule below — a rule only a comment states is a rule until someone is in a hurry.
  *
  * **What this enforces is narrower than the invariant, and the title says which.** It is a scan
  * for two spellings, so it catches the regression that actually happened and the obvious way
@@ -547,7 +550,10 @@ it("starts that watcher, and narrows the stamp, from the entry module", () => {
  * writing path was moved there. The spelling, not the invariant, is what a text scan can hold.
  */
 it("keeps `applyScheme` and the attribute's name in this module and the entry", () => {
-  /** `scheme.ts` is where `applyScheme` lives; `main.tsx` makes the one stamp at startup. */
+  /**
+   * `scheme.ts` is where `applyScheme` lives; `main.tsx` makes the one stamp at startup inside
+   * `web/src`.
+   */
   const ALLOWED = ["scheme.ts", "main.tsx"];
 
   // The two ways a file would write the attribute itself. `applyScheme` covers an alias and a
