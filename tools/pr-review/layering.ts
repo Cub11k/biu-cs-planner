@@ -13,6 +13,46 @@ import type { TestFile } from "../pr-report/tests.ts";
  * `tools/pr-report/collect.ts`, the same ones the report and the cycle check describe.
  */
 
+/**
+ * **One thing this check is deliberately not about: the build toolchain a *test* drives.**
+ *
+ * `server/src/ui.test.ts` builds the UI by calling Vite's JavaScript API — `await
+ * import("vite")` — so that it asserts on a document a real build produced rather than on a
+ * `web/dist` that may be absent or, worse, stale (#169, #194). `tools/package/shipped.test.ts`
+ * does the same for the copy that ends up in the tarball (#211). Neither place declares
+ * `vite`: it resolves through the npm workspace's hoisted `node_modules`, where `web`'s
+ * devDependency puts it and where `vitest` — a root devDependency — also requires it as a
+ * peer, so a tree that can run the suite at all has it.
+ *
+ * **The ruling, taken on #210: a test may drive `web`'s build toolchain — in any workspace and
+ * in `tools/` — and a module that ships may not.** Three reasons, in the order they matter:
+ *
+ * - This rule is about **what the application's modules may know of each other**, and `vite`
+ *   is not one of the four workspaces, so an import of it is outside the set judged here at
+ *   all — exactly as `react`, `hono` and `zod` are. Nothing of `web`'s *source* is reached
+ *   either: a build tool reads `web/vite.config.ts` off disk, which is not an import and puts
+ *   no edge in any graph.
+ * - The dependency is a **test's**, and nothing a test imports can reach a student: `files` in
+ *   the root `package.json` names `dist`, `README.md` and `LICENSE` and nothing else, and
+ *   release.yml fails a pack that carries a `.test.` path.
+ * - Declaring it would not have covered the use that needs covering. `tools/` is no workspace
+ *   and has no `package.json` of its own, so the packaging test could be declared nowhere but
+ *   the root — and the honest statement is about a *kind of file*, not about one package list.
+ *   #210 asked for either the declaration or the exemption written down; a devDependency on
+ *   `server` would have recorded it in the one place a reader of this rule does not look, and
+ *   left the second test unexplained.
+ *
+ * What keeps this from becoming a licence is the second clause. A **module** — anything
+ * `collect` records, which is to say any file that is not a test — reaching for a build tool
+ * is a finding for a human reviewer, because `server` pulling Vite into `dist/cli.js` is a
+ * different claim altogether and a much larger one. `forbiddenEdges` cannot make that call: it
+ * reads static `import` statements between the four workspaces, and a dynamic import of a
+ * package is in no graph at all (see the blind spots listed on `forbiddenEdges`). So the tests
+ * pin the mechanical half instead — that this check stays quiet about `vite`, and still catches
+ * a test that reaches past the toolchain into `web`'s source — which turns a later widening of
+ * `workspaceOfPackage` or of `judge`'s early return into a failing test rather than a surprise.
+ */
+
 /** The four workspaces the layering rule governs, in the order they may depend. */
 export const WORKSPACES = ["core", "app", "server", "web"] as const;
 
