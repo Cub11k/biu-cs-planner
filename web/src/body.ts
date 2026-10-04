@@ -12,8 +12,11 @@
  *
  * The move is not tidying. Of the five modules that read an answer, `timetable/picks.ts` and
  * `timetable/offerings.ts` wanted nothing from `api.ts` but the reader, and dragged the module
- * that touches `window` into their import graph to get it. With both here, the client is imported
- * only by the modules that actually send a request.
+ * that touches `window` into their import graph to get it. With both here, neither reaches it at
+ * all: `offerings.ts` keeps only `import type { createApiClient }`, which `verbatimModuleSyntax`
+ * erases, and `picks.ts` has no edge to it left. What still reaches `api.ts` are the three modules
+ * that send requests and the two that need the token — `App.tsx` for `hasLaunchToken` and
+ * `main.tsx` for `claimToken`, which are the client's own business and not a body's.
  *
  * `UNAUTHORIZED` is here rather than left in `api.ts` because of the sentence all five sites had
  * written above their own copy of it: *the guard answers before the route does, so its status is
@@ -63,8 +66,9 @@ export async function readBody<T>(read: () => Promise<T>): Promise<AnswerBody<T>
 /**
  * The launch token guard's refusal (ADR-0004).
  *
- * One of it, for the five modules that each wrote their own (#208). The status is widened to
- * `number` at every one of those sites deliberately: the guard answers before the route does, so
+ * One of it, for the five sites that each wrote their own (#208) — the four `read` functions in
+ * `settings.ts`, `history.ts`, `timetable/picks.ts` and `timetable/offerings.ts`, and the poll
+ * closure in `changes.ts`. The status is widened to `number` at every one of them deliberately: the guard answers before the route does, so
  * 401 is not among the answers the contract knows about, and nothing in `ApiType` will ever
  * narrow a comparison against it.
  */

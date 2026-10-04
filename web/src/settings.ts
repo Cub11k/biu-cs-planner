@@ -426,13 +426,31 @@ export function useSettings(options: UseSettingsOptions = {}): SettingsUse {
                 fresh.kind === "refused" ? { kind: "refused", reason: fresh.reason } : fresh,
               );
               // The file is not what this page read, so the revision in hand is spent and the
-              // remedy is a fresher one. Only this reason: nothing else is mended by asking again,
-              // and holding the switch shut over a refusal with no answer coming would disable it
-              // until something else happened to re-render.
+              // remedy is a fresher one. Only this reason among the refusals: nothing else is
+              // mended by asking again, and holding the switch shut over a refusal with no answer
+              // coming would disable it until something else happened to re-render.
               if (fresh.kind === "refused" && fresh.reason === "state-file-changed") {
                 setRefusedOn(known);
                 setAsks((count) => count + 1);
               }
+              /**
+               * An answer nobody could read is the same problem without the server's word for it:
+               * the arm is reached from the served arm, so the `PATCH` may have written and
+               * `known.version` may already be spent. So this asks again — the same "stop relying
+               * on what you are holding and go and look" that `TimetableScreen.takeStep` does for
+               * a step it could not read (#206).
+               *
+               * **`setWrites` is deliberately not moved, and `setRefusedOn` deliberately not set.**
+               * `writes` means *this page saved a change*, which is exactly what is not known, and
+               * `App` adds it to the screen's change count — so moving it would encode the claim
+               * the sentence refuses to make. The screen's own revision is therefore left to the
+               * Workspace poll, which is how it hears about every other write it did not make:
+               * if the `PATCH` landed, the watcher saw the file change. `refusedOn` is left alone
+               * because `settingsAnswerUnreadable` does not tell the student to try again, and a
+               * switch held shut over a sentence that asks nothing of them is the control that
+               * cannot be used and explains nothing — #111's failure.
+               */
+              if (fresh.kind === "unreadable-answer") setAsks((count) => count + 1);
             })
             // In a `finally` and not in the `then`: an answer this module could not read used to
             // reject, leaving this flag set and the switch dead and silent for the life of the

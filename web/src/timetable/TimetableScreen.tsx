@@ -538,7 +538,9 @@ export function TimetableScreen({
       const unknown = answer.kind === "unreadable-answer";
       if (answer.kind === "moved" || stale || unknown) {
         setRereads((count) => count + 1);
-        // an undo is a save (ADR-0013), so it moved the revision the header is holding too
+        // A move is a save (ADR-0013), so it moved the revision the header is holding too. For an
+        // answer nobody could read, whether it moved is the thing not known — which is why the
+        // header is told to go and look rather than told that it moved.
         if (answer.kind === "moved" || unknown) onEdited?.();
         // Availability arrives in the body, so an unreadable one left the buttons on an older
         // answer. A move and a refusal both carried the flags and need no second request.

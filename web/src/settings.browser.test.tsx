@@ -603,6 +603,35 @@ it("says the same thing about an unreadable read on a page that had the preferen
   expect([ROOT.lang, ROOT.dir]).toEqual(["he", "rtl"]);
 });
 
+/**
+ * **It reads the preferences again rather than keeping a revision that may be spent.** The arm is
+ * reached from the served arm, so the `PATCH` may have written — and a page that went on holding
+ * `known.version` would have the next switch refused `state-file-changed` and tell the student
+ * their page was stale about a change they had already been told nothing was known about.
+ *
+ * This is the same "go and look" `TimetableScreen.takeStep` does for a step it could not read.
+ * What it deliberately does **not** do is move `writes`, which means *this page saved a change*
+ * and is exactly what is not known; the screen's own revision is left to the Workspace poll.
+ */
+it("reads the preferences again after a change it could not read the answer to", async () => {
+  const mounted = mount();
+  await settingsReady(mounted);
+  const before = settingsAsked();
+  unreadableChange = { status: 200 };
+
+  switchFor(mounted).click();
+
+  await vi.waitFor(() => {
+    expect(said(mounted)).toContain(t("en", "settingsAnswerUnreadable"));
+    expect(settingsAsked()).toBeGreaterThan(before);
+  });
+  // …and the switch is offered again, because the sentence asks nothing of the student: a control
+  // held shut over an account that gives them no next step is #111's failure
+  await vi.waitFor(() => {
+    expect(switchFor(mounted).disabled).toBe(false);
+  });
+});
+
 /** In Hebrew too, because a sentence in one language is half a sentence (`CLAUDE.md`). */
 it("says a change it could not read about in Hebrew as well", async () => {
   language = "he";

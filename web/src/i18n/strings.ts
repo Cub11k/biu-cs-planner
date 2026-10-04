@@ -234,7 +234,11 @@ const english = {
 
   /**
    * The app answered and this page could not read the answer (#171, #206, #207). Five sentences
-   * for one cause, because they appear in five places and only one of them is about a click.
+   * for one cause, because they appear in five places and the places differ in what they are an
+   * account **of**. Three answer for something the student did — a click on a Group, a press of
+   * undo or redo, a press of the language switch — and two answer for a pane that simply could
+   * not get what it went to read. The rule those three follow is #171's: an act gets an account,
+   * an ask does not, which is also why the Workspace poll and `fetchAvailability` say nothing.
    *
    * What they claim is exactly what is known: an answer arrived, and it was not one this page
    * can read. **Not** that the file changed, that it was unreadable, or that the Workspace
@@ -244,8 +248,8 @@ const english = {
    * development Vite answers an HTML 500 for a server that is not running, and hono answers a
    * plain-text 404 for a path only a newer bundle asks for.
    *
-   * **Neither says whether anything was saved**, and `picksAnswerUnreadable` is the one that had
-   * to be talked out of it. `read` in `timetable/picks.ts` reaches this arm from the served arm
+   * **Not one of the five says whether anything was saved**, and `picksAnswerUnreadable` is the
+   * one that had to be talked out of it. `read` in `timetable/picks.ts` reaches this arm from the served arm
    * as well as the refused one, so an unparseable **200** to a Pick gets this sentence and that
    * write may perfectly well have landed — and the same sentence is shown for the week's own
    * read, where nothing was attempted at all. What holds in every one of those is that the week

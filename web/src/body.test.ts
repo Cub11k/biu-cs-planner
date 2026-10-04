@@ -45,7 +45,8 @@ it("hands back a body that is JSON but says nothing", async () => {
 });
 
 /**
- * The status the five `read` functions compare against, measured against a real `Response`
+ * The status the five sites compare against — four `read` functions and `changes.ts`'s poll
+ * closure — measured against a real `Response`
  * rather than against the literal they each used to write — which is the only way this can fail
  * for the reason it is named after. `expect(UNAUTHORIZED).toBe(401)` restates the declaration and
  * would pass for any number both sides agreed on.
