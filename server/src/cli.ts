@@ -63,9 +63,9 @@ Commands:
 
                       The token is a file in your user config directory, never in your
                       Workspace: $XDG_CONFIG_HOME or ~/.config/biu-cs-planner/token, and
-                      %APPDATA%\\biu-cs-planner\\token on Windows (where $XDG_CONFIG_HOME
-                      is not consulted). rotate-token prints the exact path; deleting that
-                      file by hand does the same thing.
+                      %APPDATA%\\biu-cs-planner\\token on Windows, where %APPDATA% comes
+                      first and is all but always set. rotate-token prints the exact path;
+                      deleting that file by hand does the same thing.
 
 The server runs in the foreground on port ${DEFAULT_PORT}; if that port is taken it uses
 the next free one and says so. Stop it with Ctrl-C.`;

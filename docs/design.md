@@ -193,7 +193,7 @@ web/      thin React UI; talks only to the HTTP API through Hono's typed client.
     alice.state.json          (one or more State Files)
     .backups/
   ```
-- On first run the app offers to create this layout. Nothing is written without asking.
+- On first run the app offers to create this **Workspace Layout** — the folders above, which is what the code and both Workspace adapters mean by "the layout", and not the department's Suggested Layout. Nothing is written without asking.
 - **Autosave:** every edit saves the State File after a short delay, using atomic writes.
 - **Undo/redo:** an edit is a pure function in `core`; `app` keeps the previous State File value on a
   stack with the label the use case supplied, and undo writes an earlier value back through the same

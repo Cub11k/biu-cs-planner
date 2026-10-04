@@ -31,16 +31,16 @@ import {
  * **`list` has the same three answers now, and the same one of them is out of reach** (#129):
  * what the folder holds, `[]` when there is no folder, and a refusal when there is something
  * there that cannot be listed. The two ways the real adapter reaches that refusal are a mode
- * bit and a plain file standing where a folder of the layout belongs, and this double has
- * neither — `folders` is a list of which parts of the layout exist and there is nothing one of
- * them could be the wrong *kind* of, which is already why it cannot hold the write side of the
- * same file. So no knob, for the reason above, and the answer this double does owe the real one
- * is the other two: **an absent folder lists empty and never refuses.**
+ * bit and a plain file standing where a folder of the Workspace Layout belongs, and this double
+ * has neither — `folders` is a list of which parts of the Layout exist and there is nothing
+ * one of them could be the wrong *kind* of, which is already why it cannot hold the write
+ * side of the same file. So no knob, for the reason above, and the answer this double does owe
+ * the real one is the other two: **an absent folder lists empty and never refuses.**
  *
  * **One asymmetry worth naming rather than fixing.** `seed` puts a file in without going
- * through the layout check, so a Catalog seeded before `create` is listed here where on a disk
- * it could not exist at all — a file cannot sit in a folder that is not there. It is the
- * double's own incoherent state rather than a disagreement about `list`, and closing it would
+ * through the Workspace Layout check, so a Catalog seeded before `create` is listed here where
+ * on a disk it could not exist at all — a file cannot sit in a folder that is not there. It is
+ * the double's own incoherent state rather than a disagreement about `list`, and closing it would
  * mean a second copy of the real adapter's `folderFor` here, free to drift from it. Every test
  * that lists starts from `{ created: true }`; one that seeds before creating is leaning on this
  * and should not.
@@ -122,19 +122,20 @@ export function memoryWorkspace(
    * is a refusal nothing catches by name and a wording free to drift from the one a student
    * actually meets (#121).
    *
-   * **The other way a layout is not one, this double cannot hold**: a plain file standing where
-   * a folder of the layout belongs, which the real adapter refuses with the same error naming
-   * the folder. There is nothing here a `WorkspaceFolder` could be the wrong kind of, and the
-   * double is not given a knob for it for the reason it is given none for an unreadable file —
-   * a knob invented for one test is a behaviour of the double rather than of the port.
+   * **The other way the Layout is not one, this double cannot hold**: a plain file standing
+   * where a folder of the Workspace Layout belongs, which the real adapter refuses with the same
+   * error naming the folder. There is nothing here a `WorkspaceFolder` could be the wrong kind
+   * of, and the double is not given a knob for it for the reason it is given none for an
+   * unreadable file — a knob invented for one test is a behaviour of the double rather than of
+   * the port.
    */
   const requireLayout = (): void => {
     if (folders.length < WORKSPACE_LAYOUT.length) throw new NotAWorkspaceError();
   };
 
   /**
-   * Storing a file, which both writes go through so that the layout check and the copy are
-   * made in one place and cannot drift apart between them.
+   * Storing a file, which both writes go through so that the Workspace Layout check and the
+   * copy are made in one place and cannot drift apart between them.
    */
   const writeFile = (ref: WorkspaceRef, data: unknown): void => {
     const at = key(ref);
@@ -182,10 +183,10 @@ export function memoryWorkspace(
       return files.get(key(ref))?.data;
     },
     async write(ref, data): Promise<void> {
-      // Refused before the layout is looked at, as the real adapter refuses it: the ref being
-      // one this port will not write whole is about the target, not about the folder. A double
-      // that answered a cast with a conflict, or with a layout error, would prove the wrong
-      // refusal (#113).
+      // Refused before the Workspace Layout is looked at, as the real adapter refuses it: the
+      // ref being one this port will not write whole is about the target, not about the
+      // folder. A double that answered a cast with a conflict, or with a Layout error, would
+      // prove the wrong refusal (#113).
       requireCatalogRef(ref);
       writeFile(ref, data);
     },
@@ -195,8 +196,8 @@ export function memoryWorkspace(
     },
     async saveStateFile(ref: StateFileRef, save: StateFileSave): Promise<StateFileVersion> {
       // The name is refused before anything else looks at the file, as the real adapter
-      // refuses it before it builds a path, and the layout before the revision, as the real
-      // adapter asks in that order too.
+      // refuses it before it builds a path, and the Workspace Layout before the revision, as
+      // the real adapter asks in that order too.
       const at = key(ref);
       requireLayout();
       const found = files.get(at);

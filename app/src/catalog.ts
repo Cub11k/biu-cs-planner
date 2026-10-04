@@ -12,7 +12,7 @@ import { WorkspaceRefusedError, type Workspace } from "./workspace.ts";
  * Importing a Raw Crawl: `core` turns it into a Catalog, and the Workspace stores it.
  *
  * Two things are refused rather than done quietly. A folder that is not a Workspace yet
- * is not silently made into one — the student is offered the layout first. And a stored
+ * is not silently made into one — the student is offered the Workspace Layout first. And a stored
  * Catalog that cannot be read is not overwritten: it may be hand-edited, and replacing
  * it would lose whatever it holds (docs/design.md, "Storage"; ADR-0003).
  */

@@ -13,7 +13,7 @@ export type CatalogRef = { kind: "catalog"; academicYear: number };
 
 /**
  * A Workspace holds one or more State Files, at its root rather than in a folder of the
- * layout — `alice.state.json` — so the name is what tells them apart (docs/design.md,
+ * Workspace Layout — `alice.state.json` — so the name is what tells them apart (docs/design.md,
  * "Storage"). The name is a name and never a path: `isStateFileName` says which ones are,
  * and an adapter refuses the rest.
  */
@@ -61,10 +61,21 @@ export function isStateFileName(name: string): boolean {
 
 export type WorkspaceStatus = {
   ready: boolean;
-  /** The parts of the layout that do not exist yet. */
+  /** The parts of the Workspace Layout that do not exist yet. */
   missing: WorkspaceFolder[];
 };
 
+/**
+ * The **Workspace Layout**: the folders a Workspace holds, which is what this module and both
+ * adapters mean whenever they say "the layout".
+ *
+ * Named because the bare word was ambiguous. `CONTEXT.md` glosses **Suggested Layout** — the
+ * department's recommended placement of Courses across Semesters — and the code used "the
+ * layout" for something entirely unrelated: `catalogs/`, `requirements/` and `.backups/`, the
+ * folders `create` makes and `status` reports missing. Two meanings, one of them glossed and
+ * the other not, and a reader meeting "the layout does not exist yet" had no way to tell which
+ * was meant (#174). This constant already spelled the term; the prose now uses it.
+ */
 export const WORKSPACE_LAYOUT: WorkspaceFolder[] = ["catalogs", "requirements", "backups"];
 
 /**
@@ -105,14 +116,14 @@ export function requireStateFileName(name: string): void {
  * number — and that one is the same hole with a different key, because an adapter turns the
  * year straight into a file name: a year of `"../alice.state"` builds a path back out of
  * `catalogs/` and onto a State File at the Workspace root, which then gets overwritten whole
- * with no revision guard, no name rule and no layout check. Measured, not reasoned: it
+ * with no revision guard, no name rule and no Workspace Layout check. Measured, not reasoned: it
  * destroyed a Pin and wrote into a folder that was not a Workspace. A year is the reason a
  * `CatalogRef` needed no name rule, so the rule for it is that it really is a year.
  *
  * **The narrowing is type-only.** Both adapters still know how to name a State File, because
  * `readStateFile` and `saveStateFile` need them to, so a cast reaches a read that comes back
- * with no revision and a write with no guard at all — and, until this, no layout check
- * either: the `ref.kind === "state"` layout check `write` used to carry could not survive the
+ * with no revision and a write with no guard at all — and, until this, no Workspace Layout
+ * check either: the `ref.kind === "state"` check `write` used to carry could not survive the
  * narrowing, because the compiler rejects that comparison on a `CatalogRef`, so it moved into
  * `saveStateFile` and left `write` covering nothing. `requireJsonName` in
  * `server/src/workspace.fs.ts` already states the principle: every caller in the repo
@@ -147,8 +158,8 @@ export function requireCatalogRef(ref: WorkspaceRef): void {
 }
 
 /**
- * A write into a folder that is not a Workspace: the layout is not there yet, or something
- * that is not a folder stands where a folder of the layout belongs.
+ * A write into a folder that is not a Workspace: the Workspace Layout is not there yet, or
+ * something that is not a folder stands where a folder of it belongs.
  *
  * **One refusal shared by both adapters**, as `requireStateFileName` is, and for the same
  * reason: it was two plain `Error`s in `server/src/workspace.fs.ts` and a third copy of the
@@ -175,8 +186,8 @@ export function requireCatalogRef(ref: WorkspaceRef): void {
  */
 export class NotAWorkspaceError extends WorkspaceRefusedError {
   /**
-   * The part of the layout that is what is wrong, when one part is; `undefined` when the
-   * answer is the layout as a whole, which is what a folder nobody has created yet gives.
+   * The part of the Workspace Layout that is what is wrong, when one part is; `undefined` when
+   * the answer is the Layout as a whole, which is what a folder nobody has created yet gives.
    */
   readonly folder: WorkspaceFolder | undefined;
 
@@ -188,8 +199,9 @@ export class NotAWorkspaceError extends WorkspaceRefusedError {
    * shared and it is here.
    *
    * One thing this is deliberately **not** stretched to cover: `create` failing to make a folder
-   * of the layout, which `server/src/workspace.fs.ts` refuses with a `WorkspaceRefusedError` of
-   * its own. Every sentence here begins "refusing to write", and that is untrue of a create.
+   * of the Workspace Layout, which `server/src/workspace.fs.ts` refuses with a
+   * `WorkspaceRefusedError` of its own. Every sentence here begins "refusing to write", and
+   * that is untrue of a create.
    */
   constructor(part?: { folder: WorkspaceFolder; because: string }) {
     super(
@@ -281,7 +293,7 @@ export type WorkspaceChanged = () => void;
 
 export type Workspace = {
   status(): Promise<WorkspaceStatus>;
-  /** Creates the layout. Called only after the student accepts. */
+  /** Creates the Workspace Layout. Called only after the student accepts. */
   create(): Promise<void>;
   /**
    * What the Workspace holds of one kind, empty when there is **no folder** to hold it — and

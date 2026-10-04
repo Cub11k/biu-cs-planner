@@ -143,9 +143,10 @@ it("prints the port the server actually ended up on", () => {
 });
 
 /*
- * Rotation — the escape hatch for a token somebody else has seen (issue #99). The token
- * is stable for the life of the installation on purpose, so nothing expires it and the
- * file being replaced is the whole of the revocation.
+ * Rotation — the escape hatch for a token somebody else has seen (issue #99). The token is
+ * stable for as long as its file stands — one file per user account on the machine, which is
+ * the unit it is keyed on (#147, ADR-0004) — so nothing expires it and the file being
+ * replaced is the whole of the revocation.
  */
 
 it("gives a token that is not the old one, and the next launch uses the new one", async () => {
@@ -262,7 +263,7 @@ it.skipIf(!unreadableFilesArePossible)(
  * A rotation that wrote over the token file directly would truncate it first, so a write
  * that failed part way could leave 40 of a token's 43 characters — a string
  * `TOKEN_PATTERN` still accepts, since its floor is 40 and it cannot tell a prefix from a
- * token, and which the next launch would therefore trust for the life of the installation.
+ * token, and which the next launch would therefore trust for as long as that file stands.
  * The temporary-and-rename means a failure leaves the old token whole instead.
  */
 it.skipIf(!unreadableFilesArePossible)(
