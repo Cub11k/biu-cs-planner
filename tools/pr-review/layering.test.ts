@@ -722,7 +722,11 @@ describe("this repository", () => {
     // from, so a rule-breaking import fails `npm test` and not only the PR comment.
     const derived = collect(ROOT);
     expect(forbiddenEdges(derived.modules, derived.tests).map(explain)).toEqual([]);
-  });
+    // A budget rather than the default five seconds: `collect(ROOT)` parses the whole tree, and
+    // under `npm run report` this took 2542ms on 2026-10-04 while a whole-tree test in
+    // `tools/pr-report/render.test.ts` timed out at 5000ms on PR #265's report job. The same
+    // budget and reason as the whole-tree tests in `./followers.test.ts`.
+  }, 30_000);
 
   it("points every import under `tools/` the way its rule says, modules as well as tests", () => {
     // `collect` hands over `tools/`'s test files and none of its other modules, so this reads
@@ -741,5 +745,6 @@ describe("this repository", () => {
     expect(modules.length).toBeGreaterThan(10);
     expect(tests.length).toBeGreaterThan(10);
     expect(forbiddenEdges(modules, tests).map(explain)).toEqual([]);
-  });
+    // Whole tree, same budget, same reason.
+  }, 30_000);
 });

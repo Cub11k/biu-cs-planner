@@ -263,5 +263,9 @@ describe("the totals the report prints", () => {
     const entries = tests.reduce((n, file) => n + file.cases.length, 0);
 
     expect(totalTests(tests).tests).toBeGreaterThan(entries);
-  });
+    // A budget rather than the default five seconds: `collect(ROOT)` parses the whole tree, and
+    // under `npm run report` this took 2885ms on 2026-10-04 while a sibling in
+    // `render.test.ts` timed out at 5000ms on PR #265's report job. The same budget and reason
+    // as the whole-tree tests in `tools/pr-review/followers.test.ts`.
+  }, 30_000);
 });

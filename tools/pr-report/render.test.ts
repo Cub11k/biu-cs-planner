@@ -1034,7 +1034,14 @@ describe("this repository", () => {
     // project's only narrowed edge, the subject of #51, #58, #59 and #69 — and, until #77,
     // in neither this graph nor its counts.
     expect(moduleGraph(render(collect(ROOT)))).toContain("web_src_api_ts -.-> server");
-  });
+    // A budget rather than the default five seconds, because `collect(ROOT)` reads and parses
+    // every source file in the four workspaces and every test file in `tools/`, and pays for the
+    // TypeScript compiler's first load in whichever of these runs first. Under `npm run report`,
+    // which instruments all of it, this one took 2828ms on 2026-10-04 and then timed out at
+    // 5000ms on PR #265's report job, unchanged, once that PR added one more whole-tree pass to
+    // the suite. The same budget as `tools/pr-review/followers.test.ts` carries, for the same
+    // reason: a default timeout standing in for a measurement. The assertions are unchanged.
+  }, 30_000);
 
   it("draws every cross-workspace dependency the source actually writes", () => {
     // Re-derived from `Module.packages` rather than listed by hand, so a new cross-workspace
@@ -1070,7 +1077,8 @@ describe("this repository", () => {
     expect(expected.length).toBeGreaterThan(1);
     expect(boxArrows).toHaveLength(expected.length);
     for (const edge of expected) expect(graph).toContain(edge);
-  });
+    // Whole tree, same budget, same reason.
+  }, 30_000);
 
   it("heads no two sections with the same name, for all three barrels being `index.ts`", () => {
     // #125. `core/src/index.ts`, `app/src/index.ts` and `server/src/index.ts` all reduced to
@@ -1088,7 +1096,8 @@ describe("this repository", () => {
       expect(headings).toContain(workspace);
     }
     expect(headings).not.toContain("index");
-  });
+    // Whole tree, same budget, same reason.
+  }, 30_000);
 
   it("prints a name as often as the source declares it, never once per barrel", () => {
     // #202, over the tree the fold is actually read on. The source is the oracle rather than
@@ -1118,7 +1127,8 @@ describe("this repository", () => {
     // And the one `CLAUDE.md` sends a layering reviewer here for: carried, not copied.
     expect(printed.get("Catalog")).toBe(1);
     expect(carriedShapes(markdown)).toContain("Catalog -> core/catalog/schema");
-  });
+    // Whole tree, same budget, same reason.
+  }, 30_000);
 
   it("counts, in its own summary, exactly what the fold lists", () => {
     // All three numbers, each derived from the rendered lines rather than from the loop that
@@ -1141,7 +1151,8 @@ describe("this repository", () => {
       `${rows} exported types, ${carried.size} of them re-exported by a barrel in ` +
         `${pointers.length} places`,
     );
-  });
+    // Whole tree, same budget, same reason.
+  }, 30_000);
 
   it("points no arrow at a third-party package", () => {
     // `zod`, `hono` and `react` are in `Module.packages` beside the workspace names, and an
@@ -1152,7 +1163,8 @@ describe("this repository", () => {
 
     for (const pkg of ["zod", "hono", "react"]) expect(targets).not.toContain(pkg);
     expect(targets.length).toBeGreaterThan(1);
-  });
+    // Whole tree, same budget, same reason.
+  }, 30_000);
 });
 
 /**
