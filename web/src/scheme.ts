@@ -36,8 +36,10 @@
  * true by narrowing nothing at all, and `scheme.test.ts` fails if it starts to.
  *
  * **This module owns the attribute, and every stamp carries what the store says now.** The
- * three writers are `main.tsx` once at startup, `watchScheme` on an event it answers by
- * re-reading, and `chooseScheme` at the moment it writes the store itself. No component
+ * three writers in `web/src` are `main.tsx` once at startup, `watchScheme` on an event it
+ * answers by re-reading, and `chooseScheme` at the moment it writes the store itself. The
+ * blocking stamp in `web/index.html` writes it first, unnarrowed and before any module
+ * runs, and `main.tsx` then stamps the narrowed value over it. No component
  * stamps, so no stamp can carry a value read during an earlier render — which is what #168
  * was: `SchemeControl`'s mount effect applied the choice its `useState` initialiser had read,
  * and a choice arriving from another tab in the window between that render and its commit was
@@ -238,12 +240,15 @@ export type SchemeChangeTarget = {
  * overlap at all.
  *
  * `newValue` is deliberately ignored and the store is read again instead. That keeps
- * `storedScheme` the only reader of the key and `asSchemeChoice` the only narrowing; it
- * makes the handler idempotent, so a second event for the same value stamps the same
- * attribute; and it makes a spurious event harmless, which matters because `storage` also
- * fires for `sessionStorage` — an event carrying this key from some other area still ends
- * in the answer `localStorage` gives. A `key` of `null` is `localStorage.clear()`, which
- * changed every key including this one.
+ * `storedScheme` the only reader of the key among the modules `web/src` ships, and
+ * `asSchemeChoice` the only narrowing anywhere. The one shipped reader outside those modules
+ * is the blocking stamp in `web/index.html`, which the module header lists: a classic script
+ * cannot import either function, so it reads the key itself and narrows nothing, and the
+ * narrowing keeps its one home. The re-read also makes the handler idempotent, so a second
+ * event for the same value stamps the same attribute; and it makes a spurious event
+ * harmless, which matters because `storage` also fires for `sessionStorage` — an event
+ * carrying this key from some other area still ends in the answer `localStorage` gives. A
+ * `key` of `null` is `localStorage.clear()`, which changed every key including this one.
  *
  * A store cleared, blocked or switched off since the page loaded reads as `"system"` down
  * the same path a browser that was never told takes, so an event leaves a working page in
