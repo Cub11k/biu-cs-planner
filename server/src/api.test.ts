@@ -1562,3 +1562,150 @@ it("accepts every preference the State File schema holds, and no route-only extr
 
   expect(body).toEqual(Object.keys(settingsSchema.shape));
 });
+
+/**
+ * `.backups/` over the wire (#67): the listing behind "backups and restore" on the Workspace
+ * screen, and the restore behind it.
+ *
+ * **Nothing in `web` calls either route yet.** The Workspace screen does not exist — only the
+ * Timetable does — so #67 built the use case and the route and said so rather than building a
+ * screen it was not asked for. These are the contract the screen will be written against.
+ */
+
+const BACKUPS = "/api/backups";
+const RESTORE = "/api/backups/restore";
+
+/** The moments the listing reports, which is all a snapshot is named by (ADR-0002). */
+const snapshotMoments = async (): Promise<number[]> => {
+  const listed = (await (await get(BACKUPS)).json()) as { snapshots: { takenAt: number }[] };
+  return listed.snapshots.map((snapshot) => snapshot.takenAt);
+};
+
+it("serves no snapshots for a Workspace that has saved once, and some after a second save", async () => {
+  await post("/api/workspace", {});
+
+  await post(PICKS, LECTURE);
+  // the first save replaced nothing, so it copied nothing
+  expect(await snapshotMoments()).toEqual([]);
+
+  await save(PICKS, CLASHING);
+
+  const moments = await snapshotMoments();
+  expect(moments).toHaveLength(1);
+  // a moment and nothing else: no name, no path, no size
+  const listed = (await (await get(BACKUPS)).json()) as { snapshots: object[] };
+  expect(Object.keys(listed.snapshots[0] as object)).toEqual(["takenAt"]);
+  expect(moments[0]).toEqual(expect.any(Number));
+});
+
+it("answers a listing of a folder that is not a Workspace with an empty list, not a refusal", async () => {
+  // no `.backups/` at all, which is "there are none" and not "I could not look"
+  const answer = await get(BACKUPS);
+
+  expect(answer.status).toBe(200);
+  await expect(answer.json()).resolves.toEqual({ snapshots: [] });
+});
+
+it("restores a snapshot and answers with the revision it wrote", async () => {
+  await post("/api/workspace", {});
+  await post(PICKS, LECTURE);
+  await save(PICKS, CLASHING);
+  const [takenAt] = await snapshotMoments();
+
+  const restored = await post(RESTORE, { takenAt, basedOn: await currentVersion() });
+
+  expect(restored.status).toBe(200);
+  await expect(restored.json()).resolves.toEqual({
+    kind: "restored",
+    takenAt,
+    version: await currentVersion(),
+    warnings: [],
+  });
+  // the week is back to the one Pick the snapshot held
+  await expect((await get(TIMETABLE)).json()).resolves.toMatchObject({ picks: [LECTURE] });
+});
+
+/** A restore is an edit, so it is on the undo stack like any other (ADR-0013). */
+it("puts a restore on the undo stack, under its own label", async () => {
+  await post("/api/workspace", {});
+  await post(PICKS, LECTURE);
+  await save(PICKS, CLASHING);
+  const [takenAt] = await snapshotMoments();
+
+  await post(RESTORE, { takenAt, basedOn: await currentVersion() });
+  const undone = await step(UNDO);
+
+  expect(undone.status).toBe(200);
+  await expect(undone.json()).resolves.toMatchObject({ label: "restore-backup" });
+  // undoing the restore puts both Picks back
+  await expect((await get(TIMETABLE)).json()).resolves.toMatchObject({
+    picks: [LECTURE, CLASHING],
+  });
+});
+
+it("answers a snapshot that is not there with a named 409, not a 404 and not a 500", async () => {
+  await post("/api/workspace", {});
+  await post(PICKS, LECTURE);
+
+  const refused = await post(RESTORE, { takenAt: 1, basedOn: await currentVersion() });
+
+  expect(refused.status).toBe(409);
+  await expect(refused.json()).resolves.toEqual({ reason: "backup-not-found", warnings: [] });
+});
+
+it("answers a restore into a folder that is not a Workspace with a named 409", async () => {
+  const refused = await post(RESTORE, { takenAt: 1, basedOn: undefined });
+
+  expect(refused.status).toBe(409);
+  await expect(refused.json()).resolves.toMatchObject({ reason: "workspace-not-ready" });
+});
+
+/**
+ * A restore is a save and carries the revision it was based on, exactly as a Pick and an undo
+ * do: a client that leaves it out claims there is no State File, which fails closed (#90).
+ */
+it("refuses a restore based on a revision the file no longer holds", async () => {
+  await post("/api/workspace", {});
+  await post(PICKS, LECTURE);
+  await save(PICKS, CLASHING);
+  const [takenAt] = await snapshotMoments();
+  const stale = await currentVersion();
+  // somebody else writes the file in between
+  await writeFile(join(root, "me.state.json"), JSON.stringify({ schemaVersion: 1 }), "utf8");
+
+  const refused = await post(RESTORE, { takenAt, basedOn: stale });
+
+  expect(refused.status).toBe(409);
+  await expect(refused.json()).resolves.toMatchObject({ reason: "state-file-changed" });
+});
+
+it("refuses a body that is not a restore, by name, before the domain sees it", async () => {
+  await post("/api/workspace", {});
+
+  for (const body of [{}, { takenAt: "yesterday" }, { takenAt: 1.5 }, { takenAt: null }]) {
+    const refused = await post(RESTORE, body);
+    expect(refused.status, JSON.stringify(body)).toBe(400);
+    await expect(refused.json()).resolves.toEqual({ error: "not-a-restore" });
+  }
+});
+
+/**
+ * The rule every route on this contract keeps: domain operations and never a file path
+ * (ADR-0002; docs/design.md, "API and data rules", rule 1). A snapshot is named by when it was
+ * taken, and nothing in either answer says where it lives.
+ */
+it("names no path in either answer, and no State File", async () => {
+  await post("/api/workspace", {});
+  await post(PICKS, LECTURE);
+  await save(PICKS, CLASHING);
+  const [takenAt] = await snapshotMoments();
+
+  const listed = await (await get(BACKUPS)).text();
+  const restored = await (await post(RESTORE, { takenAt, basedOn: await currentVersion() })).text();
+
+  for (const body of [listed, restored]) {
+    expect(body).not.toContain(root);
+    expect(body).not.toContain(".backups");
+    expect(body).not.toContain("state.json");
+  }
+});

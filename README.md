@@ -73,9 +73,9 @@ Workspace gets synced and committed:
 
 | Where | Path |
 | --- | --- |
-| Linux, and anywhere but Windows where `XDG_CONFIG_HOME` is set | `$XDG_CONFIG_HOME/biu-cs-planner/token`, or `~/.config/biu-cs-planner/token` |
+| Linux, and anywhere `XDG_CONFIG_HOME` is set and `%APPDATA%` is not | `$XDG_CONFIG_HOME/biu-cs-planner/token`, or `~/.config/biu-cs-planner/token` |
 | macOS | `~/.config/biu-cs-planner/token` |
-| Windows | `%APPDATA%\biu-cs-planner\token` — `XDG_CONFIG_HOME` is not consulted here |
+| Windows | `%APPDATA%\biu-cs-planner\token` — `%APPDATA%` comes first here and is all but always set; on the rare Windows without it, the first row applies |
 
 Deleting that file does the same thing as the command: the next launch finds no token and
 writes a fresh one. The command is only the way to do it without going near a dotfile.
@@ -93,7 +93,13 @@ token above is the app's own and lives elsewhere:
 | `catalogs/<year>.json` | a Catalog you imported, one file per Academic Year |
 | `requirements/` | Requirements Files, once there are any to put there |
 | `me.state.json` | your picks. One State File, and `me` is the only name it uses so far |
-| `.backups/` | reserved for backups; nothing writes here yet ([#67](https://github.com/Cub11k/biu-cs-planner/issues/67)) |
+| `.backups/` | a copy of your State File as it stood before each save: the last 20, plus one a day for 30 days |
+
+Every save but the first copies the file it is replacing into `.backups/` before overwriting
+it, so there is always something to go back to, and the oldest copies are cleared out on the
+rule in that table. They are ordinary JSON files named after the moment they were taken, so you
+can open one in any editor — but there is no button for putting one back yet: the screen that
+will offer it is not built, and the app has the route behind it and nothing that calls it.
 
 Those files are the whole of your data, and they are yours: removing the app never touches
 them, and deleting them never breaks the app.

@@ -13,13 +13,158 @@ export type CatalogRef = { kind: "catalog"; academicYear: number };
 
 /**
  * A Workspace holds one or more State Files, at its root rather than in a folder of the
- * layout — `alice.state.json` — so the name is what tells them apart (docs/design.md,
+ * Workspace Layout — `alice.state.json` — so the name is what tells them apart (docs/design.md,
  * "Storage"). The name is a name and never a path: `isStateFileName` says which ones are,
  * and an adapter refuses the rest.
  */
 export type StateFileRef = { kind: "state"; name: string };
 
 export type WorkspaceRef = CatalogRef | StateFileRef;
+
+/**
+ * One snapshot in `.backups/`: a copy of a State File as it stood before one save, named by
+ * which State File it is a copy of and when it was taken (`docs/design.md`, "Storage").
+ *
+ * **Deliberately not a member of `WorkspaceRef`** (#67). Three reasons, and the first is the
+ * one that decides it:
+ *
+ *   - **Nothing above the port ever asks for one to be written.** A snapshot is made *by* the
+ *     guarded save, beneath the port, out of the bytes that save is about to replace — so
+ *     there is no write for a ref to name. Putting it in `WorkspaceRef` would hand `write` a
+ *     third thing it could be pointed at, which is a second way to put a student's own data
+ *     on disk and exactly what `requireCatalogRef` exists to refuse (#113, CLAUDE.md's
+ *     one-writer rule).
+ *   - **It is not named by the student.** A `CatalogRef` is an Academic Year and a
+ *     `StateFileRef` is a name a student chose; `takenAt` is the adapter's own reading of a
+ *     clock. A ref the domain cannot construct from anything a student said is not the same
+ *     kind of thing as the two that are.
+ *   - **`requireCatalogRef` would stop catching a third kind.** Its last line refuses
+ *     `ref.name`, and the comment above it says a Requirements File ref "reaches the last
+ *     line and fails to compile there". A third kind that happens to carry a `name` would
+ *     compile and be refused by a sentence written about State Files — the guard silently
+ *     weakened by an unrelated addition.
+ *
+ * So `app` reaches snapshots through two operations of their own, `listBackups` and
+ * `readBackup`, and through nothing else. What that costs is that `app` cannot enumerate
+ * `.backups/` the way it enumerates Catalogs, and has to ask the adapter; what it buys is
+ * that the only thing that writes into `.backups/` is the save itself.
+ *
+ * `takenAt` is a wall-clock reading in milliseconds, as `StateEdit.at` is, and it is what
+ * tells two snapshots of one State File apart. It is never a revision: what identifies the
+ * *content* of a State File is `StateFileVersion`, and nothing compares a file against this.
+ */
+export type BackupRef = { kind: "backup"; name: string; takenAt: number };
+
+/**
+ * How many snapshots of one State File survive on the count rule: the last 20 saves
+ * (`docs/design.md`, "Storage").
+ */
+export const BACKUP_KEEP_SAVES = 20;
+
+/** How many days survive on the daily rule: one snapshot a day for 30 days. */
+export const BACKUP_KEEP_DAYS = 30;
+
+/**
+ * Which day a snapshot belongs to, as a count of whole days since the epoch in **UTC**.
+ *
+ * UTC and not the student's own calendar day, which is the tempting answer. A local day
+ * depends on the timezone the process happens to be in *at the moment of pruning*, so a
+ * student who flies to Israel and opens the app would have their snapshots re-bucketed —
+ * two of yesterday's falling into one day, and one that was yesterday's only survivor
+ * becoming deletable. Pruning is the part of this that destroys data, so it answers to
+ * something that cannot move under it. The names on disk are UTC for the same reason: they
+ * sort.
+ */
+export const backupDay = (takenAt: number): number => Math.floor(takenAt / 86_400_000);
+
+/**
+ * Which snapshots of one State File may be deleted, given all of them and the time now.
+ *
+ * **One rule, shared by both adapters**, as `isStateFileName` and `requireStateFileName` are
+ * shared and for the same reason: a copy per adapter is a copy free to drift, and here the
+ * drift deletes a student's only record of what their Plan used to be. It is a pure function
+ * over the snapshots and the clock, so the three cases below are tested directly rather than
+ * only through a disk.
+ *
+ * **"Last 20 saves plus one per day for 30 days" is a union, and the two halves disagree**
+ * (#67). So the keeping is additive and the deleting is what is left over — never the other
+ * way round, because a snapshot either rule wants must survive the other rule not wanting it:
+ *
+ *   - 200 saves in one afternoon: the count rule keeps the last 20, and the daily rule keeps
+ *     the newest of that day as well, so once those 20 age out that day still has one.
+ *   - the app opened once a month: the daily rule's window has long passed those saves, and
+ *     the count rule keeps them anyway because they are among the last 20. Age alone never
+ *     deletes anything.
+ *   - a day with nothing saved: the window is walked over the snapshots that exist rather
+ *     than over 30 calendar days, so a gap is simply a day with nothing to keep and is no
+ *     reason to hold on to something older.
+ *
+ * **The newest of each day** is the one the daily rule keeps: it is that day's last word, and
+ * a student asking for "yesterday" means where they left off rather than where they started.
+ *
+ * **A snapshot dated in the future is kept**, so a clock that has run *ahead* — a laptop
+ * waking with a bad time, a sync client stamping forward — is not a reason to delete data: the
+ * window is the last 30 days *and everything after now*.
+ *
+ * **The other direction is not defended, and saying so is the honest answer.** A clock that
+ * jumps *backwards* by more than 30 days makes the snapshot a save has just written look old,
+ * and with 20 newer ones already there the same save's pruning deletes it. That is this rule
+ * reading its inputs correctly — the snapshot genuinely claims to be from before the others —
+ * and the alternative is for the rule to know which snapshot the caller just made, which is a
+ * clock the pure function does not have. Written down rather than guarded, because the guard
+ * would have to be a lie about one of the two numbers.
+ *
+ * The answer is in newest-first order, which is this function's own and not the input's.
+ *
+ * **One State File's snapshots, and it refuses a mixed list rather than documenting that it
+ * wants one.** The count rule is "the last 20 *of this file*", so a list holding two names
+ * would apply one allowance across both and delete the whole of the quieter file's history to
+ * make room for the busier one's — measured, not reasoned: 30 of each produced 20 deletions,
+ * every one of them the second name's. Both callers filter first, so this guards a future one,
+ * which is `requireStateFileName`'s standing and its reason. An unguarded precondition is a
+ * poor trade on the one function in this repository whose mistake *deletes* a student's data.
+ *
+ * **A moment identifies a snapshot, so the list is read as a set of moments.** Within one State
+ * File both adapters refuse to let two snapshots share a millisecond — the save nudges past a
+ * name that is taken — so two refs carrying one moment are two references to one file. Read any
+ * other way they cost a slot each: a list holding one of the twenty twice kept nineteen
+ * snapshots rather than twenty, and an identity `Set` then disagreed with itself about whether
+ * the duplicate was kept. Neither is reachable from either adapter, which builds a fresh ref per
+ * directory entry, and a shared rule should not be wrong in a way a third adapter could find.
+ * The answer therefore holds at most one ref per moment, which is all a caller needs: it deletes
+ * by the name and the moment, and that is one file.
+ */
+export function backupsToPrune(snapshots: BackupRef[], now: number): BackupRef[] {
+  const names = new Set(snapshots.map((snapshot) => snapshot.name));
+  if (names.size > 1) {
+    throw new WorkspaceRefusedError(
+      "refusing to prune the snapshots of more than one State File at once: " +
+        `the last ${BACKUP_KEEP_SAVES} saves are one file's, and these name ` +
+        [...names].sort().map((name) => JSON.stringify(name)).join(", "),
+    );
+  }
+
+  const byMoment = new Map<number, BackupRef>();
+  for (const snapshot of snapshots) {
+    if (!byMoment.has(snapshot.takenAt)) byMoment.set(snapshot.takenAt, snapshot);
+  }
+  const newestFirst = [...byMoment.values()].sort((a, b) => b.takenAt - a.takenAt);
+  const keep = new Set<number>(
+    newestFirst.slice(0, BACKUP_KEEP_SAVES).map((snapshot) => snapshot.takenAt),
+  );
+
+  const today = backupDay(now);
+  const daysKept = new Set<number>();
+  for (const snapshot of newestFirst) {
+    const day = backupDay(snapshot.takenAt);
+    if (today - day >= BACKUP_KEEP_DAYS) continue;
+    if (daysKept.has(day)) continue;
+    daysKept.add(day);
+    keep.add(snapshot.takenAt);
+  }
+
+  return newestFirst.filter((snapshot) => !keep.has(snapshot.takenAt));
+}
 
 /**
  * Literal patterns, never built from data (ADR-0007).
@@ -61,10 +206,21 @@ export function isStateFileName(name: string): boolean {
 
 export type WorkspaceStatus = {
   ready: boolean;
-  /** The parts of the layout that do not exist yet. */
+  /** The parts of the Workspace Layout that do not exist yet. */
   missing: WorkspaceFolder[];
 };
 
+/**
+ * The **Workspace Layout**: the folders a Workspace holds, which is what this module and both
+ * adapters mean whenever they say "the layout".
+ *
+ * Named because the bare word was ambiguous. `CONTEXT.md` glosses **Suggested Layout** — the
+ * department's recommended placement of Courses across Semesters — and the code used "the
+ * layout" for something entirely unrelated: `catalogs/`, `requirements/` and `.backups/`, the
+ * folders `create` makes and `status` reports missing. Two meanings, one of them glossed and
+ * the other not, and a reader meeting "the layout does not exist yet" had no way to tell which
+ * was meant (#174). This constant already spelled the term; the prose now uses it.
+ */
 export const WORKSPACE_LAYOUT: WorkspaceFolder[] = ["catalogs", "requirements", "backups"];
 
 /**
@@ -96,6 +252,29 @@ export function requireStateFileName(name: string): void {
 }
 
 /**
+ * The refusal for a snapshot's reference, so both adapters make it in the same words — and the
+ * other half of what `requireStateFileName` does for a State File.
+ *
+ * **`takenAt` is guarded for the reason `requireCatalogRef` guards a year.** That doc's
+ * argument is that an adapter turns the year straight into a file name, so "a year that is not
+ * a number is the same hole with a different key", and that "the rule should not depend on
+ * being remembered". A snapshot's moment is that same key: an adapter turns it into a file name
+ * too. Nothing reachable today gets past it — `server/src/api.ts` parses the body with
+ * `z.number().int().safe()`, and the adapter composes the name out of `String(...).padStart(...)`
+ * output, which cannot produce a separator or a `..` whatever number it is handed — so this
+ * guards a future caller and is here rather than in the one caller that currently exists.
+ */
+export function requireBackupRef(ref: BackupRef): void {
+  requireStateFileName(ref.name);
+  if (!Number.isSafeInteger(ref.takenAt)) {
+    throw new WorkspaceRefusedError(
+      `refusing a snapshot of the State File ${JSON.stringify(ref.name)} taken at ` +
+        `${JSON.stringify(ref.takenAt)}: a moment is a whole number of milliseconds, never a path`,
+    );
+  }
+}
+
+/**
  * The other half of narrowing `read` and `write` to a `CatalogRef`, and the half a compiler
  * cannot make: one refusal, shared by both adapters and in the same words, for anything handed
  * to a whole-file read or write that is not really a Catalog's reference (#113).
@@ -105,14 +284,14 @@ export function requireStateFileName(name: string): void {
  * number — and that one is the same hole with a different key, because an adapter turns the
  * year straight into a file name: a year of `"../alice.state"` builds a path back out of
  * `catalogs/` and onto a State File at the Workspace root, which then gets overwritten whole
- * with no revision guard, no name rule and no layout check. Measured, not reasoned: it
+ * with no revision guard, no name rule and no Workspace Layout check. Measured, not reasoned: it
  * destroyed a Pin and wrote into a folder that was not a Workspace. A year is the reason a
  * `CatalogRef` needed no name rule, so the rule for it is that it really is a year.
  *
  * **The narrowing is type-only.** Both adapters still know how to name a State File, because
  * `readStateFile` and `saveStateFile` need them to, so a cast reaches a read that comes back
- * with no revision and a write with no guard at all — and, until this, no layout check
- * either: the `ref.kind === "state"` layout check `write` used to carry could not survive the
+ * with no revision and a write with no guard at all — and, until this, no Workspace Layout
+ * check either: the `ref.kind === "state"` check `write` used to carry could not survive the
  * narrowing, because the compiler rejects that comparison on a `CatalogRef`, so it moved into
  * `saveStateFile` and left `write` covering nothing. `requireJsonName` in
  * `server/src/workspace.fs.ts` already states the principle: every caller in the repo
@@ -147,8 +326,8 @@ export function requireCatalogRef(ref: WorkspaceRef): void {
 }
 
 /**
- * A write into a folder that is not a Workspace: the layout is not there yet, or something
- * that is not a folder stands where a folder of the layout belongs.
+ * A write into a folder that is not a Workspace: the Workspace Layout is not there yet, or
+ * something that is not a folder stands where a folder of it belongs.
  *
  * **One refusal shared by both adapters**, as `requireStateFileName` is, and for the same
  * reason: it was two plain `Error`s in `server/src/workspace.fs.ts` and a third copy of the
@@ -175,8 +354,8 @@ export function requireCatalogRef(ref: WorkspaceRef): void {
  */
 export class NotAWorkspaceError extends WorkspaceRefusedError {
   /**
-   * The part of the layout that is what is wrong, when one part is; `undefined` when the
-   * answer is the layout as a whole, which is what a folder nobody has created yet gives.
+   * The part of the Workspace Layout that is what is wrong, when one part is; `undefined` when
+   * the answer is the Layout as a whole, which is what a folder nobody has created yet gives.
    */
   readonly folder: WorkspaceFolder | undefined;
 
@@ -188,8 +367,9 @@ export class NotAWorkspaceError extends WorkspaceRefusedError {
    * shared and it is here.
    *
    * One thing this is deliberately **not** stretched to cover: `create` failing to make a folder
-   * of the layout, which `server/src/workspace.fs.ts` refuses with a `WorkspaceRefusedError` of
-   * its own. Every sentence here begins "refusing to write", and that is untrue of a create.
+   * of the Workspace Layout, which `server/src/workspace.fs.ts` refuses with a
+   * `WorkspaceRefusedError` of its own. Every sentence here begins "refusing to write", and
+   * that is untrue of a create.
    */
   constructor(part?: { folder: WorkspaceFolder; because: string }) {
     super(
@@ -281,7 +461,7 @@ export type WorkspaceChanged = () => void;
 
 export type Workspace = {
   status(): Promise<WorkspaceStatus>;
-  /** Creates the layout. Called only after the student accepts. */
+  /** Creates the Workspace Layout. Called only after the student accepts. */
   create(): Promise<void>;
   /**
    * What the Workspace holds of one kind, empty when there is **no folder** to hold it — and
@@ -339,6 +519,21 @@ export type Workspace = {
    * warning. Atomic as `write` is, and it hands back the revision it wrote so the next save
    * from the same page needs no re-read.
    *
+   * **It also writes the snapshot into `.backups/`, out of the bytes it is about to replace**
+   * (#67; `docs/design.md`, "Storage"). That is beneath the port on purpose: `app` has no
+   * second write to remember and no way to save without backing up, which is the same
+   * argument that put the revision and the JSON into one value below. A first save replaces
+   * nothing, so it leaves no snapshot; every save after it does. Pruning to the retention rule
+   * — `backupsToPrune` above — happens here too, after the save has landed.
+   *
+   * **A snapshot that cannot be written refuses the save.** `.backups/` is part of the
+   * Workspace Layout and this method already refuses a save when any part of it is missing, so
+   * an unwritable one is the same refusal met from the other side: a Warning the student can
+   * act on. The alternative — saving anyway and quietly keeping no backup — is the failure #67
+   * was filed about, and it is invisible until the day it matters. **Pruning is the other way
+   * round**: it runs after the save, it only deletes, and a snapshot it could not remove is
+   * one too many rather than one too few, so it never costs a student their save.
+   *
    * It takes the whole `StateFileSave` that `core`'s `writeStateFile` produced rather than
    * the JSON and a version separately. They are produced together so that no caller has to
    * remember to ask for the version, and this is where they are also *consumed* together:
@@ -346,6 +541,41 @@ export type Workspace = {
    * was based on, which is the hole #90 was filed for.
    */
   saveStateFile(ref: StateFileRef, save: StateFileSave): Promise<StateFileVersion>;
+  /**
+   * The snapshots of one State File, newest first (#67).
+   *
+   * `[]` when there are none, and `[]` when there is no `.backups/` at all — the same news to
+   * a student either way, exactly as `list` answers for a folder that is not there. A folder
+   * that is there and cannot be listed is `WorkspaceRefusedError`, which is the third answer
+   * `list` has and for the same reason (#129): "I could not look" may never come back empty.
+   *
+   * **This asks nothing about the Workspace Layout**, deliberately and unlike `restoreBackup`
+   * in `./backups.ts`: a folder nobody has made a Workspace yet holds no snapshots, which is
+   * the empty answer and not a refusal. A student should be able to open the screen before
+   * they have accepted the Layout, exactly as reading the State File is unguarded while
+   * writing it is not (`app/src/edit.ts`).
+   *
+   * Per State File, because retention is per State File: `alice` keeping her last 20 saves
+   * says nothing about `bob`'s.
+   */
+  listBackups(ref: StateFileRef): Promise<BackupRef[]>;
+  /**
+   * What one snapshot holds, or undefined when it is not there. Absence is not an error, as
+   * for `read` and `readStateFile`.
+   *
+   * **No revision comes back, and that is not the hole it looks like.** A revision is what a
+   * save has to be based on, and nothing ever saves a snapshot: `.backups/` is written by the
+   * guarded save and pruned by it, and a restore writes the *State File* — through
+   * `editStateFile`, carrying that file's revision (ADR-0013, "the save path is the undo
+   * path"). So there is no later write for a snapshot's revision to guard, which is the
+   * difference from `read`, where the narrowing to a `CatalogRef` exists precisely because a
+   * State File does have one.
+   *
+   * Parsed JSON, as `read` hands it back, and the caller puts it through the same reader a
+   * State File goes through: a snapshot written by an older build has to open, which is what
+   * backups are for.
+   */
+  readBackup(ref: BackupRef): Promise<unknown>;
   /**
    * Watches the **folder**, not individual files, and calls back once per event it sees —
    * creation, modification, deletion and rename alike. Watching individual files cannot
