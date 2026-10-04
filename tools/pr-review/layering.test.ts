@@ -457,8 +457,8 @@ describe("a test's build toolchain", () => {
       ['import { build } from "vite";', "export const rebuild = () => build({});"].join("\n"),
     );
     // `vite` *is* recorded here — `modules` keeps a module's package imports, unlike a test's
-    // — and is still judged quiet, because this check reads direction between the four
-    // workspaces and nothing else. So "a module that ships may not" is a sentence for a
+    // — and is still judged quiet, because this check reads only which way an import points
+    // into the four workspaces, and `vite` is not one of them. So "a module that ships may not" is a sentence for a
     // reviewer rather than a guard, which the module doc says instead of implying otherwise.
     expect(shipping.packages.map((one) => one.specifier)).toEqual(["vite"]);
     expect(forbiddenEdges([shipping], [])).toEqual([]);

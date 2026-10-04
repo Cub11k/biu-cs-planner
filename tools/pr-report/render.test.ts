@@ -1258,7 +1258,7 @@ describe("the number a reviewer reads as tests", () => {
     // across the 1 file it ran, and it agrees on every one" here, which is agreement over the
     // files that ran, said where a reader takes it for the suite.
     expect(summary(markdown)).toContain(
-      "| A run to check it against | **the run collected 1 file, fewer than the 2 the source " +
+      "| A run to check it against | **the run ran only 1 of the 2 files the source " +
         "lists** — the missing one is named below |",
     );
     expect(summary(markdown)).not.toContain("agrees on every one");
@@ -1353,7 +1353,7 @@ describe("the number a reviewer reads as tests", () => {
     );
 
     expect(summary(markdown)).toContain(
-      "| A run to check it against | **the run collected 2 files, fewer than the 3 the source " +
+      "| A run to check it against | **the run ran only 2 of the 3 files the source " +
         "lists** — the missing one is named below |",
     );
     expect(summary(markdown)).not.toContain("agrees on every one");
@@ -1377,12 +1377,30 @@ describe("the number a reviewer reads as tests", () => {
     );
 
     expect(summary(markdown)).toContain(
-      "| A run to check it against | **the run collected 1 file, fewer than the 3 the source " +
+      "| A run to check it against | **the run ran only 1 of the 3 files the source " +
         "lists** — the 2 missing are named below, and it disagrees on 1 file it did run |",
     );
     expect(markdown).toContain("These files hold tests the source counts and the run never collected");
     expect(markdown).toContain("- `server/src/b.test.ts`\n- `web/src/c.browser.test.tsx`");
     expect(markdown).toContain("**Where they disagree.**");
+  });
+
+  it("counts only the listed files it ran, when the run also holds files this report does not list", () => {
+    const markdown = render(
+      report({
+        tests: [
+          file("core/src/a.test.ts", entry("works")),
+          file("server/src/b.test.ts", entry("serves")),
+          file("web/src/c.browser.test.tsx", entry("draws the week")),
+        ],
+        run: ran({ "core/src/a.test.ts": 1, "x/one.test.ts": 2, "x/two.test.ts": 3 }),
+      }),
+    );
+
+    expect(summary(markdown)).toContain(
+      "**the run ran only 1 of the 3 files the source lists** — the 2 missing are named below |",
+    );
+    expect(markdown).toContain("**The run found tests in files this report does not list.**");
   });
 
   it("names no missing file when the run collected every one", () => {
@@ -1394,7 +1412,7 @@ describe("the number a reviewer reads as tests", () => {
     );
 
     expect(summary(markdown)).toContain("agrees on every one");
-    expect(markdown).not.toContain("fewer than");
+    expect(markdown).not.toContain("ran only");
     expect(markdown).not.toContain("**The run collected fewer files than the source lists.**");
   });
 

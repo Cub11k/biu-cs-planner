@@ -494,10 +494,12 @@ export function render(report: Report): string {
         ? "| A run to check it against | a run left a count, but it ran none of the files " +
           "listed here — see below |"
         : "| A run to check it against | none — no test run left its own count beside this report |"
-      : checked.unrun.files
-        ? `| A run to check it against | **the run collected ${checked.ran.files} ` +
-            `${checked.ran.files === 1 ? "file" : "files"}, fewer than the ${tests.length} the ` +
-            `source lists** — ${checked.unrun.files === 1 ? "the missing one is" : `the ${checked.unrun.files} missing are`} ` +
+      : checked.missing.length
+        ? // "Ran only N of the M", not "collected N": a run can also hold files this report does
+          // not list (`unlisted`, said below), and those are not in N.
+          `| A run to check it against | **the run ran only ${checked.ran.files} of the ` +
+            `${tests.length} files the source lists** — ` +
+            `${checked.missing.length === 1 ? "the missing one is" : `the ${checked.missing.length} missing are`} ` +
             `named below` +
             (checked.disagree.length ? `, and it disagrees on ${disagreeing} it did run` : "") +
             " |"
