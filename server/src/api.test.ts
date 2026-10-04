@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
@@ -1708,4 +1708,262 @@ it("names no path in either answer, and no State File", async () => {
     expect(body).not.toContain(".backups");
     expect(body).not.toContain("state.json");
   }
+});
+
+/**
+ * #216, and the guarantee `CLAUDE.md` states in one line: **"The API exposes domain operations,
+ * never file paths."**
+ *
+ * **The two tests above and the one near the top of this file are about *success* bodies.** Both
+ * assert that a Workspace that is working names no path in what it serves, and neither provokes a
+ * refusal — so the answer that was actually carrying one was never looked at. A refusal out of
+ * `server/src/workspace.fs.ts` worded itself `refusing ./catalogs/2027.json: …`, the
+ * Workspace-relative spelling of the target, and `app/src/queries.ts` puts a refusal's message
+ * straight onto the `reason` of a `workspace-refused` Warning. Three routes served it: the two
+ * Catalog queries and the exam period's `catalogWarnings`. A Workspace-relative path is smaller
+ * than an absolute one and is still a file path, reaching a page that is not allowed to know the
+ * Workspace has files in it.
+ *
+ * So these go the other way round: **provoke a refusal on every route that can answer
+ * `workspace-refused`, and read the body.** The routes are enumerated from `createApi` rather
+ * than from the ticket, because #195 added one and inherited the leak by doing nothing wrong and
+ * #67 added two more. Eighteen routes are registered; fourteen of them have a refusal arm, and
+ * all fourteen are provoked below — four by the Catalog, nine by the State File, and
+ * `POST /api/workspace` by a Workspace Layout that cannot be made.
+ *
+ * `error.message` is the only channel an adapter's prose has out of `app` — measured, with
+ * `grep -rn '\.message' app/src server/src core/src web/src`, which finds `queries.ts` and
+ * nothing else on any request path. Every other caller collapses the refusal to a reason code, so
+ * the routes below the Catalog ones could not leak a path today and are here as the guard for the
+ * next one that carries a message out.
+ */
+const namesNoPath = async (body: string, where: string): Promise<void> => {
+  // the absolute path, which is what `requireJsonName` used to word itself with — and the
+  // **resolved** one beside it, because `contained` and `usablePath` work on `realpath` output. A
+  // test root that is itself a symlink would otherwise let a leak of the resolved root through,
+  // and `mkdtemp(tmpdir())` is a symlink on macOS (`/var` → `/private/var`), where the two differ
+  // for every test in this file.
+  expect(body, where).not.toContain(root);
+  expect(body, where).not.toContain(await realpath(root));
+  // and the Workspace-relative one, which is how every other refusal in the adapter read: a
+  // leading `./` is the whole of what made `./catalogs/2027.json` a path rather than a sentence
+  expect(body, where).not.toContain("./");
+  expect(body, where).not.toContain(".json");
+  expect(body, where).not.toContain(".backups");
+  expect(body, where).not.toContain("catalogs/");
+  expect(body, where).not.toContain("requirements/");
+  // the temporary a write goes through, whose name carries the pid and the real file's name. No
+  // refusal mentions it today — `UnwritableError` names the ref — and `.json` would catch the
+  // whole name, but not a truncation of it, and this is the string whose appearance would mean
+  // the adapter had started talking about its own files.
+  expect(body, where).not.toContain(".tmp-");
+};
+
+/**
+ * A directory where the Catalog's file belongs, which is #130's trigger: it needs no permission
+ * trick, so this runs everywhere rather than skipping visibly on a runner where the test user can
+ * read anything.
+ *
+ * All four routes that reach a Catalog file, and the statuses are asserted so that none of them
+ * can pass by not refusing at all. The exam period is a **200** on purpose and is the subtlest of
+ * the four: a Catalog that cannot be served is not a refusal of the exam rail — it is an exam
+ * period nobody has published — so its refusal rides out under `catalogWarnings` inside a
+ * successful answer, which is the one place a reader of the 409 arms would not have looked.
+ */
+it("names no path in a refusal when a Catalog cannot be read, on all four routes", async () => {
+  await post("/api/workspace", {});
+  await mkdir(join(root, "catalogs", "2027.json"));
+  await writeFile(join(root, "catalogs", "2027.json", "inside.txt"), "not a Catalog", "utf8");
+
+  const listed = await get("/api/catalog/2027/offerings?semester=fall");
+  expect(listed.status).toBe(409);
+  const listedBody = await listed.text();
+  // the setup asserted rather than assumed: this is the refusal and not some other answer
+  expect(JSON.parse(listedBody)).toMatchObject({ warnings: [{ kind: "workspace-refused" }] });
+  await namesNoPath(listedBody, "GET offerings");
+  // **and it still says something true.** The other half of #216: a path removed with nothing
+  // put in its place would leave a page unable to tell the student which file to go and look
+  // at. `reason` is the refusal's own sentence (`app/src/queries.ts`), and it names the Catalog
+  // by its Academic Year — a domain operation, which is what the API is allowed to expose.
+  expect(JSON.parse(listedBody)).toMatchObject({
+    warnings: [
+      {
+        kind: "workspace-refused",
+        reason:
+          "refusing the Catalog for the Academic Year 2027: it is there and cannot be read (EISDIR)",
+      },
+    ],
+  });
+
+  const one = await get("/api/catalog/2027/offerings/89-110");
+  expect(one.status).toBe(409);
+  await namesNoPath(await one.text(), "GET one offering");
+
+  const exams = await get(EXAMS);
+  expect(exams.status).toBe(200);
+  const examsBody = await exams.text();
+  expect(JSON.parse(examsBody)).toMatchObject({
+    catalogWarnings: [{ kind: "workspace-refused" }],
+  });
+  await namesNoPath(examsBody, "GET exams");
+
+  const imported = await post("/api/catalog/2027/import", CRAWL);
+  expect(imported.status).toBe(409);
+  await namesNoPath(await imported.text(), "POST import");
+});
+
+/**
+ * The other refusal a Catalog read can make: the file is a symlink pointing out of the Workspace,
+ * which is `OutsideWorkspaceError` rather than `UnreadableError` and was worded with a path of its
+ * own. The test above it in this file already proves the *contents* out there never come back;
+ * this one is about the name of the file that pointed at them.
+ */
+it("names no path when a Catalog resolves outside the Workspace", async () => {
+  const outside = await mkdtemp(join(tmpdir(), "biu-api-outside-"));
+  try {
+    await post("/api/workspace", {});
+    await writeFile(join(outside, "secret.json"), JSON.stringify({ secret: "leaked" }));
+    await symlink(join(outside, "secret.json"), join(root, "catalogs", "2027.json"));
+
+    for (const path of [
+      "/api/catalog/2027/offerings?semester=fall",
+      "/api/catalog/2027/offerings/89-110",
+    ]) {
+      const refused = await get(path);
+      expect(refused.status, path).toBe(409);
+      const body = await refused.text();
+      expect(JSON.parse(body), path).toMatchObject({ warnings: [{ kind: "workspace-refused" }] });
+      expect(body, path).not.toContain("leaked");
+      expect(body, path).not.toContain(outside);
+      await namesNoPath(body, path);
+    }
+  } finally {
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
+/**
+ * `contained`'s **other** arm: the file is not there, so its folder is what is checked, and that
+ * folder is the symlink pointing out. Two arms worded themselves with two different paths, which
+ * is how they used to be told apart; they are told apart in the domain's words now — the Catalog
+ * itself resolves outside, or the folder holding the Workspace's Catalogs does — and neither says
+ * where.
+ */
+it("names no path when the folder holding the Catalogs resolves outside the Workspace", async () => {
+  const outside = await mkdtemp(join(tmpdir(), "biu-api-outside-"));
+  try {
+    await mkdir(join(root, "requirements"));
+    await mkdir(join(root, ".backups"));
+    await symlink(outside, join(root, "catalogs"), "dir");
+
+    const refused = await get("/api/catalog/2027/offerings?semester=fall");
+    expect(refused.status).toBe(409);
+    const body = await refused.text();
+    expect(JSON.parse(body)).toMatchObject({ warnings: [{ kind: "workspace-refused" }] });
+    expect(body).not.toContain(outside);
+    await namesNoPath(body, "GET offerings");
+  } finally {
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Every route the State File reaches, with a directory standing in its place (#130's trigger
+ * again). Nine routes, including the two history ones and the restore — none of which carries a
+ * message out today, so this is the regression guard rather than the proof: the leak was in the
+ * adapter's wording, and a route that collapses a refusal to a reason code is one `editStateFile`
+ * arm away from carrying one.
+ *
+ * The snapshot and the revision are taken **before** the State File is broken, because a restore
+ * that refused for want of a snapshot would be a different refusal and would prove nothing about
+ * this one. The **undo is made before it too, and it succeeds**, for the same reason one step
+ * further on: `redo` answers `nothing-to-redo` from memory without touching a file, so an empty
+ * redo stack would have put this route in the sweep while provably not reaching the refusal. One
+ * Pick is left on the undo stack after it, so `undo` still reaches the file as well.
+ */
+it("names no path in a refusal when the State File cannot be read, on every route", async () => {
+  await post("/api/workspace", {});
+  await post("/api/catalog/2027/import", CRAWL);
+  await post(PICKS, LECTURE);
+  await save(PICKS, CLASHING);
+  // a redo to be refused, and a Pick still left to undo
+  expect((await step(UNDO)).status).toBe(200);
+  const [takenAt] = await snapshotMoments();
+  const basedOn = await currentVersion();
+
+  // a directory where the file was, so every read of it is the port's refusal
+  await rm(join(root, "me.state.json"));
+  await mkdir(join(root, "me.state.json"));
+
+  const answers: [string, Response][] = [
+    ["GET week", await get(TIMETABLE)],
+    ["GET exams", await get(EXAMS)],
+    ["GET settings", await get(SETTINGS)],
+    ["POST pick", await post(PICKS, { ...LECTURE, basedOn })],
+    ["DELETE pick", await remove(PICKS, { courseNumber: "89-110", lessonType: "הרצאה", basedOn })],
+    ["PATCH settings", await patch(SETTINGS, { language: "en", basedOn })],
+    ["POST undo", await post(UNDO, { basedOn })],
+    ["POST redo", await post(REDO, { basedOn })],
+    ["POST restore", await post(RESTORE, { takenAt, basedOn })],
+  ];
+
+  for (const [where, answer] of answers) {
+    expect(answer.status, where).toBe(409);
+    const body = await answer.text();
+    // the refusal and not some other 409: every one of these is the port's, worded by `app`
+    expect(JSON.parse(body), where).toMatchObject({ reason: "workspace-refused" });
+    await namesNoPath(body, where);
+  }
+
+  // and the file the refusals were about is exactly as it was left
+  expect(await readdir(join(root, "me.state.json"))).toEqual([]);
+});
+
+/**
+ * The snapshots folder, which #67 added and which refuses a listing of a `.backups` that is there
+ * and is not a folder. Its refusal read `refusing ./.backups: …` — the one Workspace-relative
+ * path naming a folder the student never sees in the first place, since `.backups` is the
+ * adapter's own name for it and not a domain word at all.
+ *
+ * `app/src/backups.ts` collapses it to a reason code, so nothing escaped; it is here because the
+ * sweep is over routes and not over the ones that happened to carry a message.
+ */
+/**
+ * `POST /api/workspace` is the fourteenth refusal-capable route and the only one not reached by
+ * either of the two provocations above, so it gets its own case rather than being left to the
+ * total-body assertion further up this file — which does cover it, by asserting the whole body
+ * equals `{ reason: "workspace-refused" }`, but does so as a test about #141 and not about paths.
+ * A sweep with a hole in it is worth less than the hole is wide.
+ *
+ * A plain file where `catalogs` belongs and `requirements` genuinely missing, so `status` reports
+ * not-ready, the student is offered the Workspace Layout, and accepting it lands on the file
+ * (#121). `create`'s refusal names the **Workspace Layout folder token**, which is the same token
+ * `GET /api/workspace` already serves in `missing` — which is why `namesNoPath` forbids
+ * `catalogs/` with the separator and not the bare word.
+ */
+it("names no path when the Workspace Layout cannot be created", async () => {
+  await writeFile(join(root, "catalogs"), "not a folder");
+
+  const refused = await post("/api/workspace", {});
+
+  expect(refused.status).toBe(409);
+  const body = await refused.text();
+  expect(JSON.parse(body)).toEqual({ reason: "workspace-refused" });
+  await namesNoPath(body, "POST workspace");
+});
+
+it("names no path when the snapshots folder is there and cannot be listed", async () => {
+  await mkdir(join(root, "catalogs"));
+  await mkdir(join(root, "requirements"));
+  // a plain file where `.backups` belongs: `status` calls the Workspace ready, because the probe
+  // asks whether each part resolves inside it and not what it is (#121)
+  await writeFile(join(root, ".backups"), "not a folder");
+  await expect((await get("/api/workspace")).json()).resolves.toEqual({ ready: true, missing: [] });
+
+  const refused = await get(BACKUPS);
+
+  expect(refused.status).toBe(409);
+  const body = await refused.text();
+  expect(JSON.parse(body)).toEqual({ reason: "workspace-refused" });
+  await namesNoPath(body, "GET backups");
 });
