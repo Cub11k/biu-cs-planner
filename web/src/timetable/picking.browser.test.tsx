@@ -165,6 +165,13 @@ const timetableReads = (): number =>
     (request) => request.method === "GET" && request.pathname.startsWith("/api/timetable"),
   ).length;
 
+/** The header's undo button. */
+const undoButton = (mounted: HTMLElement): HTMLButtonElement => {
+  const found = mounted.querySelector<HTMLButtonElement>('button[data-history="undo"]');
+  if (found === null) throw new Error("the header has no undo button");
+  return found;
+};
+
 /** How many times the header asked whether undo and redo are available. */
 const availabilityAsks = (): number =>
   sent.filter((request) => request.method === "GET" && request.pathname === "/api/history")
@@ -287,13 +294,13 @@ beforeEach(() => {
       );
     }
 
-    // the two Groups that overlap in this fixture, once both are picked
     if (unreadableSave !== undefined && (method === "POST" || method === "DELETE")) {
       const status = unreadableSave;
       unreadableSave = undefined;
       return new Response("<!doctype html>", { status, headers: { "content-type": "text/html" } });
     }
 
+    // the two Groups that overlap in this fixture, once both are picked
     const clashes =
       picks.some((p) => p.lessonType === "הרצאה" && p.groupNumber === "01") &&
       picks.some((p) => p.lessonType === "תרגיל")
@@ -563,20 +570,6 @@ it("says whether a click was saved is not known, and goes and looks, when its an
   // the account outlives the re-read: it is about the click, not about the week
   expect(mounted.textContent).toContain(t("en", "picksSaveAnswerUnreadable"));
 });
-
-/** In Hebrew too, because every new string exists in both languages (`CLAUDE.md`). */
-it.each([
-  "picksBackupRefused",
-  "historyBackupRefused",
-  "settingsBackupRefused",
-  "picksSaveAnswerUnreadable",
-] as const)(
-  "has %s in Hebrew, and not as the English sentence",
-  (key) => {
-    expect(t("he", key)).not.toBe(t("en", key));
-    expect(t("he", key)).toMatch(/[\u0590-\u05FF]/);
-  },
-);
 
 /**
  * #111, the window itself: the Catalog is served at once and the read of the State File is
@@ -932,6 +925,36 @@ it("sends the rest of the queue on the re-read, not on the revision just refused
   expect(tileFor(mounted, "01").classList.contains("is-picked")).toBe(false);
   expect(mounted.textContent).toContain(FILE_CHANGED);
   expect(mounted.textContent).toContain("1 group picked");
+});
+
+/**
+ * The undo buttons wait for that re-read too (#231), as they do after a step whose answer could
+ * not be read. The click may have moved the file, so a press sent on the revision on screen
+ * would come back `state-file-changed` for a staleness the page's own click caused.
+ */
+it("holds the undo button shut until the re-read after an unreadable click lands", async () => {
+  const mounted = await openWeek();
+  tileFor(mounted, "01").click();
+  await vi.waitFor(() => {
+    if (undoButton(mounted).disabled) throw new Error("undo never became available");
+  });
+
+  const release = holdTheRead();
+  unreadableSave = 200;
+  tileFor(mounted, "02").click();
+
+  await waitForText(mounted, t("en", "picksSaveAnswerUnreadable"));
+  // the history has been asked again and still offers an undo, so only the wait is holding it
+  await vi.waitFor(() => {
+    if (availabilityAsks() < 3) throw new Error("the undo buttons were never asked again");
+  });
+  expect(undoButton(mounted).disabled).toBe(true);
+
+  release();
+
+  await vi.waitFor(() => {
+    if (undoButton(mounted).disabled) throw new Error("the re-read landed and undo stayed shut");
+  });
 });
 
 /**

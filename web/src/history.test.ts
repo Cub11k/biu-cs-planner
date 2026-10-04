@@ -125,13 +125,14 @@ it.each([
   "state-file-unreadable",
   "workspace-refused",
   "workspace-not-ready",
+  "backup-refused",
 ] as const)("carries the reason %s through unchanged", async (reason) => {
   const { api } = client(() => refusal({ reason, canUndo: true, canRedo: true, warnings: [] }));
 
   const answer = await takeStep(api, "undo", VERSION);
 
   // Named rather than mapped here: the sentence is the component's, and this module's job is
-  // to hand the name over without flattening eight reasons into one.
+  // to hand the name over without flattening nine reasons into one.
   expect(answer).toEqual({
     kind: "refused",
     reason,

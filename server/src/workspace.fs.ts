@@ -240,8 +240,9 @@ class UnreadableError extends WorkspaceRefusedError {
  * A `WorkspaceRefusedError`, so a caller can answer it the way every caller of this port
  * already answers one: a Warning and never a crashed server (docs/design.md, "API and data
  * rules"). **What reaches the student today is the `reason` and not this sentence** — the write
- * callers, `app/src/catalog.ts` and `app/src/edit.ts`, return `workspace-refused` and drop the
- * message, and only the read path in `app/src/queries.ts` carries one. So the errno below is
+ * callers, `app/src/catalog.ts` and `app/src/edit.ts`, return `workspace-refused` — or
+ * `backup-refused`, when it came out of a save's snapshot (#229) — and drop the message, and
+ * only the read path in `app/src/queries.ts` carries one. So the errno below is
  * for a log and for the arm that will want it, and saying otherwise here would claim something
  * the app does not do.
  *

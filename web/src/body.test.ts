@@ -40,7 +40,8 @@ it("says an empty body is not readable", async () => {
  * A body that is JSON and not an object is not one any caller can read a field off, so it is
  * an answer this page cannot read (#230). `null` is the case the ticket was filed for: this file
  * used to assert it came back `readable: true`, and every caller then threw on it, outside any
- * `try`, with the student told nothing. The others fail the same way at `"warnings" in body`.
+ * `try`, with the student told nothing. A number, a string or a boolean throws the same way at
+ * `"warnings" in body`; an array does not throw there, and is no shape any route answers with.
  */
 it.each([
   ["null", null],

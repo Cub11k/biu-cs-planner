@@ -104,10 +104,12 @@ const english = {
   historyUnreadable: "The file your work is saved in could not be read, so nothing changed.",
   /**
    * The save could not first make its backup, so it wrote nothing (#229). Three of these, one
-   * per pane, ending as that pane's other refusals end; the first half is shared and is the
-   * whole of what the reason says.
+   * per place a save is answered — a Pick, an undo or redo, a preference — each ending as that
+   * place's other refusals end; the first half is shared and is the whole of what the reason
+   * says.
    *
-   * **Not `picksUnreadable` or `historyUnreadable`**, which is what this used to reach: the
+   * **Not `picksUnreadable`, `historyUnreadable` or `settingsFileRefused`**, which is what this
+   * used to reach: the
    * State File read perfectly well, and it is the backup that could not be made. Nor does it
    * say why the backup failed, or where backups are kept — the reason carries neither, and a
    * folder named here would be a path in all but spelling (#216).
@@ -261,8 +263,9 @@ const english = {
    * sentences for one cause, because they appear in six places and the places differ in what
    * they are an account **of**. Three answer for something the student did — a click on a Group,
    * a press of undo or redo, a press of the language switch — and three answer for a pane that
-   * simply could not get what it went to read. The rule those three follow is #171's: an act gets an account,
-   * an ask does not, which is also why the Workspace poll and `fetchAvailability` say nothing.
+   * simply could not get what it went to read. The rule the three acts follow is #171's: an act
+   * gets an account, an ask does not, which is also why the Workspace poll and
+   * `fetchAvailability` say nothing.
    *
    * What they claim is exactly what is known: an answer arrived, and it was not one this page
    * can read. **Not** that the file changed, that it was unreadable, or that the Workspace

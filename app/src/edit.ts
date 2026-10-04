@@ -165,10 +165,10 @@ export type EditRefusal =
   | "workspace-refused"
   /**
    * The save could not first keep a backup of what it would replace, so it saved nothing
-   * (#229). **Not about the State File**, which read perfectly well — the one refusal in this
-   * union that is not about the document the student is looking at, and its own arm for that
-   * reason: folded into `workspace-refused`, it reached the page as "your saved picks could not
-   * be read" while the week was on screen showing them. `BackupRefusedError` in
+   * (#229). **Not about the State File**, which read perfectly well — a refusal that is not
+   * about the document the student is looking at, and its own arm for that reason: folded
+   * into `workspace-refused`, it reached the page as "your saved picks could not be read"
+   * while the week was on screen showing them. `BackupRefusedError` in
    * `./workspace.ts` is how it is told apart.
    */
   | "backup-refused";

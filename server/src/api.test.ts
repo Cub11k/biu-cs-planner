@@ -1972,10 +1972,11 @@ it("names no path when the snapshots folder is there and cannot be listed", asyn
  * #229, over HTTP and against a real folder. A `.backups` that is a plain file refuses every
  * save that has something to back up — and the State File itself reads perfectly well, so the
  * answer has to say it was the backup and not the file. It used to be `workspace-refused`, which
- * the page words as Picks that could not be read. A Pick, an undo and a preference are three
- * routes onto one save, so all three are asked, and none of them may name a path.
+ * the page words as Picks that could not be read. A Pick, its removal, an undo and a preference
+ * are four routes onto one save, so all four are asked, and none of them may name a path. A
+ * restore is a save too and can be refused the same way; it has no screen yet and is not asked.
  */
-it("names a save refused for want of a backup as that, on every route that saves", async () => {
+it("names a save refused for want of a backup as that, for a Pick, its removal, an undo and a preference", async () => {
   await post("/api/workspace", {});
   await post(PICKS, LECTURE);
   await save(PICKS, CLASHING);
@@ -1985,6 +1986,10 @@ it("names a save refused for want of a backup as that, on every route that saves
 
   const answers = {
     pick: await save(PICKS, OTHER_LECTURE),
+    removal: await unsave(PICKS, {
+      courseNumber: LECTURE.courseNumber,
+      lessonType: LECTURE.lessonType,
+    }),
     undo: await step(UNDO),
     settings: await patch(SETTINGS, { language: "he", basedOn: await currentVersion() }),
   };

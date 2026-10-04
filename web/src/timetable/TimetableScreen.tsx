@@ -455,6 +455,7 @@ export function TimetableScreen({
       remove: boolean,
       basedOn: StateFileVersion,
       query: TimetableQuery,
+      sentOn: TimetableState,
     ): Promise<TimetableResult> => {
       const slot = { courseNumber: group.courseNumber, lessonType: group.lessonType };
       const done = remove
@@ -484,12 +485,22 @@ export function TimetableScreen({
         }
         // An answer nobody could read, which is **not** the claim that nothing was written: the
         // arm is reached from the 200 as well as from the refusal (#231). So everything that
-        // holds a revision goes and looks, exactly as `takeStep` does for a step whose answer
-        // could not be read (#206) — the week, the two buttons, and the header's switch — and
-        // the week on screen is kept until the re-read replaces it. None of the three is a
-        // claim about whether the click landed; all three are ways of finding out.
+        // holds a revision goes and looks, as `takeStep` does for a step whose answer could not
+        // be read (#206) — the week, the two buttons, and the header's switch — and the week on
+        // screen is kept until the re-read replaces it. None of the three is a claim about
+        // whether the click landed; all three are ways of finding out.
+        //
+        // **One thing `takeStep` has that this does not**: a press waits for that re-read
+        // (`steppedOn`, which this sets too), and a direct click does not. A second click made before the re-read
+        // lands goes out on a revision the first may have spent, and comes back
+        // `state-file-changed` if it did. Held clicks are spared by the drain's wait below;
+        // routing a direct click into `held` instead would change what it means, since a held
+        // click asks for a Pick and a click on ink asks for its removal. Left as an open window.
         if (answer.kind === "unreadable-answer") {
           setUnknownSave(true);
+          // and the undo buttons wait for that re-read, as they do after a step: a press sent
+          // on a revision this click may have spent would come back `historyStale`
+          setSteppedOn(sentOn);
           setRereads((count) => count + 1);
           askHistory();
           onEdited?.();
@@ -597,7 +608,7 @@ export function TimetableScreen({
     }
     // Only a served answer knows this, and `picked` is a `boolean` once it does. A click on
     // ink removes the Pick; a click on pencil records one.
-    void save(group, group.picked === true, timetable.version, query);
+    void save(group, group.picked === true, timetable.version, query, timetable);
   };
 
   /**
@@ -651,7 +662,7 @@ export function TimetableScreen({
 
     sending.current = true;
     const sentOn = timetable;
-    void save(next.group, false, timetable.version, next.query).then((answer) => {
+    void save(next.group, false, timetable.version, next.query, sentOn).then((answer) => {
       sending.current = false;
       // This click is spent either way. A refused one is not re-sent — that is #104 — but the
       // rest of the queue must not be fired at the revision that refused it — nor at one an

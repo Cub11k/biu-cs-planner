@@ -30,6 +30,9 @@
 /**
  * A body that was read, or an answer this page could not read at all.
  *
+ * **An object is all `readable: true` promises**, not the shape a route answers with: `{}` is
+ * readable, and a caller reading a field off it gets `undefined` rather than an exception.
+ *
  * **`readable: true` means a JSON object**, and nothing less (#230). Every route this page calls
  * answers with one, and every caller reads a field straight off it — `body.label`,
  * `"warnings" in body` — outside any `try`. So a body that is JSON and not an object is an
@@ -70,7 +73,7 @@ export async function readBody<T>(read: () => Promise<T>): Promise<AnswerBody<T>
     return { readable: false };
   }
   // `null`, a number, a string, a boolean or an array: JSON, and still not a body any caller
-  // can read a field off (#230). Refused here, once, rather than guarded at five call sites.
+  // can read a field off (#230). Refused here, once, rather than guarded at every call site.
   return isObject(body) ? { readable: true, body } : { readable: false };
 }
 

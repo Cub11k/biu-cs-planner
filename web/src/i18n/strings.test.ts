@@ -35,3 +35,17 @@ it("keeps every placeholder in every language, so a translation cannot lose one"
     }
   }
 });
+
+/**
+ * The four sentences #232 added, in Hebrew as well as English (`CLAUDE.md`). The type makes a
+ * Hebrew row exist; this says it is not the English sentence copied across.
+ */
+it.each([
+  "picksBackupRefused",
+  "historyBackupRefused",
+  "settingsBackupRefused",
+  "picksSaveAnswerUnreadable",
+] as const)("has %s in Hebrew, and not as the English sentence", (key) => {
+  expect(t("he", key)).not.toBe(t("en", key));
+  expect(t("he", key)).toMatch(/[\u0590-\u05FF]/);
+});
