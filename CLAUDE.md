@@ -39,7 +39,10 @@ Development happens on temporary machines. The project lives on GitHub at `Cub11
 
 GitHub Issues on `Cub11k/biu-cs-planner`, driven through the `gh` CLI. **A ticket's body is
 frozen once written** — amendments go in the comment thread, as the exact edit they would be, so
-the ticket stays the independent record of what was asked for. See `docs/agents/issue-tracker.md`.
+the ticket stays the independent record of what was asked for. **A ticket is two or three atomic
+asks that share a file lane**, composed as a parent ticket with the atomic tickets as its
+sub-issues, and it lands as one worktree and one pull request. See
+`docs/agents/issue-tracker.md`.
 
 ### Triage labels
 
