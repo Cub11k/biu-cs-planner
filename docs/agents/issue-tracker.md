@@ -121,11 +121,12 @@ never covered.
 
 **A closing keyword in ordinary prose is a closing reference too, and may displace yours.** #223's
 body carries, at its line 12 and some two hundred lines above its `Closes` block, a sentence
-ending in the word `closed` with `#125` immediately after it. `closed` is one of GitHub's keywords, so that phrase — not a
-keyword-free mention, which is what the note on #205's thread calls it — is where the #125 link
-came from. Across the five pull requests merged in that batch, #223 is the only one whose body held
-a keyword-and-number pair anywhere before its `Closes` block, and the only one whose `Closes` block
-did not register; the pair that *did* register is that sentence. One run of five is a correlation
+ending in the word `closed` with `#125` immediately after it. `closed` is one of GitHub's
+keywords, so that phrase — not a keyword-free mention, which is what the note on #205's thread
+calls it — is where the #125 link came from. Across the five pull requests merged in that batch,
+#223 is the only one whose body held a keyword-and-number pair anywhere before its `Closes` block,
+and the only one whose `Closes` block did not register; the pair that *did* register is that
+sentence. One run of five is a correlation
 and not a mechanism, and GitHub documents no such limit, so **treat it as a reason to look rather
 than as a rule**: before opening a pull request, read the body for a keyword that has landed next
 to a number by accident, and rephrase it so the two are not adjacent. Quoting this very paragraph
