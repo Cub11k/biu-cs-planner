@@ -233,8 +233,8 @@ const english = {
     "Start the app from a terminal and open the address it prints.",
 
   /**
-   * The app answered and this page could not read the answer (#171). Two sentences for one
-   * cause, because they appear in two places and only one of them is about a click.
+   * The app answered and this page could not read the answer (#171, #206). Three sentences for
+   * one cause, because they appear in three places and only one of them is about a click.
    *
    * What they claim is exactly what is known: an answer arrived, and it was not one this page
    * can read. **Not** that the file changed, that it was unreadable, or that the Workspace
@@ -259,6 +259,23 @@ const english = {
     "The app answered with something this page could not read, so the week is not your saved " +
     "work. The app may not be running, or may be a different version from this page — start it " +
     "from a terminal and open the address it prints.",
+  /**
+   * …and the same cause for an undo or a redo (#206), which is the one where the silence was
+   * worst: undo is the click a student makes **because something already went wrong**, and
+   * ADR-0013 makes it the whole recovery story — there is no inverse to retry.
+   *
+   * One sentence for both directions, because `read` in `../history.ts` cannot tell them apart
+   * and neither can the body it could not read. It says "whether anything changed is not known
+   * here" and that is the whole of the claim: this arm is reached from the **200** as well as
+   * from the refusal, so an unparseable answer to an undo may perfectly well have undone.
+   * `historyNotDone` and `historyUnreadable` both say "nothing changed", which is exactly the
+   * false statement #197's reviewers caught in `picksAnswerUnreadable`'s draft, and
+   * `historyStale` would name a cause the body says nothing about.
+   */
+  historyAnswerUnreadable:
+    "The app answered with something this page could not read, so whether anything changed is " +
+    "not known here. The app may not be running, or may be a different version from this page " +
+    "— start it from a terminal and open the address it prints.",
 
   warningFileUnreadable: "The catalog file is not a catalog this app can read.",
   warningSchemaTooNew: "The catalog was written by a newer version of the app.",
@@ -415,6 +432,10 @@ const hebrew: Record<StringKey, string> = {
     "היישום החזיר תשובה שהדף הזה אינו יודע לקרוא, ולכן השבוע אינו משקף את העבודה " +
     "השמורה שלכם. ייתכן שהיישום אינו פועל, או שהוא בגרסה אחרת מזו של הדף — הפעילו " +
     "אותו מהמסוף ופתחו את הכתובת שהוא מדפיס.",
+  historyAnswerUnreadable:
+    "היישום החזיר תשובה שהדף הזה אינו יודע לקרוא, ולכן לא ידוע כאן אם משהו השתנה. " +
+    "ייתכן שהיישום אינו פועל, או שהוא בגרסה אחרת מזו של הדף — הפעילו אותו מהמסוף " +
+    "ופתחו את הכתובת שהוא מדפיס.",
 
   warningFileUnreadable: "הקובץ אינו קטלוג שהיישום יודע לקרוא.",
   warningSchemaTooNew: "הקטלוג נכתב בגרסה חדשה יותר של היישום.",

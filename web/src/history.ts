@@ -15,7 +15,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api.ts";
-import { UNAUTHORIZED } from "./body.ts";
+import { readBody, UNAUTHORIZED } from "./body.ts";
 import type { ApiClient } from "./changes.ts";
 import type { InferRequestType, InferResponseType } from "hono/client";
 
@@ -73,6 +73,23 @@ export type HistoryStep =
     }
   /** This page has no launch token, so the server will not talk to it (ADR-0004). */
   | { kind: "unauthorized" }
+  /**
+   * The answer arrived and its body is not one this page can read — Vite's HTML 500 when the
+   * server is not running behind the dev proxy, hono's plain-text 404 for a path a newer bundle
+   * asks for (`readBody` in ./body.ts).
+   *
+   * Its own arm and not `refused`, which the screen says as a cause: a refusal is the route
+   * having declined to move the stacks and said so, and an unparseable body says nothing about
+   * whether it declined anything. That is the ruling `timetable/picks.ts` carries, applied here.
+   *
+   * **It is reachable from the 200 as well as from the refusal**, so an unparseable answer to an
+   * undo may perfectly well have undone. Neither this arm nor the sentence for it claims either
+   * way, and the screen goes and re-reads rather than treating it as nothing having happened
+   * (#206). `available` is deliberately absent for the same reason: the flags arrive in the body
+   * this page could not read, and `useHistory` leaves the buttons on the last answer that
+   * carried them.
+   */
+  | { kind: "unreadable-answer" }
   /** The request never arrived: the server is not running, or not running here. */
   | { kind: "unreachable" };
 
@@ -89,6 +106,11 @@ const unnamed = (warnings: HistoryWarning[]): HistoryStep => ({
  * as neither being available: the first is a question still in flight or a server that is
  * not there, and a page that turned it into `false` would be making the server's claim for
  * it. Both read as a disabled button, and only one of them is honest about why.
+ *
+ * **The body is read inside the catch here, and that is the rule rather than the oversight it
+ * is below.** This is an ask and not an act: nobody pressed anything, so there is nothing the
+ * student is owed an account of, and an unreadable answer to it is one more way of not knowing
+ * — which `undefined` already says. An act gets an account, an ask does not (#171, #206).
  */
 export async function fetchAvailability(
   client: ApiClient,
@@ -116,7 +138,9 @@ async function read(answer: Response & { ok: boolean; status: number }): Promise
     const status: number = answer.status;
     if (status === UNAUTHORIZED) return { kind: "unauthorized" };
 
-    const body = (await answer.json()) as Partial<Refused>;
+    const refused = await readBody(() => answer.json() as Promise<Partial<Refused>>);
+    if (!refused.readable) return { kind: "unreadable-answer" };
+    const body = refused.body;
     const warnings = body.warnings ?? [];
     if (body.reason === undefined) return unnamed(warnings);
 
@@ -131,7 +155,9 @@ async function read(answer: Response & { ok: boolean; status: number }): Promise
     };
   }
 
-  const body = (await answer.json()) as Moved;
+  const moved = await readBody(() => answer.json() as Promise<Moved>);
+  if (!moved.readable) return { kind: "unreadable-answer" };
+  const body = moved.body;
   // `at` and `version` are on the answer and are deliberately not carried: nothing shows when
   // an edit happened, and the revision on screen comes from the read that follows a step
   // rather than from the step — a page holding its own second opinion about which revision it
@@ -147,7 +173,8 @@ async function read(answer: Response & { ok: boolean; status: number }): Promise
  * Sends one request and reads the answer **outside** the catch: only the request failing is
  * the server not being there. An answer this module cannot make sense of is a contract
  * problem, and calling it "unreachable" would send the student to look at a server that
- * answered them.
+ * answered them — so a body that is not JSON comes back as `unreadable-answer` rather than as
+ * either a rejection or a lie about where the server is (#206).
  */
 async function ask(
   send: () => Promise<Response & { ok: boolean; status: number }>,

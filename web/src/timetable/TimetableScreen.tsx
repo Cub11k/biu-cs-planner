@@ -507,10 +507,25 @@ export function TimetableScreen({
       const stale =
         answer.kind === "refused" &&
         (answer.reason === "state-file-changed" || answer.reason === "history-invalidated");
-      if (answer.kind === "moved" || stale) {
+      /**
+       * An answer this page could not read is **not** the claim that nothing was written. The
+       * arm is reached from the 200 as well as from the refusal, so the step may have landed and
+       * the revision on screen may already be spent — and `setSteppedOn(undefined)` below is
+       * exactly the assertion that it has not, which would leave the next press to be refused
+       * `state-file-changed` for staleness this screen had caused.
+       *
+       * So the page stops relying on what it is holding and goes and looks: the week, the two
+       * buttons' availability, and whatever else holds a revision. None of the three is a claim
+       * about what happened; all three are ways of finding out (#206).
+       */
+      const unknown = answer.kind === "unreadable-answer";
+      if (answer.kind === "moved" || stale || unknown) {
         setRereads((count) => count + 1);
         // an undo is a save (ADR-0013), so it moved the revision the header is holding too
-        if (answer.kind === "moved") onEdited?.();
+        if (answer.kind === "moved" || unknown) onEdited?.();
+        // Availability arrives in the body, so an unreadable one left the buttons on an older
+        // answer. A move and a refusal both carried the flags and need no second request.
+        if (unknown) askHistory();
         return;
       }
       // Nothing was written, so the revision on screen is still the file's and no answer is
@@ -849,6 +864,11 @@ function historyNotice(
       return answer.reason === undefined
         ? t(language, "historyNotDone")
         : t(language, HISTORY_REFUSAL_STRING[answer.reason]);
+    // An answer that arrived and could not be read. Not `historyNotDone` and not
+    // `historyUnreadable`: both say "nothing changed", and this arm is reached from the 200 as
+    // well as from the refusal, so the step may perfectly well have been taken (#206).
+    case "unreadable-answer":
+      return t(language, "historyAnswerUnreadable");
     case "unauthorized":
       return unauthorizedSaid(language, tokenHeld);
     case "unreachable":
