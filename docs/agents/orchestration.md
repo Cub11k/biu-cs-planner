@@ -111,8 +111,11 @@ had silently reverted before catching it and re-running from a committed tree. A
 themselves and reported it unprompted. Commit, then mutate, then revert.
 
 **Revert with `git show HEAD:<path> > <path>`.** It writes the committed content back over the file,
-which is all the step needs, and it destroys nothing that is not already in a commit — so it is also
-the form that runs when `git checkout -- <file>` does not. On 2026-10-04 #179's agent had that
+which is all the step needs, and it is the form that runs when `git checkout -- <file>` does not.
+The redirect overwrites the working file exactly as `checkout` does, so it is no safer with
+uncommitted work in that file and the commit-first step above still applies in full; what it is, is
+one file written out of the object store rather than a command that reaches for the index and the
+tree. It is not `checkout` spelled to slip past a denial. On 2026-10-04 #179's agent had that
 `checkout` denied by the permission classifier as "Irreversible Local Destruction" and built its two
 commits through the index instead, reverting each mutation from `HEAD`; PR #196 records the shape
 ("commit first, then mutate, then restore from `HEAD`") and the denial itself is on #200. Three
