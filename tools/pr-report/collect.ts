@@ -1,9 +1,15 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { readCalls, type CallEdge, type CallTargets, type ExportedNames } from "./calls.ts";
+import { readCalls, type CallEdge, type CallTargets } from "./calls.ts";
 import { readCoverage } from "./coverage.ts";
 import type { Report } from "./render.ts";
-import { readModule, type ExportOrigin, type Module } from "./surface.ts";
+import {
+  readModule,
+  resolveReExports,
+  type ExportedNames,
+  type ExportOrigin,
+  type Module,
+} from "./surface.ts";
 import { readTestFile } from "./tests.ts";
 
 /**
@@ -119,18 +125,31 @@ function packageEntries(root: string): Map<string, string> {
  * had one entry and the module read last owned it. Here two modules exporting `groupKey`
  * hold one entry each, and no reading order can make one of them answer for the other.
  *
- * Only what can be called is kept. A `type` or an `interface` is not a callee, and neither is
- * a name a re-export clause spells with the `type` keyword (#92), so this filter is now exact
- * rather than a tolerance for a `kind` that was always `const`. It was safe even then: an edge
- * starts from a value import binding, and `verbatimModuleSyntax` makes a keywordless type
- * re-export an error, so no compiling program could value-import one and call it.
+ * **Everything that is not a type is kept, and the question is deliberately that one.** A
+ * `type` or an `interface` cannot be called, and neither can a name a re-export clause spells
+ * with the `type` keyword (#92) — and a value import can never reach one of those either, since
+ * `verbatimModuleSyntax` makes a keywordless type re-export an error. So excluding the types is
+ * exact. What is kept is *not* exactly the set of callees: a class is kept and calling one
+ * throws. That is on purpose, because this map is what `declaringModule` walks a re-export
+ * chain against as well as what a call resolves to, and a name missing from it is a chain that
+ * stops rather than a call that is refused.
+ *
+ * **Written as "not a type" rather than as a list of the value kinds**, which matters since
+ * `resolveReExports` started answering `kind` properly: a re-exported class reads `class` where
+ * it used to read `const`, so a list of the value kinds that forgot `class` would have dropped
+ * `WorkspaceRefusedError` and `StateFileUnwritableError` out of the barrels that re-export
+ * them, and any chain through those names would end there. Only those names: the map is per
+ * module and keyed by name, so one missing entry cannot affect another, and no reading order is
+ * involved. Nothing in this repository is reached that way today — `readCalls` reads `Foo()` and
+ * a class arrives with `new` — which is why no test fails if this line regresses, and why it is
+ * written as the question it is rather than as the list it could have been.
  */
 function exportedNames(modules: readonly Module[]): Map<string, ExportedNames> {
   const byModule = new Map<string, ExportedNames>();
   for (const m of modules) {
     const names = new Map<string, ExportOrigin | null>();
     for (const e of m.exports) {
-      if (e.kind === "function" || e.kind === "const") names.set(e.name, e.from ?? null);
+      if (e.kind !== "type") names.set(e.name, e.from ?? null);
     }
     byModule.set(m.path, names);
   }
@@ -169,9 +188,18 @@ export function collect(root: string): Report {
     ]),
   ];
 
-  const modules = sourceFiles
-    .map((f) => readModule(f, root))
-    .sort((a, b) => a.path.localeCompare(b.path));
+  const entries = packageEntries(root);
+
+  // Two passes, because the first cannot answer the second's question. `readModule` sees one
+  // file, so a re-exported name comes out of it with a placeholder signature and `const` for a
+  // kind; `resolveReExports` has every module and the package entries, follows each `from` to
+  // the module that declares the name, and fills both in (#124). Everything downstream — the
+  // renderer, the call graph, the review's own checks — reads the resolved modules, so there is
+  // one answer in the report rather than one per reader.
+  const modules = resolveReExports(
+    sourceFiles.map((f) => readModule(f, root)).sort((a, b) => a.path.localeCompare(b.path)),
+    entries,
+  );
   const tests = testFiles
     .map((f) => readTestFile(f, root))
     .sort((a, b) => a.path.localeCompare(b.path));
@@ -179,7 +207,7 @@ export function collect(root: string): Report {
   // What a call is resolved against, keyed by module and by package rather than by name.
   const targets: CallTargets = {
     modules: exportedNames(modules),
-    entries: packageEntries(root),
+    entries,
     workspaces: new Set(modules.map((m) => m.workspace)),
   };
 

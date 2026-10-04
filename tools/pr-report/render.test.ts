@@ -149,6 +149,24 @@ function arrowTargets(markdown: string): string[] {
     .flatMap((line) => /^ {2}\w+ (?:-\.->|-->) (\S+)$/.exec(line)?.[1] ?? []);
 }
 
+/**
+ * The names the shapes fold heads its blocks with: every bold line in the third fold.
+ *
+ * A heading is what #125 is about, so it is read off the rendered markdown rather than
+ * recomputed from `Module.path` — a test that applied the naming rule itself would pass
+ * however the renderer spelled it.
+ */
+function shapeHeadings(markdown: string): string[] {
+  const body = folds(markdown).find((f) => f.summary.includes("The shapes the data takes"))?.body;
+  return (body ?? "").split("\n").flatMap((line) => /^\*\*(.+)\*\*$/.exec(line.trim())?.[1] ?? []);
+}
+
+/** The module each row of the coverage table names, in the order the table lists them. */
+function coverageRows(markdown: string): string[] {
+  const body = folds(markdown).find((f) => f.summary.includes("Coverage, file by file"))?.body;
+  return (body ?? "").split("\n").flatMap((line) => /^\| `([^`]+)` \|/.exec(line.trim())?.[1] ?? []);
+}
+
 /** The bodies of every fold, in order. */
 function folds(markdown: string): Array<{ summary: string; body: string }> {
   const found: Array<{ summary: string; body: string }> = [];
@@ -671,10 +689,12 @@ describe("the call graph", () => {
     ],
   });
 
-  it("labels a node with the module the function is written in", () => {
+  it("labels a node with the module the function is written in, workspace and all", () => {
     const graph = callGraph(render(report()));
 
-    expect(graph).toContain('core_src_b_ts_two["b.two"]');
+    // Qualified, because this graph draws no workspace boxes: `b.two` would be the #125
+    // collapse one scope down, with `index.createApi` the case that actually bites.
+    expect(graph).toContain('core_src_b_ts_two["core/b.two"]');
     expect(graph).toContain("core_src_a_ts_one --> core_src_b_ts_two");
   });
 
@@ -716,6 +736,61 @@ describe("the call graph", () => {
 
     expect(said).toContain("resolved through the calling module's own imports");
     expect(said).toContain("does not leave the module it is written in");
+  });
+});
+
+/**
+ * What a section calls a module, which is a different question from what a graph node calls
+ * one — and the report answers it in two spellings on purpose (#125).
+ */
+describe("naming a module in a heading", () => {
+  /** Two barrels with one basename, each exporting a type, so both reach the shapes fold. */
+  const twoBarrels = report({
+    modules: [
+      {
+        path: "app/src/index.ts",
+        workspace: "app",
+        exports: [{ name: "Workspace", kind: "type", signature: "{ root: string }" }],
+        imports: [],
+        packages: [],
+      },
+      {
+        path: "core/src/index.ts",
+        workspace: "core",
+        exports: [{ name: "Variant", kind: "type", signature: "{ name: string }" }],
+        imports: [],
+        packages: [],
+      },
+    ],
+    coverage: {
+      available: true,
+      total: coverageOf(91),
+      byFile: new Map([
+        ["app/src/index.ts", coverageOf(91)],
+        ["core/src/index.ts", coverageOf(92)],
+      ]),
+      deadFunctions: [],
+    },
+    edges: [],
+  });
+
+  it("tells two modules with the same basename apart in a fold heading", () => {
+    expect(shapeHeadings(render(twoBarrels))).toEqual(["app", "core"]);
+  });
+
+  it("tells them apart in the coverage table too, which names a module five times over", () => {
+    expect(coverageRows(render(twoBarrels))).toEqual(["app", "core"]);
+  });
+
+  it("keeps a graph node short, because the workspace box beside it already says which", () => {
+    // The divergence #125 asked about, asserted rather than asserted of. A node drawn inside
+    // `subgraph core` and labelled `core` reads as `core` in a box called `core`; the heading
+    // has no box, so it carries the workspace and the node does not.
+    const graph = moduleGraph(render(twoBarrels));
+
+    expect(graph).toContain('subgraph core["core"]');
+    expect(graph).toContain('core_src_index_ts["index"]');
+    expect(graph).toContain('app_src_index_ts["index"]');
   });
 });
 
@@ -765,6 +840,24 @@ describe("this repository", () => {
     expect(expected.length).toBeGreaterThan(1);
     expect(boxArrows).toHaveLength(expected.length);
     for (const edge of expected) expect(graph).toContain(edge);
+  });
+
+  it("heads no two sections with the same name, for all three barrels being `index.ts`", () => {
+    // #125. `core/src/index.ts`, `app/src/index.ts` and `server/src/index.ts` all reduced to
+    // the word `index`, so once #101 gave those blocks real content the report carried three
+    // folds' worth of sections headed `**index**` and nothing but sort order to tell them
+    // apart. Read off the rendered report, over every section that names a module.
+    const markdown = render(collect(ROOT));
+    const headings = shapeHeadings(markdown);
+    const rows = coverageRows(markdown);
+
+    expect(new Set(headings).size).toBe(headings.length);
+    expect(new Set(rows).size).toBe(rows.length);
+    // And the names are the ones a reader is looking for: the workspace, for its entry point.
+    for (const workspace of ["core", "app", "server"]) {
+      expect(headings).toContain(workspace);
+    }
+    expect(headings).not.toContain("index");
   });
 
   it("points no arrow at a third-party package", () => {

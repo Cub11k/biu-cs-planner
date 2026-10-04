@@ -1,16 +1,23 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import {
+  graphLabel,
   mergeImports,
+  moduleName,
   packageWorkspace,
   readModule,
+  resolveReExports,
+  RE_EXPORTED,
   specifierTarget,
   type ImportKind,
   type ImportRef,
+  type Module,
 } from "./surface.ts";
+
+const ROOT = resolve(import.meta.dirname, "../..");
 
 /**
  * How an import is written decides what the layering rule may allow, so the forms are
@@ -27,6 +34,27 @@ function moduleFromSource(relPath: string, lines: readonly string[]) {
     mkdirSync(dirname(file), { recursive: true });
     writeFileSync(file, lines.join("\n"), "utf8");
     return readModule(file, root);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Several files written into one throwaway root and read back the way the report reads them.
+ *
+ * `moduleFromSource` is one file, which is all `readModule` ever sees — and `resolveReExports`
+ * is the pass that exists because one file is not enough, so its fixtures are written as the
+ * little module graphs they are.
+ */
+function modulesFromSources(files: Readonly<Record<string, readonly string[]>>): Module[] {
+  const root = mkdtempSync(join(tmpdir(), "surface-"));
+  try {
+    return Object.entries(files).map(([relPath, lines]) => {
+      const file = join(root, relPath);
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, lines.join("\n"), "utf8");
+      return readModule(file, root);
+    });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -426,6 +454,43 @@ describe("where an exported name comes from", () => {
     ]);
   });
 
+  it("follows a from-less `export type { X }` to the type-only import that brought it in", () => {
+    // The five names #124 counted. `importBindings` skipped every type-only binding, so these
+    // came out with no `from` at all — and absent is the sentence "this module declares the
+    // name", which is false. Harmless while nothing followed `from`; a mis-attribution the
+    // moment `resolveReExports` did.
+    expect(
+      exportsOf([
+        'import type { RawCrawlMeta } from "./shoham/raw-crawl.ts";',
+        "export type { RawCrawlMeta };",
+      ]),
+    ).toEqual(["RawCrawlMeta:core/src/shoham/raw-crawl.ts#RawCrawlMeta"]);
+  });
+
+  it("follows the inline from-less `export { type X }` the same way", () => {
+    // The other spelling of the keyword, and the other spelling of the import. One answer.
+    expect(
+      exportsOf([
+        'import { type Variant } from "./state/schema.ts";',
+        "export { type Variant };",
+      ]),
+    ).toEqual(["Variant:core/src/state/schema.ts#Variant"]);
+  });
+
+  it("records an origin for every from-less type export this repository actually writes", () => {
+    // Measured against the tree rather than described: #124 counted five, in three files, and
+    // a count in a ticket body is exactly the thing that goes stale. What is pinned is that
+    // none of them claims to declare the name.
+    const files = ["core/src/shoham/meta.ts", "core/src/shoham/details.ts", "core/src/shoham/import.ts"];
+    const unattributed = files.flatMap((file) =>
+      readModule(resolve(ROOT, file), ROOT)
+        .exports.filter((e) => e.from === undefined && e.signature === RE_EXPORTED)
+        .map((e) => `${file}#${e.name}`),
+    );
+
+    expect(unattributed).toEqual([]);
+  });
+
   it("follows an `export { x }` with no clause to the import that brought `x` in", () => {
     // The module does not declare `join`; it imported it. "Absent means declared here" is the
     // sentence `from` makes, and this is the case that would have made it false — `surface.ts`
@@ -550,16 +615,18 @@ describe("what kind a re-exported name is", () => {
     expect(kindsOf([line])).toEqual(["Variant:type"]);
   });
 
-  it("leaves the signature a placeholder, because the shape is in another module", () => {
-    // Deliberate, and #92 says so out loud rather than silently: following `from` to the
-    // declaration needs every module already read and the package-entry map, which live in
-    // `collect.ts`. `ExportedSymbol.signature` carries the reasoning.
+  it("leaves the signature a placeholder, because `readModule` has only this one file", () => {
+    // About `readModule` alone, and no longer about the report: `resolveReExports` runs over
+    // every module afterwards and replaces both of these with the declaration's signature, so
+    // what is pinned here is that the first pass does not guess. Following `from` needs every
+    // module already read and the package-entry map, neither of which exists while one file is
+    // being parsed. `ExportedSymbol.signature` carries the reasoning.
     expect(
       moduleFromSource("core/src/index.ts", [
         'export type { Variant } from "./state/schema.ts";',
         'export { importRawCrawl } from "./shoham/import.ts";',
       ]).exports.map((e) => `${e.name}:${e.signature}`),
-    ).toEqual(["Variant:(re-exported)", "importRawCrawl:(re-exported)"]);
+    ).toEqual([`Variant:${RE_EXPORTED}`, `importRawCrawl:${RE_EXPORTED}`]);
   });
 
   it("reads a declared alias, interface, class, function and const as itself", () => {
@@ -583,5 +650,273 @@ describe("what kind a re-exported name is", () => {
       "pick:function",
       "DEFAULT:const",
     ]);
+  });
+});
+
+/**
+ * The second pass: what a re-exported name *is* and what shape it has, which is knowable only
+ * once every module has been read.
+ *
+ * #92 left both as placeholders deliberately and said so. What a reader actually saw is the
+ * shapes fold, which prints a signature for a `type` and for nothing else (`render.ts`): so
+ * `core`'s block listed `type Variant = (re-exported)` and 87 more like it, under the heading
+ * for the file a reader goes to precisely to learn what a workspace offers. #124 is that
+ * follow-up. The function and class kinds it also corrects are invisible in the rendered
+ * report and matter to `collect.ts`'s call targets instead.
+ */
+describe("a re-exported name's declaration", () => {
+  /** `name:kind:signature` for every export of the module at `path`, after the second pass. */
+  const resolvedIn = (
+    path: string,
+    files: Readonly<Record<string, readonly string[]>>,
+    entries: ReadonlyMap<string, string> = new Map(),
+  ): string[] =>
+    resolveReExports(modulesFromSources(files), entries)
+      .filter((m) => m.path === path)
+      .flatMap((m) => m.exports.map((e) => `${e.name}:${e.kind}:${e.signature}`));
+
+  /** A function to be at the far end of a chain, and the signature it should arrive with. */
+  const DECLARED = [
+    "export function importRawCrawl(crawl: string, root: string): number {",
+    "  return crawl.length + root.length;",
+    "}",
+  ];
+  const SIGNATURE = "(crawl: string, root: string) => number";
+
+  it("reads a re-exported function's signature off its declaration", () => {
+    expect(
+      resolvedIn("core/src/index.ts", {
+        "core/src/index.ts": ['export { importRawCrawl } from "./shoham/import.ts";'],
+        "core/src/shoham/import.ts": DECLARED,
+      }),
+    ).toEqual([`importRawCrawl:function:${SIGNATURE}`]);
+  });
+
+  it("records a re-exported function as a function, where it used to say `const`", () => {
+    // The consequence #92 measured and left: the kind fix told a type from a value and stopped
+    // there, so every re-exported function and class read `const`. The kind here comes from the
+    // declaration, so it is whatever the declaration is.
+    expect(
+      resolvedIn("core/src/index.ts", {
+        "core/src/index.ts": [
+          'export { importRawCrawl } from "./shoham/import.ts";',
+          'export { StateFileUnwritableError } from "./state/file.ts";',
+          'export { DEFAULT_PORT } from "./config.ts";',
+        ],
+        "core/src/shoham/import.ts": DECLARED,
+        "core/src/state/file.ts": ["export class StateFileUnwritableError extends Error {}"],
+        "core/src/config.ts": ["export const DEFAULT_PORT = 4317;"],
+      }),
+    ).toEqual([
+      `importRawCrawl:function:${SIGNATURE}`,
+      "StateFileUnwritableError:class:class",
+      "DEFAULT_PORT:const:",
+    ]);
+  });
+
+  it("reads a re-exported type's shape, which is the whole of what the shapes fold prints", () => {
+    expect(
+      resolvedIn("core/src/index.ts", {
+        "core/src/index.ts": [
+          'export type { Variant } from "./state/schema.ts";',
+          'export type { Workspace } from "./workspace.ts";',
+        ],
+        "core/src/state/schema.ts": ["export type Variant = { name: string; primary: boolean };"],
+        "core/src/workspace.ts": ["export interface Workspace { root: string }"],
+      }),
+    ).toEqual([
+      "Variant:type:{ name: string; primary: boolean }",
+      "Workspace:type:interface",
+    ]);
+  });
+
+  it("keeps a `type`-keyword re-export a type, whatever the declaration turns out to be", () => {
+    // `export type { Refused }` re-exports the type side of a class and nothing else. Taking
+    // `class` from the far end would mislabel what this module offers and would put the name
+    // back among the call targets `collect.ts` filters types out of.
+    expect(
+      resolvedIn("core/src/index.ts", {
+        "core/src/index.ts": [
+          'export type { Refused } from "./state/file.ts";',
+          'export { type Thrown } from "./state/file.ts";',
+        ],
+        "core/src/state/file.ts": [
+          "export class Refused extends Error {}",
+          "export class Thrown extends Error {}",
+        ],
+      }),
+    ).toEqual(["Refused:type:class", "Thrown:type:class"]);
+  });
+
+  it("follows a rename, because the far module has never heard of the exported name", () => {
+    // `export { a as b }` and the declaration is `a`. `ExportOrigin` carries the name beside the
+    // specifier for exactly this, and a walk that took the module alone would find nothing.
+    expect(
+      resolvedIn("core/src/index.ts", {
+        "core/src/index.ts": ['export { importRawCrawl as importCrawl } from "./shoham/import.ts";'],
+        "core/src/shoham/import.ts": DECLARED,
+      }),
+    ).toEqual([`importCrawl:function:${SIGNATURE}`]);
+  });
+
+  it("follows a chain of barrels to the end of it", () => {
+    expect(
+      resolvedIn("core/src/index.ts", {
+        "core/src/index.ts": ['export { importRawCrawl } from "./shoham/index.ts";'],
+        "core/src/shoham/index.ts": ['export { importRawCrawl } from "./import.ts";'],
+        "core/src/shoham/import.ts": DECLARED,
+      }),
+    ).toEqual([`importRawCrawl:function:${SIGNATURE}`]);
+  });
+
+  it("crosses a workspace by the package entry, as a call does", () => {
+    // The map `collect.ts` reads out of each workspace's `package.json`. Without it a barrel
+    // that re-exports another workspace's name is a dead end.
+    expect(
+      resolvedIn(
+        "app/src/index.ts",
+        {
+          "app/src/index.ts": ['export { importRawCrawl } from "@biu-cs-planner/core";'],
+          "core/src/index.ts": ['export { importRawCrawl } from "./shoham/import.ts";'],
+          "core/src/shoham/import.ts": DECLARED,
+        },
+        new Map([["@biu-cs-planner/core", "core/src/index.ts"]]),
+      ),
+    ).toEqual([`importRawCrawl:function:${SIGNATURE}`]);
+  });
+
+  it("terminates on a re-export cycle, leaving the placeholder rather than hanging", () => {
+    // `a.ts` re-exporting from `b.ts` and back. The `seen` guard is what makes this a gap in
+    // the record instead of a stack overflow; the cycle itself is a defect and
+    // `tools/pr-review/cycles.ts` is what reports one.
+    const cycle = {
+      "core/src/a.ts": ['export { thing } from "./b.ts";'],
+      "core/src/b.ts": ['export { thing } from "./a.ts";'],
+    };
+
+    expect(resolvedIn("core/src/a.ts", cycle)).toEqual([`thing:const:${RE_EXPORTED}`]);
+    expect(resolvedIn("core/src/b.ts", cycle)).toEqual([`thing:const:${RE_EXPORTED}`]);
+  });
+
+  it("terminates on a one-module cycle too, where a barrel re-exports from itself", () => {
+    expect(
+      resolvedIn("core/src/a.ts", {
+        "core/src/a.ts": ['export { thing } from "./a.ts";'],
+      }),
+    ).toEqual([`thing:const:${RE_EXPORTED}`]);
+  });
+
+  it("keeps the placeholder where the chain leaves this repository", () => {
+    // `node:path` and a third-party package are in no graph, so there is no declaration to
+    // read. `surface.ts` itself ends with `export { join }`. Saying `(re-exported)` here is
+    // the truth — a shape this report never read — rather than the claim #124 was about.
+    expect(
+      resolvedIn("core/src/index.ts", {
+        "core/src/index.ts": [
+          'export { join } from "node:path";',
+          'export { z } from "zod";',
+        ],
+      }),
+    ).toEqual([`join:const:${RE_EXPORTED}`, `z:const:${RE_EXPORTED}`]);
+  });
+
+  it("keeps the placeholder where the far module does not export the name", () => {
+    // A barrel that re-exports a name the target stopped declaring. `calls.ts`'s `UNRESOLVED`
+    // is the same situation seen from the call graph.
+    expect(
+      resolvedIn("core/src/index.ts", {
+        "core/src/index.ts": ['export { gone } from "./shoham/import.ts";'],
+        "core/src/shoham/import.ts": DECLARED,
+      }),
+    ).toEqual([`gone:const:${RE_EXPORTED}`]);
+  });
+
+  it("leaves a declared name exactly as it was read", () => {
+    expect(
+      resolvedIn("core/src/shoham/import.ts", {
+        "core/src/index.ts": ['export { importRawCrawl } from "./shoham/import.ts";'],
+        "core/src/shoham/import.ts": DECLARED,
+      }),
+    ).toEqual([`importRawCrawl:function:${SIGNATURE}`]);
+  });
+
+  it("mutates nothing it was given, so two readers of the report see one answer", () => {
+    // `collect.ts` hands the result to the renderer and to the call graph. A pass that edited
+    // its input in place would make what the second reader saw depend on the order they read.
+    const read = modulesFromSources({
+      "core/src/index.ts": ['export { importRawCrawl } from "./shoham/import.ts";'],
+      "core/src/shoham/import.ts": DECLARED,
+    });
+    const before = JSON.stringify(read);
+
+    resolveReExports(read, new Map());
+
+    expect(JSON.stringify(read)).toBe(before);
+  });
+
+  it("keeps the re-export walk in one module of the report's own source", () => {
+    // #124 asks for one barrel-follower in the codebase. It lives in `surface.ts` because
+    // `calls.ts` already imports that module, so a follower kept in `calls.ts` and imported
+    // back would be a cycle in the very module graph this report draws. A canary rather than a
+    // proof: it catches the walk being copied back, not a second one written under a new name.
+    const defining = ["calls.ts", "collect.ts", "render.ts", "surface.ts", "main.ts"].filter((f) =>
+      /(?:function|const)\s+declaringModule\b/.test(
+        readFileSync(resolve(import.meta.dirname, f), "utf8"),
+      ),
+    );
+
+    expect(defining).toEqual(["surface.ts"]);
+  });
+});
+
+/**
+ * What the report calls a module, in the two places it has to be called something: a section
+ * heading, where it must be unique, and a graph node, where it must be short.
+ */
+describe("naming a module", () => {
+  it("names a workspace's entry point after the workspace", () => {
+    // #125: every workspace's barrel is `src/index.ts`, and stripping the workspace off left
+    // three sections of one report headed `index`.
+    expect(moduleName("core/src/index.ts")).toBe("core");
+    expect(moduleName("app/src/index.ts")).toBe("app");
+    expect(moduleName("server/src/index.ts")).toBe("server");
+  });
+
+  it("tells two modules sharing a basename apart, which is the defect", () => {
+    const sharing = ["core/src/index.ts", "app/src/index.ts", "core/src/state/schema.ts", "core/src/catalog/schema.ts"];
+    const named = sharing.map(moduleName);
+
+    expect(named).toEqual(["core", "app", "core/state/schema", "core/catalog/schema"]);
+    expect(new Set(named).size).toBe(sharing.length);
+  });
+
+  it("names a module inside a workspace by its path within it", () => {
+    expect(moduleName("core/src/shoham/import.ts")).toBe("core/shoham/import");
+  });
+
+  it("leaves a `tools/` path alone, since it has no `src/` segment to drop", () => {
+    // The amendment on #125 asked for this case. No `tools/` path reaches `moduleName` today —
+    // `TEST_ONLY_DIRS` brings those directories in for their titles alone — and `tools/` has no
+    // `index.ts` either; its entry points are `main.ts`. So the two `index.ts` paths below are
+    // hypothetical, and the point of them is that a future `tools/` section would not inherit
+    // the collapse.
+    expect(moduleName("tools/pr-report/render.ts")).toBe("tools/pr-report/render");
+    expect(moduleName("tools/pr-report/index.ts")).toBe("tools/pr-report/index");
+    expect(moduleName("tools/ci/index.ts")).toBe("tools/ci/index");
+  });
+
+  it("keeps a `.tsx` extension, because dropping it would collapse a pair", () => {
+    // `web/src/scheme.ts` and a hypothetical `scheme.tsx` in the same folder are two modules.
+    // Stripping `.tsx` would give them one name, which is the defect this function is for.
+    expect(moduleName("web/src/App.tsx")).toBe("web/App.tsx");
+    expect(moduleName("web/src/scheme.ts")).toBe("web/scheme");
+  });
+
+  it("keeps a graph node label short, which is the other caller and the other trade-off", () => {
+    // A node is drawn inside a `subgraph` labelled with the workspace, so the workspace is
+    // already beside it. #125 asked whether one spelling serves both callers; it does not.
+    expect(graphLabel("core/src/index.ts")).toBe("index");
+    expect(graphLabel("core/src/shoham/import.ts")).toBe("shoham/import");
+    expect(graphLabel("tools/pr-report/render.ts")).toBe("tools/pr-report/render");
   });
 });

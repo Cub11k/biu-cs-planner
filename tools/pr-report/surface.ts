@@ -20,23 +20,35 @@ export type ExportedSymbol = {
    * the one artefact `CLAUDE.md` sends a reviewer to *before* the diff — 46 of them in
    * `core/src/index.ts` alone (#92).
    *
-   * `const` is still the answer for every re-exported value, a function and a class
-   * included: telling those apart means reading the declaration in another module, which is
-   * the same second pass `signature` would need and is not done here. See `from`.
+   * `const` is what `readModule` answers for every re-exported value, a function and a class
+   * included, because telling those apart means reading the declaration in another module.
+   * **`resolveReExports` is where that happens**, and after it a re-exported function reads
+   * `function` and a re-exported class reads `class` (#124).
+   *
+   * `const` afterwards means one of two things, and the common one is simply that the name *is*
+   * a const: all 19 of this repository's remaining `const` re-exports resolve to a real `const`
+   * declaration — `core/src/index.ts`'s `catalogSchema`, `server/src/index.ts`'s
+   * `DEFAULT_PORT`. The other is a chain that leaves this repository, a re-export of
+   * `node:path`'s `join`, say, where there is no declaration to read; `signature` is what tells
+   * the two apart, because only the second keeps `RE_EXPORTED`. There are none of those here
+   * today. See `from`.
    */
   kind: "function" | "const" | "type" | "class";
   /**
    * Rendered as written, e.g. "(crawl: RawCrawl, options: {...}) => {...}".
    *
-   * **A re-export has no declaration to read, and this says `"(re-exported)"` rather than
-   * guessing.** The shape lives in the module the name comes from, so a real signature means
-   * finding that module and reading it — which needs every module already read and the
-   * package-entry map that turns `@biu-cs-planner/core` into a path, neither of which
-   * `readModule` has while it is looking at one file. `tools/pr-report/calls.ts` already walks
-   * exactly that chain (`declaringModule`, `seen` set and all) from the collected graph, so
-   * the place for it is a second pass in `tools/pr-report/collect.ts` reusing that walk, not
-   * a second barrel-follower with its own disk reads in here. #92 chose to leave the
-   * placeholder and say so rather than duplicate the walk.
+   * **A re-export has no declaration to read, so `readModule` writes `RE_EXPORTED` and
+   * `resolveReExports` replaces it** with the signature of the module that declares the name.
+   * The shape lives at the far end of the chain, so finding it needs every module already read
+   * and the package-entry map that turns `@biu-cs-planner/core` into a path — neither of which
+   * `readModule` has while it is looking at one file. That is why the work is a second pass
+   * over `Module[]` rather than a branch in here, and why it follows the chain with
+   * `declaringModule`, the same walk the call graph uses, rather than a second
+   * barrel-follower (#92, #124).
+   *
+   * `RE_EXPORTED` is still what a reader sees where the chain ends outside this repository or
+   * at a name the far module does not export. That is a placeholder for a shape this report
+   * never read, which is a different sentence from the one #124 was filed about.
    */
   signature: string;
   /**
@@ -76,6 +88,18 @@ export type ExportedSymbol = {
  * a bare import — with `node:` specifiers kept as written, which that field never holds.
  */
 export type ExportOrigin = { specifier: string; name: string };
+
+/**
+ * What `ExportedSymbol.signature` says while nothing has followed the re-export to its
+ * declaration, and what it keeps saying where following it leads out of this repository.
+ *
+ * `readModule` writes it (once), and `resolveReExports` replaces it by *overwriting* rather
+ * than by comparing against it: a resolved symbol takes the declaration's signature whatever
+ * was there before, and an unresolved one keeps this because nothing wrote over it. So the
+ * constant buys no branch — it buys the tests and this documentation naming the same string as
+ * the one the code writes, instead of each spelling it out and drifting apart.
+ */
+export const RE_EXPORTED = "(re-exported)";
 
 /**
  * The two questions about an import that are not "where does it point".
@@ -353,6 +377,20 @@ const specifierRef = (specifier: string, fromModule: string): string => {
 export type ImportBinding = { specifier: string; imported: string };
 
 /**
+ * Which bindings `importBindings` reads.
+ *
+ * `"values"` is what a *call* is resolved against: a type cannot be called, so a type-only
+ * clause or binding is not a candidate, and reading one would be an invitation to draw an edge
+ * to it. `"names"` is what an *export clause* is resolved against, where the question is only
+ * where a name came from, and a type came from somewhere exactly as a value did.
+ *
+ * Two readings rather than one because the narrower one is load-bearing: `calls.ts` states in
+ * its own documentation that type-only bindings are skipped, and `"values"` is the default so
+ * that the reading a new caller gets is the one that cannot invent a call edge.
+ */
+export type ImportBindingScope = "values" | "names";
+
+/**
  * The names a module's import statements bind, each with the specifier it arrived on and the
  * name it has there.
  *
@@ -361,21 +399,33 @@ export type ImportBinding = { specifier: string; imported: string };
  * `tools/pr-report/calls.ts` resolves a call by it, and `readModule` itself needs it for an
  * `export { x }` that re-exports something this module imported.
  *
- * Only what exists at run time and can be named: a type-only clause or binding is skipped, and
- * so are a default and a namespace binding — `ns.foo()` is a property access rather than an
- * identifier, and a default import names nothing at the other end that `readModule` records.
- * Neither form is written anywhere in this repo's four workspaces.
+ * A default and a namespace binding are skipped under either scope — `ns.foo()` is a property
+ * access rather than an identifier, and a default import names nothing at the other end that
+ * `readModule` records. Neither form is written anywhere in this repo's four workspaces.
+ *
+ * **Whether a type-only binding is read is the caller's question, and `scope` is where it is
+ * asked.** Skipping one unconditionally is what made a from-less `export type { X }` record no
+ * origin at all: `core/src/shoham/meta.ts` writes `import type { RawCrawlMeta }` and then
+ * `export type { RawCrawlMeta };`, and with no binding to follow the symbol came out with no
+ * `from` — which `ExportedSymbol.from` reads as "this module declares the name" (#124). Five
+ * names in this repository said that falsely, and each would have resolved to the wrong module
+ * the moment anything followed `from` to find a declaration. `resolveReExports` is that
+ * anything.
  */
-export function importBindings(source: ts.SourceFile): Map<string, ImportBinding> {
+export function importBindings(
+  source: ts.SourceFile,
+  scope: ImportBindingScope = "values",
+): Map<string, ImportBinding> {
   const bindings = new Map<string, ImportBinding>();
+  const valuesOnly = scope === "values";
   for (const node of source.statements) {
     if (!ts.isImportDeclaration(node) || !ts.isStringLiteral(node.moduleSpecifier)) continue;
     // `import type { … }` erases entirely: nothing it names exists at run time.
-    if (node.importClause?.isTypeOnly) continue;
+    if (valuesOnly && node.importClause?.isTypeOnly) continue;
     const named = node.importClause?.namedBindings;
     if (!named || !ts.isNamedImports(named)) continue;
     for (const el of named.elements) {
-      if (el.isTypeOnly) continue;
+      if (valuesOnly && el.isTypeOnly) continue;
       bindings.set(el.name.text, {
         specifier: node.moduleSpecifier.text,
         imported: (el.propertyName ?? el.name).text,
@@ -396,7 +446,11 @@ export function readModule(absPath: string, root: string): Module {
   const rel = relative(root, absPath);
   // Read before the statement loop rather than during it: `export { x }` may be written above
   // the `import { x }` it re-exports, and the answer must not depend on which comes first.
-  const bindings = importBindings(source);
+  //
+  // `"names"`, not the default: a from-less export clause asks where a name came from, and
+  // `export type { RawCrawlMeta };` beside `import type { RawCrawlMeta }` is the case the
+  // default reading cannot answer. See `ImportBindingScope`.
+  const bindings = importBindings(source, "names");
   const exports: ExportedSymbol[] = [];
   const imports: ImportRef[] = [];
   const packages: ImportRef[] = [];
@@ -434,7 +488,7 @@ export function readModule(absPath: string, root: string): Module {
           exports.push({
             name: el.name.text,
             kind: isTypeExport(node, el) ? "type" : "const",
-            signature: "(re-exported)",
+            signature: RE_EXPORTED,
             ...(from === undefined ? {} : { from }),
           });
         }
@@ -469,7 +523,196 @@ export function readModule(absPath: string, root: string): Module {
   };
 }
 
-export const moduleName = (path: string): string =>
+/**
+ * One module's exported names, each mapped to where the name comes from: `null` when the
+ * module declares it, and an `ExportOrigin` — a specifier *and* the name at the other end —
+ * when it re-exports it.
+ */
+export type ExportedNames = ReadonlyMap<string, ExportOrigin | null>;
+
+/**
+ * What a re-export chain is followed against: every module read, and the module a bare import
+ * of one of this repo's own packages reaches.
+ *
+ * Every key identifies exactly one thing — a module by its path, a package by its name — and
+ * **nothing is keyed by a name**, which is #86's fix and the reason `declaringModule` can be
+ * trusted by two callers at once. `CallTargets` is this plus the workspaces a call needs, and
+ * satisfies it structurally.
+ */
+export type ModuleOrigins = {
+  /**
+   * Every module read, by repo-relative path.
+   *
+   * **How full each module's name map is, is the caller's question rather than this type's**,
+   * and the two callers answer it differently: `resolveReExports` puts every export in, because
+   * a type has a shape to go and read, while `collect.ts`'s `exportedNames` keeps only what is
+   * not a type, because a type is not a callee. So the same walk stops dead at a type name for
+   * the call graph and follows it for the surface pass, which is what each of them wants.
+   */
+  modules: ReadonlyMap<string, ExportedNames>;
+  /**
+   * Package name to the module a bare import of it reaches, from the manifest's `exports`.
+   * A workspace whose manifest gives no single entry — `web`'s gives none at all — is absent.
+   */
+  entries: ReadonlyMap<string, string>;
+};
+
+/**
+ * The module that declares a name, reached from a specifier and following re-exports, with the
+ * name that module knows it by — which a rename along the way changes.
+ *
+ * A module path is looked up before a package name, and the two cannot collide: a path names
+ * a file inside a workspace and a package name never does.
+ *
+ * `seen` ends a re-export loop — `a.ts` re-exporting a name from `b.ts` and back — with no
+ * answer rather than with no return. Such a loop is a defect and
+ * `tools/pr-review/cycles.ts` is what reports one; this function's job is only to not hang.
+ *
+ * **The one barrel-follower in this codebase**, and it lives here rather than in `calls.ts`
+ * because two things follow a chain now: the call graph, to find the function a call lands on,
+ * and `resolveReExports`, to find the declaration a signature is read from. `calls.ts` already
+ * imports this module, so a follower kept there and imported back would be a cycle in the very
+ * module graph this report draws (#124).
+ */
+export function declaringModule(
+  ref: string,
+  name: string,
+  origins: ModuleOrigins,
+  seen: Set<string>,
+): { path: string; name: string } | undefined {
+  const path = origins.modules.has(ref) ? ref : origins.entries.get(ref);
+  if (path === undefined) return undefined;
+
+  const key = `${path}#${name}`;
+  if (seen.has(key)) return undefined;
+  seen.add(key);
+
+  const names = origins.modules.get(path);
+  if (!names || !names.has(name)) return undefined;
+
+  const origin = names.get(name) ?? null;
+  return origin === null
+    ? { path, name }
+    : declaringModule(origin.specifier, origin.name, origins, seen);
+}
+
+/**
+ * The second pass: every re-exported name given the `kind` and the `signature` of the
+ * declaration it stands for.
+ *
+ * `readModule` holds one file at a time and cannot answer this — the shape is in the module the
+ * name comes from, and reaching it needs every module already read and the package entries that
+ * turn `@biu-cs-planner/core` into a path. So this runs over the whole of `Module[]`, which is
+ * what `collect.ts` has, and follows each `from` with `declaringModule` to the module that
+ * declares the name.
+ *
+ * What it deliberately leaves alone:
+ *
+ * - **A name whose chain leaves this repository.** `export { join } from "node:path"` and a
+ *   re-export of a third-party name resolve to no module, so the symbol keeps `RE_EXPORTED`
+ *   and `const`. The report then says it read no shape for the name, which is true.
+ * - **A chain that loops.** `declaringModule`'s `seen` set returns no answer, and no answer
+ *   leaves the placeholder — a defect in the source shows up as a gap here and as a finding in
+ *   `tools/pr-review/cycles.ts`, which is what a cycle is reported by.
+ * - **`from` itself.** Where a name came from stays recorded as the one step it is; this fills
+ *   in what is at the end of the steps, and the call graph still walks them one at a time.
+ * - **A `type` keyword on the clause.** Written of a class — `export type { Refused } from
+ *   "./file.ts"`, which no workspace here writes today; `app/src/index.ts:55` re-exports
+ *   `StateFileChangedError` as a value — the clause re-exports the type side of it and nothing
+ *   else. So the clause is what decides what *this* module offers and the declaration only
+ *   decides what shape it has. Taking `class`
+ *   from the far end would both mislabel the name and put it back among the call targets
+ *   `collect.ts` filters types out of — a re-export that a value import could never reach,
+ *   recorded as one a call could land on.
+ *
+ * Pure: new `Module` objects, new `exports` arrays, nothing mutated. `collect.ts` hands the
+ * result to the renderer *and* to the call graph, so a pass that edited its input in place
+ * would decide by reading order what the second reader saw.
+ */
+export function resolveReExports(
+  modules: readonly Module[],
+  entries: ReadonlyMap<string, string>,
+): Module[] {
+  const origins: ModuleOrigins = {
+    modules: new Map(
+      modules.map((m) => [m.path, new Map(m.exports.map((e) => [e.name, e.from ?? null]))]),
+    ),
+    entries,
+  };
+  // Only what a module declares, keyed by the pair that identifies it. A re-export is never an
+  // answer here: `declaringModule` returns the end of the chain, and the end of a chain is a
+  // declaration by definition.
+  const declared = new Map<string, ExportedSymbol>();
+  for (const m of modules) {
+    for (const e of m.exports) if (e.from === undefined) declared.set(`${m.path}#${e.name}`, e);
+  }
+
+  return modules.map((m) => ({
+    ...m,
+    exports: m.exports.map((e) => {
+      if (e.from === undefined) return e;
+      const owner = declaringModule(e.from.specifier, e.from.name, origins, new Set());
+      const decl = owner && declared.get(`${owner.path}#${owner.name}`);
+      if (!decl) return e;
+      // The clause's own `type` keyword wins over the declaration's kind, and only over that.
+      return { ...e, kind: e.kind === "type" ? "type" : decl.kind, signature: decl.signature };
+    }),
+  }));
+}
+
+/**
+ * The name a *section* of the report calls a module: the workspace, then the path inside it,
+ * and the workspace alone for its entry point.
+ *
+ * **It has to tell two modules with the same basename apart, and that is the whole of #125.**
+ * Every workspace's entry point is `src/index.ts`, so stripping the workspace off reduced
+ * `core/src/index.ts`, `app/src/index.ts` and `server/src/index.ts` to the one word `index` —
+ * and once #101 gave those sections real content the report carried three folds headed
+ * `**index**` with nothing but sort order to tell them apart. A reader looking for what `app`
+ * exposes had to count.
+ *
+ * So: `core/src/index.ts` is `core`, `core/src/shoham/import.ts` is `core/shoham/import`, and
+ * a path with no `src/` segment — `tools/pr-report/render.ts` — comes through as
+ * `tools/pr-report/render`, unchanged. The mapping drops the `src/` segment and a root `index`,
+ * and nothing else, so no two of the paths this report walks share an answer.
+ *
+ * **No `tools/` path reaches here today**, and the case is kept against the day one does.
+ * `TEST_ONLY_DIRS` brings `tools/` in for its test titles alone (#123) — `collect.ts` says
+ * those directories get no module in either graph and no row in the coverage table, and the
+ * titles fold prints the full `file.path` — so nothing currently runs such a path through this
+ * function. The amendment on #125 asked for the case to be checked anyway, because a future
+ * section that does would otherwise inherit the collapse across five roots instead of four.
+ *
+ * `.tsx` keeps its extension here, as it always did: `web/src/App.tsx` is `web/App.tsx`.
+ * Stripping it would collapse a `scheme.ts` and a `scheme.tsx` in one folder into one name,
+ * which is the defect this function exists to not have.
+ *
+ * `graphLabel` is the other spelling, for the one caller that has the workspace in hand
+ * already.
+ */
+export const moduleName = (path: string): string => {
+  const bare = path.replace(/\.ts$/, "");
+  const inWorkspace = /^([^/]+)\/src\/(.*)$/.exec(bare);
+  const workspace = inWorkspace?.[1];
+  const rest = inWorkspace?.[2];
+  if (workspace === undefined || rest === undefined) return bare;
+  return rest === "index" ? workspace : `${workspace}/${rest}`;
+};
+
+/**
+ * The name a *graph node* calls a module: the path inside its workspace, and nothing of the
+ * workspace itself.
+ *
+ * Diverged from `moduleName` deliberately, and this is the caller #125 said to check: the
+ * module map draws every node inside a `subgraph` labelled with the workspace, so the
+ * workspace is already on the screen beside the node and repeating it would read as
+ * `core` inside a box called `core`. Shortness is what a flowchart label is judged on, and
+ * ambiguity is what the box already answers.
+ *
+ * Every other caller — a fold heading, a coverage row, a call-graph node, none of which sits
+ * inside a workspace box — takes `moduleName`.
+ */
+export const graphLabel = (path: string): string =>
   path.replace(/^[^/]+\/src\//, "").replace(/\.ts$/, "");
 
 /**

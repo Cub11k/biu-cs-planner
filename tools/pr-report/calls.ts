@@ -2,10 +2,11 @@ import { readFileSync } from "node:fs";
 import { relative } from "node:path";
 import ts from "typescript";
 import {
+  declaringModule,
   importBindings,
   packageWorkspace,
   specifierTarget,
-  type ExportOrigin,
+  type ExportedNames,
   type SpecifierTarget,
 } from "./surface.ts";
 
@@ -42,7 +43,9 @@ import {
  * - **A barrel is followed to the declaration.** `import { createApi } from "./index.ts"`
  *   lands on `server/src/api.ts`, because `index.ts` re-exports the name rather than
  *   declaring it. A node here is a function where it is written, so a path through the code
- *   stays connected across a re-export instead of ending at a file that holds no code.
+ *   stays connected across a re-export instead of ending at a file that holds no code. The
+ *   walk itself is `surface.ts`'s `declaringModule`, which moved there when the surface pass
+ *   needed the same chain for a signature and the codebase was to keep one follower (#124).
  * - **A cross-workspace call lands inside the other workspace**, by way of that package's
  *   entry module, which `collect.ts` reads from the workspace's `package.json`.
  * - **Type-only bindings are skipped.** A type cannot be called, so neither `import type { X }`
@@ -95,17 +98,16 @@ export type CallEdge = { from: string; to: string };
 export const UNRESOLVED = "(unresolved)";
 
 /**
- * One module's exported names, each mapped to where the name comes from: `null` when the
- * module declares it, and an `ExportOrigin` — a specifier *and* the name at the other end —
- * when it re-exports it.
- */
-export type ExportedNames = ReadonlyMap<string, ExportOrigin | null>;
-
-/**
  * Everything a call is resolved against. Every key here identifies exactly one thing: a module
  * by its path, a package by its name, a workspace by its name. **Nothing is keyed by a
  * function name**, which is the whole of the fix — a function name identifies nothing, so no
  * writer can take another's entry and no reading order can change an answer.
+ *
+ * `modules` and `entries` are `ModuleOrigins`, which is what `declaringModule` follows a
+ * re-export chain against, and `workspaces` is the one thing a *call* needs on top of it:
+ * whether a scoped specifier names a workspace this report walked. The two fields are spelled
+ * out here rather than inherited so that each keeps the note that says why it is keyed as it
+ * is; `declaringModule` takes this value as a `ModuleOrigins` structurally.
  */
 export type CallTargets = {
   /** Every module read, by repo-relative path. */
@@ -134,39 +136,6 @@ const ourRef = (target: SpecifierTarget, workspaces: ReadonlySet<string>): strin
   const workspace = packageWorkspace(target.name);
   return workspace !== undefined && workspaces.has(workspace) ? target.name : undefined;
 };
-
-/**
- * The module that declares a name, reached from a specifier and following re-exports, with the
- * name that module knows it by — which a rename along the way changes.
- *
- * A module path is looked up before a package name, and the two cannot collide: a path names
- * a file inside a workspace and a package name never does.
- *
- * `seen` ends a re-export loop — `a.ts` re-exporting a name from `b.ts` and back — with no
- * answer rather than with no return. Such a loop is a defect and
- * `tools/pr-review/cycles.ts` is what reports one; this function's job is only to not hang.
- */
-function declaringModule(
-  ref: string,
-  name: string,
-  targets: CallTargets,
-  seen: Set<string>,
-): { path: string; name: string } | undefined {
-  const path = targets.modules.has(ref) ? ref : targets.entries.get(ref);
-  if (path === undefined) return undefined;
-
-  const key = `${path}#${name}`;
-  if (seen.has(key)) return undefined;
-  seen.add(key);
-
-  const names = targets.modules.get(path);
-  if (!names || !names.has(name)) return undefined;
-
-  const origin = names.get(name) ?? null;
-  return origin === null
-    ? { path, name }
-    : declaringModule(origin.specifier, origin.name, targets, seen);
-}
 
 export function readCalls(absPath: string, root: string, targets: CallTargets): CallEdge[] {
   const source = ts.createSourceFile(
