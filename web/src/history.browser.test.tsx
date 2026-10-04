@@ -720,13 +720,15 @@ it.each([
    * made light and dark an explicit choice, so the ring could be left reading one palette
    * while the page around it used the other.
    */
-  // through storage, because `SchemeControl` stamps the document itself as the header mounts
+  // Stamped here, the way `main.tsx` stamps it before React mounts. `SchemeControl` no longer
+  // writes the attribute at all — `scheme.ts` owns it and the entry module makes the startup
+  // stamp (#168) — so a test that only put the choice in the store would be waiting for a
+  // write nothing performs. The store is set too, so the control agrees with the page.
   localStorage.setItem(SCHEME_STORAGE_KEY, scheme);
+  applyScheme(ROOT, scheme);
 
   const mounted = await openWeek();
-  await vi.waitFor(() => {
-    expect(ROOT.getAttribute(SCHEME_ATTRIBUTE)).toBe(scheme);
-  });
+  expect(ROOT.getAttribute(SCHEME_ATTRIBUTE)).toBe(scheme);
   await pickOne(mounted);
   await vi.waitFor(() => {
     if (buttonFor(mounted, "undo").disabled) throw new Error("undo is still disabled");

@@ -259,7 +259,8 @@ async function openControl(
   root.render(<SchemeControl language={language} />);
 
   // `render` schedules the work rather than doing it, so the control is waited for. Its
-  // effect — the stamp on `<html>` — lands after the paint that follows.
+  // mount effect — which subscribes to the store and re-reads it, and stamps nothing at all
+  // since #168 — runs with the commit that puts the `<select>` here.
   const select = await vi.waitFor(() => {
     const found = into.querySelector("select");
     if (found === null) throw new Error("the control rendered no select");
@@ -293,15 +294,20 @@ describe.each(LANGUAGES)("the control in %s", (language) => {
     }
   });
 
-  it("starts on the choice this browser remembers", async () => {
+  it("starts on the choice this browser remembers, and leaves the stamp where it was", async () => {
     localStorage.setItem(SCHEME_STORAGE_KEY, "dark");
     await operatingSystem("light");
+    // The document as `main.tsx` leaves it: the remembered choice, narrowed, already on
+    // `<html>` before React is asked to mount anything.
+    applyScheme(ROOT, "dark");
+
     const { select } = await openControl(language);
 
-    await vi.waitFor(() => {
-      expect(ROOT.getAttribute(SCHEME_ATTRIBUTE)).toBe("dark");
-    });
     expect(select.value).toBe("dark");
+    // Still dark, and not because this control put it back: it stamps nothing as it mounts
+    // (#168), so what is asserted here is that it agreed with the page rather than rewriting
+    // it. The one test that can see the difference is the mounting race below.
+    expect(ROOT.getAttribute(SCHEME_ATTRIBUTE)).toBe("dark");
     expect(palette()).toEqual(systemDark);
   });
 
@@ -327,6 +333,147 @@ describe.each(LANGUAGES)("the control in %s", (language) => {
     expect(localStorage.getItem(SCHEME_STORAGE_KEY)).toBe(null);
   });
 
+});
+
+/**
+ * Who owns `data-theme` while the control is mounting, and what its `<select>` says
+ * afterwards (#168).
+ *
+ * Both halves need a browser and neither needs two languages. The first is React's scheduler:
+ * `createRoot().render()` schedules the work, so there is a real window between the render that
+ * reads the store and the commit that used to stamp what it read. The second is the browser's
+ * event delivery, which no fake can stand in for, because the fact under test is that the
+ * writer is the one document not told.
+ */
+describe("the attribute while the control mounts", () => {
+  it("cannot be overwritten by the value the control's render read", async () => {
+    // The page as `main.tsx` left it: light remembered, light on `<html>`, light on screen.
+    await operatingSystem("light");
+    localStorage.setItem(SCHEME_STORAGE_KEY, "light");
+    applyScheme(ROOT, "light");
+
+    const mounted = document.createElement("div");
+    host = mounted;
+    document.body.append(mounted);
+    root = createRoot(mounted);
+
+    /**
+     * The choice arrives **from inside the render phase**, which is the only place the window
+     * #168 names can be reached.
+     *
+     * Rendering has three parts and only the middle one is addressable from here: `render()`
+     * schedules the work, React then runs the whole tree's render phase, and only after all of
+     * it does it commit and run the effects. So acting in the task that called `render()` is
+     * too early — the store would be changed before the control had even read it, and the
+     * stale value the effect carries would be the new one. A mutation run proved that: the
+     * first version of this test put the choice there and passed with the fix reverted, which
+     * is the `:focus-visible` failure in `docs/agents/orchestration.md` all over again.
+     *
+     * A component rendered *after* the control renders after it, and still before any commit.
+     * Writing from a render function is impure and deliberate: this is the one instant where
+     * the control has read the store and nothing has committed, and reaching it is the whole
+     * of what the test is for.
+     */
+    /**
+     * What rendered, in the order React rendered it.
+     *
+     * `committedAlready` proves no commit had happened when the choice landed. It does *not*
+     * prove the control had already read the store, and that is the premise the whole test
+     * rests on — React rendering siblings in tree order. If that ever stopped holding, the
+     * choice would land *before* the control's read, the "stale" value the old effect carried
+     * would be the new one, and this test would go quietly vacuous again, which is exactly the
+     * trap its first version fell into. So the premise is asserted rather than assumed: a
+     * marker renders ahead of the control and the write happens behind it.
+     */
+    const rendered: string[] = [];
+    const Ahead = (): null => {
+      if (!rendered.includes("ahead")) rendered.push("ahead");
+      return null;
+    };
+
+    let committedAlready: boolean | undefined;
+    const chosenElsewhere = (): void => {
+      if (committedAlready !== undefined) return;
+      // Nothing is on the screen, so no effect has run; the control's render is behind us.
+      committedAlready = mounted.querySelector("select") !== null;
+      rendered.push("chose");
+      // Another tab chose dark, and the watcher `main.tsx` starts before `createRoot` has
+      // put it on the document. (Whether the browser really delivers such an event, and to
+      // whom, is the second-tab test below; what matters here is the moment, and a moment
+      // inside one task is not something an event can be aimed at.)
+      localStorage.setItem(SCHEME_STORAGE_KEY, "dark");
+      applyScheme(ROOT, "dark");
+    };
+    const InTheWindow = (): null => {
+      chosenElsewhere();
+      return null;
+    };
+
+    root.render(
+      <>
+        <Ahead />
+        <SchemeControl language="en" />
+        <InTheWindow />
+      </>,
+    );
+
+    const select = await vi.waitFor(() => {
+      const found = mounted.querySelector("select");
+      if (found === null) throw new Error("the control rendered no select");
+      return found;
+    });
+
+    // The window was reached, and reached before the commit. Without this the test could pass
+    // on a React that committed as it rendered, where there is no race to lose.
+    expect(committedAlready).toBe(false);
+    // …and reached after the control, which is what makes the value its render captured the
+    // *older* one. Siblings render in tree order, so a marker ahead of the control must have
+    // run before the write behind it.
+    expect(rendered).toEqual(["ahead", "chose"]);
+
+    // And the newer choice survived the commit: the effect reads the store rather than the
+    // `choice` its render captured, and stamps nothing either way.
+    expect(ROOT.getAttribute(SCHEME_ATTRIBUTE)).toBe("dark");
+    expect(palette()).toEqual(systemDark);
+    await vi.waitFor(() => {
+      expect(select.value).toBe("dark");
+    });
+  });
+
+  it("is shown by the control of a second tab, word and palette together", async () => {
+    // This tab as `main.tsx` leaves it: a watcher on `<html>`, then the control on the screen.
+    await operatingSystem("light");
+    watchIn(document, ROOT);
+    const { select } = await openControl("en");
+    expect(select.value).toBe("system");
+
+    // A second tab, which is where the choice is made — in *its* store, so this document is
+    // one the browser tells, and nothing here wrote the value.
+    const second = await entryDocument();
+    const view = second.defaultView;
+    if (view === null) throw new Error("that document has no window");
+
+    view.localStorage.setItem(SCHEME_STORAGE_KEY, "dark");
+
+    await vi.waitFor(() => {
+      expect(select.value).toBe("dark");
+    });
+    // Both halves of criterion 1: the word the student reads and the palette they are looking
+    // at. A stale word over a dark page is the failure, and it is the one a palette assertion
+    // on its own cannot see.
+    expect(ROOT.getAttribute(SCHEME_ATTRIBUTE)).toBe("dark");
+    expect(palette()).toEqual(systemDark);
+
+    // …and the student in this tab can now re-assert what they see, because the option shown
+    // is the option that is true: picking `dark` again fires no `change` event, and there is
+    // nothing left for it to have to correct.
+    view.localStorage.removeItem(SCHEME_STORAGE_KEY);
+    await vi.waitFor(() => {
+      expect(select.value).toBe("system");
+    });
+    expect(ROOT.hasAttribute(SCHEME_ATTRIBUTE)).toBe(false);
+    expect(palette()).toEqual(systemLight);
+  });
 });
 
 /**
@@ -362,16 +509,16 @@ it.each([
    * reading the machine's `--ink` while the page around it used the chosen one.
    */
   await operatingSystem(os);
-  // Through storage rather than `applyScheme`, because the control stamps the document
-  // itself as it mounts: a scheme set here by hand would be overwritten a frame later.
-  if (choice !== "system") localStorage.setItem(SCHEME_STORAGE_KEY, choice);
+  // Stamped the way `main.tsx` stamps it, before React is asked to mount: the control writes
+  // the attribute only in its `change` handler now (#168), so nothing here is waiting for it.
+  // The store is set as well, so the word the control shows agrees with the page.
+  if (choice !== "system") {
+    localStorage.setItem(SCHEME_STORAGE_KEY, choice);
+    applyScheme(ROOT, choice);
+  }
 
   const { select, before } = await openControl(language);
-  if (choice !== "system") {
-    await vi.waitFor(() => {
-      expect(ROOT.getAttribute(SCHEME_ATTRIBUTE)).toBe(choice);
-    });
-  }
+  expect(ROOT.getAttribute(SCHEME_ATTRIBUTE)).toBe(choice === "system" ? null : choice);
 
   before.focus();
   await userEvent.tab();
@@ -587,9 +734,10 @@ describe("the first paint, before any module has run", () => {
     expect(blocked.documentElement.dataset["stampError"]).toBeUndefined();
 
     // `SchemeControl` reached the screen too, which is the other half of the same exposure:
-    // it calls `schemeStore()` twice itself, and those calls were unreachable only because
-    // `main.tsx` died first. The guard is in the shared seam, so one fix covers both, and
-    // this is what says so rather than a comment claiming it.
+    // it calls `schemeStore()` three times itself — at render, in its mount effect, and in
+    // its `change` handler — and those calls were unreachable only because `main.tsx` died
+    // first. The guard is in the shared seam, so one fix covers both, and this is what says
+    // so rather than a comment claiming it.
     await vi.waitFor(() => {
       const control = blocked.querySelector("select");
       if (control === null) throw new Error("the scheme control never reached the screen");

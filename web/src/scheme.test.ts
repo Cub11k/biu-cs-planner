@@ -15,6 +15,7 @@ import {
   SCHEME_STORAGE_KEY,
   applyScheme,
   asSchemeChoice,
+  chooseScheme,
   isScheme,
   onSchemeChanged,
   rememberScheme,
@@ -178,6 +179,79 @@ it("removes the stamp for system, because no attribute is what no choice means",
   applyScheme(stamp, "system");
 
   expect(attributes.has(SCHEME_ATTRIBUTE)).toBe(false);
+});
+
+/**
+ * A student choosing, in the tab they are sitting in (#168).
+ *
+ * The browser delivers no `storage` event to the tab that wrote the value, so this is the one
+ * path by which a tab applies its own choice, and it is one step rather than two: the value
+ * recorded and the value stamped cannot differ, because there is no moment between them for
+ * anything to arrive.
+ */
+it("remembers a choice and stamps it once, in that order", () => {
+  const { browser, held } = storage();
+  const { stamp } = element();
+
+  /**
+   * One log for both halves, because the title claims an order and `held` and `done` are two
+   * records that cannot be read against each other. A store written *after* the stamp would
+   * leave every other assertion here untouched, and this repo reads a title as an assertion.
+   */
+  const order: string[] = [];
+  const recorded: SchemeBrowser = {
+    localStorage: {
+      getItem: (key) => browser.localStorage.getItem(key),
+      setItem: (key, value) => {
+        order.push(`remember ${value}`);
+        browser.localStorage.setItem(key, value);
+      },
+      removeItem: (key) => {
+        order.push("forget");
+        browser.localStorage.removeItem(key);
+      },
+    },
+  };
+  const watched: SchemeElement = {
+    setAttribute: (name, value) => {
+      order.push(`stamp ${value}`);
+      stamp.setAttribute(name, value);
+    },
+    removeAttribute: (name) => {
+      order.push("unstamp");
+      stamp.removeAttribute(name);
+    },
+  };
+
+  chooseScheme(recorded, watched, "dark");
+
+  expect(held.get(SCHEME_STORAGE_KEY)).toBe("dark");
+  // Exactly one write to the attribute, and the store written first. A second stamp would mean
+  // a second owner, which is what #168 was, and "stamped twice" and "stamped once" leave the
+  // same attribute behind.
+  expect(order).toEqual(["remember dark", "stamp dark"]);
+});
+
+it("hands the decision back as the key going away and the attribute coming off", () => {
+  const { browser, held } = storage({ [SCHEME_STORAGE_KEY]: "dark" });
+  const { stamp, done } = element();
+  applyScheme(stamp, "dark");
+
+  chooseScheme(browser, stamp, "system");
+
+  expect(held.has(SCHEME_STORAGE_KEY)).toBe(false);
+  expect(done).toEqual([`set ${SCHEME_ATTRIBUTE}=dark`, `remove ${SCHEME_ATTRIBUTE}`]);
+});
+
+it("still stamps this page when the store refuses to remember it", () => {
+  // A blocked or switched-off store loses the choice for the next load and not for this one:
+  // the page the student is looking at is the one they just chose, which is #146's third
+  // criterion restated for the writing path.
+  const { browser } = storage(undefined, true);
+  const { stamp, attributes } = element();
+
+  expect(() => chooseScheme(browser, stamp, "dark")).not.toThrow();
+  expect(attributes.get(SCHEME_ATTRIBUTE)).toBe("dark");
 });
 
 it("finds no remembered choice where there is no browser at all", () => {
@@ -446,6 +520,56 @@ it("starts that watcher, and narrows the stamp, from the entry module", () => {
 
   expect(entry).toContain("watchScheme(window");
   expect(entry).toContain("applyScheme(document.documentElement");
+
+  // …and the watcher is up before React is asked to mount. `render` schedules the work, so a
+  // choice from another tab can arrive before the first commit; a watcher started after
+  // `createRoot` would miss it, and `SchemeControl` no longer stamps anything that would
+  // cover for that (#168). An order only a comment states is an order until someone tidies
+  // the imports.
+  expect(entry.indexOf("watchScheme(window")).toBeLessThan(entry.indexOf("createRoot("));
+});
+
+/**
+ * One owner for `data-theme`, which is the invariant #168 asked for in the code.
+ *
+ * `scheme.ts` holds every stamp and `main.tsx` makes the one at startup. A component that
+ * stamped as well would be the defect back: its effect runs at commit with whatever its render
+ * captured, so a choice arriving from another tab in between is applied by the watcher and then
+ * overwritten by the older value. This is the same shape as the `var(--dark-` rule below —
+ * a rule only a comment states is a rule until someone is in a hurry.
+ *
+ * **What this enforces is narrower than the invariant, and the title says which.** It is a scan
+ * for two spellings, so it catches the regression that actually happened and the obvious way
+ * round it — reaching for `SCHEME_ATTRIBUTE` and calling `setAttribute` directly — and it does
+ * not catch a component that passes `document.documentElement` to `chooseScheme`. That last one
+ * is deliberately allowed rather than missed: a `chooseScheme` caller stamps the value it is
+ * recording in the same breath, so it cannot carry a stale one, which is the whole of why the
+ * writing path was moved there. The spelling, not the invariant, is what a text scan can hold.
+ */
+it("keeps `applyScheme` and the attribute's name in this module and the entry", () => {
+  /** `scheme.ts` is where `applyScheme` lives; `main.tsx` makes the one stamp at startup. */
+  const ALLOWED = ["scheme.ts", "main.tsx"];
+
+  // The two ways a file would write the attribute itself. `applyScheme` covers an alias and a
+  // namespace import as well, because both spell the name in the import clause; the attribute's
+  // constant covers the way round it, which is `setAttribute(SCHEME_ATTRIBUTE, …)` on an element
+  // of its own.
+  const SPELLINGS = ["applyScheme(", "SCHEME_ATTRIBUTE"];
+
+  // Tests are not judged, and the distinction is not laziness: a test drives the module
+  // directly in order to point it at a document that is not this page, which is the only way
+  // a second tab or a stylesheet can be asked anything. Nothing a test stamps ships.
+  const web = fileURLToPath(new URL(".", import.meta.url));
+  const stamping = walk(web)
+    // Matched on the path relative to `web/src`, not on the basename: a later
+    // `timetable/scheme.ts` is a different file and must not inherit this exemption.
+    .filter((file) => !/\.test\.tsx?$/.test(file) && !ALLOWED.includes(relative(web, file)))
+    .filter((file) => {
+      const source = withoutComments(readFileSync(file, "utf8"));
+      return SPELLINGS.some((spelling) => source.includes(spelling));
+    });
+
+  expect(stamping.map((file) => relative(web, file))).toEqual([]);
 });
 
 it("runs that stamp ahead of the paint it exists to beat", () => {

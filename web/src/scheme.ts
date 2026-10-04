@@ -21,12 +21,22 @@
  * unrecognised one, a store that throws, no browser at all — is the one `"system"` state
  * rather than a third palette, which is what makes losing the value cost a click.
  *
- * Three places read that store, and they have to agree. The blocking stamp in
- * `web/index.html` runs before the first paint, `main.tsx` narrows the same key before
- * React mounts, and `watchScheme` below re-reads it when another tab writes (#146).
- * `asSchemeChoice` stays the single place a value from outside becomes a choice: the inline
- * stamp keeps that true by narrowing nothing at all, and `scheme.test.ts` fails if it
- * starts to.
+ * Four places read that store, and they have to agree. The blocking stamp in
+ * `web/index.html` runs before the first paint, `main.tsx` narrows the same key before React
+ * mounts, `watchScheme` below re-reads it when another tab writes (#146), and `SchemeControl`
+ * reads it for the word it shows — at render for the first paint of the control and again at
+ * commit, because by then the first answer can be out of date (#168). `asSchemeChoice` stays
+ * the single place a value from outside becomes a choice: the inline stamp keeps that true by
+ * narrowing nothing at all, and `scheme.test.ts` fails if it starts to.
+ *
+ * **This module owns the attribute, and every stamp carries what the store says now.** The
+ * three writers are `main.tsx` once at startup, `watchScheme` on an event it answers by
+ * re-reading, and `chooseScheme` at the moment it writes the store itself. No component
+ * stamps, so no stamp can carry a value read during an earlier render — which is what #168
+ * was: `SchemeControl`'s mount effect applied the choice its `useState` initialiser had read,
+ * and a choice arriving from another tab in the window between that render and its commit was
+ * applied by the watcher and then overwritten with the older one. A component asks the store
+ * and shows the answer, and `scheme.test.ts` fails if one calls `applyScheme` again.
  *
  * Everything here takes the browser and the element as arguments rather than reaching for
  * `window` or `document`, which is what lets it be tested without either.
@@ -115,6 +125,33 @@ export function rememberScheme(browser: SchemeBrowser, choice: SchemeChoice): vo
 export function applyScheme(element: SchemeElement, choice: SchemeChoice): void {
   if (choice === "system") element.removeAttribute(SCHEME_ATTRIBUTE);
   else element.setAttribute(SCHEME_ATTRIBUTE, choice);
+}
+
+/**
+ * A student choosing, in this tab: remembered and stamped, in that order, from one place.
+ *
+ * This exists because **the browser tells the tab that wrote the value nothing.** No
+ * `storage` event is delivered to the writer, so `watchScheme` — which answers every change
+ * made anywhere else — cannot be what applies a choice made here. Something in the writing
+ * tab has to, and the question #168 asked is what that something is allowed to be.
+ *
+ * It is this function and not a component's effect, because recording and stamping are then
+ * one step and the value stamped is the one being recorded. An effect is a second step, run
+ * later, with whatever its render captured: that is how a choice arriving in between came to
+ * be overwritten. The invariant the module header states is kept here by there being nothing
+ * for a caller to get wrong — no caller holds a choice long enough for it to go stale,
+ * because it writes the store with the same value in the same breath.
+ *
+ * `rememberScheme` swallows a store that refuses, so a blocked store still leaves this page
+ * in the chosen scheme and only the next load forgets.
+ */
+export function chooseScheme(
+  browser: SchemeBrowser,
+  element: SchemeElement,
+  choice: SchemeChoice,
+): void {
+  rememberScheme(browser, choice);
+  applyScheme(element, choice);
 }
 
 /**
@@ -218,11 +255,16 @@ export function watchScheme(
  * The same event, handed to something that is not the document.
  *
  * `watchScheme` covers the page, which is what a student is looking at, and it is all
- * `main.tsx` needs. A control showing the choice *as a word* is the other consumer: its
- * `<select>` reads the store once as it mounts, so after another tab chooses, the page it
- * sits on is dark and its own value still says what it said. That is one `useEffect` away —
- * `onSchemeChanged(window, schemeStore(), setChoice)` — and it is separated out so that the
- * component needs no adapter standing in for an element it is not.
+ * `main.tsx` needs. A control showing the choice *as a word* is the other consumer, and
+ * `SchemeControl` is it: `onSchemeChanged(window, schemeStore(), setChoice)` is what keeps its
+ * `<select>` on the scheme the document is actually in after another tab chose (#168). Before
+ * that it read the store once as it mounted, so the page around it went dark under a drop-down
+ * still saying "light" — and re-picking the option already shown fires no `change` event,
+ * which made that the one value its student could not re-assert.
+ *
+ * It stays separate from `watchScheme` so that the component needs no adapter standing in for
+ * an element it is not, and so that a subscriber which only *shows* the choice cannot stamp
+ * it: what this hands over is a `SchemeChoice` and not a document.
  *
  * Both go through the same guard and the same re-read, so two subscribers cannot end up with
  * two answers, and the tab that wrote the value is told nothing by either.
