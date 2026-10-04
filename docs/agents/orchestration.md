@@ -50,7 +50,8 @@ These hold regardless of what the table says:
   landed "in a run with four other agents, two of them writing in `docs/adr/`", with `CONTEXT.md`
   "outside every lane. Deliberately left rather than raced." Twice is a pattern.
 - **Prefix every scratch file with your ticket number *and* something that identifies you within
-  the ticket** — `182-review-1-graphs.ts`, not `182-graphs.ts`. The scratchpad is shared across
+  the ticket, which no other writer in it is using** — `182-review-1-graphs.ts`, not
+  `182-graphs.ts`. The scratchpad is shared across
   agents and sessions. A run in September 2026 had two scratch files overwritten mid-task by a
   sibling agent, and one measurement briefly reported another worktree's numbers as its own. The
   ticket number separates tickets, and a parent and its two reviewers are one ticket: all three
@@ -75,8 +76,9 @@ them unless it is told not to.
 throwaway scripts like anyone else, and it has no way to know the scratchpad is shared. In one
 run an agent kept the rule perfectly and its two reviewers wrote unprefixed files beside it,
 because relaying the rule had not occurred to anyone. Hand each reviewer the identifier it is to
-use — `201-review-1-`, `201-review-2-` — rather than leaving each to invent one, since a reviewer
-choosing for itself cannot see what the other chose.
+use — `182-review-1-`, `182-review-2-` — rather than leaving each to invent one, since a reviewer
+choosing for itself cannot see what the other chose, and two that both pick `review` have each
+identified themselves and still collided.
 
 ## Ask whether the test passes for the reason you think it does
 
