@@ -65,9 +65,30 @@ span the children, and what is out of scope. It does **not** restate the childre
 one click away and they are the frozen record; a paraphrase in the parent is a second version of
 the ask that can drift from the first.
 
-**One worktree, one branch, one pull request per parent**, and the pull request closes the children
-(`Closes #a, #b, #c`). The saving is the overhead, so a parent that lands as three pull requests
-has saved nothing.
+**One worktree, one branch, one pull request per parent.** The saving is the overhead, so a parent
+that lands as three pull requests has saved nothing.
+
+**The pull request body closes the parent and every child, with the keyword repeated:**
+
+```
+Closes #179
+Closes #124
+Closes #125
+```
+
+Not `Closes #179, #124, #125`. GitHub reads one keyword as governing one reference and treats the
+rest of a comma-separated list as ordinary links, so that spelling closes the parent and leaves
+every child open. This file said it the wrong way for one day: #190 was the first parent to land
+under this rule, it carried `Closes #178, #163, #176`, and on merge #178 closed while #163 and
+#176 stayed open and had to be closed by hand (#191).
+
+A parent closed over open children is worse than one that never claimed to close them — the open
+count is wrong, `ready-for-agent` lists work that has already merged, and the next reconciliation
+pass reads those children as still to do. It also wastes the one mechanical benefit the shape has:
+`sub_issues_summary.completed` only moves when a child actually closes.
+
+The keywords work in a pull request **body** and in commit messages, not in a comment added
+afterwards, and only for issues in the same repository.
 
 This is the same sub-issue machinery the wayfinding section below uses, for a different purpose. A
 composed parent is not a `wayfinder:map`: a map is a standing document with Fog and
@@ -115,6 +136,10 @@ makes the parent `needs-triage`, because the agent would stall on it either way.
 
 ### Commands
 
+Confirmed against this repo by running them, except the detach, which is marked below — the one
+line in this section that was written from the API's shape rather than from a run is the one that
+turned out to be wrong, so the distinction is kept visible.
+
 The sub-issues endpoint takes the child's numeric **database id**, not its `#number` and not its
 `node_id`:
 
@@ -122,8 +147,13 @@ The sub-issues endpoint takes the child's numeric **database id**, not its `#num
 # the child's database id
 gh api repos/Cub11k/biu-cs-planner/issues/<child> --jq .id
 
-# attach / detach
+# attach — run, and the answer is the PARENT's number rather than the child's, so verify an
+# attach by reading the parent's sub-issues below instead of by trusting the response
 gh api --method POST   repos/Cub11k/biu-cs-planner/issues/<parent>/sub_issues -F sub_issue_id=<child-db-id>
+
+# detach — NOT yet run here. No composition has needed undoing, and testing it would have meant
+# either a throwaway ticket or detaching a closed parent's child, which leaves "removed sub-issue"
+# on a finished record for nothing. Check the answer rather than assume it the first time it is used.
 gh api --method DELETE repos/Cub11k/biu-cs-planner/issues/<parent>/sub_issue  -F sub_issue_id=<child-db-id>
 
 # read the composition
