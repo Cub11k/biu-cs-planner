@@ -816,15 +816,22 @@ it("refuses a State File it cannot read, rather than reporting it absent", async
   await mkdir(join(root, "alice.state.json"));
 
   await expect(workspace.readStateFile(ALICE)).rejects.toThrow(WorkspaceRefusedError);
-  // The refusal names the file the way this adapter's other one does: relative to the Workspace
-  // root, never absolutely. `app/src/queries.ts` puts this message into a Warning the API
-  // serves, so what is in it is what a student is shown (docs/design.md, "API and data rules").
+  // The refusal names the file in the domain's words and no path of any kind — it used to read
+  // `refusing ./alice.state.json: …`, the Workspace-relative spelling, which is smaller than an
+  // absolute path and is still a file path (#216). `app/src/queries.ts` puts a message out of
+  // this port into a Warning the API serves, so what is in it is what crosses the API
+  // (CLAUDE.md, "The API exposes domain operations, never file paths").
   const refusal = await workspace
     .readStateFile(ALICE)
     .then(() => undefined)
     .catch((thrown: unknown) => thrown as Error);
-  expect(refusal?.message).toContain("./alice.state.json");
+  expect(refusal?.message).toBe(
+    'refusing the State File "alice": it is there and cannot be read (EISDIR)',
+  );
   expect(refusal?.message).not.toContain(root);
+  // and the filesystem's own error, whose message does carry the absolute path, is on `cause`
+  // where a log can reach it and a response cannot (#165)
+  expect((refusal?.cause as { code?: unknown } | undefined)?.code).toBe("EISDIR");
   // the save a report of absence would have let through, based on there being no file
   await expect(workspace.saveStateFile(ALICE, firstSave(STATE))).rejects.toThrow(
     WorkspaceRefusedError,
@@ -953,10 +960,12 @@ it("refuses to list Catalogs when catalogs is a plain file, rather than reportin
 
   expect(refusal).toBeInstanceOf(WorkspaceRefusedError);
   expect((refusal as Error).message).toBe(
-    "refusing ./catalogs: it is there and is not a folder (ENOTDIR)",
+    "refusing the folder holding the Workspace's Catalogs: it is there and is not a folder (ENOTDIR)",
   );
-  // no absolute path in what a caller could pass on as a Warning
+  // no path of any kind in what a caller could pass on as a Warning: it read `./catalogs` until
+  // #216, which is Workspace-relative rather than absolute and is a file path either way
   expect((refusal as Error).message).not.toContain(root);
+  expect((refusal as Error).message).not.toContain("./");
   // and the file is untouched, as a listing has no business changing anything
   expect(await readFile(join(root, "catalogs"), "utf8")).toBe("not a folder");
 });
@@ -1046,9 +1055,10 @@ it.skipIf(!unreadableFilesArePossible)(
       const refusal = await workspace.list("catalog").catch((error: unknown) => error);
       expect(refusal).toBeInstanceOf(WorkspaceRefusedError);
       expect((refusal as Error).message).toBe(
-        "refusing ./catalogs: it is there and cannot be read (EACCES)",
+        "refusing the folder holding the Workspace's Catalogs: it is there and cannot be read (EACCES)",
       );
       expect((refusal as Error).message).not.toContain(root);
+      expect((refusal as Error).message).not.toContain("./");
     } finally {
       await chmod(join(root, "catalogs"), 0o700);
     }
@@ -1876,4 +1886,167 @@ it("reads the last stamp of a name that itself ends in one, not the first", asyn
   ]);
   // and nothing of it is attributed to the State File whose name is the prefix
   expect(await workspace.listBackups(alice)).toEqual([]);
+});
+
+/**
+ * #216, at the port rather than at a route: **every refusal this adapter can make, in one
+ * sweep, asserted to name no path of any kind.**
+ *
+ * The tests above pin the whole message for the cases they are about, which is what catches a
+ * wording that regresses. What they cannot catch is a refusal that does not exist yet — and that
+ * is how this leak spread: `UnwritableError`'s doc named the defect and its own ticket, #195
+ * added a route that inherited it, and #67 added `snapshot`, `listBackups` and `readBackup` on
+ * the same `contained`/`bytesOrAbsent`/`entriesOrAbsent` footing without anything failing. A
+ * refusal added to this module arrives here, where the rule is one assertion over all of them
+ * rather than a sentence somebody has to remember.
+ *
+ * Every refusing operation of the port is provoked, and each case is **asserted to have refused**
+ * before its message is read, so a trigger that stops triggering fails rather than passing
+ * silently. The triggers are a directory where a file belongs, a plain file where a folder belongs
+ * and a symlink out of the Workspace — none of them needing a mode bit, so the sweep runs
+ * everywhere (#130). Each one is a **thunk** and not a promise: provoked eagerly, these are
+ * rejections nothing is awaiting yet, which vitest reports as unhandled and is right to.
+ *
+ * `requireJsonName` is the one refusal not here, and it is the one that used to name an
+ * **absolute** path. Nothing reachable can provoke it: every name this module builds ends in
+ * `.json`, which is the standing its own doc claims. The compiler covers it instead — it takes
+ * the domain description as a parameter now, so a future caller cannot reach it without one.
+ */
+it("names no path in any refusal it can make, over every operation of the port", async () => {
+  const made: string[] = [];
+  /** A Workspace of its own per case, so one case's damage is not another's setup. */
+  const folder = async (): Promise<string> => {
+    const path = await mkdtemp(join(tmpdir(), "biu-no-path-"));
+    made.push(path);
+    return path;
+  };
+
+  try {
+    const refusals: [string, () => Promise<unknown>][] = [];
+    const sweep = (where: string, refuse: () => Promise<unknown>): void => {
+      refusals.push([where, refuse]);
+    };
+
+    // 1. a Catalog, a State File and a snapshot that are all directories where files belong
+    {
+      const path = await folder();
+      const workspace = fileSystemWorkspace(path);
+      await workspace.create();
+      const first = await workspace.saveStateFile(ALICE, firstSave(STATE));
+      // a second save, because the first replaced nothing and so copied nothing
+      await workspace.saveStateFile(ALICE, { json: { ...STATE }, basedOn: first });
+      const [held] = await workspace.listBackups(ALICE);
+      expect(held).toBeDefined();
+
+      await mkdir(join(path, "catalogs", "2027.json"));
+      await rm(join(path, "alice.state.json"));
+      await mkdir(join(path, "alice.state.json"));
+      for (const entry of await readdir(join(path, ".backups"))) {
+        await rm(join(path, ".backups", entry));
+        await mkdir(join(path, ".backups", entry));
+      }
+
+      sweep("read a Catalog", () => workspace.read({ kind: "catalog", academicYear: 2027 }));
+      sweep("write a Catalog", () =>
+        workspace.write({ kind: "catalog", academicYear: 2027 }, CATALOG),
+      );
+      sweep("read a State File", () => workspace.readStateFile(ALICE));
+      sweep("save a State File", () => workspace.saveStateFile(ALICE, firstSave(STATE)));
+      sweep("read a snapshot", () => workspace.readBackup(held!));
+    }
+
+    // 2. a Workspace whose folders are plain files, so a listing meets something that is not one.
+    //    `status` calls it **ready**, which is #121's second door and why these are refusals
+    //    rather than empty answers.
+    {
+      const path = await folder();
+      await writeFile(join(path, "catalogs"), "not a folder");
+      await writeFile(join(path, "requirements"), "not a folder");
+      await writeFile(join(path, ".backups"), "not a folder");
+      const workspace = fileSystemWorkspace(path);
+      expect(await workspace.status()).toEqual({ ready: true, missing: [] });
+
+      sweep("list Catalogs", () => workspace.list("catalog"));
+      sweep("list snapshots", () => workspace.listBackups(ALICE));
+      // the snapshot a save takes, which refuses before a byte is written when `.backups` is not
+      // a folder — reached by a *second* save, since a first one replaces nothing
+      sweep("snapshot inside a save", async () => {
+        const wrote = await workspace.saveStateFile(ALICE, firstSave(STATE));
+        return workspace.saveStateFile(ALICE, { json: { ...STATE }, basedOn: wrote });
+      });
+    }
+
+    // 3. a listing of a Workspace root that is itself a plain file — the one folder whose
+    //    Workspace-relative spelling was a single dot, naming nothing
+    {
+      const path = join(await folder(), "workspace");
+      await writeFile(path, "not a folder");
+      sweep("list State Files", () => fileSystemWorkspace(path).list("state"));
+    }
+
+    // 4. `contained`'s two arms: the Catalog file points out of the Workspace, and the folder
+    //    holding the Catalogs does. They used to be told apart by naming two different paths.
+    {
+      const away = await folder();
+
+      const linked = await folder();
+      await mkdir(join(linked, "requirements"));
+      await mkdir(join(linked, ".backups"));
+      await symlink(away, join(linked, "catalogs"), "dir");
+      sweep("read through a folder pointing out", () =>
+        fileSystemWorkspace(linked).read({ kind: "catalog", academicYear: 2027 }),
+      );
+
+      const path = await folder();
+      const workspace = fileSystemWorkspace(path);
+      await workspace.create();
+      await writeFile(join(away, "2027.json"), JSON.stringify(CATALOG));
+      await symlink(join(away, "2027.json"), join(path, "catalogs", "2027.json"));
+      sweep("read a file pointing out", () =>
+        workspace.read({ kind: "catalog", academicYear: 2027 }),
+      );
+    }
+
+    // 5. a create that cannot make the Workspace Layout, and the two writes into a folder that is
+    //    not a Workspace at all
+    {
+      const taken = await folder();
+      await writeFile(join(taken, "catalogs"), "not a folder");
+      await mkdir(join(taken, "requirements"));
+      sweep("create the Workspace Layout", () => fileSystemWorkspace(taken).create());
+
+      const bare = await folder();
+      sweep("save into a folder that is not a Workspace", () =>
+        fileSystemWorkspace(bare).saveStateFile(ALICE, firstSave(STATE)),
+      );
+      sweep("write into a folder that is not a Workspace", () =>
+        fileSystemWorkspace(bare).write({ kind: "catalog", academicYear: 2027 }, CATALOG),
+      );
+    }
+
+    // the count, so a case silently dropped from the sweep fails rather than shrinking it
+    expect(refusals.length).toBe(14);
+
+    for (const [where, refuse] of refusals) {
+      const refusal = await refuse()
+        .then(() => undefined)
+        .catch((thrown: unknown) => thrown as Error);
+      // it refused at all, so a trigger that stops working fails here rather than passing
+      expect(refusal, where).toBeInstanceOf(WorkspaceRefusedError);
+      const message = refusal?.message ?? "";
+      // no absolute path, which `requireJsonName` used to word itself with
+      expect(message, where).not.toContain(tmpdir());
+      // and no Workspace-relative one, which is how the rest of them read: `./catalogs/2027.json`
+      // is smaller than an absolute path and is a file path all the same
+      expect(message, where).not.toContain("./");
+      expect(message, where).not.toContain(".json");
+      expect(message, where).not.toContain(".backups");
+      expect(message, where).not.toContain("catalogs/");
+      // the subject is said in the domain's words instead, so a caller that may not know the
+      // Workspace has files in it still learns which thing was refused
+      expect(message, where).toMatch(/Workspace|Catalog|State File|snapshot/);
+    }
+  } finally {
+    for (const path of made) await rm(path, { recursive: true, force: true });
+  }
 });
