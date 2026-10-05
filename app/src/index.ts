@@ -57,6 +57,7 @@ export {
 export {
   getOffering,
   listOfferings,
+  type CatalogRefused,
   type ListResult,
   type OfferingResult,
   type QueryWarning,

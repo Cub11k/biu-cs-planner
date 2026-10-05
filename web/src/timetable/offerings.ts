@@ -19,23 +19,31 @@ type Answer = InferResponseType<OfferingsRoute>;
 /** The answer that carries the Offerings; the others carry the Warnings or the guard's refusal. */
 type ServedCatalog = Extract<Answer, { offerings: unknown }>;
 
-/** Why no Catalog was served. The API sends these with every answer that has none. */
+/**
+ * Why no Catalog was served, when one was looked for: none for the year, or a file that is not a
+ * Catalog this build reads. A Workspace that would not touch the file is not one of these (#149).
+ */
 export type CatalogWarning = Extract<Answer, { warnings: unknown }>["warnings"][number];
 
 export type OfferingsResult =
   | { kind: "served"; offerings: Offering[] }
   /**
-   * The API would not serve a Catalog and said why: no Catalog for the year, a file it
-   * could not read, a schema version it does not speak, a Workspace that refused it.
-   * The Warnings travel with it, because a refusal nobody can act on is not a refusal.
+   * The API served no Catalog and said why: no Catalog for the year, a file it could not read
+   * as one, a schema version it does not speak. Not a refusal (#149): the Catalog was looked
+   * for, and the Warnings travel with the answer, because a Warning nobody can read is none.
    */
-  | { kind: "refused"; warnings: CatalogWarning[] }
+  | { kind: "not-served"; warnings: CatalogWarning[] }
+  /**
+   * The Workspace would not touch the Catalog file at all (#149): a refusal, which the API answers
+   * apart from the Warnings above, because there was no Catalog for a Warning to be about.
+   */
+  | { kind: "refused" }
   /** This page has no launch token, so the server will not talk to it (ADR-0004). */
   | { kind: "unauthorized" }
   /**
    * The answer arrived and its body is not one this page can read — Vite's HTML 500 when the
    * server is not running behind the dev proxy, hono's plain-text 404 for a path a newer
-   * bundle asks for (`readBody` in ../body.ts). Its own arm and not `refused` with no
+   * bundle asks for (`readBody` in ../body.ts). Its own arm and not `not-served` with no
    * Warnings, because that is the shape `isAbsence` reads as "this year has no Catalog yet" —
    * an affirmative claim about the student's folder that nothing here knows (#171).
    */
@@ -79,7 +87,8 @@ export async function fetchOfferings(
     const refused = await readBody<Answer>(() => answer.json());
     if (!refused.readable) return { kind: "unreadable-answer" };
     const body = refused.body;
-    return { kind: "refused", warnings: "warnings" in body ? body.warnings : [] };
+    if ("kind" in body && body.kind === "refused") return { kind: "refused" };
+    return { kind: "not-served", warnings: "warnings" in body ? body.warnings : [] };
   }
 
   const served = await readBody<ServedCatalog>(() => answer.json());

@@ -102,7 +102,6 @@ const WARNING_STRING = new Map<CatalogWarning["kind"], StringKey>([
   ["file-unreadable", "warningFileUnreadable"],
   ["schema-version-too-new", "warningSchemaTooNew"],
   ["schema-version-unsupported", "warningSchemaUnsupported"],
-  ["workspace-refused", "warningWorkspaceRefused"],
 ]);
 
 /**
@@ -1029,11 +1028,12 @@ export function TimetablePane({
                */
             catalog.kind === "unreadable-answer" ? (
               <p className="text-sm text-pencil">{t(language, "catalogAnswerUnreadable")}</p>
-            ) : catalog.kind === "refused" ? (
+            ) : catalog.kind === "not-served" || catalog.kind === "refused" ? (
               <CatalogNotice
                 language={language}
                 academicYear={yearLabel}
-                warnings={catalog.warnings}
+                warnings={catalog.kind === "not-served" ? catalog.warnings : []}
+                workspaceRefused={catalog.kind === "refused"}
               />
             ) : (
               <CoursePicker
@@ -1291,20 +1291,24 @@ export function CatalogNotice({
   language,
   academicYear,
   warnings,
+  workspaceRefused = false,
 }: {
   language: Language;
   /** Spelled as the header spells it, so the screen names one year once. */
   academicYear: string;
   warnings: readonly CatalogWarning[];
+  /** The Workspace would not touch the file: a refusal, not one of the Warnings (#149). */
+  workspaceRefused?: boolean;
 }): React.JSX.Element {
   return (
     <div className="text-sm text-pencil">
       <p>
-        {isAbsence(warnings)
+        {!workspaceRefused && isAbsence(warnings)
           ? t(language, "catalogMissing", { year: academicYear })
           : t(language, "catalogUnreadable", { year: academicYear })}
       </p>
       <ul className="mt-2 list-disc space-y-1 ps-5">
+        {workspaceRefused ? <li>{t(language, "warningWorkspaceRefused")}</li> : null}
         {warnings.map((warning) => {
           const key = WARNING_STRING.get(warning.kind);
           return key === undefined ? null : <li key={warning.kind}>{t(language, key)}</li>;

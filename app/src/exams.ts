@@ -8,7 +8,7 @@ import {
 } from "@biu-cs-planner/core";
 import { readStateFile, type EditRefusal } from "./edit.ts";
 import { DEFAULT_STATE_FILE, variantShownIn, type TimetableRef } from "./picks.ts";
-import { listOfferings, type QueryWarning } from "./queries.ts";
+import { listOfferings, type CatalogRefused, type QueryWarning } from "./queries.ts";
 import type { Workspace } from "./workspace.ts";
 
 /**
@@ -55,6 +55,12 @@ export type ExamsResult =
       warnings: StateFileWarning[];
       /** About the Catalog the Exams came from, which is a different file. */
       catalogWarnings: QueryWarning[];
+      /**
+       * The Workspace would not touch that Catalog: a refusal, apart from its Warnings (#149), and
+       * `null` when the Catalog was read or looked for. The rail is still served, with every
+       * picked Course's Exams unknown, because the Picks are in the State File and that was read.
+       */
+      catalogRefused: CatalogRefused | null;
     }
   | { kind: "refused"; reason: EditRefusal; warnings: StateFileWarning[] };
 
@@ -112,8 +118,10 @@ function sourcesFor(courseNumbers: readonly string[], offerings: readonly ExamSo
  * which have no State File to read, the generator among them (`core/src/timetable/exams.ts`).
  *
  * Refused only for the State File, as `readTimetable` is: the Picks and the threshold are in it,
- * so without it there is no question to answer. A Catalog that cannot be served is not a refusal —
- * it is an exam period nobody has published yet, which is a Warning and a partial rail.
+ * so without it there is no question to answer. A Catalog that cannot be served is not a refusal
+ * *of the rail* — it is an exam period nobody has published yet, which is a Warning and a partial
+ * rail — and a Catalog the Workspace would not touch rides as `catalogRefused`, apart from the
+ * Warnings (#149).
  *
  * **One limit this cannot honour, and it is the data model rather than this function.** The
  * Semester filters *Offerings* and cannot filter *sittings*: a Catalog `Exam` is `{ moed, date,
@@ -145,10 +153,14 @@ export async function readExams(workspace: Workspace, at: TimetableRef): Promise
   return {
     kind: "served",
     variantName: where.variant,
-    exams: checkExams(sourcesFor(courseNumbers, catalog.offerings ?? []), { spacingDays }),
+    exams: checkExams(
+      sourcesFor(courseNumbers, catalog.kind === "read" ? (catalog.offerings ?? []) : []),
+      { spacingDays },
+    ),
     spacingDays,
     version: loaded.version,
     warnings: loaded.warnings,
-    catalogWarnings: catalog.warnings,
+    catalogWarnings: catalog.kind === "read" ? catalog.warnings : [],
+    catalogRefused: catalog.kind === "refused" ? catalog : null,
   };
 }

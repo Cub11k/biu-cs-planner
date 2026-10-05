@@ -5,6 +5,7 @@ import { memoryWorkspace, type MemoryWorkspace } from "./workspace.memory.ts";
 import { readExams } from "./exams.ts";
 import { pickGroup } from "./picks.ts";
 import { setSettings } from "./settings.ts";
+import { WorkspaceRefusedError, type Workspace } from "./workspace.ts";
 
 /**
  * The exam period, read at the threshold the student stored (#164).
@@ -227,6 +228,37 @@ it("counts a picked Course the Catalog cannot answer for as one whose Exams are 
     { kind: "no-catalog-for-year", academicYear: 2027 },
   ]);
   expect(read.kind === "served" && read.warnings).toEqual([]);
+});
+
+/**
+ * #149: a Catalog the Workspace would not touch is a refusal, not a Catalog Warning. The rail is
+ * still served — the Picks are in the State File, which was read — with the refusal apart from
+ * `catalogWarnings`, which hold only Warnings about a Catalog that was looked for.
+ */
+it("carries a refused Catalog apart from the Catalog's Warnings", async () => {
+  const workspace = memoryWorkspace({ created: true });
+  await pickGroup(workspace, AT, pick("89-110"), { basedOn: undefined });
+  const refusing: Workspace = {
+    ...workspace,
+    read: () =>
+      Promise.reject(
+        new WorkspaceRefusedError(
+          { reason: "unreadable", subject: { kind: "catalog", academicYear: 2027 } },
+          "the adapter's own words",
+        ),
+      ),
+  };
+
+  const read = await readExams(refusing, AT);
+
+  expect(read.kind).toBe("served");
+  expect(read.kind === "served" && read.exams.coursesWithUnknownExams).toBe(1);
+  expect(read.kind === "served" && read.catalogWarnings).toEqual([]);
+  expect(read.kind === "served" && read.catalogRefused).toEqual({
+    kind: "refused",
+    reason: "unreadable",
+    sentence: "refusing the Catalog for the Academic Year 2027: it is there and cannot be read",
+  });
 });
 
 it("answers an empty exam period before anything is picked, rather than failing", async () => {

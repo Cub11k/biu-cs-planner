@@ -1,4 +1,6 @@
 import { mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { closeSync, constants, openSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
@@ -318,7 +320,7 @@ it("reports a Catalog that resolves outside the Workspace, rather than failing",
     const listed = await get("/api/catalog/2027/offerings?semester=fall");
     expect(listed.status).toBe(409);
     const body = await listed.text();
-    expect(JSON.parse(body)).toMatchObject({ warnings: [{ kind: "workspace-refused" }] });
+    expect(JSON.parse(body)).toMatchObject({ kind: "refused" });
     // and the refusal never hands back what was out there
     expect(body).not.toContain("leaked");
 
@@ -340,9 +342,7 @@ it("reports a refusal the same way for one Offering as for a list", async () => 
     const one = await get("/api/catalog/2027/offerings/89-110");
 
     expect(one.status).toBe(409);
-    await expect(one.json()).resolves.toMatchObject({
-      warnings: [{ kind: "workspace-refused" }],
-    });
+    await expect(one.json()).resolves.toMatchObject({ kind: "refused", reason: "outside-workspace" });
   } finally {
     await rm(outside, { recursive: true, force: true });
   }
@@ -381,7 +381,7 @@ it("says what is wrong with a stored Catalog it will not overwrite", async () =>
  * into nothing and write the result over a Catalog it had never read.
  *
  * Both routes that reach the file, for the reason the State File test gives: the import's arm and
- * the query's `notServed` are two different lines, and `notServed` is also where a refusal is
+ * the query's `catalogNotServed` are two different lines, and `catalogNotServed` is also where a refusal is
  * told from absence — a 404 here would be the API claiming a refused Catalog simply was not
  * there.
  *
@@ -398,8 +398,11 @@ it("answers a stored Catalog it cannot read with a 409, and never a 500 or a 404
 
   const listed = await get("/api/catalog/2027/offerings?semester=fall");
   expect(listed.status).toBe(409);
-  await expect(listed.json()).resolves.toMatchObject({
-    warnings: [{ kind: "workspace-refused" }],
+  // #149: a refusal is its own arm, with #249's reason code, and no Warnings
+  await expect(listed.json()).resolves.toEqual({
+    kind: "refused",
+    reason: "unreadable",
+    sentence: "refusing the Catalog for the Academic Year 2027: it is there and cannot be read",
   });
 
   // the bytes, not just the status code: the import wrote nothing over what it could not read
@@ -617,7 +620,7 @@ it("removes a Pick, and says so again when there is none left to remove", async 
 
 /**
  * The external-edit guard, over HTTP (#90). `docs/design.md`, "External edits": each save
- * carries the file version it was based on, and the server refuses the overwrite when the
+ * carries the revision of the file it was based on, and the server refuses the overwrite when the
  * file changed on disk meanwhile.
  */
 it("serves the revision a page has to hand back, and takes it on the save", async () => {
@@ -1315,6 +1318,7 @@ it("checks the Exams at the threshold the student stored, and changes when they 
     },
     warnings: [],
     catalogWarnings: [],
+    catalogRefused: null,
   });
 
   const chosen = await choose({ examSpacingDays: 2 });
@@ -1807,7 +1811,7 @@ const namesNoPath = async (body: string, where: string): Promise<void> => {
  * All four routes that reach a Catalog file, and the statuses are asserted so that none of them
  * can pass by not refusing at all. The exam period is a **200** on purpose and is the subtlest of
  * the four: a Catalog that cannot be served is not a refusal of the exam rail — it is an exam
- * period nobody has published — so its refusal rides out under `catalogWarnings` inside a
+ * period nobody has published — so its refusal rides out under `catalogRefused` (#149) inside a
  * successful answer, which is the one place a reader of the 409 arms would not have looked.
  */
 it("names no path in a refusal when a Catalog cannot be read, on all four routes", async () => {
@@ -1819,21 +1823,18 @@ it("names no path in a refusal when a Catalog cannot be read, on all four routes
   expect(listed.status).toBe(409);
   const listedBody = await listed.text();
   // the setup asserted rather than assumed: this is the refusal and not some other answer
-  expect(JSON.parse(listedBody)).toMatchObject({ warnings: [{ kind: "workspace-refused" }] });
+  expect(JSON.parse(listedBody)).toMatchObject({ kind: "refused" });
   await namesNoPath(listedBody, "GET offerings");
   // **and it still says something true.** The other half of #216: a path removed with nothing
   // put in its place would leave a page unable to tell the student which file to go and look
-  // at. `reason` is `app`'s sentence, worded from the refusal's reason code and subject
+  // at. `sentence` is `app`'s, worded from the refusal's reason code and subject
   // (`app/src/refusal.ts`, #249), and it names the Catalog by its Academic Year — a domain
-  // operation, which is what the API is allowed to expose. The errno the adapter put on its own
-  // message (`EISDIR`) does not come with it: that is the adapter's word, and stays in its log.
+  // operation, which is what the API is allowed to expose. What the adapter put on its own
+  // message does not come with it: that is the adapter's word, for the `--debug` log (#165).
   expect(JSON.parse(listedBody)).toMatchObject({
-    warnings: [
-      {
-        kind: "workspace-refused",
-        reason: "refusing the Catalog for the Academic Year 2027: it is there and cannot be read",
-      },
-    ],
+    kind: "refused",
+    reason: "unreadable",
+    sentence: "refusing the Catalog for the Academic Year 2027: it is there and cannot be read",
   });
 
   const one = await get("/api/catalog/2027/offerings/89-110");
@@ -1844,7 +1845,8 @@ it("names no path in a refusal when a Catalog cannot be read, on all four routes
   expect(exams.status).toBe(200);
   const examsBody = await exams.text();
   expect(JSON.parse(examsBody)).toMatchObject({
-    catalogWarnings: [{ kind: "workspace-refused" }],
+    catalogWarnings: [],
+    catalogRefused: { kind: "refused", reason: "unreadable" },
   });
   await namesNoPath(examsBody, "GET exams");
 
@@ -1873,7 +1875,7 @@ it("names no path when a Catalog resolves outside the Workspace", async () => {
       const refused = await get(path);
       expect(refused.status, path).toBe(409);
       const body = await refused.text();
-      expect(JSON.parse(body), path).toMatchObject({ warnings: [{ kind: "workspace-refused" }] });
+      expect(JSON.parse(body), path).toMatchObject({ kind: "refused" });
       expect(body, path).not.toContain("leaked");
       expect(body, path).not.toContain(outside);
       await namesNoPath(body, path);
@@ -1900,7 +1902,7 @@ it("names no path when the folder holding the Catalogs resolves outside the Work
     const refused = await get("/api/catalog/2027/offerings?semester=fall");
     expect(refused.status).toBe(409);
     const body = await refused.text();
-    expect(JSON.parse(body)).toMatchObject({ warnings: [{ kind: "workspace-refused" }] });
+    expect(JSON.parse(body)).toMatchObject({ kind: "refused" });
     expect(body).not.toContain(outside);
     await namesNoPath(body, "GET offerings");
   } finally {
@@ -2010,8 +2012,8 @@ it("carries nothing a hostile adapter wrote, on any route", async () => {
   // method but the ones `spared` names answers with the hostile refusal once `refuse` is set, so
   // the double covers the whole port with none of it listed — a method added to the port later is
   // hostile here too without anyone remembering to add it. It is a decorator and never a writer:
-  // every save in this test reaches the real adapter through `editStateFile`, as production's do,
-  // which is also why `tools/ci/state-file-writer.ts` has nothing to find here.
+  // every save in this test reaches the real adapter through `editStateFile`, as production's do.
+  // `tools/ci/state-file-writer.ts` cannot see inside a Proxy trap, so that is kept true by review.
   const real = fileSystemWorkspace(root);
   let refuse: (() => WorkspaceRefusedError) | undefined;
   let spared: (property: PropertyKey) => boolean = () => false;
@@ -2046,7 +2048,8 @@ it("carries nothing a hostile adapter wrote, on any route", async () => {
       // passing by serving something else
       expect(answer.status, where).toBe(409);
       const body = await answer.text();
-      expect(body, where).toMatch(/workspace-refused|backup-refused/);
+      // the Catalog queries answer a refusal with their own arm (#149), the rest with a reason
+      expect(body, where).toMatch(/workspace-refused|backup-refused|"kind":"refused"/);
       expect(body, where).not.toContain(leak);
       expect(body, where).not.toContain(smuggled);
       await namesNoPath(body, where);
@@ -2111,22 +2114,25 @@ it("carries nothing a hostile adapter wrote, on any route", async () => {
 
     // 3. only the Catalog read refuses. The exam period reads the State File first, so above it
     //    refused on that; the Catalog refusal it carries **inside a 200**, under
-    //    `catalogWarnings`, is the one route where that refusal is not the answer's status. The
+    //    `catalogRefused`, is the one route where that refusal is not the answer's status. The
     //    sentence there and on the Catalog query is `app`'s, about the Catalog it asked for.
     refuse = make;
     spared = (property) => property !== "read";
-    const sentence = {
-      kind: "workspace-refused",
-      reason: `refusing the Catalog for the Academic Year 2027: ${because}`,
+    // #149: the refusal is its own arm, and a reason code is said only when it is the port's
+    const refused = {
+      kind: "refused",
+      ...(because === "it is there and cannot be read" ? { reason: "unreadable" } : {}),
+      sentence: `refusing the Catalog for the Academic Year 2027: ${because}`,
     };
     const exams = await get(EXAMS);
     expect(exams.status, kind).toBe(200);
     const examsBody = await exams.text();
-    expect(JSON.parse(examsBody), kind).toMatchObject({ catalogWarnings: [sentence] });
+    expect(JSON.parse(examsBody), kind).toMatchObject({ catalogWarnings: [], catalogRefused: refused });
+    expect(JSON.parse(examsBody).catalogRefused, kind).toEqual(refused);
     const offerings = await get("/api/catalog/2027/offerings?semester=fall");
     expect(offerings.status, kind).toBe(409);
     const offeringsBody = await offerings.text();
-    expect(JSON.parse(offeringsBody), kind).toEqual({ warnings: [sentence] });
+    expect(JSON.parse(offeringsBody), kind).toEqual(refused);
     for (const body of [examsBody, offeringsBody]) {
       expect(body, kind).not.toContain(leak);
       expect(body, kind).not.toContain(smuggled);
@@ -3461,4 +3467,102 @@ it("names what New Plan from Suggested Layout needs, and refuses a stale revisio
   const malformed = await post(FROM_LAYOUT, { requirementsFile: "" });
   expect(malformed.status).toBe(400);
   await expect(malformed.json()).resolves.toEqual({ error: "not-a-layout-request" });
+});
+
+/**
+ * #250, over HTTP: a FIFO with no writer where a Catalog, the State File or a Requirements File
+ * belongs. `readFile` on one used to block for good, so `GET /api/catalog/2027/offerings` never
+ * answered and the process would not stop. Every route below — the reads, and writes that read
+ * first — now answers, and none of them with a 5xx: the port refuses a path that is not a regular file before reading it.
+ *
+ * Each request is raced against a timer, so the regression fails here rather than hanging the
+ * suite, and each FIFO is released afterwards (opened for writing and closed, which hands a
+ * blocked reader an end of file) so a read that did block cannot keep the worker alive.
+ */
+it.skipIf(process.platform === "win32")(
+  "answers every route that reads a file when a FIFO stands where the file belongs",
+  async () => {
+    await post("/api/workspace", {});
+    const fifos = [
+      join(root, "catalogs", "2027.json"),
+      join(root, "me.state.json"),
+      join(root, "requirements", "cs.json"),
+    ];
+    execFileSync("mkfifo", fifos);
+
+    const answered = async (path: string, asked: Response | Promise<Response> = get(path)): Promise<number> => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const hung = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${path} still unanswered after 2000ms`)), 2000);
+      });
+      try {
+        return (await Promise.race([asked, hung])).status;
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+
+    try {
+      for (const path of [
+        "/api/catalog/2027/offerings?semester=fall",
+        "/api/catalog/2027/offerings/89-110",
+        "/api/timetable/2027/fall",
+        "/api/timetable/2027/fall/exams",
+        "/api/plan",
+        "/api/progress",
+        "/api/programs",
+        "/api/requirements",
+        "/api/settings",
+        "/api/courses",
+        "/api/backups",
+      ]) {
+        expect(await answered(path), path).toBeLessThan(500);
+      }
+      // and the writes, each of which reads the file it is about to replace or merge into first
+      const writes: [string, Response | Promise<Response>][] = [
+        ["POST import", post("/api/catalog/2027/import", CRAWL)],
+        ["POST pick", post("/api/timetable/2027/fall/picks", { ...LECTURE, basedOn: undefined })],
+        ["PATCH settings", patch("/api/settings", { language: "he", basedOn: undefined })],
+      ];
+      for (const [where, asked] of writes) {
+        expect(await answered(where, asked), where).toBeLessThan(500);
+      }
+      // the setup asserted rather than assumed: the Catalog read met the FIFO and refused it
+      expect(await answered("/api/catalog/2027/offerings?semester=fall")).toBe(409);
+    } finally {
+      for (const fifo of fifos) {
+        try {
+          closeSync(openSync(fifo, constants.O_WRONLY | constants.O_NONBLOCK));
+        } catch {
+          // no reader was waiting on it
+        }
+      }
+    }
+  },
+);
+
+/**
+ * #250's second half: a year in a route path is four digits. `z.coerce.number()` used to read
+ * `0x7e3` as 2019, `2e3` as 2000 and a whitespace-padded `2027` as 2027, while `2027.5` got
+ * `400 bad-year`. Now every spelling but the digits gets the same 400.
+ */
+it("takes a year in a route path only as four digits", async () => {
+  await post("/api/workspace", {});
+
+  for (const year of ["0x7e3", "2e3", "%202027%20", "2027%0a", "2027%09", "02027", "2027.5", "1899", "2201"]) {
+    const exams = await get(`/api/timetable/${year}/fall/exams`);
+    expect(exams.status, year).toBe(400);
+    await expect(exams.json(), year).resolves.toEqual({ error: "bad-year" });
+
+    const offering = await get(`/api/catalog/${year}/offerings/89-110`);
+    expect(offering.status, year).toBe(400);
+    await expect(offering.json(), year).resolves.toEqual({ error: "bad-year" });
+
+    // the offerings list words its 400 for the year and the semester alike
+    const offerings = await get(`/api/catalog/${year}/offerings?semester=fall`);
+    expect(offerings.status, year).toBe(400);
+  }
+
+  // and the digits themselves still name the year
+  expect((await get("/api/timetable/2027/fall/exams")).status).toBe(200);
 });

@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
+import { z } from "zod";
 import {
   parseStateFile,
   readStateFile,
@@ -11,6 +12,7 @@ import {
   CURRENT_STATE_SCHEMA_VERSION,
   stateSchema,
   statusSchema,
+  type Attempt,
   type State,
 } from "./schema.ts";
 
@@ -631,6 +633,25 @@ it("exports JSON Schema, so a hand-edited State File gets editor support", () =>
   // Only the version is required: everything a new State File leaves out has a default,
   // and a hand-written file that omits it should not be flagged in the editor.
   expect(schema.required).toEqual(["schemaVersion"]);
+});
+
+/**
+ * #342: the reader gives an Attempt without an id one (`attempt-<n>`), so the schema an editor
+ * checks a hand-written file against must not demand it. Validated by turning the exported JSON
+ * back into a validator, so this reads the JSON an editor reads rather than the Zod it came from.
+ */
+it("exports a JSON Schema that accepts an Attempt without an id, which the reader assigns", () => {
+  const editor = z.fromJSONSchema(stateJsonSchema() as Parameters<typeof z.fromJSONSchema>[0]);
+  const attempt = { courseNumber: "89-110", academicYear: 2027, semester: "fall", status: "planned" };
+  const file = { schemaVersion: CURRENT_STATE_SCHEMA_VERSION, attempts: [attempt] };
+
+  expect(editor.safeParse(file).success).toBe(true);
+  expect(editor.safeParse({ ...file, attempts: [{ ...attempt, id: "a-1" }] }).success).toBe(true);
+  // Optional is not unchecked: an id that is there still has to be one.
+  expect(editor.safeParse({ ...file, attempts: [{ ...attempt, id: "" }] }).success).toBe(false);
+  expect(parseStateFile(file).state?.attempts[0]?.id).toBe("attempt-1");
+  // The State the app works with after reading still always names its Attempts.
+  expectTypeOf<Attempt["id"]>().toEqualTypeOf<string>();
 });
 
 /**

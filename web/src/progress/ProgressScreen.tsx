@@ -281,6 +281,12 @@ export function ProgressScreen({
         setEditRefused(answer.reason === undefined ? "progressNotDone" : REFUSAL_STRING[answer.reason]);
         // the file is not what the screen shows: keep it on screen and go and look
         if (answer.reason === "state-file-changed") setRereads((count) => count + 1);
+        // The save was made and its revision could not be read (#326), so it may have landed: as
+        // with an answer nobody could read, everything holding a revision goes and looks (#344).
+        if (answer.reason === "save-revision-unreadable") {
+          setRereads((count) => count + 1);
+          onEdited();
+        }
         return;
       }
       if (answer.kind === "unreadable-answer") {

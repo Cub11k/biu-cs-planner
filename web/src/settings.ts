@@ -451,6 +451,12 @@ export function useSettings(options: UseSettingsOptions = {}): SettingsUse {
                * cannot be used and explains nothing — #111's failure.
                */
               if (fresh.kind === "unreadable-answer") setAsks((count) => count + 1);
+              // A change whose save was made and whose revision could not be read (#326) is the
+              // same "may have been saved", with the server's word for it, and gets the same
+              // re-read and nothing more, for the reasons above (#344).
+              if (fresh.kind === "refused" && fresh.reason === "save-revision-unreadable") {
+                setAsks((count) => count + 1);
+              }
             })
             // In a `finally` and not in the `then`: an answer this module could not read used to
             // reject, leaving this flag set and the switch dead and silent for the life of the

@@ -124,3 +124,140 @@ it("does the same for every other Timetable edit, a Tray edit among them", async
   expect(answer.status).toBe(200);
   expect(((await answer.json()) as { tray: { known: boolean }[] }).tray.every((e) => !e.known)).toBe(true);
 });
+
+/**
+ * #344: the same, for the Programs and Progress edits. Each builds its answer by reading
+ * `requirements/` after the save — listing it, then reading each file — and a read that fails with
+ * something other than a refusal used to answer 500 for an edit that had been written.
+ *
+ * Here only those two port methods fail once told to; the State File has its own and the save goes
+ * through untouched.
+ */
+const CS_REQUIREMENTS = {
+  schemaVersion: 1,
+  program: { id: "cs", name: { he: "מדעי המחשב", en: "Computer Science" } },
+  cohorts: [{ academicYear: 2027, semester: "fall" }],
+  courses: [{ number: "89-110", credits: 5 }],
+  requirements: [
+    { id: "intro", kind: "course", course: "89-110" },
+    { id: "hebrew", kind: "manual", description: { he: "עברית", en: "Hebrew" } },
+  ],
+  tracks: [],
+};
+
+async function stageRequirements() {
+  const root = await mkdtemp(join(tmpdir(), "biu-answer-"));
+  roots.push(root);
+  const real = fileSystemWorkspace(root);
+  let failing = false;
+  const workspace: Workspace = new Proxy(real, {
+    get(target, property, receiver) {
+      const method: unknown = Reflect.get(target, property, receiver);
+      if ((property !== "read" && property !== "list") || typeof method !== "function") return method;
+      return async (...args: unknown[]): Promise<unknown> => {
+        if (failing) throw new Error("the disk is failing");
+        return (method as (...args: unknown[]) => unknown).apply(target, args);
+      };
+    },
+  });
+  const api = createApi({ workspace, token: TOKEN, changes: { changeCount: () => 0 } });
+  const send = async (method: string, path: string, body?: unknown): Promise<Response> =>
+    await api.request(path, {
+      method,
+      headers: body === undefined ? bearer : { "Content-Type": "application/json", ...bearer },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+  const version = async (): Promise<string> =>
+    ((await (await send("GET", "/api/programs")).json()) as { version: string }).version;
+
+  expect((await send("POST", "/api/workspace", {})).status).toBe(200);
+  const imported = await send("POST", "/api/requirements/import", { name: "cs-2027", file: CS_REQUIREMENTS });
+  expect(imported.status).toBe(200);
+  const chosen = await send("PUT", "/api/programs", {
+    programs: [{ requirementsFile: "cs-2027" }],
+    basedOn: undefined,
+  });
+  expect(chosen.status).toBe(200);
+  // the honest answer, so what follows is the failure's doing
+  const honest = (await (await send("GET", "/api/progress")).json()) as { programs: { status: string }[] };
+  expect(honest.programs.map((program) => program.status)).toEqual(["evaluated"]);
+
+  return { send, version, fail: () => (failing = true), recover: () => (failing = false) };
+}
+
+it("answers a Programs or Cohort edit that landed with its revision when requirements/ then throws", async () => {
+  const { send, version, fail, recover } = await stageRequirements();
+
+  for (const [path, body] of [
+    ["/api/programs", { programs: [{ requirementsFile: "cs-2027", track: "none-such" }] }],
+    ["/api/cohort", { cohort: { academicYear: 2027, semester: "fall" } }],
+  ] as const) {
+    recover();
+    const basedOn = await version();
+    fail();
+    const answer = await send("PUT", path, { ...body, basedOn });
+
+    expect(answer.status, path).toBe(200);
+    const served = (await answer.json()) as { version: string; programWarnings: { kind: string }[] };
+    expect(isStateFileRevision(served.version), path).toBe(true);
+    expect(served.version, path).not.toBe(basedOn);
+    // the listing it could not make is marked, not left out and not made up
+    expect(served.programWarnings, path).toEqual([{ kind: "requirements-unlisted" }]);
+
+    // and the edit did land, at the revision the answer said
+    recover();
+    expect(await version(), path).toBe(served.version);
+  }
+});
+
+it("answers a Pin or tick that landed with its revision when requirements/ then throws", async () => {
+  const { send, version, fail, recover } = await stageRequirements();
+  const pin = { courseNumber: "89-110", requirementsFile: "cs-2027", requirementId: "intro" };
+  const tick = { requirementsFile: "cs-2027", requirementId: "hebrew" };
+
+  for (const [method, path, body] of [
+    ["POST", "/api/progress/pins", pin],
+    ["DELETE", "/api/progress/pins", pin],
+    ["POST", "/api/progress/ticks", tick],
+    ["DELETE", "/api/progress/ticks", tick],
+  ] as const) {
+    const where = `${method} ${path}`;
+    recover();
+    const basedOn = await version();
+    fail();
+    const answer = await send(method, path, { ...body, basedOn });
+
+    expect(answer.status, where).toBe(200);
+    const served = (await answer.json()) as { version: string; programWarnings: { kind: string }[] };
+    expect(isStateFileRevision(served.version), where).toBe(true);
+    expect(served.version, where).not.toBe(basedOn);
+    expect(served.programWarnings, where).toEqual([{ kind: "requirements-unlisted" }]);
+
+    recover();
+    expect(await version(), where).toBe(served.version);
+  }
+});
+
+/** The Plan's edits read `requirements/` after the save for the Plan checks, and so the same. */
+it("answers a Plan edit that landed with its revision when requirements/ then throws", async () => {
+  const { send, version, fail, recover } = await stageRequirements();
+  const basedOn = await version();
+
+  fail();
+  const answer = await send("POST", "/api/plan/attempts", {
+    courseNumber: "89-110",
+    academicYear: 2027,
+    semester: "fall",
+    status: "planned",
+    basedOn,
+  });
+
+  expect(answer.status).toBe(200);
+  const served = (await answer.json()) as { version: string; attempts: { courseNumber: string }[] };
+  expect(isStateFileRevision(served.version)).toBe(true);
+  expect(served.version).not.toBe(basedOn);
+  expect(served.attempts).toEqual([expect.objectContaining({ courseNumber: "89-110" })]);
+
+  recover();
+  expect(await version()).toBe(served.version);
+});

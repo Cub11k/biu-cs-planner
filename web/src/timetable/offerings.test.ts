@@ -50,7 +50,7 @@ it("says the year has no Catalog, and carries the Warning that says so", async (
 
   const result = await fetchOfferings(api, { academicYear: 2027, semester: "fall" });
 
-  expect(result).toEqual({ kind: "refused", warnings });
+  expect(result).toEqual({ kind: "not-served", warnings });
 });
 
 it("keeps a Catalog that could not be read apart from one that is not there", async () => {
@@ -60,16 +60,17 @@ it("keeps a Catalog that could not be read apart from one that is not there", as
   const result = await fetchOfferings(api, { academicYear: 2027, semester: "fall" });
 
   // the file is there; telling the student to import a crawl would not help them
-  expect(result).toEqual({ kind: "refused", warnings });
+  expect(result).toEqual({ kind: "not-served", warnings });
 });
 
-it("keeps a Workspace refusal apart from absence", async () => {
-  const warnings = [{ kind: "workspace-refused", reason: "not a catalog" }];
-  const { api } = client(() => Response.json({ warnings }, { status: 409 }));
+it("keeps a Workspace refusal apart from absence, and from the Warnings", async () => {
+  // #149: the API answers a refusal with its own arm, carrying no Warnings
+  const refused = { kind: "refused", reason: "unreadable", sentence: "refusing the Catalog" };
+  const { api } = client(() => Response.json(refused, { status: 409 }));
 
   const result = await fetchOfferings(api, { academicYear: 2027, semester: "fall" });
 
-  expect(result).toEqual({ kind: "refused", warnings });
+  expect(result).toEqual({ kind: "refused" });
 });
 
 it("says so when the page has no launch token, rather than blaming the Catalog", async () => {
@@ -95,7 +96,7 @@ it("says the API is unreachable rather than throwing at the screen", async () =>
  * the dev proxy answers when the server behind it is not running — rejected the promise and the
  * sidebar was left on "Loading the catalog…" with no account of why.
  *
- * `unreadable-answer` and deliberately not `refused` with no Warnings: `isAbsence` reads that
+ * `unreadable-answer` and deliberately not `not-served` with no Warnings: `isAbsence` reads that
  * shape as "this year has no Catalog yet, import a crawl", which is an affirmative claim about
  * the student's folder that an unparseable body says nothing about.
  */

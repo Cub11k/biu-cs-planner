@@ -17,6 +17,12 @@ const row = (overrides: Record<string, string> = {}) => ({
   ...overrides,
 });
 
+/** The answer's read arm, failing the test when the Workspace refused instead. */
+function read<T extends { kind: string }>(answer: T): Extract<T, { kind: "read" }> {
+  expect(answer.kind).toBe("read");
+  return answer as Extract<T, { kind: "read" }>;
+}
+
 async function workspaceWithCatalog() {
   const workspace = memoryWorkspace({ created: true });
   await importCrawl(
@@ -36,7 +42,7 @@ async function workspaceWithCatalog() {
 it("lists the Courses a Semester holds, Year-long ones included", async () => {
   const workspace = await workspaceWithCatalog();
 
-  const fall = await listOfferings(workspace, { academicYear: 2027, semester: "fall" });
+  const fall = read(await listOfferings(workspace, { academicYear: 2027, semester: "fall" }));
 
   expect(fall.offerings?.map((o) => o.courseNumber)).toEqual(["89-110", "89-385"]);
   // a Year-long Course is given in Fall as much as in Spring
@@ -46,7 +52,7 @@ it("lists the Courses a Semester holds, Year-long ones included", async () => {
 it("lists a different set for the other Semester", async () => {
   const workspace = await workspaceWithCatalog();
 
-  const spring = await listOfferings(workspace, { academicYear: 2027, semester: "spring" });
+  const spring = read(await listOfferings(workspace, { academicYear: 2027, semester: "spring" }));
 
   expect(spring.offerings?.map((o) => o.courseNumber)).toEqual(["89-133", "89-385"]);
 });
@@ -54,7 +60,7 @@ it("lists a different set for the other Semester", async () => {
 it("returns one Course with its Groups, Meetings and Exams", async () => {
   const workspace = await workspaceWithCatalog();
 
-  const found = await getOffering(workspace, { academicYear: 2027, courseNumber: "89-110" });
+  const found = read(await getOffering(workspace, { academicYear: 2027, courseNumber: "89-110" }));
 
   expect(found.offering?.nameHebrew).toBe("מבוא למדעי המחשב");
   expect(found.offering?.groups[0]?.meetings).toEqual([
@@ -66,7 +72,7 @@ it("returns one Course with its Groups, Meetings and Exams", async () => {
 it("says so when the year has no Catalog, rather than inventing an empty one", async () => {
   const workspace = memoryWorkspace({ created: true });
 
-  const result = await listOfferings(workspace, { academicYear: 2030, semester: "fall" });
+  const result = read(await listOfferings(workspace, { academicYear: 2030, semester: "fall" }));
 
   expect(result.offerings).toBeUndefined();
   expect(result.warnings).toEqual([{ kind: "no-catalog-for-year", academicYear: 2030 }]);
@@ -76,7 +82,7 @@ it("reports a stored Catalog it cannot read as a Warning, not a crash", async ()
   const workspace = memoryWorkspace({ created: true });
   workspace.seed({ kind: "catalog", academicYear: 2027 }, { nonsense: true });
 
-  const result = await listOfferings(workspace, { academicYear: 2027, semester: "fall" });
+  const result = read(await listOfferings(workspace, { academicYear: 2027, semester: "fall" }));
 
   expect(result.offerings).toBeUndefined();
   expect(result.warnings).toEqual([{ kind: "file-unreadable" }]);
@@ -101,22 +107,22 @@ it("words a refusal itself, and carries nothing a hostile adapter wrote", async 
       ),
   };
 
-  const expected = [
-    {
-      kind: "workspace-refused",
-      reason: "refusing the Catalog for the Academic Year 2027: it is there and cannot be read",
-    },
-  ];
+  // #149: a refusal is its own arm with no Warnings in it, carrying #249's reason code
+  const expected = {
+    kind: "refused",
+    reason: "unreadable",
+    sentence: "refusing the Catalog for the Academic Year 2027: it is there and cannot be read",
+  };
   const listed = await listOfferings(hostile, { academicYear: 2027, semester: "fall" });
-  expect(listed).toEqual({ warnings: expected });
+  expect(listed).toEqual(expected);
   const one = await getOffering(hostile, { academicYear: 2027, courseNumber: "89-110" });
-  expect(one).toEqual({ warnings: expected });
+  expect(one).toEqual(expected);
   expect(JSON.stringify([listed, one])).not.toContain("whatever-it-likes");
   expect(JSON.stringify([listed, one])).not.toContain(path);
 });
 
-/** A refusal whose `refusal` cannot even be read is still a Warning, and not a crashed request. */
-it("answers a refusal it cannot read anything off as a Warning", async () => {
+/** A refusal whose `refusal` cannot even be read is still a refusal, and not a crashed request. */
+it("answers a refusal it cannot read anything off as a refusal", async () => {
   // an accessor where the port declares a field, which only a cast or plain JavaScript can make
   const unreadable = Object.create(WorkspaceRefusedError.prototype, {
     refusal: {
@@ -130,12 +136,9 @@ it("answers a refusal it cannot read anything off as a Warning", async () => {
     read: () => Promise.reject(unreadable),
   };
 
+  // still the refused arm, with no reason code because none could be read
   expect(await listOfferings(hostile, { academicYear: 2027, semester: "fall" })).toEqual({
-    warnings: [
-      {
-        kind: "workspace-refused",
-        reason: "refusing the Catalog for the Academic Year 2027: the Workspace would not touch it",
-      },
-    ],
+    kind: "refused",
+    sentence: "refusing the Catalog for the Academic Year 2027: the Workspace would not touch it",
   });
 });

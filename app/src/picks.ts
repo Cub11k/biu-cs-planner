@@ -194,7 +194,7 @@ export const variantEditedIn = (state: State, at: TimetableRef): VariantRef =>
  * every entry is simply `known: false`.
  *
  * **After a save, a Catalog read that fails in any way is that same `known: false`** (#324).
- * `listOfferings` answers a refusal as a Warning and lets anything else propagate, which for a read
+ * `listOfferings` answers a refusal with its own arm and lets anything else propagate, which for a read
  * is a 500 that changed nothing. Built after a save, the same throw used to answer 500 for an edit
  * that had landed, and the page told the student it failed. So `afterSave` reads the Catalog as
  * not there when the read throws: the answer carries the new revision and the parts it could read,
@@ -210,9 +210,11 @@ async function view(
   const unread = trayEntries(state, shown, undefined);
   const catalog = async () => {
     const asked = listOfferings(workspace, { academicYear: at.academicYear, semester: at.semester });
-    if (!afterSave) return (await asked).offerings;
+    const offeringsOf = (answer: Awaited<typeof asked>) =>
+      answer.kind === "read" ? answer.offerings : undefined;
+    if (!afterSave) return offeringsOf(await asked);
     try {
-      return (await asked).offerings;
+      return offeringsOf(await asked);
     } catch {
       return undefined;
     }

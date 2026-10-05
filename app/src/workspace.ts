@@ -298,9 +298,11 @@ export const WORKSPACE_LAYOUT: WorkspaceFolder[] = ["catalogs", "requirements", 
  * save based on there being no file overwrite one that was there all along (#109): only
  * nothing at that name may come back as undefined.
  *
- * A refusal is a Warning the student can act on, and never a crashed server
+ * A refusal is an answer the student can act on, and never a crashed server
  * (docs/design.md, "API and data rules"), which is why an adapter raises this rather than
- * letting a filesystem error out of the port.
+ * letting a filesystem error out of the port. **It is not a Warning** (#149): a Warning is a
+ * problem found in something that was read, and a refusal is the case where nothing could be,
+ * so a caller answers it with an arm of its own rather than in a list of Warnings.
  *
  * **What `app` reads off it is `refusal`, and never `message`** (#249). `refusal` is a reason
  * code and a subject, both drawn from closed sets this port defines, and it is required: an
@@ -312,6 +314,16 @@ export const WORKSPACE_LAYOUT: WorkspaceFolder[] = ["catalogs", "requirements", 
  */
 export class WorkspaceRefusedError extends Error {
   override readonly name = "WorkspaceRefusedError";
+  /**
+   * **`cause` is for the `--debug` log and nothing else** (#165). An adapter keeps the error it
+   * met there — the filesystem's, absolute path and errno included — and no use case reads it:
+   * every `catch` in `app` answers a refusal with a reason code, and the page is told only that.
+   * Under `--debug` the server's `loggingWorkspace` (`server/src/debug.ts`) writes the reason
+   * code, the errno and the `cause` chain to stderr; otherwise nothing reads it at all. The
+   * absolute Workspace path may appear in that log, and **the launch token may never**, in any
+   * mode. A `catch` that wants to log a refusal itself is the place that rule has to be kept.
+   */
+  declare readonly cause?: unknown;
   /** Why, and about what, in this port's words. The only part of a refusal `app` reads. */
   readonly refusal: WorkspaceRefusal;
 
@@ -787,10 +799,10 @@ export type Workspace = {
    *
    * **A snapshot that cannot be written refuses the save.** `.backups/` is part of the
    * Workspace Layout and this method already refuses a save when any part of it is missing, so
-   * an unwritable one is a refusal too: a Warning the student can act on. It is raised as
+   * an unwritable one is a refusal too, answered as `backup-refused`. It is raised as
    * `BackupRefusedError`, which every adapter owes the caller (#229), so that it is worded as
-   * the backup's and not as the State File's. The alternative — saving anyway and quietly keeping no backup — is the failure #67
-   * was filed about, and it is invisible until the day it matters. **Pruning is the other way
+   * the backup's and not as the State File's. The alternative — saving anyway and quietly
+   * keeping no backup — is the failure #67 was filed about, and it is invisible until the day it matters. **Pruning is the other way
    * round**: it runs after the save, it only deletes, and a snapshot it could not remove is
    * one too many rather than one too few, so it never costs a student their save.
    *

@@ -32,7 +32,7 @@ import {
  * is the hole this closes. A subject with getters could answer a check with one value and the
  * sentence with another — measured on PR #280, where a year read three times said a path on its
  * third read — so each field is read exactly once into a local, and a read that throws is the
- * fallback sentence and not a crashed request: a refusal is a Warning, never a 500.
+ * fallback sentence and not a crashed request: a refusal is an answer, never a 500.
  *
  * **`asked` is checked too**, because it can be the very value a refusal is about: `not-a-name`
  * is raised for a name that is a path. A State File's name is said only when `isStateFileName`
@@ -43,6 +43,19 @@ export function wordRefusal(
   refusal: WorkspaceRefusal | undefined,
   asked: WorkspaceRefusalSubject,
 ): string {
+  return answerRefusal(refusal, asked).sentence;
+}
+
+/**
+ * `wordRefusal`'s sentence, with the reason code it was worded from (#187, #149): what a Catalog
+ * query that was refused answers with. The code is given only when it is one of the port's own —
+ * the same `Object.hasOwn` lookup that picks the sentence — so a value an adapter invented is no
+ * more said as a code than as words, and a refusal nothing could be read off has none.
+ */
+export function answerRefusal(
+  refusal: WorkspaceRefusal | undefined,
+  asked: WorkspaceRefusalSubject,
+): { reason?: WorkspaceRefusalReason; sentence: string } {
   let reason: unknown;
   let kind: unknown;
   let folder: unknown;
@@ -63,11 +76,13 @@ export function wordRefusal(
     folder = undefined;
   }
 
-  const because =
+  const known =
     typeof reason === "string" && Object.hasOwn(BECAUSE, reason)
-      ? BECAUSE[reason as WorkspaceRefusalReason]
-      : "the Workspace would not touch it";
-  return `refusing ${aboutSubject(kind, folder, asked)}: ${because}`;
+      ? (reason as WorkspaceRefusalReason)
+      : undefined;
+  const because = known === undefined ? "the Workspace would not touch it" : BECAUSE[known];
+  const sentence = `refusing ${aboutSubject(kind, folder, asked)}: ${because}`;
+  return known === undefined ? { sentence } : { reason: known, sentence };
 }
 
 /**

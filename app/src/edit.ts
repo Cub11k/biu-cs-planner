@@ -138,7 +138,7 @@ export type EditOptions = {
    * a way past the guard.
    *
    * Required, and with no default, because a default is how this hole was open in the first
-   * place: #63 gave `writeStateFile` the parameter, nothing could produce a version, and
+   * place: #63 gave `writeStateFile` the parameter, nothing could produce a revision, and
    * `undefined` went in everywhere while the signature made it look handled. A caller that
    * cannot say what it was based on has not read the file, and cannot safely write it.
    */
@@ -178,8 +178,9 @@ export type EditRefusal =
    * format (#311, #326). **The write may well have landed**, so this is not `workspace-refused`:
    * that reason reaches the page as an edit that changed nothing, which here may be false. What
    * is refused is passing the adapter's account of the save on. Every screen words it as a save
-   * that may have landed, never as one that was lost; the Timetable and an undo or redo step also
-   * re-read the State File on it (the Progress screen and the language switch do not yet).
+   * that may have landed, never as one that was lost, and every screen re-reads the State File on
+   * it: the Timetable, the Plan screen, an undo or redo step, and since #344 the Progress screen
+   * and the language switch.
    */
   | "save-revision-unreadable";
 

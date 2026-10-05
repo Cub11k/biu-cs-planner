@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { watch, type FSWatcher } from "node:fs";
+import { watch, type FSWatcher, type Stats } from "node:fs";
 import { mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import {
@@ -186,6 +186,18 @@ class OutsideWorkspaceError extends WorkspaceRefusedError {
  */
 const ABSENT = ["ENOENT", "ENOTDIR"];
 
+/** What a path that is not a regular file is instead, in the words a log reader would use. */
+const kindOf = (found: Stats): string =>
+  found.isDirectory()
+    ? "a directory"
+    : found.isFIFO()
+      ? "a FIFO"
+      : found.isSocket()
+        ? "a socket"
+        : found.isCharacterDevice() || found.isBlockDevice()
+          ? "a device"
+          : "not a file";
+
 /** The errno a filesystem error carries, when it carries one. */
 const errnoOf = (error: unknown): string | undefined => {
   const code = (error as { code?: unknown } | null)?.code;
@@ -194,9 +206,9 @@ const errnoOf = (error: unknown): string | undefined => {
 
 /**
  * A file that is there and whose contents cannot be read: `EACCES` behind a mode bit,
- * `EISDIR` where a directory sits in a file's place, `EIO` on failing hardware, a lock a sync
- * client holds mid-download. **The third answer #109 was filed for**, and neither of the other
- * two:
+ * `EIO` on failing hardware, a lock a sync client holds mid-download — or something in a file's
+ * place that is not a regular file at all, a directory or a FIFO (#250), refused before a read.
+ * **The third answer #109 was filed for**, and neither of the other two:
  *
  *   - **Not absence.** Reported as absent, an unreadable State File has no revision, so a save
  *     based on there being no file *matches*, the external-edit guard passes, and the atomic
@@ -204,8 +216,8 @@ const errnoOf = (error: unknown): string | undefined => {
  *     not fail in, and a file whose contents cannot be seen is exactly the file it exists for.
  *   - **Not the `readFile` error either.** Letting an `EACCES` out of the port turns a mode bit
  *     into a 500, which is a different bug of the same size. A `WorkspaceRefusedError` is what
- *     every caller of this port already turns into a Warning or a 409: a refusal is a Warning
- *     the student can act on and never a crashed server (docs/design.md, "API and data rules").
+ *     every caller of this port already turns into a named refusal: an answer the student can
+ *     act on and never a crashed server (docs/design.md, "API and data rules").
  *
  * `WorkspaceRefusedError` and deliberately not `StateFileChangedError`: nothing changed, and
  * that error's `basedOn`/`found` pair has nothing true to carry here — `found` would have to
@@ -229,11 +241,17 @@ const errnoOf = (error: unknown): string | undefined => {
  * the filesystem met and a response cannot (#165).
  */
 class UnreadableError extends WorkspaceRefusedError {
-  constructor(about: WorkspaceRefusalSubject, error: unknown, { notAFolder = false } = {}) {
+  constructor(
+    about: WorkspaceRefusalSubject,
+    error: unknown,
+    { notAFolder = false, notAFile = false } = {},
+  ) {
     const code = errnoOf(error);
     const because = notAFolder
       ? "it is there and is not a folder"
-      : "it is there and cannot be read";
+      : notAFile
+        ? "it is there and is not a regular file"
+        : "it is there and cannot be read";
     super(
       { reason: notAFolder ? "not-a-folder" : "unreadable", subject: about },
       `refusing ${describe(about)}: ${because}` + (code === undefined ? "" : ` (${code})`),
@@ -251,8 +269,8 @@ class UnreadableError extends WorkspaceRefusedError {
  * first unnamed one in `server/src/api.ts`.
  *
  * A `WorkspaceRefusedError`, so a caller can answer it the way every caller of this port
- * already answers one: a Warning and never a crashed server (docs/design.md, "API and data
- * rules"). **No caller reads this sentence** (#249): the callers in `app` answer a refusal with
+ * already answers one: a named refusal and never a crashed server (docs/design.md, "API and
+ * data rules"). **No caller reads this sentence** (#249): the callers in `app` answer a refusal with
  * a reason of their own, and the one that serves a sentence — the Catalog read in
  * `app/src/queries.ts` — words its own from the refusal's reason code and subject. So the errno
  * below is for a log (#165), and saying otherwise here would claim something the app does not
@@ -564,15 +582,37 @@ export function fileSystemWorkspace(
    * **`about` is the file the refusal is about** — the ref, passed in by the caller that has it —
    * and is the refusal's subject (#249). This is the refusal that reached the wire: a Catalog
    * read's message used to go out as a Warning, carrying `./catalogs/2027.json` (#216), and
-   * `app/src/queries.ts` now words that Warning from the subject instead.
+   * `app/src/queries.ts` now words its refused arm (`CatalogRefused`, #149) from the subject
+   * instead.
+   *
+   * **Only a regular file is read** (#250). A FIFO with no writer makes `readFile` block for
+   * good, and that read is threadpool work nothing can cancel, so it hung the route and kept the
+   * process alive past Ctrl-C and an explicit exit. A `stat` on the way in, the shape
+   * `requireLayoutFolder` has on the write side, turns anything that is there and is not a
+   * regular file — a FIFO, a socket, a device, a directory — into `UnreadableError`: #109's
+   * *unreadable* answer and not a fourth one, since something is there and it cannot be read as a
+   * document. `stat` follows a symlink, so one pointing at a FIFO is refused the same way. A
+   * timeout was ruled out: it answers the request and still leaves the process pinned.
+   *
+   * **The gap between the `stat` and the `readFile` is accepted.** A regular file swapped for a
+   * FIFO between the two calls still blocks. Closing it would take opening with `O_NONBLOCK` and
+   * checking the descriptor, and the only one who can race it is the student, in their own
+   * Workspace, at the millisecond a screen loads.
    */
   const bytesOrAbsent = async (
     path: string,
     about: WorkspaceRefusalSubject,
   ): Promise<Uint8Array | undefined> => {
     try {
+      const found = await stat(path);
+      if (!found.isFile()) {
+        // The cause names what is there, for a log (#165); the reason code stays `unreadable`.
+        const cause = new Error(`${path} is not a regular file (${kindOf(found)})`);
+        throw new UnreadableError(about, cause, { notAFile: true });
+      }
       return await readFile(path);
     } catch (error) {
+      if (error instanceof UnreadableError) throw error;
       const code = errnoOf(error);
       if (code !== undefined && ABSENT.includes(code)) return undefined;
       throw new UnreadableError(about, error);

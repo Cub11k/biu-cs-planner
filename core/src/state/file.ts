@@ -70,13 +70,28 @@ const STATE_MIGRATIONS: Migrations = {};
 const versionProbe = z.object({ schemaVersion: z.number() });
 
 /**
+ * An Attempt as a file may hold it: one written before Attempts had ids has none, and neither has
+ * one a student adds by hand. Also what the exported JSON Schema describes (#342).
+ */
+const storedAttemptSchema = attemptSchema.extend({
+  id: attemptSchema.shape.id
+    .optional()
+    .meta({ description: "Optional. An Attempt without an id is given attempt-<n> when the file is read." }),
+});
+
+/**
  * JSON Schema for a State File, so a hand-edited file gets autocomplete and inline errors in
  * an editor. Generated from the Zod schema, never maintained by hand. It describes the file
  * as written rather than as read (`io: "input"`), so the fields a new State File leaves out
  * — everything but the version — are not flagged as missing.
+ *
+ * Its Attempts are the ones a file may hold, not the ones the State holds (#342): an Attempt's
+ * `id` is optional here, because the reader assigns `attempt-<n>` to one without it
+ * (`readAttempts`), while `Attempt` after reading still always has one.
  */
 export function stateJsonSchema(): Record<string, unknown> {
-  return z.toJSONSchema(stateSchema, { io: "input" }) as Record<string, unknown>;
+  const storedState = stateSchema.extend({ attempts: z.array(storedAttemptSchema).default([]) });
+  return z.toJSONSchema(storedState, { io: "input" }) as Record<string, unknown>;
 }
 
 /**
@@ -367,8 +382,6 @@ function checkTimetablesUnique(
   });
 }
 
-/** An Attempt as a file may hold it: one written before Attempts had ids has none. */
-const storedAttemptSchema = attemptSchema.extend({ id: attemptSchema.shape.id.optional() });
 
 /**
  * The Attempts, each with an id (#290). An Attempt without one — every Attempt a build before ids
