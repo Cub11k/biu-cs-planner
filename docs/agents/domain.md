@@ -44,3 +44,22 @@ If the concept you need isn't in the glossary yet, that's a signal: either you'r
 If your output contradicts an existing ADR, surface it explicitly rather than silently overriding:
 
 > _Contradicts ADR-0007 (requirements are interpreted data), but worth reopening because…_
+
+## Correcting an ADR
+
+**Set by the maintainer on 2026-10-05: an ADR is corrected by adding a dated note, and its
+original wording is left as it was.** Until then the repo had done it both ways — ADR-0004 kept its
+sentence and added a note below it (#321), while ADR-0014 edited its sentence in place *and* added
+a note (#268) — because nothing here said which (#350).
+
+- **Leave the decision's original text untouched**, even the sentence that is now wrong. The ADR is
+  the record of what was decided and how it was put at the time; a sentence quietly corrected is a
+  record that can no longer show it was ever otherwise.
+- **Add a paragraph after the passage it corrects, starting `**Amended <YYYY-MM-DD> (#<ticket>):**`**,
+  that quotes or names what it corrects, says what is now true, and says why. The note alone
+  carries the correction: a reader who stops at the original sentence and a reader who reads on
+  must both be able to tell which is current. ADR-0004's `**Amended 2026-10-05 (#321):**` is the
+  shape.
+- **An amendment corrects the record, never the decision.** A note says what was built or what the
+  text got wrong, and that the decision stands. A change to the decision itself is a new ADR that
+  supersedes the old one, and the old one gains a note pointing at it.
