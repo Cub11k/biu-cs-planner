@@ -503,3 +503,48 @@ it("reports the save and not the snapshot it took", async () => {
   expect(await workspace.listBackups(ALICE)).toHaveLength(1);
   expect(heard).toBe(1);
 });
+
+/**
+ * #287: Requirements Files are listed, read and written whole the way Catalogs are, under the
+ * same titles the real adapter's tests use — so a use case proven here is proven against the
+ * behaviour a disk has.
+ */
+const REQUIREMENTS = { schemaVersion: 1, program: { id: "cs", name: { he: "מדעי המחשב" } } };
+
+it("lists, reads and writes Requirements Files apart from the other kinds", async () => {
+  const workspace = memoryWorkspace({ created: true });
+
+  await workspace.write({ kind: "requirements", name: "math-2027" }, REQUIREMENTS);
+  workspace.seed({ kind: "requirements", name: "cs-2027" }, REQUIREMENTS);
+  await workspace.write({ kind: "catalog", academicYear: 2027 }, CATALOG);
+
+  expect(await workspace.list("requirements")).toEqual([
+    { kind: "requirements", name: "cs-2027" },
+    { kind: "requirements", name: "math-2027" },
+  ]);
+  expect(await workspace.list("catalog")).toEqual([{ kind: "catalog", academicYear: 2027 }]);
+  expect(await workspace.read({ kind: "requirements", name: "math-2027" })).toEqual(REQUIREMENTS);
+  expect(await workspace.read({ kind: "requirements", name: "absent" })).toBeUndefined();
+});
+
+it("lists no Requirements Files, and never refuses, for a Workspace holding none", async () => {
+  await expect(memoryWorkspace().list("requirements")).resolves.toEqual([]);
+  await expect(memoryWorkspace({ created: true }).list("requirements")).resolves.toEqual([]);
+});
+
+it("refuses a Requirements File whose name is a path, on a read and on a write", async () => {
+  const workspace = memoryWorkspace({ created: true });
+  const hostile = { kind: "requirements", name: "../alice.state" } as const;
+
+  await expect(workspace.write(hostile, REQUIREMENTS)).rejects.toThrow(WorkspaceRefusedError);
+  await expect(workspace.read(hostile)).rejects.toThrow(/a name, never a path/);
+  expect(workspace.written()).toEqual([]);
+});
+
+it("refuses a Requirements File write before the Workspace Layout exists", async () => {
+  const workspace = memoryWorkspace();
+
+  await expect(
+    workspace.write({ kind: "requirements", name: "cs-2027" }, REQUIREMENTS),
+  ).rejects.toThrow(NotAWorkspaceError);
+});

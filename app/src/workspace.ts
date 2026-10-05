@@ -19,7 +19,27 @@ export type CatalogRef = { kind: "catalog"; academicYear: number };
  */
 export type StateFileRef = { kind: "state"; name: string };
 
-export type WorkspaceRef = CatalogRef | StateFileRef;
+/**
+ * A Requirements File: the rules of one Program for one or more Cohorts, in `requirements/` (#287).
+ * Named by its file name within that folder without the `.json` — `cs-2027` for
+ * `requirements/cs-2027.json` — the way a State File is named without `.state.json`. Free text,
+ * so it is held to the same name rule (`isRequirementsFileName`), and an adapter refuses the rest
+ * before it builds a path.
+ *
+ * Read and written whole, as a Catalog is, and for the same reason: nothing edits one in place. A
+ * Requirements File is converted by hand from the department's rules and imported or dropped into
+ * the folder, so there is no revision to carry and no save to guard (`read` and `write` below).
+ */
+export type RequirementsFileRef = { kind: "requirements"; name: string };
+
+export type WorkspaceRef = CatalogRef | StateFileRef | RequirementsFileRef;
+
+/**
+ * What `read` and `write` take: the files nothing edits in place. A State File is not one of them
+ * — it is read with its revision and saved through the guard — and `requireWholeFileRef` refuses
+ * one at runtime as well, because a cast gets past the compiler (#113).
+ */
+export type WholeFileRef = CatalogRef | RequirementsFileRef;
 
 /**
  * One snapshot in `.backups/`: a copy of a State File as it stood before one save, named by
@@ -209,6 +229,16 @@ export function isStateFileName(name: string): boolean {
 }
 
 /**
+ * Whether a name can be a Requirements File's (#287): **the same rule as a State File's name**,
+ * and for the same reason — it is free text that becomes a file name, so it is the other ref that
+ * could smuggle a path across the boundary. One rule rather than a second copy, so the two kinds of
+ * name cannot drift apart on what a path is.
+ */
+export function isRequirementsFileName(name: string): boolean {
+  return isStateFileName(name);
+}
+
+/**
  * Whether a folder is a Workspace, and if not, what about its Workspace Layout is wrong.
  *
  * **Two ways a part of the Layout is not usable, and they are reported apart** (#243). A part
@@ -304,7 +334,8 @@ export class WorkspaceRefusedError extends Error {
  *     there to write into (`NotAWorkspaceError`).
  *   - `not-created`: a part of the Workspace Layout could not be made by `create`.
  *   - `not-json`: only `.json` files are read or written.
- *   - `not-a-name`: a State File name that is not one — a path, among other things.
+ *   - `not-a-name`: a State File's or a Requirements File's name that is not one — a path, among
+ *     other things.
  *   - `not-a-year`: a Catalog's Academic Year that is not a whole number.
  *   - `not-a-moment`: a snapshot's moment that is not a whole number of milliseconds.
  *   - `not-a-catalog`: a State File handed to a whole-file read or write (`requireCatalogRef`).
@@ -357,6 +388,18 @@ export function requireStateFileName(name: string): void {
   throw new WorkspaceRefusedError(
     { reason: "not-a-name", subject: { kind: "state", name } },
     `refusing a State File named ${JSON.stringify(name)}: a name, never a path`,
+  );
+}
+
+/**
+ * The refusal for a Requirements File's name, so both adapters make it in the same words, as
+ * `requireStateFileName` is for a State File's (#287).
+ */
+export function requireRequirementsFileName(name: string): void {
+  if (isRequirementsFileName(name)) return;
+  throw new WorkspaceRefusedError(
+    { reason: "not-a-name", subject: { kind: "requirements", name } },
+    `refusing a Requirements File named ${JSON.stringify(name)}: a name, never a path`,
   );
 }
 
@@ -415,8 +458,15 @@ export function requireBackupRef(ref: BackupRef): void {
  */
 export function requireCatalogRef(ref: WorkspaceRef): void {
   // Spelled as what it *requires* rather than what it refuses, so a third kind of file in a
-  // Workspace — a Requirements File ref — reaches the last line and fails to compile there,
-  // rather than passing a check named for Catalogs and being written whole without a guard.
+  // Workspace reaches the last line and fails to compile there, rather than passing a check named
+  // for Catalogs and being written whole without a guard. The Requirements File was that third
+  // kind, and it is answered by `requireWholeFileRef` below, before this is asked (#287).
+  if (ref.kind === "requirements") {
+    throw new WorkspaceRefusedError(
+      { reason: "not-a-catalog", subject: ref },
+      "refusing a Requirements File where only a Catalog is read or written",
+    );
+  }
   if (ref.kind === "catalog") {
     // A safe integer and nothing else: every one of those is digits with at most a leading
     // minus, so there is no separator and no `..` for an adapter to resolve. The range a year
@@ -435,6 +485,19 @@ export function requireCatalogRef(ref: WorkspaceRef): void {
     `refusing the State File ${JSON.stringify(ref.name)} here: a State File is read through ` +
       "readStateFile and saved through saveStateFile, which carry the revision a guarded save needs",
   );
+}
+
+/**
+ * What a whole-file `read` or `write` is handed, held to what it may be: a Catalog's ref whose year
+ * is a year, or a Requirements File's whose name is a name — and never a State File's (#287). Both
+ * adapters ask this and nothing narrower, so the rule for each kind is said once, here.
+ */
+export function requireWholeFileRef(ref: WorkspaceRef): void {
+  if (ref.kind === "requirements") {
+    requireRequirementsFileName(ref.name);
+    return;
+  }
+  requireCatalogRef(ref);
 }
 
 /**
@@ -679,24 +742,25 @@ export type Workspace = {
    * Parsed JSON, or undefined when the file is not there. Never throws for absence;
    * throws `WorkspaceRefusedError` when the target is one a Workspace will not touch.
    *
-   * A `CatalogRef` and not a `WorkspaceRef`, because a State File is read through
+   * A `WholeFileRef` and not a `WorkspaceRef`, because a State File is read through
    * `readStateFile` and there is deliberately no second way to read one: a read that
    * handed back content without its revision would be a read nothing can safely save
    * after, and the compiler is what keeps that from being written by accident. A Catalog
-   * needs none — it is re-importable from its Raw Crawl and nothing edits one in place.
-   * `requireCatalogRef` refuses a State File here at runtime as well, because a cast gets
+   * needs none — it is re-importable from its Raw Crawl and nothing edits one in place — and
+   * neither does a Requirements File, which is imported or dropped in whole (#287).
+   * `requireWholeFileRef` refuses a State File here at runtime as well, because a cast gets
    * past the compiler (#113).
    */
-  read(ref: CatalogRef): Promise<unknown>;
+  read(ref: WholeFileRef): Promise<unknown>;
   /**
    * Atomic: an interrupted write leaves the previous file intact. Throws
    * `WorkspaceRefusedError` on a target a Workspace will not touch.
    *
    * For the files nothing edits in place. A State File is saved through `saveStateFile`,
-   * and `requireCatalogRef` refuses one here at runtime rather than trusting the narrowing
+   * and `requireWholeFileRef` refuses one here at runtime rather than trusting the narrowing
    * above, which a cast defeats (#113).
    */
-  write(ref: CatalogRef, data: unknown): Promise<void>;
+  write(ref: WholeFileRef, data: unknown): Promise<void>;
   /**
    * What a State File holds and which revision that is, or undefined when it is not there.
    * Absence is not an error, exactly as for `read`.

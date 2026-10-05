@@ -79,7 +79,13 @@ function fullFile() {
         ],
       },
     ],
-    pins: [{ courseNumber: "10-001", requirementId: "general-english" }],
+    pins: [
+      { courseNumber: "10-001", requirementId: "general-english" },
+      { courseNumber: "89-110", requirementId: "core", requirementsFile: "cs-2027" },
+    ],
+    cohort: { academicYear: 2026, semester: "fall" },
+    programs: [{ requirementsFile: "cs-2027", track: "ai" }, { requirementsFile: "math-2027" }],
+    manualTicks: [{ requirementId: "hebrew-expression", requirementsFile: "cs-2027" }],
     settings: { language: "he", examSpacingDays: 5 },
   };
 }
@@ -114,6 +120,8 @@ it("opens a file that is a version and nothing else", () => {
     attempts: [],
     timetables: [],
     pins: [],
+    programs: [],
+    manualTicks: [],
     settings: { language: "en", examSpacingDays: 3 },
   });
 });
@@ -568,6 +576,8 @@ it("names Courses by course number and nothing by Catalog entry", () => {
     "academicYear",
     "attempts",
     "blockedTimes",
+    // #287: the Cohort and the Programs name a Requirements File by its name, never by content
+    "cohort",
     "courseNumber",
     "day",
     "end",
@@ -578,19 +588,23 @@ it("names Courses by course number and nothing by Catalog entry", () => {
     "label",
     "language",
     "lessonType",
+    "manualTicks",
     "meetings",
     "name",
     "passed",
     "picks",
     "pins",
     "primary",
+    "programs",
     "requirementId",
+    "requirementsFile",
     "schemaVersion",
     "semester",
     "settings",
     "start",
     "status",
     "timetables",
+    "track",
     "tray",
     "value",
     "variants",
@@ -931,7 +945,10 @@ it("leaves out what the schema does not know, so it cannot write a file the read
 
   expect(Object.keys(save.json).sort()).toEqual([
     "attempts",
+    // defaulted by the schema the writer parses through, as `pins` is
+    "manualTicks",
     "pins",
+    "programs",
     "schemaVersion",
     "settings",
     "timetables",
@@ -978,4 +995,68 @@ it("writes a value detached from the State it was made from", () => {
   state.timetables[0]!.variants[0]!.name = "renamed after the save";
 
   expect(parseStateFile(onDisk(save.json)).state).toEqual(stateOf(fullFile()));
+});
+
+/**
+ * #287 established first whether `CURRENT_STATE_SCHEMA_VERSION` had to move for the Cohort, the
+ * Programs and the ticked Manual Requirements, and it did not: each is optional or defaulted, so
+ * a version-1 file written before them means exactly what it meant — no Cohort, no Program, no
+ * tick — and opens with no Warning. A Pin written before Pins named their Requirements File opens
+ * as it was, with no file.
+ */
+it("opens a file written before Programs, Cohort and ticks unchanged, and warns of nothing", () => {
+  const before = {
+    schemaVersion: 1,
+    pins: [{ courseNumber: "89-110", requirementId: "core" }],
+  };
+
+  const result = parseStateFile(before);
+
+  expect(CURRENT_STATE_SCHEMA_VERSION).toBe(1);
+  expect(result.warnings).toEqual([]);
+  expect(result.state).not.toHaveProperty("cohort");
+  expect(result.state?.programs).toEqual([]);
+  expect(result.state?.manualTicks).toEqual([]);
+  expect(result.state?.pins).toEqual([{ courseNumber: "89-110", requirementId: "core" }]);
+});
+
+it("drops a Program it cannot read and keeps the others, naming the one", () => {
+  const result = parseStateFile({
+    schemaVersion: CURRENT_STATE_SCHEMA_VERSION,
+    programs: [{ requirementsFile: "cs-2027" }, { track: "ai" }, { requirementsFile: "math-2027" }],
+  });
+
+  expect(result.state?.programs).toEqual([
+    { requirementsFile: "cs-2027" },
+    { requirementsFile: "math-2027" },
+  ]);
+  expect(result.warnings).toEqual([
+    { kind: "entry-dropped", at: "programs[1]", field: "requirementsFile" },
+  ]);
+});
+
+it("drops a tick it cannot read and keeps the rest", () => {
+  const result = parseStateFile({
+    schemaVersion: CURRENT_STATE_SCHEMA_VERSION,
+    manualTicks: [{ requirementId: "hebrew" }, "english", { requirementId: 7 }],
+  });
+
+  expect(result.state?.manualTicks).toEqual([{ requirementId: "hebrew" }]);
+  expect(result.warnings).toEqual([
+    { kind: "entry-dropped", at: "manualTicks[1]" },
+    { kind: "entry-dropped", at: "manualTicks[2]", field: "requirementId" },
+  ]);
+});
+
+it("reads a Cohort it cannot read as none, and says which part was wrong", () => {
+  const wrongSemester = parseStateFile({
+    schemaVersion: CURRENT_STATE_SCHEMA_VERSION,
+    cohort: { academicYear: 2026, semester: "winter" },
+  });
+  expect(wrongSemester.state).not.toHaveProperty("cohort");
+  expect(wrongSemester.warnings).toEqual([{ kind: "cohort-unreadable", field: "semester" }]);
+
+  const notACohort = parseStateFile({ schemaVersion: CURRENT_STATE_SCHEMA_VERSION, cohort: 2026 });
+  expect(notACohort.state).not.toHaveProperty("cohort");
+  expect(notACohort.warnings).toEqual([{ kind: "cohort-unreadable" }]);
 });

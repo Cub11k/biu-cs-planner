@@ -5,11 +5,13 @@ import { basename, dirname, join, resolve, sep } from "node:path";
 import {
   BackupRefusedError,
   backupsToPrune,
+  isRequirementsFileName,
   isStateFileName,
   NotAWorkspaceError,
   requireBackupRef,
-  requireCatalogRef,
+  requireRequirementsFileName,
   requireStateFileName,
+  requireWholeFileRef,
   StateFileChangedError,
   statusOf,
   WORKSPACE_LAYOUT,
@@ -32,7 +34,7 @@ import type { StateFileSave, StateFileVersion } from "@biu-cs-planner/core";
  * path happens here, so there is no caller-supplied path to sanitise.
  *
  *   <root>/catalogs/<year>.json
- *   <root>/requirements/
+ *   <root>/requirements/<name>.json
  *   <root>/<name>.state.json
  *   <root>/.backups/
  */
@@ -45,6 +47,7 @@ const DIRECTORY: Record<WorkspaceFolder, string> = {
 /** Literal patterns, never built from data (ADR-0007). */
 const CATALOG_FILE = /^(\d{4})\.json$/;
 const STATE_FILE = /^(.+)\.state\.json$/;
+const REQUIREMENTS_FILE = /^(.+)\.json$/;
 
 /**
  * A snapshot in `.backups/`: the State File's name, the moment it was taken, and the same
@@ -298,6 +301,8 @@ const describeRef = (ref: WorkspaceRef | BackupRef): string => {
       return `the Catalog for the Academic Year ${ref.academicYear}`;
     case "state":
       return `the State File ${JSON.stringify(ref.name)}`;
+    case "requirements":
+      return `the Requirements File ${JSON.stringify(ref.name)}`;
     case "backup":
       return (
         `the snapshot of the State File ${JSON.stringify(ref.name)} ` +
@@ -317,9 +322,8 @@ const describeRef = (ref: WorkspaceRef | BackupRef): string => {
  * deliberately alike in shape: one is what the filesystem is told, the other what a caller who
  * may not know there is a filesystem is told.
  *
- * `requirements` has no ref kind of its own and so is unreachable today. It is here because the
- * record is total over `WorkspaceFolder` and the rule should not depend on being remembered —
- * exactly the standing `requireJsonName` has, and its reason.
+ * `requirements` is reached by a Requirements File's ref since #287, which replaced the note that
+ * it had none and was unreachable.
  */
 const FOLDER_DESCRIPTION: Record<WorkspaceFolder, string> = {
   catalogs: "the folder holding the Workspace's Catalogs",
@@ -493,6 +497,10 @@ export function fileSystemWorkspace(
         // what keeps `..` from ever being resolved.
         requireStateFileName(ref.name);
         return join(root, `${ref.name}.state.json`);
+      case "requirements":
+        // Free text too, so refused by the port's own rule before a path is built from it (#287).
+        requireRequirementsFileName(ref.name);
+        return join(folderPath(ref), `${ref.name}.json`);
     }
   };
 
@@ -814,7 +822,7 @@ export function fileSystemWorkspace(
     kind: WorkspaceRef["kind"] | "backup";
   }): Promise<void> => {
     const folder = folderFor(ref);
-    // `write` is the only caller and `requireCatalogRef` has already run there, so this line is
+    // `write` is the only caller and `requireWholeFileRef` has already run there, so this line is
     // unreachable today and guards a future one — `requireJsonName`'s standing, and its reason.
     // A State File would need no check here anyway: it lives at the Workspace root, and
     // `missingFolders` answers for that, since a root that is a file holds no folder at all.
@@ -934,6 +942,19 @@ export function fileSystemWorkspace(
           .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
           .map((name) => ({ kind: "state" as const, name }));
       }
+      if (kind === "requirements") {
+        // Every `.json` in `requirements/` whose name this adapter would write, so its own
+        // temporary file — which starts with a dot — is not listed as a Requirements File. What a
+        // file holds is not this port's question: one that is not a Requirements File is listed
+        // here and reported by the use case that reads it (#287).
+        return entries
+          .flatMap((entry) => {
+            const name = REQUIREMENTS_FILE.exec(entry)?.[1];
+            return name !== undefined && isRequirementsFileName(name) ? [name] : [];
+          })
+          .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+          .map((name) => ({ kind: "requirements" as const, name }));
+      }
       return entries
         .map((name) => CATALOG_FILE.exec(name))
         .filter((m): m is RegExpExecArray => m !== null)
@@ -942,8 +963,8 @@ export function fileSystemWorkspace(
     },
 
     async read(ref): Promise<unknown> {
-      // the runtime half of the narrowing to a `CatalogRef`, which a cast defeats (#113)
-      requireCatalogRef(ref);
+      // the runtime half of the narrowing to a `WholeFileRef`, which a cast defeats (#113)
+      requireWholeFileRef(ref);
       const target = filePath(ref);
       requireJsonName(target, ref);
 
@@ -959,7 +980,7 @@ export function fileSystemWorkspace(
       // File back behind a layout check: the one this used to carry could not be written once
       // the parameter was narrowed, and a cast reached an unguarded write into a folder
       // nobody agreed to. Refusing the ref outright is a stronger check than restoring it.
-      requireCatalogRef(ref);
+      requireWholeFileRef(ref);
       const target = filePath(ref);
       requireJsonName(target, ref);
 
@@ -1226,6 +1247,8 @@ function folderFor(ref: {
   switch (ref.kind) {
     case "catalog":
       return "catalogs";
+    case "requirements":
+      return "requirements";
     case "backup":
       return "backups";
     case "state":

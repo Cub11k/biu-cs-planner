@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "../api.ts";
-import { DIRECTION, t, type Language, type StringKey } from "../i18n/strings.ts";
+import { t, type Language, type StringKey } from "../i18n/strings.ts";
 import { academicYearOf, academicYearSpan, semesterOf } from "./calendar.ts";
 import { courseName, type Semester } from "./catalog.ts";
 import { fetchOfferings, type CatalogWarning, type OfferingsResult } from "./offerings.ts";
@@ -25,19 +25,12 @@ import {
 } from "./variants.ts";
 import { clashingGroups, isPicked, weekGroups, type WeekGroup } from "./week.ts";
 import {
-  useHistory,
-  type Direction,
-  type HistoryRefusal,
-  type HistoryStep,
-} from "../history.ts";
-import { HistoryControls } from "../HistoryControls.tsx";
-import type {
-  SettingsNotice,
-  SettingsRefusal,
-  SettingsUnread,
-  SettingsWarning,
-} from "../settings.ts";
-import { SchemeControl } from "../SchemeControl.tsx";
+  AppShell,
+  unauthorizedSaid,
+  type AppShellProps,
+  type ScreenDefinition,
+  type ScreenProps,
+} from "../AppShell.tsx";
 import { CoursePicker } from "./CoursePicker.tsx";
 import { addToTray, removeFromTray } from "./tray.ts";
 import { TrayColumn } from "./TrayColumn.tsx";
@@ -95,101 +88,6 @@ const REFUSAL_STRING = {
   // The State File read fine and the backup could not be made, so not `picksUnreadable` (#229).
   "backup-refused": "picksBackupRefused",
 } as const satisfies Record<NonNullable<StateRefusal>, StringKey>;
-
-/**
- * Why an undo or a redo did nothing, in words the student can act on. Exhaustive against the
- * contract, so a reason added to `server/src/history.ts` is a compile error here rather than
- * a refusal the student never hears about.
- *
- * Five of the nine are the edit refusals an undo inherits by going through the same save
- * path (ADR-0013), and four of those five get their own sentence rather than the Pick's:
- * `picksStale` is an account of a click that was not saved, and a student who pressed Undo
- * did not click a Group. `workspace-not-ready` is the exception — "this folder is not a
- * workspace yet, so nothing can be saved in it" is the whole truth for either.
- */
-const HISTORY_REFUSAL_STRING = {
-  "nothing-to-undo": "historyNothingToUndo",
-  "nothing-to-redo": "historyNothingToRedo",
-  "state-file-missing": "historyFileMissing",
-  "history-invalidated": "historyInvalidated",
-  "state-file-changed": "historyStale",
-  "state-file-unreadable": "historyUnreadable",
-  "workspace-refused": "historyUnreadable",
-  "workspace-not-ready": "workspaceNotReady",
-  "backup-refused": "historyBackupRefused",
-} as const satisfies Record<NonNullable<HistoryRefusal>, StringKey>;
-
-/**
- * Why a change to a preference did nothing, in words the student can act on. Exhaustive against
- * the contract, so a reason added to the settings route is a compile error here rather than a
- * refusal the student never hears about.
- *
- * `state-file-changed` gets its own sentence rather than `picksStale`'s. That one is an account of
- * a click on a Group and a student who used the language switch clicked no Group — and #111 is the
- * ticket about showing a claim the page cannot make. `workspace-not-ready` shares
- * `workspaceNotReady` with the other two maps: "this folder is not a workspace yet, so nothing can
- * be saved in it" is the whole truth for any of them, which is why that one key names the folder
- * and not a pane (#217).
- */
-const SETTINGS_REFUSAL_STRING = {
-  "workspace-not-ready": "workspaceNotReady",
-  "state-file-unreadable": "settingsFileUnreadable",
-  "state-file-changed": "settingsStale",
-  "workspace-refused": "settingsFileRefused",
-  "backup-refused": "settingsBackupRefused",
-} as const satisfies Record<NonNullable<SettingsRefusal>, StringKey>;
-
-/**
- * What the screen says when a read brought no preferences, and which of the three it was.
- *
- * A map rather than the ternary it replaces, and `satisfies` so it is exhaustive: the ternary
- * said `settingsUnreread` for everything that was not `"never"`, so #207's third value would
- * have been shown as "what is on screen is the last version this page read" — a claim about a
- * read that, for an answer nobody could parse, never happened.
- */
-const SETTINGS_UNREAD_STRING = {
-  never: "settingsUnread",
-  again: "settingsUnreread",
-  "answer-unreadable": "settingsReadAnswerUnreadable",
-} as const satisfies Record<SettingsUnread, StringKey>;
-
-/**
- * The name of a preference, for the `settings-unreadable` Warning to say which one it lost. A `Map`
- * and not a record, because `field` is a `string` on the wire: `core` names whatever field of
- * `settingsSchema` it could not read, and a newer server may name one this build has no word for.
- */
-/**
- * One `settings-unreadable` Warning, derived from the contract rather than written out: the shape
- * was spelled by hand in three places, which compiled only because it happened to match `core`'s
- * member — a renamed sibling field would not have been caught.
- */
-type UnreadableSetting = Extract<SettingsWarning, { kind: "settings-unreadable" }>;
-
-const SETTING_NAME_STRING = new Map<string, StringKey>([
-  ["language", "settingLanguage"],
-  ["examSpacingDays", "settingExamSpacing"],
-]);
-
-/**
- * The name of an edit, from the label the API answers with. A `Map` and not a record, because
- * the contract types `label` as a `string`: a newer server may send a label this build has no
- * name for, and `editUnknown` is what is true of every one of them.
- */
-const EDIT_LABEL_STRING = new Map<string, StringKey>([
-  ["pick-group", "editPickGroup"],
-  ["remove-pick", "editRemovePick"],
-  ["create-variant", "editCreateVariant"],
-  ["duplicate-variant", "editDuplicateVariant"],
-  ["rename-variant", "editRenameVariant"],
-  ["delete-variant", "editDeleteVariant"],
-  ["set-primary-variant", "editSetPrimaryVariant"],
-  ["add-to-tray", "editAddToTray"],
-  ["remove-from-tray", "editRemoveFromTray"],
-  ["add-blocked-time", "editAddBlockedTime"],
-  ["replace-blocked-time", "editReplaceBlockedTime"],
-  ["remove-blocked-time", "editRemoveBlockedTime"],
-  ["copy-blocked-times", "editCopyBlockedTimes"],
-]);
 
 /**
  * An edit the screen sends on the view on screen: given the week it was made on — its Semester
@@ -256,70 +154,30 @@ function useReloading<T>(
   return [answer, showAnswer];
 }
 
-export type TimetableScreenProps = {
-  language: Language;
-  /**
-   * How the language switch is honoured, or `undefined` for *not now* — the settings have not been
-   * read, or a change is already in flight (`../settings.ts`). The switch is then disabled rather
-   * than a button that sends a change which cannot succeed.
-   */
-  onLanguage: ((language: Language) => void) | undefined;
-  /**
-   * What the last change to a preference did, when it did nothing. A preference lives in the State
-   * File, so changing one goes through the guarded save path and **can be refused** — and this is
-   * the only account the student gets of a switch they pressed that changed nothing (#115).
-   */
-  settingsNotice?: SettingsNotice | undefined;
-  /**
-   * The Warnings the settings were read with. `settings-unreadable` is the one that is shown:
-   * `core` has always raised it per field it could not read, and until #115 it was dropped at the
-   * boundary — so a preference back at its default looked exactly like one never set.
-   */
-  settingsWarnings?: readonly SettingsWarning[];
-  /**
-   * That the page has no word on the preferences, and which of the three things that means:
-   * `"never"` — the language on screen is the schema's default and the switch beside it is
-   * disabled; `"again"` — it is the last version this page read; `"answer-unreadable"` — the
-   * answer itself could not be read, so the file was not reached at all as far as this page can
-   * tell. Three sentences, because each of the other two would be false of at least one of the
-   * rest: the first claims defaults are on screen, and the first two both claim a read of the
-   * preferences that an unparseable body says nothing about (`../settings.ts`, #207).
-   */
-  settingsUnread?: SettingsUnread | undefined;
-  /**
-   * Called when this screen has written the State File, or may have — a step or a click whose
-   * answer it could not read (#206, #231) — so whatever else on the page is holding a revision
-   * can stop holding one that may be spent. It asks the header to go and look, and claims nothing.
-   *
-   * There are two writers on one page now — a Pick here and a preference in the header — and each
-   * holds the revision it read. The Workspace poll reconciles them up to `DEFAULT_EVERY_MS` later,
-   * which is seconds in which the other writer's save is refused `state-file-changed` and the
-   * student is told their page was stale about something they caused themselves. This is the same
-   * remedy `askHistory` already is for the undo buttons, and it is called from beside it.
-   */
-  onEdited?: (() => void) | undefined;
-  /**
-   * Whether this page is holding a launch token at all, which is what tells a **retired** token
-   * from **no** token (#126). Both are refused with a 401 and the server cannot say which it
-   * was, so the fact comes from the page's own side — `hasLaunchToken` in `../api.ts`, which
-   * `App` reads and hands down.
-   *
-   * A prop and not read here, because it is a fact about the page and this screen is one pane
-   * of it; and it defaults to `false`, which is the state of a page that was opened without a
-   * token and the sentence this screen showed for everything before this.
-   */
-  tokenHeld?: boolean;
-  /** Taken as an argument so the screen can be opened on any date, and tested. */
-  today?: Date;
-  /**
-   * How many times the Workspace has changed on disk since the page loaded. The screen does
-   * nothing with the number but notice that it moved, which is how "the UI reloads on
-   * external changes" (docs/design.md, "Storage") reaches a React effect. It arrives as a
-   * prop rather than being watched here because the folder is the whole app's business, not
-   * this screen's: `App` asks for it, `web/src/changes.ts` is where the asking happens.
-   */
-  workspaceChanges?: number;
+/**
+ * The Timetable as the app opens it: the screen inside the app shell (`../AppShell.tsx`), which
+ * holds the header — undo and redo, the scheme and the language — that this screen used to carry
+ * itself (#294). It is the shell with this one screen, so whatever renders the Timetable alone
+ * still gets the whole of what a student sees on it; `../App.tsx` renders the shell with every
+ * screen that is built.
+ */
+export type TimetableScreenProps = Omit<AppShellProps, "screens">;
+
+export function TimetableScreen(props: TimetableScreenProps): React.JSX.Element {
+  return <AppShell screens={TIMETABLE_SCREENS} {...props} />;
+}
+
+/** The Timetable's entry in the screen registry: the landing screen, at the root path. */
+export const TIMETABLE_SCREEN: ScreenDefinition = {
+  path: "/",
+  label: "timetable",
+  // one spelling of the year on the whole screen, the header's and the sidebar's alike
+  subtitle: (language, today) =>
+    `${t(language, SEMESTER_STRING[semesterOf(today)])} · ${t(language, "academicYear", academicYearSpan(academicYearOf(today)))}`,
+  render: (props) => <TimetablePane {...props} />,
 };
+
+const TIMETABLE_SCREENS: readonly ScreenDefinition[] = [TIMETABLE_SCREEN];
 
 /**
  * The landing screen: the week of one Semester of the current Academic Year, the Catalog to
@@ -327,19 +185,22 @@ export type TimetableScreenProps = {
  * its Groups on the week as options; clicking one Picks it, and clicking a Pick removes it.
  *
  * It reaches the domain only through the typed client in ../api.ts, which is the only
- * thing on this side that knows the API contract (docs/design.md, "Architecture").
+ * thing on this side that knows the API contract (docs/design.md, "Architecture"). Undo and redo
+ * are the shell's; this screen tells the shell which revision it is showing, and re-reads when a
+ * step asks it to.
  */
-export function TimetableScreen({
+export function TimetablePane({
   language,
-  onLanguage,
-  settingsNotice,
-  settingsWarnings = [],
-  settingsUnread,
+  tokenHeld,
+  today,
+  workspaceChanges,
+  stepRereads,
+  steps,
   onEdited,
-  tokenHeld = false,
-  today = new Date(),
-  workspaceChanges = 0,
-}: TimetableScreenProps): React.JSX.Element {
+  onActed,
+  onRevision,
+  notices,
+}: ScreenProps): React.JSX.Element {
   const academicYear = academicYearOf(today);
   const semester = semesterOf(today);
 
@@ -370,39 +231,12 @@ export function TimetableScreen({
   const [unknownSave, setUnknownSave] = useState(false);
   const [rereads, setRereads] = useState(0);
   /**
-   * The undo or redo this page last took, and which way it went.
-   *
-   * The direction is kept because the answer does not carry it: a 200 says what moved and a
-   * 409 says why nothing did, and neither says which button was pressed. "Undid picking a
-   * group" and "Redid picking a group" are the same answer read two ways.
-   *
-   * Retired by the next step or the next click, exactly as `staleSave` is, and for the same
-   * reason: it is the only account the student gets of what a press did.
+   * The answer a click was sent on, while the re-read its unreadable answer asked for is still in
+   * flight (#231). The click may have spent the revision on screen, so this screen tells the shell
+   * it has no revision to step from until a newer answer lands — a press sent on a revision the
+   * click may have spent would come back `historyStale`. Held by identity, as `refusedOn` is.
    */
-  const [lastStep, setLastStep] = useState<
-    { direction: Direction; answer: HistoryStep } | undefined
-  >(undefined);
-  /**
-   * The answer a step was sent on, while that step's own re-read is still in flight.
-   *
-   * A step's answer carries the new revision but not the Variant, so the revision on screen
-   * is spent from the moment the step succeeds until the re-read lands. `history.stepping`
-   * covers the request and stops there, which left a window — milliseconds on loopback, a
-   * whole round trip on a cold Workspace — where both buttons were live over a revision the
-   * file had moved past. Two quick presses, or Enter held down on the button, and the second
-   * came back `state-file-changed`: the page blaming the student's view for staleness the
-   * button it offered had caused.
-   *
-   * So a press waits for the week to catch up. Held by identity and not by revision, exactly
-   * as `refusedOn` is and for the same reason: a file reverted to the revision it had is
-   * still news, and waiting for a different string would wait for ever. Any newer answer
-   * releases it, because `timetable` is then a different object.
-   *
-   * Set only where a re-read is actually coming. A refusal that writes nothing has no answer
-   * on the way, and leaving this set over one would disable the buttons until something else
-   * happened to re-render the screen.
-   */
-  const [steppedOn, setSteppedOn] = useState<TimetableState | undefined>(undefined);
+  const [awaitingFrom, setAwaitingFrom] = useState<TimetableState | undefined>(undefined);
   /**
    * Clicks made before the first Timetable answer arrived, in the order they were made.
    *
@@ -431,17 +265,6 @@ export function TimetableScreen({
    * had is still news, and waiting for a different string would wait for ever.
    */
   const refusedOn = useRef<TimetableState | undefined>(undefined);
-
-  /**
-   * Whether undo and redo are available, and the steps themselves.
-   *
-   * Keyed on the change count, so another tab's edit moves these buttons as well as this
-   * week: the stacks belong to the State File and live in the server process, not in this
-   * page (ADR-0013). Nothing here counts this page's own edits — that count would be wrong
-   * about a reloaded tab from the moment it loaded.
-   */
-  const history = useHistory({ changes: workspaceChanges });
-  const askHistory = history.ask;
 
   /**
    * The Variant tab the student chose, or `undefined` for the primary — which is what a Semester
@@ -481,7 +304,7 @@ export function TimetableScreen({
 
   const [catalog]: [CatalogState, unknown] = useReloading(askCatalog, workspaceChanges);
   const [timetable, setTimetable]: [TimetableState, (answer: TimetableResult) => void] =
-    useReloading(askTimetable, workspaceChanges + rereads);
+    useReloading(askTimetable, workspaceChanges + rereads + stepRereads);
 
   const offerings = catalog.kind === "served" ? catalog.offerings : [];
   /**
@@ -540,10 +363,9 @@ export function TimetableScreen({
       setUnknownSave(true);
       // and the undo buttons wait for that re-read, as they do after a step: a press sent
       // on a revision this click may have spent would come back `historyStale`
-      setSteppedOn(sentOn);
+      setAwaitingFrom(sentOn);
       setRereads((count) => count + 1);
-      askHistory();
-      onEdited?.();
+      onEdited();
       return answer;
     }
     if (answer.kind === "served") follow?.(answer);
@@ -555,13 +377,10 @@ export function TimetableScreen({
     //
     // `onEdited` is the same argument for the same reason: this write moved the file's
     // revision, and the header's language switch is holding its own.
-    if (answer.kind === "served") {
-      askHistory();
-      onEdited?.();
-    }
+    if (answer.kind === "served") onEdited();
     return answer;
     },
-    [setTimetable, askHistory, onEdited],
+    [setTimetable, onEdited],
   );
 
   /**
@@ -608,81 +427,40 @@ export function TimetableScreen({
   );
 
   /**
-   * One press of undo or redo.
-   *
-   * `basedOn` is the revision on screen, exactly as a save's is: an undo *is* a save and goes
-   * through the same external-edit guard (ADR-0013). Which is why no press is offered before
-   * the State File has been read, and none is offered again until the re-read below has landed
-   * — see `steppedOn` — `undefined` there is the claim that there is no file, and
-   * #111 is the ticket about what that claim looks like to a student who caused none of it.
-   *
-   * **What the week shows afterwards is a direct re-read, not the change count.** Two reasons
-   * rather than a preference: the answer carries the new revision but not the Variant, so
-   * there is nothing in it to draw; and the poll is up to `DEFAULT_EVERY_MS` away, which is
-   * seconds of a week that disagrees with the file after the student's own press. A second tab
-   * sees it the other way round — the write moves the Workspace change count and that tab
-   * re-reads within the interval, which is what it already does for every edit this one makes.
+   * A press of undo or redo in the shell is the account owed now, so whatever this screen said
+   * about the last click is retired — as a press here used to retire it before the buttons moved
+   * into the shell (#294).
    */
-  const takeStep = (
-    direction: Direction,
-    basedOn: StateFileVersion,
-    sentOn: TimetableState,
-  ): void => {
-    // whatever the last click or press was told, this press is the account owed now
+  useEffect(() => {
+    if (steps === 0) return;
     setStaleSave(false);
     setUnknownSave(false);
     setHeldLost(false);
-    setLastStep(undefined);
-    // Claimed before the request goes out rather than when its answer arrives: the two are
-    // different renders, and a press landing between them is the window this closes.
-    setSteppedOn(sentOn);
+  }, [steps]);
 
-    void history.step(direction, basedOn).then((answer) => {
-      setLastStep({ direction, answer });
-      // A move changed the file, and the two stale reasons both mean the page is showing
-      // something the file has moved past — `history-invalidated` by definition, since the
-      // revision the server compared was not the one it wrote. Only these three: an absent
-      // or unreadable file has nothing newer to fetch, and blanking a week the student can
-      // still read would cost them it for nothing.
-      const stale =
-        answer.kind === "refused" &&
-        (answer.reason === "state-file-changed" || answer.reason === "history-invalidated");
-      /**
-       * An answer this page could not read is **not** the claim that nothing was written. The
-       * arm is reached from the 200 as well as from the refusal, so the step may have landed and
-       * the revision on screen may already be spent — and `setSteppedOn(undefined)` below is
-       * exactly the assertion that it has not, which would leave the next press to be refused
-       * `state-file-changed` for staleness this screen had caused.
-       *
-       * So the page stops relying on what it is holding and goes and looks: the week, the two
-       * buttons' availability, and whatever else holds a revision. None of the three is a claim
-       * about what happened; all three are ways of finding out (#206).
-       */
-      const unknown = answer.kind === "unreadable-answer";
-      if (answer.kind === "moved" || stale || unknown) {
-        setRereads((count) => count + 1);
-        // A move is a save (ADR-0013), so it moved the revision the header is holding too. For an
-        // answer nobody could read, whether it moved is the thing not known — which is why the
-        // header is told to go and look rather than told that it moved.
-        if (answer.kind === "moved" || unknown) onEdited?.();
-        // Availability arrives in the body, so an unreadable one left the buttons on an older
-        // answer. A move and a refusal both carried the flags and need no second request.
-        if (unknown) askHistory();
-        return;
-      }
-      // Nothing was written, so the revision on screen is still the file's and no answer is
-      // on its way. The next press may go out at once — and must be able to, because there
-      // is nothing left to wait for.
-      setSteppedOn(undefined);
-    });
-  };
+  /**
+   * Which revision the shell may step from: the one on screen, once the State File has been read
+   * and no re-read an unreadable answer asked for is still on its way. `undefined` otherwise — a
+   * served view's revision is `string | undefined`, and `undefined` is the claim that there is no
+   * State File, which the server fails closed on (#111).
+   *
+   * A layout effect, so the shell hears it before the browser paints: the buttons are enabled in
+   * the same frame as the week that makes them pressable, as they were while this screen drew them.
+   */
+  useLayoutEffect(() => {
+    onRevision(
+      timetable.kind === "served" && timetable.version !== undefined && awaitingFrom !== timetable
+        ? { version: timetable.version, answer: timetable }
+        : undefined,
+    );
+  }, [timetable, awaitingFrom, onRevision]);
 
   /** Whatever became of the last click or press, the one being made now is the account owed. */
   const retireNotices = (): void => {
     setHeldLost(false);
     setStaleSave(false);
     setUnknownSave(false);
-    setLastStep(undefined);
+    onActed();
   };
 
   /**
@@ -860,79 +638,12 @@ export function TimetableScreen({
     });
   }, [held, timetable, save, academicYear, semester]);
 
-  /**
-   * How a press is made, or `undefined` for *not now*. There has to be a revision on screen
-   * to step from, and no step already in flight: a second press sent on a revision the first
-   * has moved past comes back `state-file-changed`, which would tell the student their page
-   * was stale about something they had no part in.
-   */
-  const stepFrom =
-    timetable.kind === "served" &&
-    // A served view's revision is `string | undefined`, and `undefined` is the claim that
-    // there is no State File — which the server fails closed on. Without this the press was
-    // offered on such a view and stopped only by the server answering `canUndo: false`, which
-    // is a different fact that can disagree: another tab creates the file, this page's
-    // `/api/history` re-ask lands before its Timetable re-read, and a press then goes out on
-    // `undefined` and comes back `state-file-changed` — the student reading that their page
-    // was showing an older version of a file it had never read. That is #111 exactly, which
-    // the comments here already claimed was prevented and now is.
-    timetable.version !== undefined &&
-    !history.stepping &&
-    steppedOn !== timetable
-      ? (direction: Direction): void => takeStep(direction, timetable.version, timetable)
-      : undefined;
-  const stepNotice = historyNotice(language, lastStep, tokenHeld);
-
   // one spelling of the year on the whole screen: the header and the sidebar disagreeing
   // about 2026-27 and 2027 reads as if a different year were the one missing
   const yearLabel = t(language, "academicYear", academicYearSpan(academicYear));
 
   return (
-    <div dir={DIRECTION[language]} className="flex min-h-dvh flex-col">
-      <header className="flex items-center gap-4 border-b border-rule bg-paper px-4 py-2">
-        <h1 className="text-lg font-semibold">{t(language, "timetable")}</h1>
-        <span className="text-sm text-pencil">
-          {t(language, SEMESTER_STRING[semester])} · {yearLabel}
-        </span>
-        {/*
-          Undo and redo, before the two preferences: they act on the document this header sits
-          over, where the scheme and the language are about the page. `SchemeControl`'s
-          `ms-auto` still pushes the preferences to the end side of the row.
-
-          Availability is `GET /api/history`'s answer and not a count kept here, conjoined
-          with the two things only this screen knows: that there is a revision to step from,
-          and that no step is in flight.
-        */}
-        <HistoryControls
-          language={language}
-          canUndo={stepFrom !== undefined && history.available?.canUndo === true}
-          canRedo={stepFrom !== undefined && history.available?.canRedo === true}
-          onUndo={() => stepFrom?.("undo")}
-          onRedo={() => stepFrom?.("redo")}
-        />
-        {/*
-          The two preferences the header carries, at the end side of the row — `ms-auto` on
-          the first of them, so the pair sits at the right in English and at the left in
-          Hebrew without a second rule (CLAUDE.md: direction-neutral classes only).
-        */}
-        <SchemeControl language={language} />
-        {/*
-          The language switch, which now writes the choice into the State File instead of holding
-          it in a `useState` that a reload threw away (#115, ADR-0014). `disabled` and not
-          `aria-disabled`, for `HistoryControls`' reason: a switch that cannot be honoured is not a
-          thing to tab to and be refused by.
-        */}
-        <button
-          type="button"
-          data-language={language}
-          disabled={onLanguage === undefined}
-          onClick={() => onLanguage?.(language === "en" ? "he" : "en")}
-          className="rounded-sm border border-rule bg-paper px-3 py-1 text-sm text-ink-soft disabled:opacity-50"
-        >
-          {t(language, "otherLanguage")}
-        </button>
-      </header>
-
+    <>
       <div className="grid min-h-0 flex-1 grid-cols-[18rem_minmax(0,1fr)]">
         {/*
           The left column, Layout E: the Tray above, this Semester's Catalog below (#283). Two
@@ -1029,20 +740,8 @@ export function TimetableScreen({
               {heldLost && <span>{t(language, "picksHeldLost")}</span>}
               {staleSave && <span>{t(language, "picksStale")}</span>}
               {unknownSave && <span>{t(language, "picksSaveAnswerUnreadable")}</span>}
-              {/* what the last press of undo or redo did, or why it did nothing */}
-              {stepNotice === undefined ? null : <span>{stepNotice}</span>}
-              {/* why the last change to a preference did nothing, and a preference that could
-                  not be read at all — both in the live region, because a language that did not
-                  change is exactly the kind of nothing a student cannot otherwise tell happened */}
-              {settingsSaid(language, settingsNotice, tokenHeld) === undefined ? null : (
-                <span>{settingsSaid(language, settingsNotice, tokenHeld)}</span>
-              )}
-              {settingsUnread === undefined ? null : (
-                <span>{t(language, SETTINGS_UNREAD_STRING[settingsUnread])}</span>
-              )}
-              {unreadableSettings(settingsWarnings).map((warning) => (
-                <span key={warning.field ?? "all"}>{settingSaid(language, warning)}</span>
-              ))}
+              {/* the shell's own: the last press of undo or redo, the last preference */}
+              {notices}
               {clashes.length > 0 && <span>{clashesSaid(language, clashes.length)}</span>}
               {/* the Clashes strip names what a Pick Clashes with when it is a Blocked Time: its
                   own label is what a student can act on (#282) */}
@@ -1093,21 +792,8 @@ export function TimetableScreen({
           </div>
         </section>
       </div>
-    </div>
+    </>
   );
-}
-
-/**
- * Which of the two things a 401 means, said once for the whole screen.
- *
- * The server answers a wrong token and a missing one identically — it must, or the answer would
- * tell a caller whether it had guessed a real token — so the difference comes from whether this
- * page is holding one at all (`hasLaunchToken` in `../api.ts`). Shown in four places, which is
- * why it is a function and not four ternaries: a page that said one of them in one pane and the
- * other in another would be claiming both.
- */
-function unauthorizedSaid(language: Language, tokenHeld: boolean): string {
-  return t(language, tokenHeld ? "tokenRetired" : "tokenMissing");
 }
 
 /**
@@ -1145,108 +831,6 @@ function picksNotice(
     case "served":
       return picksSaid(language, timetable.picks.length);
   }
-}
-
-/**
- * What the screen says about the undo or redo it last took, and nothing when it has taken
- * none.
- *
- * Every branch is a key into the translation files. The API's `label` is a key too — the
- * server says so itself — so it is looked up and never shown: `pick-group` is not a sentence
- * in either language, and a component that printed it would be inventing a string here.
- */
-function historyNotice(
-  language: Language,
-  last: { direction: Direction; answer: HistoryStep } | undefined,
-  tokenHeld: boolean,
-): string | undefined {
-  if (last === undefined) return undefined;
-  const { direction, answer } = last;
-
-  switch (answer.kind) {
-    case "moved":
-      return t(language, direction === "undo" ? "undoneEdit" : "redoneEdit", {
-        edit: t(language, EDIT_LABEL_STRING.get(answer.label) ?? "editUnknown"),
-      });
-    case "refused":
-      // A refusal with no reason on it is an answer the contract has and this client cannot
-      // provoke — a 400 on a body it does not send. What is true of it is that nothing
-      // happened, and that is all it says rather than naming a cause it does not know.
-      return answer.reason === undefined
-        ? t(language, "historyNotDone")
-        : t(language, HISTORY_REFUSAL_STRING[answer.reason]);
-    // An answer that arrived and could not be read. Not `historyNotDone` and not
-    // `historyUnreadable`: both say "nothing changed", and this arm is reached from the 200 as
-    // well as from the refusal, so the step may perfectly well have been taken (#206).
-    case "unreadable-answer":
-      return t(language, "historyAnswerUnreadable");
-    case "unauthorized":
-      return unauthorizedSaid(language, tokenHeld);
-    case "unreachable":
-      return t(language, "apiUnreachable");
-  }
-}
-
-/**
- * What the screen says about the last change to a preference, and nothing when there has been
- * none or it went through.
- *
- * There is no arm for a change that worked, deliberately: a language that changed flips the whole
- * document, which is its own account, and a sentence saying so would be one more thing to read
- * about something the student can already see.
- */
-function settingsSaid(
-  language: Language,
-  notice: SettingsNotice | undefined,
-  tokenHeld: boolean,
-): string | undefined {
-  if (notice === undefined) return undefined;
-
-  switch (notice.kind) {
-    case "refused":
-      // A refusal with no reason on it is an answer the contract has and this client cannot
-      // provoke — a 400 on a body it does not send. What is true of it is that nothing changed.
-      return notice.reason === undefined
-        ? t(language, "settingsNotDone")
-        : t(language, SETTINGS_REFUSAL_STRING[notice.reason]);
-    // An answer that arrived and could not be read. Not `settingsNotDone`: "your preference was
-    // not changed" is a claim about the file, and this arm is reached from the served arm too, so
-    // an unparseable 200 to a `PATCH` may perfectly well have written (#207).
-    case "unreadable-answer":
-      return t(language, "settingsAnswerUnreadable");
-    case "unauthorized":
-      return unauthorizedSaid(language, tokenHeld);
-    case "unreachable":
-      return t(language, "apiUnreachable");
-  }
-}
-
-/**
- * The preferences that could not be read, out of every Warning the settings were read with.
- *
- * Only `settings-unreadable`, which is the one #115 is about. The other kinds a State File read
- * can raise reach this screen in the same array and are still not shown — that is the boundary
- * this ticket narrowed rather than closed, and each of them is about a part of the document this
- * line is not showing.
- */
-function unreadableSettings(warnings: readonly SettingsWarning[]): UnreadableSetting[] {
-  return warnings.filter(
-    (warning): warning is UnreadableSetting => warning.kind === "settings-unreadable",
-  );
-}
-
-/**
- * One preference that could not be read, named when `core` named a field.
- *
- * A field this build has no word for falls back to the unnamed sentence rather than printing the
- * key: `examSpacingDays` is not a word in either language, and a component that showed it would be
- * inventing a string outside the translation files.
- */
-function settingSaid(language: Language, warning: UnreadableSetting): string {
-  const name = warning.field === undefined ? undefined : SETTING_NAME_STRING.get(warning.field);
-  return name === undefined
-    ? t(language, "settingsUnreadable")
-    : t(language, "settingsUnreadableNamed", { setting: t(language, name) });
 }
 
 /** One Pick is not "1 groups picked", and Hebrew's singular is a different word again. */

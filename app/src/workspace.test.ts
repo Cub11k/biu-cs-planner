@@ -5,12 +5,15 @@ import {
   BACKUP_KEEP_SAVES,
   backupDay,
   backupsToPrune,
+  isRequirementsFileName,
   isStateFileName,
   isStateFileRevision,
   NotAWorkspaceError,
   requireBackupRef,
   requireCatalogRef,
+  requireRequirementsFileName,
   requireStateFileName,
+  requireWholeFileRef,
   statusOf,
   WorkspaceRefusedError,
   type BackupRef,
@@ -75,6 +78,59 @@ it.each(ACCEPTED)("accepts %s", (_what, name) => {
 it.each(REFUSED)("refuses %s", (_what, name) => {
   expect(isStateFileName(name)).toBe(false);
   expect(() => requireStateFileName(name)).toThrow(WorkspaceRefusedError);
+});
+
+/**
+ * A Requirements File's name is held to the same rule (#287), and by its own function, so the
+ * two cannot drift apart on what a path is: every name above is accepted or refused for both.
+ */
+it.each(ACCEPTED)("accepts %s as a Requirements File's name", (_what, name) => {
+  expect(isRequirementsFileName(name)).toBe(true);
+  expect(() => requireRequirementsFileName(name)).not.toThrow();
+});
+
+it.each(REFUSED)("refuses %s as a Requirements File's name", (_what, name) => {
+  expect(isRequirementsFileName(name)).toBe(false);
+  expect(() => requireRequirementsFileName(name)).toThrow(WorkspaceRefusedError);
+});
+
+it("refuses a hostile Requirements File name as a name, naming the Requirements File", () => {
+  let refused: unknown;
+  try {
+    requireRequirementsFileName("../alice.state");
+  } catch (error) {
+    refused = error;
+  }
+  expect(refused).toBeInstanceOf(WorkspaceRefusedError);
+  expect((refused as WorkspaceRefusedError).refusal).toEqual({
+    reason: "not-a-name",
+    subject: { kind: "requirements", name: "../alice.state" },
+  });
+});
+
+/**
+ * What a whole-file read or write may be handed since #287: a Catalog's ref or a Requirements
+ * File's, each held to its own rule, and never a State File's.
+ */
+it("lets a Catalog and a Requirements File through a whole-file read or write, and no State File", () => {
+  expect(() => requireWholeFileRef({ kind: "catalog", academicYear: 2027 })).not.toThrow();
+  expect(() => requireWholeFileRef({ kind: "requirements", name: "cs-2027" })).not.toThrow();
+
+  expect(() => requireWholeFileRef({ kind: "requirements", name: "../cs" })).toThrow(
+    WorkspaceRefusedError,
+  );
+  expect(() => requireWholeFileRef({ kind: "catalog", academicYear: "../x" } as never)).toThrow(
+    /a year is a whole number/,
+  );
+  expect(() => requireWholeFileRef({ kind: "state", name: "alice" })).toThrow(
+    /State File "alice".*readStateFile/s,
+  );
+});
+
+it("keeps refusing a Requirements File where only a Catalog is asked for", () => {
+  expect(() => requireCatalogRef({ kind: "requirements", name: "cs-2027" })).toThrow(
+    WorkspaceRefusedError,
+  );
 });
 
 /** A refusal a student can act on names what was refused, so the message carries the name. */

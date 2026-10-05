@@ -1,4 +1,4 @@
-import type { Attempt, Pin } from "../state/schema.ts";
+import type { Attempt } from "../state/schema.ts";
 import { countedIn, type Assignment, type Placement } from "./evaluate.ts";
 import {
   accepts,
@@ -80,11 +80,24 @@ export type SolverWarning =
   /** A Pin that would count a Course where an earlier Pin already counts it and may not share. */
   | { kind: "pin-conflict"; courseNumber: string; requirementId: string };
 
+/**
+ * A Pin as the solver takes it: a Course, a Requirement id, and which of `programs` the Pin is for
+ * (#287). A Requirement id is unique only within one file, so a Pin naming `program` is honoured in
+ * that Program alone; one naming none is honoured in every Program that has the id, which is what
+ * every Pin meant before Pins could name their Requirements File. Turning a State File Pin's file
+ * name into an index is the caller's, which knows the student's Programs.
+ */
+export interface SolvePin {
+  courseNumber: string;
+  requirementId: string;
+  program?: number;
+}
+
 export interface SolveInput {
   /** One Program, or the two of a double major, each with its Track. */
   programs: readonly { file: RequirementsFile; track?: string }[];
   attempts: readonly Attempt[];
-  pins?: readonly Pin[];
+  pins?: readonly SolvePin[];
   limits?: SolveLimits;
 }
 
@@ -160,17 +173,20 @@ function subsetsOf(leaves: number[]): number[][] {
 /** Pins resolved to leaves, by Program and canonical course, with the Warnings they raise. */
 function resolvePins(
   programs: readonly CompiledProgram[],
-  pins: readonly Pin[],
+  pins: readonly SolvePin[],
   warn: (warning: SolverWarning) => void,
 ): Map<string, number[]>[] {
   const resolved = programs.map(() => new Map<string, number[]>());
   const ordered = [...pins].sort(
     (a, b) =>
-      byCodeUnit(a.courseNumber, b.courseNumber) || byCodeUnit(a.requirementId, b.requirementId),
+      byCodeUnit(a.courseNumber, b.courseNumber) ||
+      byCodeUnit(a.requirementId, b.requirementId) ||
+      (a.program ?? -1) - (b.program ?? -1),
   );
-  for (const { courseNumber, requirementId } of ordered) {
+  for (const { courseNumber, requirementId, program: only } of ordered) {
     let found = false;
     programs.forEach((program, p) => {
+      if (only !== undefined && only !== p) return;
       const leaf = program.byId.get(requirementId);
       if (leaf === undefined) return;
       found = true;

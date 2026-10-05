@@ -90,22 +90,33 @@ export {
   splitBlockedRange,
 } from "./state/blocked.ts";
 export type { BlockedRange, BlockedTimeWarning } from "./state/blocked.ts";
+export { effectiveFile, programWarnings, setCohort, setPrograms } from "./state/programs.ts";
+export { pinCourse, tickManual, unpinCourse, untickManual } from "./state/pins.ts";
+export type { PinRef, RequirementRef } from "./state/pins.ts";
+export type { ListedRequirementsFile, ProgramWarning } from "./state/programs.ts";
 export {
   blockedTimeSchema,
   CURRENT_STATE_SCHEMA_VERSION,
   groupPickSchema,
+  manualTickSchema,
+  pinSchema,
+  programSchema,
   settingsSchema,
   stateSchema,
+  studentCohortSchema,
 } from "./state/schema.ts";
 export type {
   Attempt,
   BlockedTime,
   Grade,
   GroupPick,
+  ManualTick,
   Pin,
+  Program,
   Settings,
   State,
   Status,
+  StudentCohort,
   Timetable,
   Variant,
 } from "./state/schema.ts";
@@ -150,4 +161,11 @@ export type {
   RequirementStatus,
 } from "./requirements/evaluate.ts";
 export { DEFAULT_SOLVE_LIMITS, solveAssignment } from "./requirements/solve.ts";
-export type { Solution, SolveInput, SolveLimits, SolverWarning } from "./requirements/solve.ts";
+export type {
+  Solution,
+  SolveInput,
+  SolveLimits,
+  SolvePin,
+  SolverWarning,
+} from "./requirements/solve.ts";
+export { requirementsAccepting } from "./requirements/candidates.ts";
