@@ -208,11 +208,43 @@ export function isStateFileName(name: string): boolean {
   return !NAME_FORBIDS.test(name);
 }
 
+/**
+ * Whether a folder is a Workspace, and if not, what about its Workspace Layout is wrong.
+ *
+ * **Two ways a part of the Layout is not usable, and they are reported apart** (#243). A part
+ * that is *not there* is `missing`, and `create` makes it. A part that is *there and is not a
+ * folder* — a plain `catalogs` file — is `notAFolder`, and `create` cannot make it, because the
+ * name is taken. One list for both would have told a student their `catalogs` was absent when it
+ * is standing in the folder in front of them, and sent them to accept a Layout that `create` then
+ * refuses on the same file. `ready` is true only when both are empty.
+ *
+ * `notAFolder` is **left out rather than empty** when no part is the wrong kind of thing, so the
+ * answer for every other Workspace is the one it has always been, and a reader that knows only
+ * `missing` still reads `ready` right. `statusOf` is where both adapters build this, so the rule
+ * that joins the two lists into `ready` is written once.
+ */
 export type WorkspaceStatus = {
   ready: boolean;
-  /** The parts of the Workspace Layout that do not exist yet. */
+  /** The parts of the Workspace Layout that are not there yet. */
   missing: WorkspaceFolder[];
+  /** The parts of the Workspace Layout that are there and are not a folder; absent when none. */
+  notAFolder?: WorkspaceFolder[];
 };
+
+/**
+ * A Workspace's status, out of what is wrong with its Layout: the one rule both adapters answer
+ * `status` with (#243). An adapter that cannot hold a part of the wrong kind — the in-memory one
+ * cannot — still says what `ready` means through this, so the promise is pinned in the port's own
+ * test rather than only where a disk can reach it.
+ */
+export function statusOf(layout: {
+  missing: WorkspaceFolder[];
+  notAFolder: WorkspaceFolder[];
+}): WorkspaceStatus {
+  const { missing, notAFolder } = layout;
+  const ready = missing.length === 0 && notAFolder.length === 0;
+  return notAFolder.length === 0 ? { ready, missing } : { ready, missing, notAFolder };
+}
 
 /**
  * The **Workspace Layout**: the folders a Workspace holds, which is what this module and both
@@ -572,6 +604,10 @@ export type WorkspaceWatcher = {
 export type WorkspaceChanged = () => void;
 
 export type Workspace = {
+  /**
+   * Whether this folder is a Workspace: built by `statusOf`, so `ready` is false when any part
+   * of the Workspace Layout is missing **or** is there and is not a folder (#243).
+   */
   status(): Promise<WorkspaceStatus>;
   /**
    * Creates the Workspace Layout. Called only after the student accepts.
@@ -583,8 +619,9 @@ export type Workspace = {
    *
    * **`status()` is how to see what a refused create left**: it reports which parts of the
    * Workspace Layout are missing, and accepting the Workspace Layout again makes the rest once
-   * whatever refused it is fixed. (A name the Workspace Layout needs that a plain file holds
-   * counts as there and is refused by name on the next create or write, #121.) That is
+   * whatever refused it is fixed. (A name the Workspace Layout needs that a plain file holds is
+   * not missing: `status` reports it under `notAFolder` and not ready, and a create or a write
+   * refuses it by name, #243.) That is
    * the reason this need not roll back while a State File write must be atomic: a half-made
    * Workspace Layout is empty folders, a state the app can describe and recover from, and a
    * half-written file is neither. A rollback would also have to tell the folders this call made
@@ -611,8 +648,8 @@ export type Workspace = {
    * A folder that is not a folder at all — a plain `catalogs` file — is one of the two ways to
    * reach that refusal, and it is deliberately *not* absence: what was named is there, and it
    * is the wrong kind of thing. The write side refuses the same file by name
-   * (`NotAWorkspaceError`, #121), and an adapter that read it as absence here would report the
-   * Workspace ready and its Catalogs as none.
+   * (`NotAWorkspaceError`, #121) and `status` reports it under `notAFolder` (#243), and an
+   * adapter that read it as absence here would report its Catalogs as none.
    */
   list(kind: WorkspaceRef["kind"]): Promise<WorkspaceRef[]>;
   /**

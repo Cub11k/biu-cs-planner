@@ -6,6 +6,7 @@ import {
   requireCatalogRef,
   requireStateFileName,
   StateFileChangedError,
+  statusOf,
   WORKSPACE_LAYOUT,
   type BackupRef,
   type StateFileContents,
@@ -230,8 +231,11 @@ export function memoryWorkspace(
 
   return {
     async status(): Promise<WorkspaceStatus> {
+      // Through the port's own rule, so `ready` means here what it means on a disk (#243). No
+      // part of the Layout can be the wrong kind of thing here, for the reason in
+      // `requireLayout`'s doc, so `notAFolder` is always empty and `statusOf` leaves it out.
       const missing = WORKSPACE_LAYOUT.filter((f) => !folders.includes(f));
-      return { ready: missing.length === 0, missing };
+      return statusOf({ missing, notAFolder: [] });
     },
     async create(): Promise<void> {
       folders = [...WORKSPACE_LAYOUT];

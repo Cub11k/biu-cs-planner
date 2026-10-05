@@ -11,6 +11,7 @@ import {
   requireCatalogRef,
   requireStateFileName,
   StateFileChangedError,
+  statusOf,
   WORKSPACE_LAYOUT,
   WorkspaceRefusedError,
   type BackupRef,
@@ -582,9 +583,9 @@ export function fileSystemWorkspace(
    * wrong for this one, which names the folder itself. `ENOTDIR` here says what was named is
    * there and is not a folder, which is a state of the Workspace and the opposite of absence:
    * `usablePath` asks whether a path resolves inside the Workspace and not what it *is*, so a
-   * `catalogs` that is a plain file is usable, counts towards the Workspace Layout, and makes
-   * `status` report the Workspace **ready** (#121). A ready Workspace answering "no Catalogs"
-   * because its `catalogs` is a file is the lie in its most visible form.
+   * `catalogs` that is a plain file gets this far, and `status` reports it under `notAFolder`
+   * (#243). Answering "no Catalogs" because `catalogs` is a file would be the lie #129 was filed
+   * about, in its most visible form.
    *
    * Recognised from the errno rather than by asking `isDirectory` first, which is what
    * `requireLayoutFolder` does on the write side. A write has a reason to ask in advance — it
@@ -674,10 +675,10 @@ export function fileSystemWorkspace(
    * "Storage").
    *
    * **`.backups/` is required to be a folder before anything is written**, with the same
-   * refusal a write into a `catalogs` that is a plain file gets: `missingFolders` asks whether
-   * each part of the Workspace Layout resolves inside the Workspace and not what it *is*, so a
-   * plain `.backups` file makes `status` report ready and would otherwise meet the
-   * filesystem raw here — the second door #121 was filed for, met from a third side.
+   * refusal a write into a `catalogs` that is a plain file gets. `status` reports a plain
+   * `.backups` file as not ready (#243), but a save does not ask `status`: it asks
+   * `missingFolders`, which counts only what is not there, so without this the snapshot would
+   * meet the filesystem raw here (#121).
    *
    * **The millisecond is nudged past a name that is already taken.** A snapshot's name *is*
    * its timestamp, so two saves inside one millisecond would be one file and the second would
@@ -794,15 +795,15 @@ export function fileSystemWorkspace(
    * A write lands in a folder of the Workspace Layout, and that folder has to *be* one.
    *
    * `usablePath` asks whether a path resolves inside the Workspace, not what it is, so a
-   * `catalogs` that is a plain **file** is usable, counts towards the Workspace Layout, and
-   * `status` reports the Workspace ready. The write then opened its temporary below that file and
-   * the filesystem answered `ENOTDIR` — a raw error out of a Workspace the port had just called
-   * ready, which is the second door #121 was filed for and the reachable one.
+   * `catalogs` that is a plain **file** is usable. Without this the write opened its temporary
+   * below that file and the filesystem answered `ENOTDIR`, raw (#121). `status` no longer calls
+   * such a Workspace ready (`layoutOf`, #243), so the use cases in `app` stop at that answer
+   * before they write; this is the port keeping its own promise to a caller that writes without
+   * asking first, and the refusal names the folder.
    *
-   * Asked here rather than by narrowing `usablePath`, which is what the ticket rules out and
-   * what would break worse: a `catalogs` that is a file would then read as *missing*, the
-   * student would be offered the Workspace Layout, and `create` would meet the same file again —
-   * one raw error swapped for another. The kind of a folder is a question a write asks, and this is
+   * Asked here rather than by narrowing `usablePath`, which would make a `catalogs` that is a file
+   * read as *missing* — and missing is the one thing it is not, since `create` cannot make a
+   * folder whose name a file holds. The kind of a folder is a question a write asks, and this is
    * where a write asks it.
    */
   const requireLayoutFolder = async (ref: {
@@ -819,30 +820,59 @@ export function fileSystemWorkspace(
   };
 
   /**
-   * The parts of the Workspace Layout that are not there, which is what "not a Workspace"
-   * means.
+   * What is wrong with the Workspace Layout, which is what "not a Workspace" means: the parts
+   * that are **not there**, and the parts that are **there and are not a folder** (#243).
+   *
+   * Not there is what `usablePath` answers: no `realpath`, or one outside the Workspace. A part
+   * that passes that is then asked what it *is*, because resolving inside the Workspace is all
+   * `usablePath` says, and a plain `catalogs` file passes it. That file used to count towards the
+   * Layout, so `status` called the Workspace ready and every write into it was refused.
+   *
+   * The `stat` is answered rather than raised, as everything behind `status` is: a part whose
+   * `stat` fails after its `realpath` succeeded went away in between, which is not there.
    */
-  const missingFolders = async (): Promise<WorkspaceFolder[]> => {
+  const layoutOf = async (): Promise<{
+    missing: WorkspaceFolder[];
+    notAFolder: WorkspaceFolder[];
+  }> => {
     const missing: WorkspaceFolder[] = [];
+    const notAFolder: WorkspaceFolder[] = [];
     for (const folder of WORKSPACE_LAYOUT) {
-      if ((await usableFolder(folder)) === undefined) missing.push(folder);
+      const path = await usableFolder(folder);
+      const folderish =
+        path === undefined
+          ? undefined
+          : await stat(path).then(
+              (found) => found.isDirectory(),
+              () => undefined,
+            );
+      if (folderish === undefined) missing.push(folder);
+      else if (!folderish) notAFolder.push(folder);
     }
-    return missing;
+    return { missing, notAFolder };
   };
+
+  /**
+   * The parts of the Workspace Layout that are not there. A State File's save asks this and not
+   * `layoutOf` as a whole, because a part that is there and is not a folder is refused by name
+   * where it is reached: `.backups` by the snapshot (`BackupRefusedError`, #229), and `catalogs`
+   * and `requirements` hold nothing a State File's save writes.
+   */
+  const missingFolders = async (): Promise<WorkspaceFolder[]> => (await layoutOf()).missing;
 
   return {
     async status(): Promise<WorkspaceStatus> {
-      const missing = await missingFolders();
-      return { ready: missing.length === 0, missing };
+      return statusOf(await layoutOf());
     },
 
     /**
      * Idempotent for a folder that is already there — `recursive` makes an existing directory
      * a success — and refused, rather than raw, for a name that is there and is not one: a
      * plain `catalogs` gives `EEXIST`, which is the same file `requireLayoutFolder` refuses a
-     * write into, met from the other side. Reachable whenever one part of the Workspace Layout is a
-     * file and another is genuinely missing, because then `status` is not ready, the student is
-     * offered the Workspace Layout, and accepting it lands here (#121).
+     * write into, met from the other side. Reachable whenever a part of the Workspace Layout is a
+     * file, because then `status` is not ready (#243) and a page that offers the Layout to every
+     * Workspace that is not ready lands here when the student accepts (#121). `notAFolder` is
+     * what tells that page to say so instead.
      *
      * **One `mkdir` at a time, and no rollback** (#166). A refusal on `requirements` or
      * `backups` leaves `catalogs` made, which the port's `create` says is allowed and names

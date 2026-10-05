@@ -72,6 +72,7 @@ export {
   requireCatalogRef,
   requireStateFileName,
   StateFileChangedError,
+  statusOf,
   WORKSPACE_LAYOUT,
   WorkspaceRefusedError,
   type BackupRef,

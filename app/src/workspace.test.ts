@@ -10,6 +10,7 @@ import {
   requireBackupRef,
   requireCatalogRef,
   requireStateFileName,
+  statusOf,
   WorkspaceRefusedError,
   type BackupRef,
   type WorkspaceRefusal,
@@ -148,6 +149,33 @@ it("names the part of the Workspace Layout that is what is wrong, when one part 
   expect(refusal.message).toMatch(
     /^refusing to write: the Workspace layout does not exist yet — catalogs is there and is not a folder$/,
   );
+});
+
+/**
+ * #243: what `ready` means, pinned at the port rather than only where a disk can reach it. A part
+ * of the Workspace Layout that is there and is not a folder makes a Workspace not ready exactly as
+ * a missing one does, and is reported apart from the missing ones, because `create` makes what is
+ * missing and cannot make a folder whose name a file holds. The in-memory double can never hold
+ * such a part, so this is the only place its half of the promise is asserted.
+ */
+it("is not ready while a part of the Workspace Layout is missing or is there and not a folder", () => {
+  expect(statusOf({ missing: [], notAFolder: [] })).toEqual({ ready: true, missing: [] });
+  expect(statusOf({ missing: ["backups"], notAFolder: [] })).toEqual({
+    ready: false,
+    missing: ["backups"],
+  });
+  expect(statusOf({ missing: [], notAFolder: ["catalogs"] })).toEqual({
+    ready: false,
+    missing: [],
+    notAFolder: ["catalogs"],
+  });
+  expect(statusOf({ missing: ["requirements"], notAFolder: ["catalogs"] })).toEqual({
+    ready: false,
+    missing: ["requirements"],
+    notAFolder: ["catalogs"],
+  });
+  // left out rather than empty, so every other Workspace's answer is the one it always was
+  expect(statusOf({ missing: [], notAFolder: [] })).not.toHaveProperty("notAFolder");
 });
 
 /**

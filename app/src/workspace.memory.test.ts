@@ -74,6 +74,27 @@ it("lists nothing, and never refuses, for a Workspace holding nothing of that ki
   await expect(workspace.list("state")).resolves.toEqual([{ kind: "state", name: "alice" }]);
 });
 
+/**
+ * The real adapter's test of the same title, to the same answers (#243). `ready` is built by the
+ * port's `statusOf` in both, and `notAFolder` is left out of both while no part is the wrong kind
+ * of thing — which here is always, for the reason `MemoryWorkspace`'s doc gives; the half of the
+ * promise this double cannot reach is pinned in `./workspace.test.ts`.
+ */
+it("reports an ordinary folder as not a Workspace, and creates the Layout when asked", async () => {
+  const workspace = memoryWorkspace();
+
+  expect(await workspace.status()).toEqual({
+    ready: false,
+    missing: ["catalogs", "requirements", "backups"],
+  });
+  expect(await workspace.status()).not.toHaveProperty("notAFolder");
+
+  await workspace.create();
+
+  expect(await workspace.status()).toEqual({ ready: true, missing: [] });
+  expect(await workspace.status()).not.toHaveProperty("notAFolder");
+});
+
 /** The same refusal the real adapter makes, so a use case cannot pass here and fail there. */
 it("refuses a State File whose name is a path rather than a name", async () => {
   const workspace = memoryWorkspace({ created: true });
