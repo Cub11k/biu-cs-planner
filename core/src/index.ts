@@ -100,6 +100,8 @@ export {
   updateAttempt,
 } from "./state/attempts.ts";
 export type { AttemptChange, AttemptTarget, AttemptWarning } from "./state/attempts.ts";
+export { fromSuggestedLayout, suggestedLayoutOf } from "./state/suggested-layout.ts";
+export type { LayoutCreated, LayoutSkipped, LayoutSummary } from "./state/suggested-layout.ts";
 export { semesterIndex, studyPointAt } from "./state/semester-order.ts";
 export type { SemesterAt, StudyPoint } from "./state/semester-order.ts";
 export type { PinRef, RequirementRef } from "./state/pins.ts";

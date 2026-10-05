@@ -241,6 +241,13 @@ export const trackHeadSchema = z.object({ id: idSchema, name: textSchema });
 
 export const trackSchema = trackHeadSchema.extend({
   requirements: z.array(requirementSchema).default([]),
+  /**
+   * The Track's own entries of the Suggested Layout, placed beside the base rule set's when the
+   * Track is chosen (#293), as its Requirements are. `layoutEntrySchema` is declared below.
+   */
+  get suggestedLayout() {
+    return z.array(layoutEntrySchema).default([]);
+  },
 });
 
 // --- Policies, overlap, layout ----------------------------------------------------------------

@@ -249,7 +249,12 @@ class Reading {
       `${at}.requirements`,
       (entry, entryAt) => this.requirement(entry, entryAt, 1),
     );
-    return { ...head.data, requirements };
+    const suggestedLayout = this.each(
+      layoutEntrySchema,
+      (raw as Record<string, unknown>).suggestedLayout,
+      `${at}.suggestedLayout`,
+    );
+    return { ...head.data, requirements, suggestedLayout };
   }
 
   /**

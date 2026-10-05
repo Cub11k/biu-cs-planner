@@ -3,6 +3,8 @@ import {
   attemptWarnings,
   checkPlan,
   effectiveFile,
+  fromSuggestedLayout,
+  suggestedLayoutOf,
   moveAttempt,
   removeAttempt,
   updateAttempt,
@@ -11,6 +13,7 @@ import {
   type AttemptFacts,
   type AttemptId,
   type AttemptWarning,
+  type LayoutSummary,
   type PlanProgram,
   type PlanWarning,
   type SemesterAt,
@@ -222,4 +225,85 @@ export async function removeAttemptFrom(
     { label: "remove-attempt", apply: (state) => removeAttempt(state, id) },
     options,
   );
+}
+
+/**
+ * Why New Plan from Suggested Layout made nothing, and what it needs instead (#293). It never
+ * guesses: no Cohort means no Semester to place a study year in, and no Program means no layout.
+ *
+ * - `cohort-not-chosen`: the State File has no Cohort.
+ * - `program-not-chosen`: the student has no Program, or the one asked for is not among theirs.
+ * - `requirements-file-unavailable`: the Workspace does not hold that Program's file, or cannot read it.
+ * - `no-suggested-layout`: the file, with the student's Track, has no Suggested Layout.
+ */
+export type LayoutUnavailable =
+  | "cohort-not-chosen"
+  | "program-not-chosen"
+  | "requirements-file-unavailable"
+  | "no-suggested-layout";
+
+export type LayoutResult =
+  | (Extract<PlanResult, { kind: "served" }> & { summary: LayoutSummary })
+  | { kind: "unavailable"; reason: LayoutUnavailable; version: StateFileVersion | undefined }
+  | Extract<PlanResult, { kind: "refused" }>;
+
+/**
+ * New Plan from Suggested Layout (#293): planned Attempts for every Course of the layout of one of
+ * the student's Programs — the one `requirementsFile` names, or the first — placed relative to their
+ * Cohort, skipping every Course they already have an Attempt of. One guarded save and **one undo
+ * step**, which removes everything it created; a run that creates nothing writes nothing.
+ *
+ * What it needs is decided on the State the edit is applied to, inside the guarded writer, so a
+ * Cohort chosen in another tab a moment ago is the Cohort used — or the edit is refused as based on
+ * a revision the file no longer holds.
+ */
+export async function planFromSuggestedLayout(
+  workspace: Workspace,
+  choice: { requirementsFile?: string | undefined },
+  options: PlanEditOptions,
+): Promise<LayoutResult> {
+  const loaded = await loadRequirementsFiles(workspace);
+  const newId = options.newId ?? uuid;
+  let unavailable: LayoutUnavailable | undefined;
+  let summary: LayoutSummary = { created: [], skipped: [] };
+
+  const outcome = await editStateFile(
+    workspace,
+    options.stateFile ?? DEFAULT_STATE_FILE,
+    {
+      label: "plan-from-suggested-layout",
+      apply: (state) => {
+        const program =
+          choice.requirementsFile === undefined
+            ? state.programs[0]
+            : state.programs.find((p) => p.requirementsFile === choice.requirementsFile);
+        const file =
+          program === undefined || loaded.kind === "refused"
+            ? undefined
+            : loaded.files.find((entry) => entry.listed.name === program.requirementsFile)?.file;
+        if (state.cohort === undefined) unavailable = "cohort-not-chosen";
+        else if (program === undefined) unavailable = "program-not-chosen";
+        else if (file === undefined) unavailable = "requirements-file-unavailable";
+        else if (suggestedLayoutOf(file, program.track).length === 0) unavailable = "no-suggested-layout";
+        if (unavailable !== undefined || state.cohort === undefined || file === undefined) return state;
+
+        const made = fromSuggestedLayout(state, file, program?.track, state.cohort, newId);
+        summary = made.summary;
+        return made.state;
+      },
+    },
+    { basedOn: options.basedOn, ...(options.history ? { history: options.history } : {}) },
+  );
+
+  if (outcome.kind === "refused") {
+    return { kind: "refused", reason: outcome.reason, warnings: outcome.warnings };
+  }
+  if (unavailable !== undefined) return { kind: "unavailable", reason: unavailable, version: outcome.version };
+  return {
+    kind: "served",
+    view: await planOf(workspace, outcome.state, options.now ?? Date.now),
+    version: outcome.version,
+    warnings: outcome.warnings,
+    summary,
+  };
 }

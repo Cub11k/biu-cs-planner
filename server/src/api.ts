@@ -21,6 +21,7 @@ import {
   makeVariantPrimary,
   moveAttemptTo,
   pickGroup,
+  planFromSuggestedLayout,
   pinCourseTo,
   readExams,
   readPlan,
@@ -435,6 +436,15 @@ const movedAttemptSchema = z.object({ ...semesterPlaceShape, basedOn: basedOnSch
 
 /** Removing an Attempt carries nothing but the revision it was based on. */
 const removedAttemptSchema = z.object({ basedOn: basedOnSchema });
+
+/**
+ * New Plan from Suggested Layout (#293): which of the student's Programs' layout to follow, by its
+ * Requirements File's name — the first Program when none is named — and the revision it is based on.
+ */
+const fromLayoutSchema = z.object({
+  requirementsFile: z.string().min(1).max(200).optional(),
+  basedOn: basedOnSchema,
+});
 
 /**
  * Every Plan answer, read or write, in one shape: the Attempts with their Warnings and the revision
@@ -870,6 +880,27 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
       const body = await bodyAs(c, removedAttemptSchema, "not-a-removal");
       if (!body.ok) return c.json({ error: body.error }, 400);
       return planAnswer(c, await removeAttemptFrom(workspace, id.data, { basedOn: body.value.basedOn, history: into }));
+    })
+
+    /**
+     * New Plan from Suggested Layout (#293): planned Attempts for the layout's Courses, placed
+     * relative to the Cohort, skipping Courses the student already has. One save and one undo step,
+     * answered with the Plan and a `summary` of what was created and skipped. When it cannot run —
+     * no Cohort, no Program, no file, no layout — it writes nothing and answers a named 409 saying
+     * which, with the revision the file still holds; a stale revision is the usual 409.
+     */
+    .post("/api/plan/suggested-layout", capped, async (c) => {
+      const body = await bodyAs(c, fromLayoutSchema, "not-a-layout-request");
+      if (!body.ok) return c.json({ error: body.error }, 400);
+      const { basedOn, requirementsFile } = body.value;
+      const result = await planFromSuggestedLayout(workspace, { requirementsFile }, { basedOn, history: into });
+      if (result.kind === "unavailable") {
+        return c.json({ reason: result.reason, version: result.version }, 409);
+      }
+      if (result.kind === "refused") {
+        return c.json({ reason: result.reason, warnings: result.warnings }, 409);
+      }
+      return c.json({ ...result.view, summary: result.summary, version: result.version, warnings: result.warnings });
     })
 
     .get("/api/catalog/:year/offerings", async (c) => {

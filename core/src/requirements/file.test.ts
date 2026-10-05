@@ -83,6 +83,7 @@ function fullFile() {
         id: "ai",
         name: { he: "בינה מלאכותית", en: "AI" },
         requirements: [{ id: "ai-ml", kind: "course", course: "89-391" }],
+        suggestedLayout: [{ studyYear: 3, semester: "spring", courses: ["89-391"] }],
       },
     ],
     doubleCounting: {
@@ -301,6 +302,28 @@ it("reports a duplicate Requirement id, keeps the first and drops the later one"
   expect(result.file?.tracks[0]?.requirements).toEqual([]);
 });
 
+it("reads a Track's own Suggested Layout entry by entry, dropping only an unreadable one (#293)", () => {
+  const file = minimalFile({
+    tracks: [
+      {
+        id: "ai",
+        name: { he: "בינה" },
+        suggestedLayout: [
+          { studyYear: 3, semester: "fall", courses: ["89-391"] },
+          { studyYear: 0, semester: "fall", courses: ["89-392"] },
+        ],
+      },
+    ],
+  });
+
+  const result = parseRequirementsFile(onDisk(file));
+
+  expect(result.file?.tracks[0]?.suggestedLayout).toEqual([{ studyYear: 3, semester: "fall", courses: ["89-391"] }]);
+  expect(result.warnings).toEqual([
+    { kind: "entry-dropped", at: "tracks[0].suggestedLayout[1]", field: "studyYear" },
+  ]);
+});
+
 it("reports duplicate Pool, Course set, Track, Course and Equivalence entries, keeping the first", () => {
   const file = minimalFile({
     pools: [
@@ -348,7 +371,7 @@ it("reports duplicate Pool, Course set, Track, Course and Equivalence entries, k
   ]);
   expect(result.file?.pools).toEqual([{ id: "x", kind: "prefix", prefix: "89-" }]);
   expect(result.file?.courseSets).toEqual([{ id: "s", courses: ["89-110"] }]);
-  expect(result.file?.tracks).toEqual([{ id: "t", name: { he: "1" }, requirements: [] }]);
+  expect(result.file?.tracks).toEqual([{ id: "t", name: { he: "1" }, requirements: [], suggestedLayout: [] }]);
   expect(result.file?.courses).toEqual([{ number: "89-110", credits: 5 }]);
   expect(result.file?.equivalences).toEqual([{ from: "89-109", to: "89-110" }]);
 });

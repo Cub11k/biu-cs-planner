@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { EditHistory, StateEdit } from "./edit.ts";
-import { addAttemptTo, moveAttemptTo, readPlan, removeAttemptFrom, updateAttemptOf } from "./plan.ts";
+import {
+  addAttemptTo,
+  moveAttemptTo,
+  planFromSuggestedLayout,
+  readPlan,
+  removeAttemptFrom,
+  updateAttemptOf,
+} from "./plan.ts";
 import { memoryWorkspace, type MemoryWorkspace } from "./workspace.memory.ts";
 
 /**
@@ -321,5 +328,129 @@ describe("the Plan checks in the answer", () => {
     expect(read.kind === "served" && read.view.planWarnings).toEqual([
       { kind: "requirements-missing", target: { kind: "program", requirementsFile: "cs-2027" }, requirementIds: ["intro"] },
     ]);
+  });
+});
+
+/**
+ * #293: New Plan from Suggested Layout through the guarded writer — one save, one undo step, a
+ * summary of what it created and skipped, and what it needs said rather than guessed. The layout
+ * is invented (ADR-0006).
+ */
+describe("planFromSuggestedLayout", () => {
+  const LAYOUT = {
+    schemaVersion: 1,
+    program: { id: "cs", name: { he: "מדעי המחשב" } },
+    suggestedLayout: [
+      { studyYear: 1, semester: "fall", courses: ["89-110", "88-101"] },
+      { studyYear: 1, semester: "spring", courses: ["89-111"] },
+    ],
+    tracks: [{ id: "ai", name: { he: "בינה" }, suggestedLayout: [{ studyYear: 2, semester: "fall", courses: ["89-391"] }] }],
+  };
+  const MATH = {
+    schemaVersion: 1,
+    program: { id: "math", name: { he: "מתמטיקה" } },
+    suggestedLayout: [{ studyYear: 1, semester: "fall", courses: ["88-132"] }],
+  };
+  const seeded = (state: Record<string, unknown>): MemoryWorkspace => {
+    const workspace = memoryWorkspace({ created: true });
+    workspace.seed({ kind: "requirements", name: "cs-2027" }, LAYOUT);
+    workspace.seed({ kind: "requirements", name: "math-2027" }, MATH);
+    workspace.seed({ kind: "requirements", name: "bare" }, { schemaVersion: 1, program: { id: "b", name: { he: "b" } } });
+    workspace.seed(REF, { schemaVersion: 1, ...state });
+    return workspace;
+  };
+  const cohort = { academicYear: 2027, semester: "fall" };
+
+  it("creates the layout's Attempts in one save and one undo step, and summarises them", async () => {
+    const workspace = seeded({
+      cohort,
+      programs: [{ requirementsFile: "cs-2027", track: "ai" }],
+      attempts: [{ id: "x", courseNumber: "88-101", academicYear: 2026, semester: "summer", status: "passed" }],
+    });
+    const history = collecting();
+    const before = workspace.written().length;
+
+    const made = await planFromSuggestedLayout(workspace, {}, {
+      ...ALICE,
+      basedOn: await versionOf(workspace),
+      history,
+      newId: counting(),
+    });
+
+    expect(made).toMatchObject({
+      kind: "served",
+      summary: {
+        created: [
+          { id: "id-1", courseNumber: "89-110", academicYear: 2027, semester: "fall" },
+          { id: "id-2", courseNumber: "89-111", academicYear: 2027, semester: "spring" },
+          { id: "id-3", courseNumber: "89-391", academicYear: 2028, semester: "fall" },
+        ],
+        skipped: [{ courseNumber: "88-101", reason: "attempted" }],
+      },
+      view: { attempts: [{ id: "x" }, { id: "id-1" }, { id: "id-2" }, { id: "id-3" }] },
+      version: await versionOf(workspace),
+    });
+    expect(workspace.written().length - before).toBe(1);
+    expect(history.edits.map((edit) => edit.label)).toEqual(["plan-from-suggested-layout"]);
+    // the one undo step puts back the Plan as it was, without any of the three
+    expect(history.edits[0]?.previous.attempts.map((a) => a.id)).toEqual(["x"]);
+  });
+
+  it("uses the Program it is asked for, and refuses to guess one the student has not chosen", async () => {
+    const workspace = seeded({ cohort, programs: [{ requirementsFile: "cs-2027" }, { requirementsFile: "math-2027" }] });
+
+    const math = await planFromSuggestedLayout(workspace, { requirementsFile: "math-2027" }, {
+      ...ALICE,
+      basedOn: await versionOf(workspace),
+      newId: counting(),
+    });
+    expect(math).toMatchObject({ kind: "served", summary: { created: [{ courseNumber: "88-132" }] } });
+
+    const physics = await planFromSuggestedLayout(workspace, { requirementsFile: "physics" }, {
+      ...ALICE,
+      basedOn: await versionOf(workspace),
+    });
+    expect(physics).toMatchObject({ kind: "unavailable", reason: "program-not-chosen" });
+  });
+
+  it("says what it needs, writing nothing, rather than guessing", async () => {
+    const cases: [Record<string, unknown>, string][] = [
+      [{ programs: [{ requirementsFile: "cs-2027" }] }, "cohort-not-chosen"],
+      [{ cohort }, "program-not-chosen"],
+      [{ cohort, programs: [{ requirementsFile: "missing" }] }, "requirements-file-unavailable"],
+      [{ cohort, programs: [{ requirementsFile: "bare" }] }, "no-suggested-layout"],
+    ];
+    for (const [state, reason] of cases) {
+      const workspace = seeded(state);
+      const version = await versionOf(workspace);
+      const before = workspace.written().length;
+
+      const answer = await planFromSuggestedLayout(workspace, {}, { ...ALICE, basedOn: version });
+
+      expect(answer, reason).toEqual({ kind: "unavailable", reason, version });
+      expect(workspace.written()).toHaveLength(before);
+    }
+  });
+
+  it("creates nothing and writes nothing the second time", async () => {
+    const workspace = seeded({ cohort, programs: [{ requirementsFile: "cs-2027" }] });
+    await planFromSuggestedLayout(workspace, {}, { ...ALICE, basedOn: await versionOf(workspace), newId: counting() });
+    const before = workspace.written().length;
+
+    const again = await planFromSuggestedLayout(workspace, {}, { ...ALICE, basedOn: await versionOf(workspace) });
+
+    expect(again).toMatchObject({ kind: "served", summary: { created: [], skipped: [{}, {}, {}] } });
+    expect(workspace.written()).toHaveLength(before);
+  });
+
+  it("is refused when based on a revision the file no longer holds", async () => {
+    const workspace = seeded({ cohort, programs: [{ requirementsFile: "cs-2027" }] });
+    const stale = await versionOf(workspace);
+    await addAttemptTo(workspace, planned, { ...ALICE, basedOn: stale, newId: counting() });
+
+    expect(await planFromSuggestedLayout(workspace, {}, { ...ALICE, basedOn: stale })).toMatchObject({
+      kind: "refused",
+      reason: "state-file-changed",
+    });
   });
 });
