@@ -58,8 +58,36 @@ const headers = (token: string, accept: string): Record<string, string> => ({
  * this read happens before the graph check posts its comment, and a throw here would take that
  * comment down with it over a field only the Spec pass reads.
  */
-const PAGE = 100;
+export const PAGE = 100;
 export const MAX_PAGES = 10;
+
+/** One page of a GraphQL connection, as GitHub serves it. */
+export type Page<T> = {
+  nodes?: T[];
+  pageInfo?: { hasNextPage?: boolean; endCursor?: string | null };
+};
+
+/**
+ * Every node of a connection, from the page already in hand and `next` for each page after it,
+ * until GitHub says there is no next page or `MAX_PAGES` pages have been read. `cutAt` is set
+ * only when the cap stopped it, to the number of nodes read, so a caller can say so rather than
+ * pass a part off as the whole. Shared by the review's read here and by the closing-references
+ * check's (`tools/closing-refs/read.ts`), so the two cannot page differently (#320).
+ */
+export async function readAllPages<T>(
+  first: Page<T> | undefined,
+  next: (after: string) => Promise<Page<T> | undefined>,
+): Promise<{ nodes: T[]; cutAt?: number }> {
+  const nodes: T[] = [];
+  let page = first;
+  for (let read = 1; ; read++) {
+    nodes.push(...(page?.nodes ?? []));
+    const after = page?.pageInfo?.hasNextPage ? page.pageInfo.endCursor : undefined;
+    if (!after) return { nodes };
+    if (read === MAX_PAGES) return { nodes, cutAt: nodes.length };
+    page = await next(after);
+  }
+}
 
 const QUERY = `
 query($owner: String!, $name: String!, $number: Int!, $after: String) {
@@ -78,11 +106,6 @@ query($owner: String!, $name: String!, $number: Int!, $after: String) {
     }
   }
 }`;
-
-type ClosingPage = {
-  nodes?: LinkedIssue[];
-  pageInfo?: { hasNextPage?: boolean; endCursor?: string | null };
-};
 
 async function readPage(
   repo: string,
@@ -118,22 +141,11 @@ export async function fetchPullRequest(
   token: string,
 ): Promise<PullRequest> {
   const pr = await readPage(repo, number, token, null);
-  const closes: LinkedIssue[] = [];
-  let page = pr["closingIssuesReferences"] as ClosingPage | undefined;
-  let cut = false;
-
-  for (let read = 1; ; read++) {
-    closes.push(...(page?.nodes ?? []));
-    const next = page?.pageInfo?.hasNextPage ? page.pageInfo.endCursor : undefined;
-    if (!next) break;
-    if (read === MAX_PAGES) {
-      cut = true;
-      break;
-    }
-    page = (await readPage(repo, number, token, next))["closingIssuesReferences"] as
-      | ClosingPage
-      | undefined;
-  }
+  const closingPage = (from: Record<string, unknown>) =>
+    from["closingIssuesReferences"] as Page<LinkedIssue> | undefined;
+  const { nodes: closes, cutAt } = await readAllPages(closingPage(pr), async (after) =>
+    closingPage(await readPage(repo, number, token, after)),
+  );
 
   return {
     number,
@@ -147,7 +159,7 @@ export async function fetchPullRequest(
       title: issue.title ?? "",
       body: issue.body ?? "",
     })),
-    ...(cut ? { closesCutAt: closes.length } : {}),
+    ...(cutAt !== undefined ? { closesCutAt: cutAt } : {}),
   };
 }
 

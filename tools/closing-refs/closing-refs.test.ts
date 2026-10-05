@@ -363,7 +363,7 @@ function fakePort(
   return {
     writes,
     repository: "Cub11k/biu-cs-planner",
-    closingReferences: async () => references,
+    closingReferences: async () => ({ numbers: references }),
     body: async () => body,
     subIssues: async (issue) => children[issue] ?? [],
     findComment: async () => existing,
@@ -457,6 +457,23 @@ describe("run", () => {
     expect(port.writes).toHaveLength(1);
     expect(port.writes[0]).toMatch(/^edit:4:/);
     expect(port.writes[0]).toContain("Resolved.");
+  });
+
+  it("says so in the comment and the log when the list was read short", async () => {
+    // #320: past the read's cap, the rest of the list is unknown, and everything the check
+    // concludes was concluded from part of it — even a pull request that would otherwise be
+    // silent hears that.
+    const port = fakePort([205, 202], {}, undefined, "Closes #205\nCloses #202\n");
+    port.closingReferences = async () => ({ numbers: [205, 202], cutAt: 2 });
+    const lines: string[] = [];
+
+    const decision = await run(port, (line) => lines.push(line));
+
+    expect(decision?.kind).toBe("post");
+    expect(port.writes[0]).toContain(
+      "**GitHub holds more closing references than this check reads: it read the first 2 and stopped.**",
+    );
+    expect(lines[0]).toBe("::warning::closing-references check read only the first 2 closing references");
   });
 
   it("never throws: a failing GitHub call becomes a warning in the log", async () => {

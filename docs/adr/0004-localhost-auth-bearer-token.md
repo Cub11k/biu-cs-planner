@@ -8,6 +8,8 @@ Any website open in the browser can send requests to a localhost server, and oth
 - **Fallback:** a browser without a token gets a single-use pairing code printed in the terminal.
 - **Beyond loopback:** binding to another interface requires a password (scrypt hash, rate-limited login).
 
+**Amended 2026-10-05 (#321):** "binds only to `127.0.0.1`" above is narrower than what was built. The server binds **loopback only**: `127.0.0.1` by default, and `--host` also accepts `localhost` and `::1` (`LOOPBACK_ADDRESSES` in `server/src/cli.ts`), which the `Host` check accepts too, along with the bracketed `[::1]` (`LOOPBACK_NAMES` in `server/src/guard.ts`). `docs/design.md`, "Authentication", was corrected to this by #305; the decision itself — loopback, `Host` and `Origin` checked, a bearer token on every request — is unchanged.
+
 ## Considered Options
 
 - **Cookie session:** browsers send localhost cookies to every port on the host, so other local apps would receive them. It would also need separate CSRF defenses.

@@ -186,8 +186,18 @@ export function renderFindings(
   findings: readonly Finding[],
   unwritten: readonly number[] = [],
   fence?: OpenFence,
+  cutAt?: number,
 ): string {
   const out = [MARKER, "", "### Closing references", ""];
+
+  if (cutAt !== undefined) {
+    out.push(
+      `**GitHub holds more closing references than this check reads: it read the first ` +
+        `${cutAt} and stopped.** Everything below is judged against those alone, so a child ` +
+        "named as left out, or a line named as unregistered, may be in the part it did not read.",
+      "",
+    );
+  }
 
   if (findings.length > 0) {
     const sentences = findings.map(
@@ -279,23 +289,27 @@ export type Existing = { readonly id: number; readonly body: string };
 /**
  * Post when there is something to say and nowhere to say it yet; edit when the comment that
  * is already there no longer says the right thing; otherwise stay silent. A pull request with
- * no listed parent's child left out, no closing line in its body that the list lacks, and no
- * earlier comment is always silent.
+ * no listed parent's child left out, no closing line in its body that the list lacks, a list
+ * read to its end, and no earlier comment is always silent.
  */
 export function decide(
   closes: readonly Closed[],
   existing: Existing | undefined,
   unwritten: readonly number[] = [],
   fence?: OpenFence,
+  cutAt?: number,
 ): Decision {
   const numbers = closes.map((issue) => issue.number);
   const findings = unclosedChildren(closes);
-  const anything = findings.length > 0 || unwritten.length > 0 || fence !== undefined;
+  // A list read short is a finding of its own: everything else here was judged against part
+  // of what GitHub holds, so saying nothing would pass a part off as the whole (#320).
+  const anything =
+    findings.length > 0 || unwritten.length > 0 || fence !== undefined || cutAt !== undefined;
 
   if (!anything && !existing) return { kind: "silent" };
 
   const body = anything
-    ? renderFindings(numbers, findings, unwritten, fence)
+    ? renderFindings(numbers, findings, unwritten, fence, cutAt)
     : renderResolved(closes);
 
   if (!existing) return { kind: "post", body };
@@ -307,8 +321,12 @@ export function decide(
 export interface Port {
   /** `owner/name`, for telling this repository's `owner/name#n` from another's. */
   readonly repository: string;
-  /** The issue numbers in the pull request's `closingIssuesReferences`. */
-  closingReferences(): Promise<number[]>;
+  /**
+   * The issue numbers in the pull request's `closingIssuesReferences`, every page of them, and
+   * `cutAt` — how many GitHub listed before the cut, other repositories' included — only when the read stopped at its page cap with more left
+   * (#320). Absent means `numbers` is the whole list.
+   */
+  closingReferences(): Promise<{ numbers: number[]; cutAt?: number }>;
   /**
    * The body, where GitHub would read closing keywords from it — and `""` where it would not:
    * GitHub links closing keywords only on a pull request into the default branch, so a release
@@ -333,7 +351,7 @@ export async function run(
   log: (line: string) => void,
 ): Promise<Decision | undefined> {
   try {
-    const numbers = await port.closingReferences();
+    const { numbers, cutAt } = await port.closingReferences();
     const body = await port.body();
     const unwritten = unregistered(writtenClosings(body, port.repository), numbers);
     // Only what the list lacks: a swallowed line GitHub registered anyway is no loss.
@@ -343,11 +361,14 @@ export async function run(
     const closes = await Promise.all(
       numbers.map(async (number) => ({ number, children: await port.subIssues(number) })),
     );
-    const decision = decide(closes, await port.findComment(), unwritten, fence);
+    const decision = decide(closes, await port.findComment(), unwritten, fence, cutAt);
 
     if (decision.kind === "post") await port.postComment(decision.body);
     if (decision.kind === "edit") await port.editComment(decision.id, decision.body);
 
+    if (cutAt !== undefined) {
+      log(`::warning::closing-references check read only the first ${cutAt} closing references`);
+    }
     log(
       `closes ${numbers.length === 0 ? "nothing" : issueList(numbers)}; ` +
         `${unclosedChildren(closes).length} parent(s) with open children not listed; ` +

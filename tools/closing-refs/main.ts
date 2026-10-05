@@ -1,5 +1,6 @@
 import { findComment, updateComment, upsertComment } from "../pr-review/github.ts";
 import { MARKER, run, type Child, type Port } from "./closing-refs.ts";
+import { API, headers, ok, readClosingReferences, type Read } from "./read.ts";
 
 /**
  * The closing-references check on one pull request, against the real GitHub API. Run by
@@ -15,96 +16,16 @@ import { MARKER, run, type Child, type Port } from "./closing-refs.ts";
  * The comment helpers are `tools/pr-review/github.ts`'s, so both checks find, post and edit
  * their sticky comments the same way, each by its own marker.
  */
-const API = "https://api.github.com";
-
-const headers = (token: string): Record<string, string> => ({
-  authorization: `Bearer ${token}`,
-  accept: "application/vnd.github+json",
-  "x-github-api-version": "2022-11-28",
-  "user-agent": "biu-cs-planner-closing-refs",
-});
-
-async function ok(response: Response, what: string): Promise<Response> {
-  if (!response.ok) {
-    throw new Error(`${what} failed: ${response.status} ${await response.text()}`);
-  }
-  return response;
-}
-
-/**
- * 100 is GitHub's page ceiling, and more closing references than that is not a pull request.
- *
- * The body and the two branch names come in the same read, so the body is compared against the
- * list GitHub held at the same moment rather than one fetched a request later.
- */
-const QUERY = `
-query($owner: String!, $name: String!, $number: Int!) {
-  repository(owner: $owner, name: $name) {
-    defaultBranchRef { name }
-    pullRequest(number: $number) {
-      body
-      baseRefName
-      closingIssuesReferences(first: 100) { nodes { number repository { nameWithOwner } } }
-    }
-  }
-}`;
-
-type Read = { references: number[]; body: string };
-
 function port(repo: string, number: number, token: string, dryRun: boolean): Port {
-  const [owner, name] = repo.split("/");
   let read: Promise<Read> | undefined;
-
-  const readOnce = (): Promise<Read> =>
-    (read ??= (async (): Promise<Read> => {
-      const response = await ok(
-        await fetch(`${API}/graphql`, {
-          method: "POST",
-          headers: { ...headers(token), "content-type": "application/json" },
-          body: JSON.stringify({ query: QUERY, variables: { owner, name, number } }),
-        }),
-        "reading the closing references",
-      );
-      const payload = (await response.json()) as {
-        errors?: { message: string }[];
-        data?: {
-          repository?: {
-            defaultBranchRef?: { name?: string } | null;
-            pullRequest?: {
-              body?: string | null;
-              baseRefName?: string;
-              closingIssuesReferences?: {
-                nodes?: { number: number; repository?: { nameWithOwner?: string } }[];
-              };
-            };
-          };
-        };
-      };
-      if (payload.errors?.length) {
-        throw new Error(`reading the closing references failed: ${payload.errors[0]!.message}`);
-      }
-      const repository = payload.data?.repository;
-      const pr = repository?.pullRequest;
-      if (!pr) throw new Error(`pull request ${repo}#${number} was not found`);
-      // Into any branch but the default one GitHub links no closing keyword, so a body full of
-      // them is not a list that failed to register (see `Port.body`).
-      const intoDefault =
-        pr.baseRefName !== undefined && pr.baseRefName === repository?.defaultBranchRef?.name;
-      return {
-        // An issue in another repository can be closed too, but its number means nothing
-        // here: looking it up would read this repository's issue of the same number.
-        references: (pr.closingIssuesReferences?.nodes ?? [])
-          .filter((node) => node.repository?.nameWithOwner?.toLowerCase() === repo.toLowerCase())
-          .map((node) => node.number),
-        body: intoDefault ? (pr.body ?? "") : "",
-      };
-    })());
+  const readOnce = (): Promise<Read> => (read ??= readClosingReferences(repo, number, token));
 
   return {
     repository: repo,
 
     async closingReferences() {
-      return (await readOnce()).references;
+      const { references, cutAt } = await readOnce();
+      return cutAt === undefined ? { numbers: references } : { numbers: references, cutAt };
     },
 
     async body() {

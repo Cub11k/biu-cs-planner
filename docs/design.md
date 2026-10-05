@@ -1,6 +1,6 @@
 # Design
 
-Agreed on 2026-09-11 in a design interview. No code exists yet. Terms follow [`CONTEXT.md`](../CONTEXT.md); the reasons behind hard-to-reverse decisions are in [`docs/adr/`](adr/); background research is in [`docs/research/`](research/).
+Agreed on 2026-09-11 in a design interview, and built since in the order under [Build order](#build-order), which says how far that has got. Terms follow [`CONTEXT.md`](../CONTEXT.md); the reasons behind hard-to-reverse decisions are in [`docs/adr/`](adr/); background research is in [`docs/research/`](research/).
 
 **Next step:** build in the order under [Build order](#build-order).
 
@@ -21,8 +21,8 @@ Three kinds of file, each with its own lifecycle, each carrying a `schemaVersion
 | File | Content | Changes |
 |---|---|---|
 | Catalog | Offerings of one Academic Year (Groups, Meetings, credits, Exams, Hebrew and English names) | Crawled once a year, re-crawled before registration windows |
-| Requirements File | Rules, Pools, Prerequisites, Offering Patterns, Equivalences, policies and Suggested Layout for one Program and Cohort | Yearly or less often |
-| State File | Attempts, Timetables, Pins, settings | Whenever the student edits |
+| Requirements File | Rules, Pools, Prerequisites, Offering Patterns, Equivalences, policies and Suggested Layout for one Program, across one or more Cohorts (`cohorts` in `core/src/requirements/schema.ts`, PR #319) | Yearly or less often |
+| State File | Attempts, Timetables, Pins, the student's Cohort and Programs, ticked Manual Requirements, settings (`stateSchema` in `core/src/state/schema.ts`, PR #330) | Whenever the student edits |
 
 - Zod schemas in `core` are the single source of truth. They generate TypeScript types, validate every file on load and every request, and export JSON Schema so hand-written Requirements Files get editor autocomplete and inline errors.
 - Migration functions upgrade older files on load, so old State Files keep opening.
@@ -73,7 +73,7 @@ Requirements form a tree of these building blocks:
 
 Anything the vocabulary cannot express becomes a Manual Requirement with its text. New building blocks are added only when real data forces them.
 
-**Every Requirement carries a stable id.** A Pin in the State File references a Requirement by that id and by nothing else, so an id has to survive a Requirements File being re-edited or reissued for a new Cohort — otherwise every Pin a student has made silently stops resolving. Ids are assigned by the maintainer writing the file, not derived from a Requirement's position in the tree or from its text, both of which move.
+**Every Requirement carries a stable id.** A Pin in the State File references a Requirement by that id and the Requirements File it is in, and a ticked Manual Requirement the same way (`CONTEXT.md`, "Pin", ruled on #287), so an id has to survive a Requirements File being re-edited or reissued for a new Cohort — otherwise every Pin a student has made silently stops resolving. Ids are assigned by the maintainer writing the file, not derived from a Requirement's position in the tree or from its text, both of which move.
 
 ### Assignment
 
@@ -194,7 +194,7 @@ web/      thin React UI; talks only to the HTTP API through Hono's typed client.
     .backups/
   ```
 - On first run the app offers to create this **Workspace Layout** — the folders above, which is what the code and both Workspace adapters mean by "the layout", and not the department's Suggested Layout. Nothing is written without asking.
-  - **Creating it is not transactional, and does not need to be** (#166). The adapter makes the folders one at a time and does not roll back, so a create refused part way — a `requirements` it cannot make after `catalogs` was made — leaves the earlier folders standing. What a refused create guarantees is that nothing already there was replaced, not that the folder is untouched. `status()` is how to see what it left: it reports which parts of the Workspace Layout are missing, and accepting the Workspace Layout again makes the rest once whatever refused it is fixed. A name the Workspace Layout needs that a plain file holds counts as there, so `status()` does not list it, and the next create or write refuses it by name. A half-made Workspace Layout is a state the app can describe and recover from, of empty folders that cost nothing; a half-written State File is neither, which is why the write path is atomic and this one is not. So whatever the Workspace screen (#238) says after a refused create, it must not say that nothing was changed.
+  - **Creating it is not transactional, and does not need to be** (#166). The adapter makes the folders one at a time and does not roll back, so a create refused part way — a `requirements` it cannot make after `catalogs` was made — leaves the earlier folders standing. What a refused create guarantees is that nothing already there was replaced, not that the folder is untouched. `status()` is how to see what it left: it reports which parts of the Workspace Layout are missing, and accepting the Workspace Layout again makes the rest once whatever refused it is fixed. A name the Workspace Layout needs that a plain file holds is not missing: `status()` reports it apart, under `notAFolder`, and the Workspace is not ready (`statusOf` in `app/src/workspace.ts`, #243, PR #316); `create` cannot make it, and the next create or write refuses it by name. A half-made Workspace Layout is a state the app can describe and recover from, of empty folders that cost nothing; a half-written State File is neither, which is why the write path is atomic and this one is not. So whatever the Workspace screen (#238) says after a refused create, it must not say that nothing was changed.
 - **Autosave:** every edit saves the State File after a short delay, using atomic writes.
 - **Undo/redo:** an edit is a pure function in `core`; `app` keeps the previous State File value on a
   stack with the label the use case supplied, and undo writes an earlier value back through the same
@@ -306,7 +306,9 @@ The rejected options (cookies, TLS, sockets) are in [ADR 0004](adr/0004-localhos
 1. Schemas and migrations
 2. Shoham Importer and Catalog import (crawler built alongside, in its own repo)
 3. Timetable: manual grid, Variants, Clashes, Exams, Blocked Times; then the State File and Workspace storage
+   - Built, the Tray included: Variants, Blocked Times and the Tray landed in PR #317. Exams are checked (`app/src/exams.ts`, served at `/api/timetable/:year/:semester/exams`), and the side pane's exam-period rail is not drawn yet.
 4. Requirement engine, Assignment solver, Progress
+   - The engine and the solver exist in `core` (`core/src/requirements/`, PR #319): the Requirements File, Progress evaluation and the Assignment solver. The app reaches them and the Progress screen shows them since PR #330 (`app/src/progress.ts`, `web/src/progress/`).
 5. Plan screen and Plan checks
 6. Plan Diffs
 7. Generator
