@@ -338,19 +338,30 @@ function yearLongWarnings(reading: Reading): PlanWarning[] {
  * Credits per Semester, from the first Program whose file gives a Course's credits, over the
  * Attempts that took a seat that Semester (planned, registered, passed, failed — not exempt or
  * credited, which were done elsewhere or waived). A Year-long Course's credits are the year's, so
- * each of its halves carries half of them. Only a Semester holding a planned or registered Attempt
- * is reported: the others are history, and there is nothing left to plan in them.
+ * when its Fall and Spring halves are both in one Academic Year each carries half of them; a lone
+ * half carries them all, since nothing says where the rest falls. Only a Semester holding a planned
+ * or registered Attempt is reported: the others are history, and there is nothing left to plan in
+ * them.
  */
 function creditLoadWarnings(readings: readonly Reading[], attempts: readonly Attempt[], limit: number): PlanWarning[] {
-  const creditsOf = (courseNumber: string): number => {
+  const creditsOf = (taken: Attempt): number => {
     for (const { program } of readings) {
-      const course = program.canonical(courseNumber);
+      const course = program.canonical(taken.courseNumber);
       const credits = program.credits(course);
       if (credits === undefined) continue;
       const yearLong = program.file.courses.some(
         (c) => program.canonical(c.number) === course && c.offeringPattern === "year-long",
       );
-      return yearLong ? credits / 2 : credits;
+      const otherHalf = taken.semester === "fall" ? "spring" : taken.semester === "spring" ? "fall" : undefined;
+      const paired =
+        otherHalf !== undefined &&
+        attempts.some(
+          (a) =>
+            a.academicYear === taken.academicYear &&
+            a.semester === otherHalf &&
+            program.canonical(a.courseNumber) === course,
+        );
+      return yearLong && paired ? credits / 2 : credits;
     }
     return 0;
   };
@@ -364,7 +375,7 @@ function creditLoadWarnings(readings: readonly Reading[], attempts: readonly Att
       credits: 0,
       planning: false,
     };
-    slot.credits += creditsOf(attempt.courseNumber);
+    slot.credits += creditsOf(attempt);
     slot.planning ||= isPending(attempt);
     semesters.set(index, slot);
   }

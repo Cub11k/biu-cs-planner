@@ -37,7 +37,8 @@ export function suggestedLayoutOf(file: RequirementsFile, track: string | undefi
 /**
  * Creates a planned Attempt for each Course of the layout the student has no Attempt of, placed at
  * the Semester its study point falls in for `cohort` (`studyPointAt`), in the order the layout lists
- * them. Ids come from `newId`, so this stays pure.
+ * them. A Year-long Course gets both its halves, Fall and Spring of the year its entry falls in.
+ * Ids come from `newId`, so this stays pure.
  */
 export function fromSuggestedLayout(
   state: State,
@@ -47,6 +48,9 @@ export function fromSuggestedLayout(
   newId: () => AttemptId,
 ): { state: State; summary: LayoutSummary } {
   const { canonical } = compileProgram(file, track);
+  const yearLong = new Set(
+    file.courses.filter((c) => c.offeringPattern === "year-long").map((c) => canonical(c.number)),
+  );
   const attempted = new Set(state.attempts.map((attempt) => canonical(attempt.courseNumber)));
   const listed = new Set<string>();
   const created: Attempt[] = [];
@@ -65,9 +69,20 @@ export function fromSuggestedLayout(
         continue;
       }
       listed.add(course);
-      const attempt: Attempt = { id: newId(), courseNumber, ...at, status: "planned" };
-      created.push(attempt);
-      summary.created.push({ id: attempt.id, courseNumber, ...at });
+      // A Year-long Course is taken as a Fall half and a Spring half of one Academic Year, which is
+      // how the Plan checks read it, so a layout entry for one creates both halves in its year.
+      const places: SemesterAt[] =
+        yearLong.has(course) && at.semester !== "summer"
+          ? [
+              { academicYear: at.academicYear, semester: "fall" },
+              { academicYear: at.academicYear, semester: "spring" },
+            ]
+          : [at];
+      for (const place of places) {
+        const attempt: Attempt = { id: newId(), courseNumber, ...place, status: "planned" };
+        created.push(attempt);
+        summary.created.push({ id: attempt.id, courseNumber, ...place });
+      }
     }
   }
 

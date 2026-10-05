@@ -413,13 +413,16 @@ describe("credit load per Semester", () => {
     ]);
   });
 
-  it("counts each half of a Year-long Course as half its credits", () => {
+  it("counts each half of a Year-long Course as half its credits, and a lone half as all of them", () => {
     const yearLong = [attempt("f", "89-120", 2027, "fall"), attempt("s", "89-120", 2027, "spring")];
 
     expect(checkPlan({ attempts: yearLong, programs: [program(cs)], creditLoadLimit: 3 })).toMatchObject([
       { kind: "credit-load", target: { semester: "fall" }, credits: 4 },
       { kind: "credit-load", target: { semester: "spring" }, credits: 4 },
     ]);
+    expect(
+      checkPlan({ attempts: [attempt("f", "89-120", 2027, "fall")], programs: [program(cs)], creditLoadLimit: 3 }),
+    ).toMatchObject([{ kind: "credit-load", target: { semester: "fall" }, credits: 8 }]);
   });
 
   it("leaves out exempt and credited Courses, and a Semester that is only history", () => {

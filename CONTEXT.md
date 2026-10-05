@@ -34,7 +34,7 @@ A Course as given in one Semester of a Catalog, with its credits, Groups and Exa
 _Avoid_: course instance, availability
 
 **Year-long Course**:
-A Course whose Offering spans Fall and Spring as one unit (שנתי).
+A Course whose Offering spans Fall and Spring as one unit (שנתי). In the Plan it is two Attempts, a Fall half and a Spring half of one Academic Year, each carrying half the Course's credits; that is what New Plan from Suggested Layout creates and what the Plan checks read (#291, #293).
 _Avoid_: annual course
 
 **Group**:
@@ -80,7 +80,7 @@ The rules of one Program for one or more Cohorts, converted by hand from the dep
 _Avoid_: yedion, curriculum
 
 **Requirement**:
-One node in a Program's rule tree: all-of, N-of, credits from a Pool, cap, Manual Requirement, and so on.
+One node in a Program's rule tree: all-of, N-of, credits from a Pool, cap, Manual Requirement, and so on. A total is the one kind that takes no Course of its own: it counts the credits of every counted Course, or every one in its Pool, so it never competes with its siblings for a Course and cannot be Pinned to (ruled on #328).
 _Avoid_: condition, constraint
 
 **Pool**:

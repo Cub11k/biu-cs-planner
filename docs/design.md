@@ -331,6 +331,7 @@ The rejected options (cookies, TLS, sockets) are in [ADR 0004](adr/0004-localhos
 
 - Is a minimum-grade Prerequisite checked against the best or the latest passing Attempt? A policy setting in the Requirements File until the author checks.
 - **Where does a Spring Cohort's Suggested Layout land?** Built (#293) as: a study year begins at the Cohort's own Semester and every Semester keeps the one the layout gives, so a Spring 2027 Cohort's year-1 Spring is 2027 Spring and its year-1 Fall is 2028 Fall (`studyPointAt` in `core/src/state/semester-order.ts`). It keeps every Offering Pattern and never puts two study points in one Semester; the cost is that year-1 Fall Courses land after year-1 Spring ones. Progression deadlines are placed by the same rule. Unconfirmed against the department's convention for mid-year Cohorts.
+- **What credit load is normal for a BIU CS Semester?** The Plan checks warn above the student's `creditLoadLimit`, which defaults to 24 (`DEFAULT_CREDIT_LOAD_LIMIT`, #291), on an estimate of about 20 credits in a full Semester. Unconfirmed against the department's figures.
 
 Answered on 2026-09-13 from a real crawl, in [`research/shoham-raw-shape.md`](research/shoham-raw-shape.md):
 

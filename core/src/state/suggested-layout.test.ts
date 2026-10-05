@@ -128,3 +128,20 @@ it("creates nothing from a file with no Suggested Layout", () => {
   expect(result.summary).toEqual({ created: [], skipped: [] });
   expect(suggestedLayoutOf(bare, undefined)).toEqual([]);
 });
+
+it("creates both halves of a Year-long Course, Fall and Spring of the year its entry falls in", () => {
+  const yearLong = parseRequirementsFile({
+    schemaVersion: 1,
+    program: { id: "cs", name: { he: "מדעי המחשב" } },
+    courses: [{ number: "89-120", credits: 8, offeringPattern: "year-long" }],
+    suggestedLayout: [{ studyYear: 2, semester: "fall", courses: ["89-120"] }],
+  }).file!;
+
+  const { state, summary } = fromSuggestedLayout(empty(), yearLong, undefined, fallCohort, counting());
+
+  expect(state.attempts.map((a) => [a.id, a.courseNumber, a.academicYear, a.semester])).toEqual([
+    ["id-1", "89-120", 2028, "fall"],
+    ["id-2", "89-120", 2028, "spring"],
+  ]);
+  expect(summary.created).toHaveLength(2);
+});
