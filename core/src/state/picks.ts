@@ -4,7 +4,7 @@ import {
   type MeetingClash,
   type PickedGroup,
 } from "../timetable/clashes.ts";
-import type { GroupPick, PickedMeeting, State, Variant } from "./schema.ts";
+import type { BlockedTime, GroupPick, PickedMeeting, State, Variant } from "./schema.ts";
 import { timetableAt, variantNamed, withTimetable } from "./timetable.ts";
 
 /**
@@ -181,16 +181,36 @@ const asPickedGroup = (pick: GroupPick, semester: Semester): PickedGroup => ({
 });
 
 /**
+ * A Clash as the Timetable reports it. A Clash with a Blocked Time names **the Blocked Time** —
+ * the whole row, label included, and its position in the Timetable's list — and not only the
+ * span the Clashes module compares (#282): "clashes with work" is what a student can act on, and
+ * the position is how the screen points at the row. The Clashes module reads a Blocked Time as a
+ * bare `WeeklySpan` and knows nothing of a label, so this is where the label is put back.
+ */
+export type TimetableClash =
+  | Extract<MeetingClash, { kind: "meeting-meeting" }>
+  | (Omit<Extract<MeetingClash, { kind: "meeting-blocked-time" }>, "blockedTime"> & {
+      blockedTime: BlockedTime;
+      blockedTimeIndex: number;
+    });
+
+/**
  * Every Clash among one Variant's Picks, and between them and that Semester's Blocked
  * Times. A Warning and never a refusal: this is what the app reports after an edit has
  * already gone through.
  */
-export function clashesIn(state: State, at: VariantRef): MeetingClash[] {
+export function clashesIn(state: State, at: VariantRef): TimetableClash[] {
   const variant = variantAt(state, at);
   if (variant === undefined) return [];
 
+  const blockedTimes = timetableAt(state, at)?.blockedTimes ?? [];
   return findMeetingClashes(
     variant.picks.map((pick) => asPickedGroup(pick, at.semester)),
-    timetableAt(state, at)?.blockedTimes ?? [],
-  );
+    blockedTimes,
+  ).map((clash): TimetableClash => {
+    if (clash.kind === "meeting-meeting") return clash;
+    // `findMeetingClashes` hands back the very span it was given, so identity finds the row
+    const blockedTimeIndex = blockedTimes.findIndex((row) => row === clash.blockedTime);
+    return { ...clash, blockedTime: blockedTimes[blockedTimeIndex]!, blockedTimeIndex };
+  });
 }

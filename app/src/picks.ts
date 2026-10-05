@@ -8,7 +8,7 @@ import {
   variantAt,
   variantWarnings,
   type GroupPick,
-  type MeetingClash,
+  type TimetableClash,
   type PickSlot,
   type Semester,
   type StateFileVersion,
@@ -75,7 +75,7 @@ export type TimetableView = {
   /** Every Variant of the Timetable, in file order — the tabs above the week (#281). */
   variants: VariantTab[];
   picks: GroupPick[];
-  clashes: MeetingClash[];
+  clashes: TimetableClash[];
   /**
    * What is wrong with this Timetable's Variants **after** the edit this view answers: a name
    * two of them share, or not exactly one primary. A Warning and never a refusal, computed from
