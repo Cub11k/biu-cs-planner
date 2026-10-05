@@ -110,18 +110,19 @@ and the two can disagree — the same distinction "Verify a creation by number, 
 
 **CI now asks this question too, and the manual step stays.** `closing-refs.yml` runs on every
 pull request from a branch of this repository (forks are skipped: their token cannot comment), on
-open, on every body edit and on every push, and comments on two things: when the list holds a
-parent, any open child of it that the list does not hold (#260); and any issue the body puts a
-closing keyword before, outside code fences and inline code, that the list does not hold — #223's
-failure, described below, which starting from the list alone could not see (#308). It never fails
-a job and says nothing while the body and the list agree and no listed parent has a child left
-out. It skips fences, inline code and HTML comments, so a keyword in an indented code block is
-still read and may be named whether or not GitHub read it; the body of a pull request into any
-branch but `dev` is not read, because GitHub links no closing keyword there; and nothing re-runs it when the tracker changes under an open pull request (a child
-attached or reopened later is seen on the next push or body edit). So run the command above
-yourself before reporting; the comment is a second reader, not a replacement. Run over the sixty
-most recent pull requests on 2026-10-05, the body half named exactly one: #223, with the four
-issues its `Closes` block was written for.
+open, on every body edit and on every push, and comments on three things: when the list holds a
+parent, any open child of it that the list does not hold (#260); any issue the body puts a closing
+keyword before, outside code, that the list does not hold; and a code fence the body never closes,
+with any closing lines it swallowed that the list does not hold — #223's failure, described below,
+which starting from the list alone could not see (#308). It never fails a job, and says nothing
+while the body and the list agree and no listed parent has a child left out. It skips fences,
+inline code and HTML comments, so a keyword in an indented code block is still read and may be
+named whether or not GitHub read it; the body of a pull request into any branch but `dev` is not
+read, because GitHub links no closing keyword there; and nothing re-runs it when the tracker
+changes under an open pull request (a child attached or reopened later is seen on the next push or
+body edit). So run the command above yourself before reporting; the comment is a second reader,
+not a replacement. Run over the sixty most recent pull requests on 2026-10-05, it named exactly
+one: #223, with the four issues its `Closes` block was written for.
 
 **The spelling being right is not the link being right.** On 2026-10-04 PR #223 carried `Closes
 #205`, `Closes #202`, `Closes #203` and `Closes #204`, each with the keyword on its own line and
@@ -148,6 +149,19 @@ it as a reason to look rather than as a rule**: before opening a pull request, r
 keyword that has landed next to a number by accident, and rephrase it so the two are not adjacent.
 Quoting this very paragraph is the easy way to do it by mistake — put a quotation like that inside
 a code fence, where no reference is parsed at all.
+
+**What swallowed #223's lines was a code fence left open** (found on 2026-10-05, building #308).
+Its body quotes a fenced block inside another fence, at its lines 18 to 29: a ```` ```ts ```` block
+inside a ```` ``` ```` one. CommonMark ends the outer fence at the inner one's closing line, so the
+```` ``` ```` written at line 29 to close the quotation opens a new fence instead, and that one runs
+to the end of the body. The four `Closes` lines are inside it — GitHub's own markdown endpoint
+(`gh api markdown -f mode=gfm`) renders `Closes #205` inside a `<pre>`. So "outside any code
+fence", two paragraphs up, was true of the body as written and false of it as parsed, and the
+displacement the paragraph above proposes is not needed to explain the result: the phrase at line
+12 registered #125 because it was the only keyword GitHub could see. The advice in that paragraph
+stands for its own reason, since a keyword in prose does close what it names. **Quote a fence with
+a longer one — four backticks around three — and the check names a fence left open that
+swallowed a closing line.**
 
 **When the list disagrees with the body, close the missing issues by hand after the merge**, with
 the reason on each, as #202 through #205 record. Do not wait for a re-parse to repair it, and do

@@ -3,6 +3,7 @@ import {
   MARKER,
   decide,
   issueList,
+  openFence,
   proseOnly,
   renderFindings,
   renderResolved,
@@ -155,8 +156,51 @@ describe("proseOnly", () => {
     expect(writtenClosings("<!-- Closes #12 -->\nCloses #3\n<!-- Fixes #4", "o/r")).toEqual([3]);
   });
 
+  it("does not read a comment marker quoted in inline code as a comment", () => {
+    // #223's body quotes `<!-- pr-review -->` long before its `Closes` block.
+    expect(writtenClosings("The marker `<!-- pr-review -->` is code.\n\nCloses #205", "o/r")).toEqual(
+      [205],
+    );
+  });
+
   it("leaves a lone backtick as written", () => {
     expect(proseOnly("it's a ` stray")).toBe("it's a ` stray");
+  });
+});
+
+/** #223's body in miniature: a fence quoting a fence, and the `Closes` block after it. */
+const NESTED = [
+  "Prose that closed #125 in passing.",
+  "",
+  "```",
+  "**core/shoham/details**",
+  "",
+  "```ts",
+  "type DetailKey = {}",
+  "```",
+  "",
+  "- `RawDetail`",
+  "```",
+  "",
+  "More prose.",
+  "",
+  "Closes #205",
+  "Closes #202",
+].join("\n");
+
+describe("openFence", () => {
+  it("finds the fence a quoted fence left open, and the closing lines it swallowed", () => {
+    expect(openFence(NESTED, "o/r")).toEqual({ line: 11, hidden: [205, 202] });
+    // And the ordinary reading skips them, as GitHub does.
+    expect(writtenClosings(NESTED, "o/r")).toEqual([125]);
+  });
+
+  it("is nothing when every fence closes", () => {
+    expect(openFence("```\nCloses #1\n```\nCloses #2", "o/r")).toBeUndefined();
+  });
+
+  it("is nothing when the open fence swallowed no closing line", () => {
+    expect(openFence("Closes #1\n```\ncode", "o/r")).toBeUndefined();
   });
 });
 
@@ -237,7 +281,7 @@ describe("renderFindings for closing lines GitHub did not record", () => {
       "The body puts a closing keyword before #205 and #202, and GitHub's list holds #125, so " +
         "merging will not close them.",
     );
-    expect(body).toContain("#223's failure");
+    expect(body).toContain("close them by hand after the merge");
     expect(body).not.toContain("open child");
   });
 
@@ -369,6 +413,26 @@ describe("run", () => {
     expect(decision?.kind).toBe("post");
     expect(port.writes).toHaveLength(1);
     expect(port.writes[0]).toContain("The body puts a closing keyword before #205 and #202");
+  });
+
+  it("names the unclosed fence that swallowed #223's `Closes` block", async () => {
+    const port = fakePort([125], {}, undefined, NESTED);
+
+    await run(port, () => {});
+
+    expect(port.writes).toHaveLength(1);
+    expect(port.writes[0]).toContain(
+      "The code fence opened on line 11 of the body is never closed, so GitHub reads everything " +
+        "after it as code, including the closing keywords before #205 and #202",
+    );
+    // Not named twice: outside code the body closes only #125, which the list holds.
+    expect(port.writes[0]).not.toContain("The body puts a closing keyword");
+  });
+
+  it("says nothing of a swallowed line GitHub registered anyway", async () => {
+    const port = fakePort([125, 205, 202], {}, undefined, NESTED);
+
+    expect(await run(port, () => {})).toEqual({ kind: "silent" });
   });
 
   it("is silent when the body and the list agree", async () => {

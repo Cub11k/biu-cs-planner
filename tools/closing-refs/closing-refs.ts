@@ -65,9 +65,18 @@ export function unclosedChildren(closes: readonly Closed[]): Finding[] {
  * body. Indented code blocks are not handled, and a reference in one is read as written.
  */
 export function proseOnly(body: string): string {
+  return blankCode(fences(body).kept);
+}
+
+/**
+ * The body's lines with every fenced line blanked, and the line (1-based) of a fence that is
+ * never closed, if there is one.
+ */
+function fences(body: string): { kept: string[]; openAt?: number } {
   const kept: string[] = [];
-  let fence: { char: string; length: number } | undefined;
-  for (const line of body.split(/\r?\n/)) {
+  let fence: { char: string; length: number; line: number } | undefined;
+  const lines = body.split(/\r?\n/);
+  for (const [index, line] of lines.entries()) {
     if (fence) {
       const closer = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(line);
       if (closer && closer[1]![0] === fence.char && closer[1]!.length >= fence.length) {
@@ -78,19 +87,25 @@ export function proseOnly(body: string): string {
     }
     const opener = /^ {0,3}(`{3,}|~{3,})/.exec(line);
     if (opener) {
-      fence = { char: opener[1]![0]!, length: opener[1]!.length };
+      fence = { char: opener[1]![0]!, length: opener[1]!.length, line: index + 1 };
       kept.push("");
       continue;
     }
     kept.push(line);
   }
-  // A blanked fence line is an empty line, so it ends a paragraph as the fence did.
+  return fence ? { kept, openAt: fence.line } : { kept };
+}
+
+function blankCode(kept: readonly string[]): string {
+  // A blanked fence line is an empty line, so it ends a paragraph as the fence did. Code spans
+  // go before comments: a marker quoted in backticks — `<!-- pr-review -->` — is code, and read
+  // as a comment opener it would blank everything after it.
   return kept
     .join("\n")
-    .replace(/<!--[\s\S]*?(?:-->|$)/g, " ")
     .split(/(\n[ \t]*\n)/)
     .map((part) => part.replace(/(?<!`)(`+)(?!`)[\s\S]*?(?<!`)\1(?!`)/g, " "))
-    .join("");
+    .join("")
+    .replace(/<!--[\s\S]*?(?:-->|$)/g, " ");
 }
 
 /**
@@ -119,6 +134,26 @@ export function writtenClosings(body: string, repository: string): number[] {
     found.add(Number(match[2]));
   }
   return [...found];
+}
+
+/**
+ * A code fence that is never closed, and the closing keywords it swallowed.
+ *
+ * CommonMark runs an unclosed fence to the end of the body, so every `Closes` line after it is
+ * code and GitHub registers none of them — while the author, who meant the fence to end, sees
+ * prose. That is what happened on #223: a fence quoting another fence (```` ```ts ```` inside
+ * ```` ``` ````) closed early, the next ```` ``` ```` opened a new one, and the four deliberate
+ * lines at the bottom fell inside it. `writtenClosings` rightly skips them, so this reads the
+ * swallowed text as if the fence were not there, to say what was lost and where.
+ */
+export type OpenFence = { readonly line: number; readonly hidden: readonly number[] };
+
+export function openFence(body: string, repository: string): OpenFence | undefined {
+  const { openAt } = fences(body);
+  if (openAt === undefined) return undefined;
+  const after = body.split(/\r?\n/).slice(openAt).join("\n");
+  const hidden = writtenClosings(after, repository);
+  return hidden.length > 0 ? { line: openAt, hidden } : undefined;
 }
 
 /** What the body closes that GitHub's list does not hold, in the body's order. */
@@ -150,6 +185,7 @@ export function renderFindings(
   closes: readonly number[],
   findings: readonly Finding[],
   unwritten: readonly number[] = [],
+  fence?: OpenFence,
 ): string {
   const out = [MARKER, "", "### Closing references", ""];
 
@@ -182,18 +218,31 @@ export function renderFindings(
         `${closes.length === 0 ? "holds no issue at all" : `holds ${issueList(closes)}`}, so ` +
         `merging will not close ${one ? "it" : "them"}.`,
       "",
-      "This is #223's failure, which `docs/agents/issue-tracker.md` records: lines written on " +
-        "purpose that GitHub never registered. Look for a keyword sitting next to another number " +
-        "earlier in the body and move the two apart, and if the list still disagrees, close " +
-        `${one ? "it" : "them"} by hand after the merge with the reason. If the number is a pull ` +
+      "Lines written on purpose that GitHub never registered are a failure " +
+        "`docs/agents/issue-tracker.md` records. Edit the body and read the list again, and if it " +
+        `still disagrees, close ${one ? "it" : "them"} by hand after the merge with the reason. ` +
+        "If the number is a pull " +
         "request rather than an issue, GitHub records no closing reference to it and nothing " +
         "needs doing: this is advice, and it never fails a job.",
       "",
     );
   }
 
+  if (fence) {
+    const one = fence.hidden.length === 1;
+    out.push(
+      `The code fence opened on line ${fence.line} of the body is never closed, so GitHub reads ` +
+        `everything after it as code, including the closing keyword${one ? "" : "s"} before ` +
+        `${issueList(fence.hidden)}, and merging will not close ${one ? "it" : "them"}. A fence ` +
+        "quoting another fence ends at the inner one's closing line; close it, or quote with a " +
+        "longer fence (four backticks around three), and this comment resolves on the next edit.",
+      "",
+    );
+  }
+
+  const bodyRead = unwritten.length > 0 || fence !== undefined;
   out.push(
-    unwritten.length === 0
+    !bodyRead
       ? `Read from what GitHub recorded (${VERIFY}), not from the body, and re-read on every ` +
           "edit and push."
       : `Compared against what GitHub recorded (${VERIFY}) — the body is read only for lines ` +
@@ -237,15 +286,16 @@ export function decide(
   closes: readonly Closed[],
   existing: Existing | undefined,
   unwritten: readonly number[] = [],
+  fence?: OpenFence,
 ): Decision {
   const numbers = closes.map((issue) => issue.number);
   const findings = unclosedChildren(closes);
-  const anything = findings.length > 0 || unwritten.length > 0;
+  const anything = findings.length > 0 || unwritten.length > 0 || fence !== undefined;
 
   if (!anything && !existing) return { kind: "silent" };
 
   const body = anything
-    ? renderFindings(numbers, findings, unwritten)
+    ? renderFindings(numbers, findings, unwritten, fence)
     : renderResolved(closes);
 
   if (!existing) return { kind: "post", body };
@@ -284,11 +334,16 @@ export async function run(
 ): Promise<Decision | undefined> {
   try {
     const numbers = await port.closingReferences();
-    const unwritten = unregistered(writtenClosings(await port.body(), port.repository), numbers);
+    const body = await port.body();
+    const unwritten = unregistered(writtenClosings(body, port.repository), numbers);
+    // Only what the list lacks: a swallowed line GitHub registered anyway is no loss.
+    const swallowed = openFence(body, port.repository);
+    const hidden = swallowed ? unregistered(swallowed.hidden, numbers) : [];
+    const fence = swallowed && hidden.length > 0 ? { line: swallowed.line, hidden } : undefined;
     const closes = await Promise.all(
       numbers.map(async (number) => ({ number, children: await port.subIssues(number) })),
     );
-    const decision = decide(closes, await port.findComment(), unwritten);
+    const decision = decide(closes, await port.findComment(), unwritten, fence);
 
     if (decision.kind === "post") await port.postComment(decision.body);
     if (decision.kind === "edit") await port.editComment(decision.id, decision.body);
@@ -297,6 +352,7 @@ export async function run(
       `closes ${numbers.length === 0 ? "nothing" : issueList(numbers)}; ` +
         `${unclosedChildren(closes).length} parent(s) with open children not listed; ` +
         `${unwritten.length} closing line(s) in the body not listed; ` +
+        `${fence ? `an unclosed fence from line ${fence.line} hides ${issueList(fence.hidden)}` : "no unclosed fence hiding one"}; ` +
         `${decision.kind}`,
     );
     return decision;
