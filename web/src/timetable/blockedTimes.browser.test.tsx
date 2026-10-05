@@ -302,14 +302,9 @@ it("keeps the form open with its input when the save is refused, and closes it o
   expect((await field(mounted, t("en", "blockedLabel"))).value).toBe("night class");
   expect(rows(mounted)).toHaveLength(0);
 
-  // the re-read the refusal asked for has to land before the next press can be based on it
+  // pressed at once: if the re-read the refusal asked for is still on its way, the save waits
+  // for it and goes out on the revision it brings (#334)
   const before = fake.version;
-  await until(() =>
-    expect(
-      fake.sent.filter((request) => request.method === "GET" && request.pathname.endsWith("/fall")).length,
-    ).toBeGreaterThan(1),
-  );
-  await new Promise((settled) => setTimeout(settled, 50));
   blockedAction(mounted, "save").click();
 
   await until(() => expect(rows(mounted)).toHaveLength(1));

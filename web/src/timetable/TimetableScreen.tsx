@@ -65,6 +65,20 @@ type TimetableState = { kind: "loading" } | TimetableResult;
  */
 type HeldClick = { group: WeekGroup; query: TimetableQuery };
 
+/** A served Timetable answer: what an edit can be sent on. */
+type Served = Extract<TimetableResult, { kind: "served" }>;
+
+/**
+ * An edit made while a `state-file-changed` re-read is in flight (#334): sent on the answer that
+ * re-read brings, or dropped and said so when it brings none. `variant` is the Variant on screen
+ * when it was made, because an edit is about the week it was made on or about none.
+ */
+type HeldEdit = {
+  variant: string;
+  send: (on: Served) => Promise<TimetableResult | undefined>;
+  drop: () => void;
+};
+
 /** The tab a student chose: a Variant's name, and its position for when two share it (#322). */
 type VariantWanted = { name: string; position: number | undefined };
 
@@ -279,6 +293,19 @@ export function TimetablePane({
    * had is still news, and waiting for a different string would wait for ever.
    */
   const refusedOn = useRef<TimetableState | undefined>(undefined);
+  /**
+   * The answer a save was refused `state-file-changed` on, while the re-read that refusal asked
+   * for is still in flight (#334). The revision on screen is spent until that re-read lands, so an
+   * edit made now would be refused again — the second click in PR #333's capture left 28 ms after
+   * the re-read was answered and before it was drawn. So an edit made while this is the answer on
+   * screen is held in `heldEdits`, and sent on whatever the re-read brings: the wait undo already
+   * makes after a step (`steppedOn` in `../AppShell.tsx`, ADR-0013). Held by identity, as
+   * `refusedOn` is.
+   */
+  const [rereadingFrom, setRereadingFrom] = useState<TimetableState | undefined>(undefined);
+  const heldEdits = useRef<HeldEdit[]>([]);
+  /** How many edits are held, so the screen can say so while they wait. */
+  const [heldEditCount, setHeldEditCount] = useState(0);
 
   /**
    * The Variant tab the student chose, or `undefined` for the primary — which is what a Semester
@@ -382,6 +409,8 @@ export function TimetablePane({
     // see, and would throw away the revision the next click needs.
     if (answer.kind === "refused" && answer.reason === "state-file-changed") {
       setStaleSave(true);
+      // and until the re-read lands, an edit made on this answer waits for it (#334)
+      setRereadingFrom(sentOn);
       setRereads((count) => count + 1);
       return answer;
     }
@@ -397,7 +426,8 @@ export function TimetablePane({
     // lands goes out on a revision the first may have spent, and comes back
     // `state-file-changed` if it did. Held clicks are spared by the drain's wait below;
     // routing a direct click into `held` instead would change what it means, since a held
-    // click asks for a Pick and a click on ink asks for its removal. Left as an open window.
+    // click asks for a Pick and a click on ink asks for its removal. Left as an open window
+    // here; the `state-file-changed` arm above closes it for its own re-read (#334).
     if (
       answer.kind === "unreadable-answer" ||
       (answer.kind === "refused" && answer.reason === "save-revision-unreadable")
@@ -500,11 +530,14 @@ export function TimetablePane({
    */
   useLayoutEffect(() => {
     onRevision(
-      timetable.kind === "served" && timetable.version !== undefined && awaitingFrom !== timetable
+      timetable.kind === "served" &&
+        timetable.version !== undefined &&
+        awaitingFrom !== timetable &&
+        rereadingFrom !== timetable
         ? { version: timetable.version, answer: timetable }
         : undefined,
     );
-  }, [timetable, awaitingFrom, onRevision]);
+  }, [timetable, awaitingFrom, rereadingFrom, onRevision]);
 
   /** Whatever became of the last click or press, the one being made now is the account owed. */
   const retireNotices = (): void => {
@@ -525,15 +558,58 @@ export function TimetablePane({
   ): Promise<TimetableResult | undefined> => {
     if (timetable.kind !== "served") return Promise.resolve(undefined);
     retireNotices();
-    const sentOn = timetable;
-    const query = {
-      academicYear,
-      semester,
-      variant: timetable.variantName,
-      position: timetable.variantPosition,
+    const sendOn = (on: Served): Promise<TimetableResult> => {
+      const query = { academicYear, semester, variant: on.variantName, position: on.variantPosition };
+      return edit(query, on.version).then((answer) => settle(answer, on, follow));
     };
-    return edit(query, timetable.version).then((answer) => settle(answer, sentOn, follow));
+    return rereadingFrom === timetable ? hold(timetable.variantName, sendOn) : sendOn(timetable);
   };
+
+  /**
+   * Holds an edit until the re-read a `state-file-changed` refusal asked for has landed (#334),
+   * and answers with what became of it once it is sent — or `undefined` if it is dropped.
+   */
+  const hold = (
+    variant: string,
+    send: (on: Served) => Promise<TimetableResult | undefined>,
+  ): Promise<TimetableResult | undefined> =>
+    new Promise((resolve) => {
+      heldEdits.current.push({
+        variant,
+        send: (on) => send(on).then((answer) => (resolve(answer), answer)),
+        drop: () => resolve(undefined),
+      });
+      setHeldEditCount(heldEdits.current.length);
+    });
+
+  /**
+   * The held edits, once the answer they wait for is on screen: sent one after another, each on
+   * the answer the one before it brought, because each save moves the revision. One that is
+   * refused, or a re-read that brought no week, ends the queue, and the rest are dropped with
+   * `picksHeldLost` rather than vanishing (#334). So is one made on a Variant no longer shown.
+   */
+  useEffect(() => {
+    if (rereadingFrom === undefined || timetable === rereadingFrom || timetable.kind === "loading") {
+      return;
+    }
+    setRereadingFrom(undefined);
+    const waiting = heldEdits.current.splice(0);
+    setHeldEditCount(0);
+    if (waiting.length === 0) return;
+
+    void waiting.reduce<Promise<TimetableState | undefined>>(
+      (previous, next) =>
+        previous.then((on) => {
+          if (on?.kind !== "served" || on.variantName !== next.variant) {
+            next.drop();
+            setHeldLost(true);
+            return undefined;
+          }
+          return next.send(on);
+        }),
+      Promise.resolve(timetable),
+    );
+  }, [timetable, rereadingFrom]);
 
   /**
    * A form's edit, answered with whether it landed (#324): the Blocked Time form stays open, with
@@ -641,8 +717,16 @@ export function TimetablePane({
       return;
     }
     // Only a served answer knows this, and `picked` is a `boolean` once it does. A click on
-    // ink removes the Pick; a click on pencil records one.
-    void save(group, group.picked === true, timetable.version, query, timetable);
+    // ink removes the Pick; a click on pencil records one — decided on the week it was made on,
+    // and kept if it has to wait for a re-read (#334).
+    const remove = group.picked === true;
+    if (rereadingFrom === timetable) {
+      void hold(timetable.variantName, (on) =>
+        save(group, remove, on.version, { ...query, position: on.variantPosition }, on),
+      );
+      return;
+    }
+    void save(group, remove, timetable.version, query, timetable);
   };
 
   /**
@@ -817,6 +901,8 @@ export function TimetablePane({
               {held.length > 0 && timetable.kind !== "served" && (
                 <span>{t(language, "picksHeld")}</span>
               )}
+              {/* an edit waiting for the re-read a refusal asked for (#334) */}
+              {heldEditCount > 0 && <span>{t(language, "picksHeldForReread")}</span>}
               {heldLost && <span>{t(language, "picksHeldLost")}</span>}
               {staleSave && <span>{t(language, "picksStale")}</span>}
               {unknownSave !== undefined && <span>{t(language, unknownSave)}</span>}

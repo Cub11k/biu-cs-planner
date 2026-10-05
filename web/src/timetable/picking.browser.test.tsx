@@ -657,6 +657,67 @@ it("says whether a click was saved is not known, and goes and looks, when its an
 });
 
 /**
+ * #334: a click made after a save was refused `state-file-changed` and before the re-read that
+ * refusal asked for has been applied. The re-read is held open, as PR #333's capture held it for
+ * 200 ms; the click used to go out at once on the revision the refusal had spent, and be refused
+ * again. It is held instead, and sent on the revision the re-read brings.
+ */
+it("holds a click made while a refusal's re-read is in flight, and sends it on the revision it brings", async () => {
+  const mounted = await openWeek();
+  tileFor(mounted, "01").click();
+  await vi.waitFor(() => {
+    if (!tileFor(mounted, "01").classList.contains("is-picked")) throw new Error("not picked");
+  });
+
+  changedUnderneath = true;
+  const release = holdTheRead();
+  tileFor(mounted, "03", "Tirgul").click();
+  await waitForText(mounted, t("en", "picksStale"));
+  const refusedSaves = sent.filter((request) => request.method === "POST").length;
+
+  // the re-read is out and held; this click is made on the week the refusal left
+  tileFor(mounted, "03", "Tirgul").click();
+  await waitForText(mounted, t("en", "picksHeldForReread"));
+  // nothing was sent on the spent revision
+  expect(sent.filter((request) => request.method === "POST").length, traffic()).toBe(refusedSaves);
+
+  release();
+
+  await vi.waitFor(() => {
+    if (!tileFor(mounted, "03", "Tirgul").classList.contains("is-picked")) {
+      throw new Error(`the held click never landed\n${traffic()}`);
+    }
+  });
+  const posts = sent.filter((request) => request.method === "POST");
+  expect(posts.length, traffic()).toBe(refusedSaves + 1);
+  // on the revision the re-read brought, which is the file's now
+  expect((posts.at(-1)?.body as { basedOn?: string }).basedOn, traffic()).toBe(`v${version - 1}`);
+  expect(mounted.textContent).not.toContain(t("en", "picksHeldForReread"));
+  expect(mounted.textContent).not.toContain(t("en", "picksStale"));
+});
+
+/** …and one held while the re-read then fails is said to be not saved, never dropped in silence. */
+it("says a click held for a refusal's re-read was not saved when that re-read fails", async () => {
+  const mounted = await openWeek();
+
+  changedUnderneath = true;
+  const release = holdTheRead();
+  tileFor(mounted, "01").click();
+  await waitForText(mounted, t("en", "picksStale"));
+
+  tileFor(mounted, "03", "Tirgul").click();
+  await waitForText(mounted, t("en", "picksHeldForReread"));
+  const postsBefore = sent.filter((request) => request.method === "POST").length;
+
+  refuse = { reason: "state-file-unreadable", warnings: [] };
+  release();
+
+  await waitForText(mounted, t("en", "picksHeldLost"));
+  expect(sent.filter((request) => request.method === "POST").length, traffic()).toBe(postsBefore);
+  expect(mounted.textContent).not.toContain(t("en", "picksHeldForReread"));
+});
+
+/**
  * #326: a save that was made and whose revision the Workspace could not hand back readably. The
  * fake accepts the Pick and then refuses as the real server does, so the click landed — and the
  * sentence must not say nothing changed, the week must stay, and the page goes and re-reads it.
