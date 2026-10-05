@@ -138,6 +138,10 @@ export function backupsToPrune(snapshots: BackupRef[], now: number): BackupRef[]
   const names = new Set(snapshots.map((snapshot) => snapshot.name));
   if (names.size > 1) {
     throw new WorkspaceRefusedError(
+      {
+        reason: "mixed-snapshots",
+        subject: { kind: "folder", folder: "backups" },
+      },
       "refusing to prune the snapshots of more than one State File at once: " +
         `the last ${BACKUP_KEEP_SAVES} saves are one file's, and these name ` +
         [...names].sort().map((name) => JSON.stringify(name)).join(", "),
@@ -235,10 +239,79 @@ export const WORKSPACE_LAYOUT: WorkspaceFolder[] = ["catalogs", "requirements", 
  * A refusal is a Warning the student can act on, and never a crashed server
  * (docs/design.md, "API and data rules"), which is why an adapter raises this rather than
  * letting a filesystem error out of the port.
+ *
+ * **What `app` reads off it is `refusal`, and never `message`** (#249). `refusal` is a reason
+ * code and a subject, both drawn from closed sets this port defines, and it is required: an
+ * adapter cannot raise one without saying which of them it is. The sentence `app` serves is
+ * worded from it, by `app` (`./refusal.ts`), so an adapter has no string of its own choosing that
+ * can reach a response. The message is the adapter's own account, for a log (#165) — what used
+ * to go out over the Catalog routes, until #216 found it naming a path and this found that
+ * nothing but adapter discipline stopped the next one from doing so.
  */
 export class WorkspaceRefusedError extends Error {
   override readonly name = "WorkspaceRefusedError";
+  /** Why, and about what, in this port's words. The only part of a refusal `app` reads. */
+  readonly refusal: WorkspaceRefusal;
+
+  constructor(refusal: WorkspaceRefusal, message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.refusal = refusal;
+  }
 }
+
+/**
+ * Why a Workspace refused, as a code rather than a sentence (#249). One per refusal this port and
+ * its adapters make; `./refusal.ts` holds the sentence for each, in a record that is total over
+ * this union, so a reason added here does not compile until `app` has words for it.
+ *
+ *   - `outside-workspace`: the target, or the folder it lives in, resolves outside the Workspace.
+ *   - `unreadable`: it is there and its contents cannot be read.
+ *   - `not-a-folder`: what was named as a folder is there and is not one, so it cannot be listed.
+ *   - `unwritable`: the write was attempted and could not be made.
+ *   - `not-a-workspace`: the Workspace Layout, or the one part of it the subject names, is not
+ *     there to write into (`NotAWorkspaceError`).
+ *   - `not-created`: a part of the Workspace Layout could not be made by `create`.
+ *   - `not-json`: only `.json` files are read or written.
+ *   - `not-a-name`: a State File name that is not one — a path, among other things.
+ *   - `not-a-year`: a Catalog's Academic Year that is not a whole number.
+ *   - `not-a-moment`: a snapshot's moment that is not a whole number of milliseconds.
+ *   - `not-a-catalog`: a State File handed to a whole-file read or write (`requireCatalogRef`).
+ *   - `mixed-snapshots`: one pruning asked about the snapshots of more than one State File.
+ */
+export type WorkspaceRefusalReason =
+  | "outside-workspace"
+  | "unreadable"
+  | "not-a-folder"
+  | "unwritable"
+  | "not-a-workspace"
+  | "not-created"
+  | "not-json"
+  | "not-a-name"
+  | "not-a-year"
+  | "not-a-moment"
+  | "not-a-catalog"
+  | "mixed-snapshots";
+
+/**
+ * What a refusal was about: one of the refs a caller named, a folder of the Workspace Layout, or
+ * the Workspace as a whole — its root, or the Layout when no single part of it is what is wrong.
+ *
+ * **The refs carry values a caller handed in, and `app` still checks them before it says them.**
+ * A name refused as `not-a-name` is by definition one that is not safe to repeat, and an adapter
+ * that built a subject out of something else entirely would compile; so `./refusal.ts` says a
+ * name only when `isStateFileName` passes it and a number only when it is a whole one, and says
+ * "a State File whose name is not one" otherwise. The subject is what lets the page say which
+ * Catalog, which Academic Year and which State File; the check is what keeps it from being a
+ * second channel for exactly what the message no longer is.
+ */
+export type WorkspaceRefusalSubject =
+  WorkspaceRef | BackupRef | { kind: "folder"; folder: WorkspaceFolder } | { kind: "workspace" };
+
+/** A refusal in the port's own words: why, and about what (#249). */
+export type WorkspaceRefusal = {
+  reason: WorkspaceRefusalReason;
+  subject: WorkspaceRefusalSubject;
+};
 
 /**
  * The refusal itself, so that both adapters make it in the same words rather than each
@@ -247,6 +320,7 @@ export class WorkspaceRefusedError extends Error {
 export function requireStateFileName(name: string): void {
   if (isStateFileName(name)) return;
   throw new WorkspaceRefusedError(
+    { reason: "not-a-name", subject: { kind: "state", name } },
     `refusing a State File named ${JSON.stringify(name)}: a name, never a path`,
   );
 }
@@ -268,6 +342,7 @@ export function requireBackupRef(ref: BackupRef): void {
   requireStateFileName(ref.name);
   if (!Number.isSafeInteger(ref.takenAt)) {
     throw new WorkspaceRefusedError(
+      { reason: "not-a-moment", subject: ref },
       `refusing a snapshot of the State File ${JSON.stringify(ref.name)} taken at ` +
         `${JSON.stringify(ref.takenAt)}: a moment is a whole number of milliseconds, never a path`,
     );
@@ -313,6 +388,7 @@ export function requireCatalogRef(ref: WorkspaceRef): void {
     // may sensibly fall in is the API's business; a path is this rule's.
     if (!Number.isSafeInteger(ref.academicYear)) {
       throw new WorkspaceRefusedError(
+        { reason: "not-a-year", subject: ref },
         `refusing a Catalog for the Academic Year ${JSON.stringify(ref.academicYear)}: ` +
           "a year is a whole number, never a path",
       );
@@ -320,6 +396,7 @@ export function requireCatalogRef(ref: WorkspaceRef): void {
     return;
   }
   throw new WorkspaceRefusedError(
+    { reason: "not-a-catalog", subject: ref },
     `refusing the State File ${JSON.stringify(ref.name)} here: a State File is read through ` +
       "readStateFile and saved through saveStateFile, which carry the revision a guarded save needs",
   );
@@ -373,6 +450,11 @@ export class NotAWorkspaceError extends WorkspaceRefusedError {
    */
   constructor(part?: { folder: WorkspaceFolder; because: string }) {
     super(
+      {
+        reason: "not-a-workspace",
+        subject:
+          part === undefined ? { kind: "workspace" } : { kind: "folder", folder: part.folder },
+      },
       "refusing to write: the Workspace layout does not exist yet" +
         (part === undefined ? "" : ` — ${part.folder} ${part.because}`),
     );
@@ -400,7 +482,7 @@ export class NotAWorkspaceError extends WorkspaceRefusedError {
  */
 export class BackupRefusedError extends WorkspaceRefusedError {
   constructor(refusal: WorkspaceRefusedError) {
-    super(refusal.message, { cause: refusal });
+    super(refusal.refusal, refusal.message, { cause: refusal });
   }
 }
 
@@ -449,7 +531,10 @@ export class StateFileChangedError extends Error {
 
   constructor(
     name: string,
-    revisions: { basedOn: StateFileVersion | undefined; found: StateFileVersion | undefined },
+    revisions: {
+      basedOn: StateFileVersion | undefined;
+      found: StateFileVersion | undefined;
+    },
   ) {
     super(
       `refusing to overwrite the State File ${JSON.stringify(name)}: ` +

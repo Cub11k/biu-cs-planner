@@ -95,7 +95,10 @@ const cannotBeRead = (workspace: MemoryWorkspace): Workspace => ({
   ...workspace,
   read: () =>
     Promise.reject(
-      new WorkspaceRefusedError("refusing catalogs/2027.json: it is there and cannot be read (EISDIR)"),
+      new WorkspaceRefusedError(
+        { reason: "unreadable", subject: { kind: "catalog", academicYear: 2027 } },
+        "refusing catalogs/2027.json: it is there and cannot be read (EISDIR)",
+      ),
     ),
 });
 

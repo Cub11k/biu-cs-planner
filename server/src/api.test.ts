@@ -1783,14 +1783,15 @@ it("names no path in a refusal when a Catalog cannot be read, on all four routes
   await namesNoPath(listedBody, "GET offerings");
   // **and it still says something true.** The other half of #216: a path removed with nothing
   // put in its place would leave a page unable to tell the student which file to go and look
-  // at. `reason` is the refusal's own sentence (`app/src/queries.ts`), and it names the Catalog
-  // by its Academic Year — a domain operation, which is what the API is allowed to expose.
+  // at. `reason` is `app`'s sentence, worded from the refusal's reason code and subject
+  // (`app/src/refusal.ts`, #249), and it names the Catalog by its Academic Year — a domain
+  // operation, which is what the API is allowed to expose. The errno the adapter put on its own
+  // message (`EISDIR`) does not come with it: that is the adapter's word, and stays in its log.
   expect(JSON.parse(listedBody)).toMatchObject({
     warnings: [
       {
         kind: "workspace-refused",
-        reason:
-          "refusing the Catalog for the Academic Year 2027: it is there and cannot be read (EISDIR)",
+        reason: "refusing the Catalog for the Academic Year 2027: it is there and cannot be read",
       },
     ],
   });

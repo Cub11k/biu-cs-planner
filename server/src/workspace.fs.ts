@@ -19,6 +19,7 @@ import {
   type Workspace,
   type WorkspaceFolder,
   type WorkspaceRef,
+  type WorkspaceRefusalSubject,
   type WorkspaceStatus,
   type WorkspaceWatcher,
 } from "@biu-cs-planner/app";
@@ -154,8 +155,11 @@ const WATCHED_FOLDERS: WorkspaceFolder[] = ["catalogs", "requirements"];
  * channel for it is #165's question and not this one's.
  */
 class OutsideWorkspaceError extends WorkspaceRefusedError {
-  constructor(what: string) {
-    super(`refusing ${what}: it resolves outside the Workspace`);
+  constructor(about: WorkspaceRefusalSubject) {
+    super(
+      { reason: "outside-workspace", subject: about },
+      `refusing ${describe(about)}: it resolves outside the Workspace`,
+    );
   }
 }
 
@@ -221,11 +225,16 @@ const errnoOf = (error: unknown): string | undefined => {
  * the filesystem met and a response cannot (#165).
  */
 class UnreadableError extends WorkspaceRefusedError {
-  constructor(what: string, error: unknown, because = "it is there and cannot be read") {
+  constructor(about: WorkspaceRefusalSubject, error: unknown, { notAFolder = false } = {}) {
     const code = errnoOf(error);
-    super(`refusing ${what}: ${because}` + (code === undefined ? "" : ` (${code})`), {
-      cause: error,
-    });
+    const because = notAFolder
+      ? "it is there and is not a folder"
+      : "it is there and cannot be read";
+    super(
+      { reason: notAFolder ? "not-a-folder" : "unreadable", subject: about },
+      `refusing ${describe(about)}: ${because}` + (code === undefined ? "" : ` (${code})`),
+      { cause: error },
+    );
   }
 }
 
@@ -266,10 +275,11 @@ class UnreadableError extends WorkspaceRefusedError {
  * carries as the `reason` on `workspace-refused`.
  */
 class UnwritableError extends WorkspaceRefusedError {
-  constructor(what: string, error: unknown) {
+  constructor(about: WorkspaceRefusalSubject, error: unknown) {
     const code = errnoOf(error);
     super(
-      `refusing to write ${what}: it could not be written` +
+      { reason: "unwritable", subject: about },
+      `refusing to write ${describe(about)}: it could not be written` +
         (code === undefined ? "" : ` (${code})`),
       { cause: error },
     );
@@ -314,9 +324,21 @@ const FOLDER_DESCRIPTION: Record<WorkspaceFolder, string> = {
   backups: "the folder holding the Workspace's snapshots",
 };
 
-const describeFolder = (ref: { kind: WorkspaceRef["kind"] | "backup" }): string => {
+const folderSubject = (ref: { kind: WorkspaceRef["kind"] | "backup" }): WorkspaceRefusalSubject => {
   const folder = folderFor(ref);
-  return folder === undefined ? "the Workspace root" : FOLDER_DESCRIPTION[folder];
+  return folder === undefined ? { kind: "workspace" } : { kind: "folder", folder };
+};
+
+/** A refusal's subject in this adapter's words, for its message: a ref, a folder, or the root. */
+const describe = (about: WorkspaceRefusalSubject): string => {
+  switch (about.kind) {
+    case "folder":
+      return FOLDER_DESCRIPTION[about.folder];
+    case "workspace":
+      return "the Workspace root";
+    default:
+      return describeRef(about);
+  }
 };
 
 /**
@@ -508,13 +530,13 @@ export function fileSystemWorkspace(
 
     const real = await realPathOrAbsent(target);
     if (real !== undefined) {
-      if (!within(real, realRoot)) throw new OutsideWorkspaceError(describeRef(ref));
+      if (!within(real, realRoot)) throw new OutsideWorkspaceError(ref);
       return { path: target };
     }
 
     const parent = await realPathOrAbsent(dirname(target));
     if (parent === undefined) return { missing: true };
-    if (!within(parent, realRoot)) throw new OutsideWorkspaceError(describeFolder(ref));
+    if (!within(parent, realRoot)) throw new OutsideWorkspaceError(folderSubject(ref));
     return { path: target };
   };
 
@@ -532,13 +554,16 @@ export function fileSystemWorkspace(
    * is the one caller whose message `app/src/queries.ts` carries out as a Warning, and it used
    * to carry `./catalogs/2027.json` with it (#216).
    */
-  const bytesOrAbsent = async (path: string, what: string): Promise<Uint8Array | undefined> => {
+  const bytesOrAbsent = async (
+    path: string,
+    about: WorkspaceRefusalSubject,
+  ): Promise<Uint8Array | undefined> => {
     try {
       return await readFile(path);
     } catch (error) {
       const code = errnoOf(error);
       if (code !== undefined && ABSENT.includes(code)) return undefined;
-      throw new UnreadableError(what, error);
+      throw new UnreadableError(about, error);
     }
   };
 
@@ -582,16 +607,19 @@ export function fileSystemWorkspace(
    * special-cased here. Every folder is named now and the special case is gone with it: the
    * degenerate case was the whole of the wording problem in miniature.
    */
-  const entriesOrAbsent = async (path: string, what: string): Promise<string[] | undefined> => {
+  const entriesOrAbsent = async (
+    path: string,
+    about: WorkspaceRefusalSubject,
+  ): Promise<string[] | undefined> => {
     try {
       return await readdir(path);
     } catch (error) {
       const code = errnoOf(error);
       if (code === "ENOENT") return undefined;
       if (code === "ENOTDIR") {
-        throw new UnreadableError(what, error, "it is there and is not a folder");
+        throw new UnreadableError(about, error, { notAFolder: true });
       }
-      throw new UnreadableError(what, error);
+      throw new UnreadableError(about, error);
     }
   };
 
@@ -629,9 +657,9 @@ export function fileSystemWorkspace(
    */
   const onDisk = async (
     path: string,
-    what: string,
+    about: WorkspaceRefusalSubject,
   ): Promise<{ bytes: Uint8Array; version: StateFileVersion } | undefined> => {
-    const bytes = await bytesOrAbsent(path, what);
+    const bytes = await bytesOrAbsent(path, about);
     // The bytes come back with the revision because the save needs both and from one read:
     // the snapshot it writes into `.backups/` is a copy of exactly the bytes this revision
     // was taken from, and a second read could hash one file and copy another (#67).
@@ -656,7 +684,7 @@ export function fileSystemWorkspace(
   const snapshot = async (name: string, bytes: Uint8Array): Promise<void> => {
     await requireLayoutFolder({ kind: "backup" });
     const taken = new Set(
-      await entriesOrAbsent(folderPath({ kind: "backup" }), describeFolder({ kind: "backup" })),
+      await entriesOrAbsent(folderPath({ kind: "backup" }), folderSubject({ kind: "backup" })),
     );
 
     let takenAt = now();
@@ -664,7 +692,7 @@ export function fileSystemWorkspace(
 
     const ref: BackupRef = { kind: "backup", name, takenAt };
     const target = filePath(ref);
-    requireJsonName(target, describeRef(ref));
+    requireJsonName(target, ref);
 
     const check = await contained(target, ref);
     // `requireLayoutFolder` above has already answered for a `.backups` that is the wrong kind
@@ -689,7 +717,7 @@ export function fileSystemWorkspace(
       const entries =
         (await entriesOrAbsent(
           folderPath({ kind: "backup" }),
-          describeFolder({ kind: "backup" }),
+          folderSubject({ kind: "backup" }),
         )) ?? [];
       const held = entries.flatMap((entry) => {
         const ref = backupFromFileName(entry);
@@ -743,7 +771,7 @@ export function fileSystemWorkspace(
       await rm(temporary, { force: true }).catch(() => undefined);
       // and the refusal leaves, never the filesystem's own error: raw, it is caught by nothing
       // and becomes a 500 (#121). `UnwritableError` says why that is the wrong answer.
-      throw new UnwritableError(describeRef(ref), error);
+      throw new UnwritableError(ref, error);
     }
   };
 
@@ -784,7 +812,10 @@ export function fileSystemWorkspace(
     // `missingFolders` answers for that, since a root that is a file holds no folder at all.
     if (folder === undefined) return;
     if (await isDirectory(join(root, DIRECTORY[folder]))) return;
-    throw new NotAWorkspaceError({ folder, because: "is there and is not a folder" });
+    throw new NotAWorkspaceError({
+      folder,
+      because: "is there and is not a folder",
+    });
   };
 
   /**
@@ -831,6 +862,7 @@ export function fileSystemWorkspace(
           // `requireJsonName` puts what it refused in its own. The filesystem's error stays on
           // `cause`, where a log can reach it and a response cannot.
           throw new WorkspaceRefusedError(
+            { reason: "not-created", subject: { kind: "folder", folder } },
             `refusing to create the Workspace layout: ${folder} could not be made` +
               (code === undefined ? "" : ` (${code})`),
             { cause: error },
@@ -854,7 +886,7 @@ export function fileSystemWorkspace(
       const folder = await usablePath(folderPath({ kind }));
       if (folder === undefined) return [];
 
-      const entries = await entriesOrAbsent(folder, describeFolder({ kind }));
+      const entries = await entriesOrAbsent(folder, folderSubject({ kind }));
       if (entries === undefined) return [];
       if (kind === "state") {
         // A State File shares the root with the Workspace Layout and with whatever else the student
@@ -879,12 +911,12 @@ export function fileSystemWorkspace(
       // the runtime half of the narrowing to a `CatalogRef`, which a cast defeats (#113)
       requireCatalogRef(ref);
       const target = filePath(ref);
-      requireJsonName(target, describeRef(ref));
+      requireJsonName(target, ref);
 
       const check = await contained(target, ref);
       if ("missing" in check) return undefined;
 
-      const bytes = await bytesOrAbsent(check.path, describeRef(ref));
+      const bytes = await bytesOrAbsent(check.path, ref);
       return bytes === undefined ? undefined : contentOf(bytes);
     },
 
@@ -895,7 +927,7 @@ export function fileSystemWorkspace(
       // nobody agreed to. Refusing the ref outright is a stronger check than restoring it.
       requireCatalogRef(ref);
       const target = filePath(ref);
-      requireJsonName(target, describeRef(ref));
+      requireJsonName(target, ref);
 
       const check = await contained(target, ref);
       // A Catalog's folder not being there is what makes the target missing, so that check
@@ -909,12 +941,12 @@ export function fileSystemWorkspace(
 
     async readStateFile(ref: StateFileRef): Promise<StateFileContents | undefined> {
       const target = filePath(ref);
-      requireJsonName(target, describeRef(ref));
+      requireJsonName(target, ref);
 
       const check = await contained(target, ref);
       if ("missing" in check) return undefined;
 
-      const bytes = await bytesOrAbsent(check.path, describeRef(ref));
+      const bytes = await bytesOrAbsent(check.path, ref);
       // The revision comes from the same bytes the content does, in one read: two reads
       // could hash one file and parse another.
       return bytes === undefined
@@ -955,7 +987,7 @@ export function fileSystemWorkspace(
      */
     async saveStateFile(ref: StateFileRef, save: StateFileSave): Promise<StateFileVersion> {
       const target = filePath(ref);
-      requireJsonName(target, describeRef(ref));
+      requireJsonName(target, ref);
 
       const check = await contained(target, ref);
       if ("missing" in check) throw new NotAWorkspaceError();
@@ -970,7 +1002,7 @@ export function fileSystemWorkspace(
       // As late as it can be made short of reordering the snapshot before it, which the doc
       // above weighs: what is between this check and the rename is the snapshot, and nothing
       // else.
-      const replacing = await onDisk(check.path, describeRef(ref));
+      const replacing = await onDisk(check.path, ref);
       if (replacing?.version !== save.basedOn) {
         throw new StateFileChangedError(ref.name, {
           basedOn: save.basedOn,
@@ -1019,7 +1051,7 @@ export function fileSystemWorkspace(
       const folder = await usablePath(folderPath({ kind: "backup" }));
       if (folder === undefined) return [];
 
-      const entries = await entriesOrAbsent(folder, describeFolder({ kind: "backup" }));
+      const entries = await entriesOrAbsent(folder, folderSubject({ kind: "backup" }));
       if (entries === undefined) return [];
 
       return entries
@@ -1040,12 +1072,12 @@ export function fileSystemWorkspace(
      */
     async readBackup(ref: BackupRef): Promise<unknown> {
       const target = filePath(ref);
-      requireJsonName(target, describeRef(ref));
+      requireJsonName(target, ref);
 
       const check = await contained(target, ref);
       if ("missing" in check) return undefined;
 
-      const bytes = await bytesOrAbsent(check.path, describeRef(ref));
+      const bytes = await bytesOrAbsent(check.path, ref);
       return bytes === undefined ? undefined : contentOf(bytes);
     },
 
@@ -1180,8 +1212,11 @@ function folderFor(ref: {
  * Nothing reachable today gets this far, so what the change protects is the future caller the
  * guard exists for — which is exactly the caller that would also be the first to leak a path.
  */
-function requireJsonName(path: string, what: string): void {
+function requireJsonName(path: string, about: WorkspaceRefusalSubject): void {
   if (!path.endsWith(".json")) {
-    throw new WorkspaceRefusedError(`refusing ${what}: only .json files are read or written`);
+    throw new WorkspaceRefusedError(
+      { reason: "not-json", subject: about },
+      `refusing ${describe(about)}: only .json files are read or written`,
+    );
   }
 }

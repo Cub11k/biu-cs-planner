@@ -343,7 +343,12 @@ it("reports the adapter's refusal when the file changes between the read and the
 const cannotBeRead = (workspace: MemoryWorkspace): Workspace => ({
   ...workspace,
   readStateFile: () =>
-    Promise.reject(new WorkspaceRefusedError("refusing ./alice.state.json: it is there and cannot be read (EACCES)")),
+    Promise.reject(
+      new WorkspaceRefusedError(
+        { reason: "unreadable", subject: { kind: "state", name: "alice" } },
+        "refusing ./alice.state.json: it is there and cannot be read (EACCES)",
+      ),
+    ),
 });
 
 it("refuses an edit to a State File the port cannot read, rather than starting an empty one", async () => {

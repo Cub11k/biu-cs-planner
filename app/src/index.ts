@@ -82,6 +82,9 @@ export {
   type WorkspaceChanged,
   type WorkspaceFolder,
   type WorkspaceRef,
+  type WorkspaceRefusal,
+  type WorkspaceRefusalReason,
+  type WorkspaceRefusalSubject,
   type WorkspaceStatus,
   type WorkspaceWatcher,
 } from "./workspace.ts";

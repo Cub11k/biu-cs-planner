@@ -4,15 +4,13 @@ import {
   type Offering,
   type Semester,
 } from "@biu-cs-planner/core";
+import { wordRefusal } from "./refusal.ts";
 import { WorkspaceRefusedError, type Workspace } from "./workspace.ts";
 
 /**
  * Reading the Catalog. Every read goes through the schema, because a file on disk is
  * untrusted whoever wrote it — a hand-edited or half-synced Catalog is a Warning the
  * student can act on, never a crashed server (docs/design.md, "API and data rules").
- *
- * **This module is the one place a Workspace adapter's own words reach the API.** The arm below
- * says what that costs and what the words have to be.
  */
 export type QueryWarning =
   | CatalogFileWarning
@@ -20,22 +18,13 @@ export type QueryWarning =
   /**
    * The Workspace would not touch the file. Never carries what was out there.
    *
-   * **`reason` is the refusal's own sentence, and it is the only channel an adapter's prose has
-   * out of `app`** — measured, not assumed: `grep -rn '\.message' app/src server/src core/src
-   * web/src` finds the line below and nothing else on any request path. Every other caller of
-   * the port collapses a refusal to a reason code of its own, so the three routes this Warning
-   * reaches — the two Catalog queries and the exam period's `catalogWarnings` — are where
-   * whatever an adapter wrote lands on the wire.
-   *
-   * So what an adapter says here is held to **"The API exposes domain operations, never file
-   * paths"** (CLAUDE.md; docs/design.md, "API and data rules", rule 1). It said
-   * `refusing ./catalogs/2027.json: it is there and cannot be read (EACCES)` until #216 — a
-   * Workspace-relative path, which is smaller than an absolute one and is a file path all the
-   * same, reaching a page that is not allowed to know the Workspace has files in it. It now says
-   * which Catalog, which Academic Year, which State File, which snapshot; the path the
-   * filesystem met stays on the error's `cause`, where a log can reach it and a response cannot.
-   * `server/src/workspace.fs.ts` is where that is enforced and
-   * `server/src/workspace.fs.test.ts` sweeps every refusal it can make for one.
+   * **`reason` is `app`'s sentence and not the adapter's** (#249): `wordRefusal` in `./refusal.ts`
+   * builds it from the refusal's reason code and subject, which the port requires of every
+   * `WorkspaceRefusedError`, and says a file only if it is the Catalog asked for. So
+   * it says which Catalog and which Academic Year, as it did before, and nothing a Workspace
+   * adapter chose can reach the three routes this Warning travels on — the two Catalog queries
+   * and the exam period's `catalogWarnings`. The error's own message is never read here; it is
+   * the adapter's account, kept for a log (#165).
    */
   | { kind: "workspace-refused"; reason: string };
 
@@ -46,12 +35,20 @@ async function loadCatalog(
   workspace: Workspace,
   academicYear: number,
 ): Promise<{ offerings?: Offering[]; warnings: QueryWarning[] }> {
+  const ref = { kind: "catalog", academicYear } as const;
   let stored: unknown;
   try {
-    stored = await workspace.read({ kind: "catalog", academicYear });
+    stored = await workspace.read(ref);
   } catch (error) {
     if (error instanceof WorkspaceRefusedError) {
-      return { warnings: [{ kind: "workspace-refused", reason: error.message }] };
+      return {
+        warnings: [
+          {
+            kind: "workspace-refused",
+            reason: wordRefusal(error.refusal, ref),
+          },
+        ],
+      };
     }
     throw error;
   }
