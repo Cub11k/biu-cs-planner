@@ -1,6 +1,8 @@
 import {
   addAttempt,
   attemptWarnings,
+  checkPlan,
+  effectiveFile,
   moveAttempt,
   removeAttempt,
   updateAttempt,
@@ -9,7 +11,10 @@ import {
   type AttemptFacts,
   type AttemptId,
   type AttemptWarning,
+  type PlanProgram,
+  type PlanWarning,
   type SemesterAt,
+  type SolvePin,
   type State,
   type StateFileVersion,
   type StateFileWarning,
@@ -22,6 +27,7 @@ import {
   type StateEditing,
 } from "./edit.ts";
 import { DEFAULT_STATE_FILE } from "./picks.ts";
+import { loadRequirementsFiles } from "./requirements.ts";
 import type { Workspace } from "./workspace.ts";
 
 /**
@@ -34,6 +40,12 @@ import type { Workspace } from "./workspace.ts";
  *
  * **An Attempt is named by its id.** New ids come from `newId`, a UUID unless a caller injects a
  * source, which is what lets a test say which id an add hands out.
+ *
+ * **Every answer carries the Plan checks** (#291): `checkPlan` against the Requirements Files of
+ * the student's chosen Programs, recomputed from the State File and `requirements/` on every read
+ * and never stored. A Program whose file the Workspace does not hold, or cannot read, is left out
+ * of them; the Programs route is where that is said (`./programs.ts`). The missing-Requirements
+ * lens runs the solver, so it is given a clock (`now`) for its time cap, as Progress is.
  */
 
 export type PlanView = {
@@ -41,6 +53,8 @@ export type PlanView = {
   attempts: Attempt[];
   /** The Warnings over the Attempts that need no Requirements File (`attemptWarnings`). */
   attemptWarnings: AttemptWarning[];
+  /** The Plan checks against the chosen Programs' Requirements Files (`checkPlan`). */
+  planWarnings: PlanWarning[];
 };
 
 export type PlanResult =
@@ -56,6 +70,8 @@ export type PlanResult =
 export type PlanReadOptions = {
   /** Defaults to `DEFAULT_STATE_FILE`; a State File is named, never a path. */
   stateFile?: string;
+  /** The clock the solver's time cap is measured by. `Date.now` when nothing says otherwise. */
+  now?: () => number;
 };
 
 export type PlanEditOptions = PlanReadOptions & {
@@ -68,8 +84,51 @@ export type PlanEditOptions = PlanReadOptions & {
 
 const uuid = (): AttemptId => globalThis.crypto.randomUUID();
 
-async function planOf(state: State): Promise<PlanView> {
-  return { attempts: state.attempts, attemptWarnings: attemptWarnings(state) };
+/** The chosen Programs whose Requirements File the Workspace holds and could read, in order. */
+async function programsOf(workspace: Workspace, state: State): Promise<PlanProgram[]> {
+  if (state.programs.length === 0) return [];
+  const loaded = await loadRequirementsFiles(workspace);
+  if (loaded.kind === "refused") return [];
+  return state.programs.flatMap((choice): PlanProgram[] => {
+    const file = loaded.files.find((entry) => entry.listed.name === choice.requirementsFile)?.file;
+    if (file === undefined) return [];
+    const ticked = state.manualTicks
+      .filter((tick) => effectiveFile(state, tick) === choice.requirementsFile)
+      .map((tick) => tick.requirementId);
+    return [
+      {
+        requirementsFile: choice.requirementsFile,
+        file,
+        ...(choice.track === undefined ? {} : { track: choice.track }),
+        ticked,
+      },
+    ];
+  });
+}
+
+/** The State's Pins as the solver takes them: each in the Program whose file it names. */
+function pinsFor(state: State, programs: readonly PlanProgram[]): SolvePin[] {
+  return state.pins.flatMap((pin) => {
+    const file = effectiveFile(state, pin);
+    const index = programs.findIndex((program) => program.requirementsFile === file);
+    return index < 0 ? [] : [{ courseNumber: pin.courseNumber, requirementId: pin.requirementId, program: index }];
+  });
+}
+
+async function planOf(workspace: Workspace, state: State, now: () => number): Promise<PlanView> {
+  const programs = await programsOf(workspace, state);
+  return {
+    attempts: state.attempts,
+    attemptWarnings: attemptWarnings(state),
+    planWarnings: checkPlan({
+      attempts: state.attempts,
+      programs,
+      ...(state.cohort === undefined ? {} : { cohort: state.cohort }),
+      creditLoadLimit: state.settings.creditLoadLimit,
+      pins: pinsFor(state, programs),
+      limits: { now },
+    }),
+  };
 }
 
 /** The Attempts the State File holds, with their Warnings and the revision they were read from. */
@@ -80,7 +139,7 @@ export async function readPlan(workspace: Workspace, options: PlanReadOptions = 
   }
   return {
     kind: "served",
-    view: await planOf(loaded.state),
+    view: await planOf(workspace, loaded.state, options.now ?? Date.now),
     version: loaded.version,
     warnings: loaded.warnings,
   };
@@ -100,7 +159,7 @@ async function edit(
   }
   return {
     kind: "served",
-    view: await planOf(outcome.state),
+    view: await planOf(workspace, outcome.state, options.now ?? Date.now),
     version: outcome.version,
     warnings: outcome.warnings,
   };

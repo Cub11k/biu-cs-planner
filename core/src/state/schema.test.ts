@@ -142,7 +142,7 @@ it("fills an all-but-empty file in, so a new State File is a version and nothing
     pins: [],
     programs: [],
     manualTicks: [],
-    settings: { language: "en", examSpacingDays: 3 },
+    settings: { language: "en", examSpacingDays: 3, creditLoadLimit: 24 },
   });
 });
 

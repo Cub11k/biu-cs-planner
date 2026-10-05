@@ -32,7 +32,7 @@ describe("readPlan", () => {
 
     expect(await readPlan(workspace, ALICE)).toEqual({
       kind: "served",
-      view: { attempts: [], attemptWarnings: [] },
+      view: { attempts: [], attemptWarnings: [], planWarnings: [] },
       version: undefined,
       warnings: [],
     });
@@ -184,4 +184,93 @@ it("writes nothing for an edit that changes nothing, and still serves the revisi
 
   expect(unchanged).toMatchObject({ kind: "served", version });
   expect(workspace.written()).toHaveLength(written);
+});
+
+/**
+ * #291: every Plan answer carries the Plan checks against the chosen Programs' Requirements Files,
+ * at the student's own credit load limit. The Requirements File is invented (ADR-0006).
+ */
+describe("the Plan checks in the answer", () => {
+  const CS = {
+    schemaVersion: 1,
+    program: { id: "cs", name: { he: "מדעי המחשב" } },
+    courses: [
+      { number: "89-110", credits: 6, offeringPattern: "fall" },
+      { number: "89-111", credits: 6, prerequisites: { kind: "passed", course: "89-110" } },
+    ],
+    requirements: [{ id: "intro", kind: "course", course: "89-110" }],
+  };
+  const seeded = (state: Record<string, unknown>): MemoryWorkspace => {
+    const workspace = memoryWorkspace({ created: true });
+    workspace.seed({ kind: "requirements", name: "cs-2027" }, CS);
+    workspace.seed(REF, { schemaVersion: 1, ...state });
+    return workspace;
+  };
+
+  it("serves the Plan checks of the chosen Program, each pointing at its Attempt", async () => {
+    const workspace = seeded({
+      programs: [{ requirementsFile: "cs-2027" }],
+      attempts: [
+        { id: "a", courseNumber: "89-110", academicYear: 2027, semester: "spring", status: "planned" },
+        { id: "b", courseNumber: "89-111", academicYear: 2027, semester: "spring", status: "planned" },
+      ],
+    });
+
+    const read = await readPlan(workspace, ALICE);
+
+    expect(read.kind === "served" && read.view.planWarnings).toEqual([
+      {
+        kind: "prerequisite-unmet",
+        target: { kind: "attempt", id: "b" },
+        requirementsFile: "cs-2027",
+        courseNumber: "89-111",
+        missing: ["89-110"],
+        reliesOn: [],
+      },
+      {
+        kind: "offering-pattern",
+        target: { kind: "attempt", id: "a" },
+        requirementsFile: "cs-2027",
+        courseNumber: "89-110",
+        pattern: "fall",
+      },
+    ]);
+  });
+
+  it("checks credit load at the limit the State File stores", async () => {
+    const attempts = [
+      { id: "a", courseNumber: "89-110", academicYear: 2027, semester: "fall", status: "planned" },
+      { id: "b", courseNumber: "89-111", academicYear: 2028, semester: "fall", status: "planned" },
+    ];
+    const generous = await readPlan(seeded({ programs: [{ requirementsFile: "cs-2027" }], attempts }), ALICE);
+    const strict = await readPlan(
+      seeded({ programs: [{ requirementsFile: "cs-2027" }], attempts, settings: { creditLoadLimit: 5 } }),
+      ALICE,
+    );
+
+    const loads = (result: typeof generous) =>
+      result.kind === "served" ? result.view.planWarnings.filter((w) => w.kind === "credit-load") : [];
+    expect(loads(generous)).toEqual([]);
+    expect(loads(strict)).toEqual([
+      { kind: "credit-load", target: { kind: "semester", academicYear: 2027, semester: "fall" }, credits: 6, limit: 5 },
+      { kind: "credit-load", target: { kind: "semester", academicYear: 2028, semester: "fall" }, credits: 6, limit: 5 },
+    ]);
+  });
+
+  it("runs no Requirements-based check with no Program chosen, or for a file the Workspace lacks", async () => {
+    const attempts = [{ id: "b", courseNumber: "89-111", academicYear: 2027, semester: "fall", status: "planned" }];
+
+    for (const programs of [[], [{ requirementsFile: "math-2027" }]]) {
+      const read = await readPlan(seeded({ programs, attempts }), ALICE);
+      expect(read.kind === "served" && read.view.planWarnings).toEqual([]);
+    }
+  });
+
+  it("names the Requirements a Plan leaves missing, read off the projected lens", async () => {
+    const read = await readPlan(seeded({ programs: [{ requirementsFile: "cs-2027" }] }), ALICE);
+
+    expect(read.kind === "served" && read.view.planWarnings).toEqual([
+      { kind: "requirements-missing", target: { kind: "program", requirementsFile: "cs-2027" }, requirementIds: ["intro"] },
+    ]);
+  });
 });

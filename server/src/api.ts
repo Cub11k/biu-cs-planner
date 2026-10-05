@@ -290,6 +290,7 @@ const copiedBlockedTimesSchema = z.object({
 export const savedSettingsSchema = z.object({
   language: settingsSchema.shape.language.unwrap().optional(),
   examSpacingDays: settingsSchema.shape.examSpacingDays.unwrap().optional(),
+  creditLoadLimit: settingsSchema.shape.creditLoadLimit.unwrap().optional(),
   basedOn: basedOnSchema,
 });
 

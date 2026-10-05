@@ -1086,6 +1086,7 @@ it("serves the schema's defaults before any State File exists, and writes none",
   await expect(response.json()).resolves.toEqual({
     language: "en",
     examSpacingDays: 3,
+    creditLoadLimit: 24,
     warnings: [],
   });
   // reading created nothing: `version` was absent above, and the folder is still empty
@@ -1180,6 +1181,36 @@ it("refuses an Exam spacing a number of days cannot be, and stores nothing", asy
   const off = await choose({ examSpacingDays: 0 });
   expect(off.status).toBe(200);
   await expect(off.json()).resolves.toMatchObject({ examSpacingDays: 0 });
+});
+
+/**
+ * #291: the credit load limit round-trips by the route the Exam spacing does, with the same bound
+ * — whole and never negative, `0` allowed — and a stored value the bound refuses still opens.
+ */
+it("reads and writes the credit load limit by the same route, bounded as the spacing is", async () => {
+  await post("/api/workspace", {});
+
+  for (const creditLoadLimit of [-1, 20.5, null, "24"]) {
+    const response = await choose({ creditLoadLimit });
+    expect(response.status, String(creditLoadLimit)).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: "not-settings" });
+  }
+  expect(await settingsVersion()).toBeUndefined();
+
+  const chosen = await choose({ creditLoadLimit: 30 });
+  expect(chosen.status).toBe(200);
+  await expect(chosen.json()).resolves.toMatchObject({ creditLoadLimit: 30, examSpacingDays: 3 });
+  restart();
+  await expect((await get(SETTINGS)).json()).resolves.toMatchObject({ creditLoadLimit: 30 });
+
+  const zero = await choose({ creditLoadLimit: 0 });
+  await expect(zero.json()).resolves.toMatchObject({ creditLoadLimit: 0 });
+
+  await writeFile(join(root, "me.state.json"), JSON.stringify({ schemaVersion: 1, settings: { creditLoadLimit: -3 } }));
+  await expect((await get(SETTINGS)).json()).resolves.toMatchObject({
+    creditLoadLimit: 24,
+    warnings: [{ kind: "settings-unreadable", field: "creditLoadLimit" }],
+  });
 });
 
 /**
@@ -3098,7 +3129,12 @@ it("serves an empty Plan before any Attempt, and writes no State File", async ()
   const read = await get(PLAN);
 
   expect(read.status).toBe(200);
-  await expect(read.json()).resolves.toMatchObject({ attempts: [], attemptWarnings: [], warnings: [] });
+  await expect(read.json()).resolves.toMatchObject({
+    attempts: [],
+    attemptWarnings: [],
+    planWarnings: [],
+    warnings: [],
+  });
   expect(await readdir(root)).toEqual([]);
 });
 
@@ -3238,4 +3274,44 @@ it("names no path in a Plan answer", async () => {
   expect(text).not.toContain(root);
   expect(text).not.toContain(await realpath(root));
   expect(text).not.toContain(".json");
+});
+
+/**
+ * #291: the Plan answer carries the Plan checks, against the chosen Program's Requirements File,
+ * at the credit load limit the settings route sets.
+ */
+it("carries the Plan checks in the Plan answer, at the stored credit load limit", async () => {
+  await post("/api/workspace", {});
+  await dropRequirements("cs-plan", {
+    schemaVersion: 1,
+    program: { id: "cs", name: { he: "מדעי המחשב" } },
+    courses: [
+      { number: "89-110", credits: 6, offeringPattern: "fall" },
+      { number: "89-111", credits: 6, prerequisites: { kind: "passed", course: "89-110" } },
+    ],
+  });
+  await put("/api/programs", { programs: [{ requirementsFile: "cs-plan" }], basedOn: await planVersion() });
+  const { added: intro } = (await (
+    await post(ATTEMPTS, { ...PLANNED, semester: "spring", basedOn: await planVersion() })
+  ).json()) as PlanBody;
+  const second = await post(ATTEMPTS, {
+    ...PLANNED,
+    courseNumber: "89-111",
+    semester: "spring",
+    basedOn: await planVersion(),
+  });
+  const { added: ds } = (await second.json()) as PlanBody;
+
+  await expect((await get(PLAN)).json()).resolves.toMatchObject({
+    planWarnings: [
+      { kind: "prerequisite-unmet", target: { kind: "attempt", id: ds }, missing: ["89-110"] },
+      { kind: "offering-pattern", target: { kind: "attempt", id: intro }, pattern: "fall" },
+    ],
+  });
+
+  await patch(SETTINGS, { creditLoadLimit: 10, basedOn: await planVersion() });
+  const body = (await (await get(PLAN)).json()) as { planWarnings: { kind: string }[] };
+  expect(body.planWarnings.filter((w) => w.kind === "credit-load")).toEqual([
+    { kind: "credit-load", target: { kind: "semester", academicYear: 2027, semester: "spring" }, credits: 12, limit: 10 },
+  ]);
 });

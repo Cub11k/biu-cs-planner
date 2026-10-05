@@ -100,8 +100,8 @@ export {
   updateAttempt,
 } from "./state/attempts.ts";
 export type { AttemptChange, AttemptTarget, AttemptWarning } from "./state/attempts.ts";
-export { semesterIndex } from "./state/semester-order.ts";
-export type { SemesterAt } from "./state/semester-order.ts";
+export { semesterIndex, studyPointAt } from "./state/semester-order.ts";
+export type { SemesterAt, StudyPoint } from "./state/semester-order.ts";
 export type { PinRef, RequirementRef } from "./state/pins.ts";
 export type { ListedRequirementsFile, ProgramWarning } from "./state/programs.ts";
 export {
@@ -109,6 +109,7 @@ export {
   attemptSchema,
   blockedTimeSchema,
   CURRENT_STATE_SCHEMA_VERSION,
+  DEFAULT_CREDIT_LOAD_LIMIT,
   gradeSchema,
   groupPickSchema,
   manualTickSchema,
@@ -185,3 +186,12 @@ export type {
   SolverWarning,
 } from "./requirements/solve.ts";
 export { requirementsAccepting } from "./requirements/candidates.ts";
+export { checkPlan } from "./plan/checks.ts";
+export type {
+  PlanCheckInput,
+  PlanProgram,
+  PlanTarget,
+  PlanWarning,
+  ProgramTarget,
+  SemesterTarget,
+} from "./plan/checks.ts";

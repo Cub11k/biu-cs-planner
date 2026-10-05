@@ -28,6 +28,15 @@ import { DEFAULT_EXAM_SPACING_DAYS } from "../timetable/exams.ts";
  */
 export const CURRENT_STATE_SCHEMA_VERSION = 1;
 
+/**
+ * The credit load above which a Semester raises a Warning when the student has set no limit
+ * (#291). A full-time BIU Semester carries around 20 credits, the norm a three-year degree of
+ * about 120 spreads over six; 24 leaves room for an ordinary heavy Semester and flags one a
+ * fifth past the norm. One constant, which the setting defaults to and the Plan checks fall back
+ * to, so the two cannot mean different numbers (the rule #164 set for Exam spacing).
+ */
+export const DEFAULT_CREDIT_LOAD_LIMIT = 24;
+
 /** Literal pattern, never built from data (ADR-0007). */
 const CLOCK_TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -267,6 +276,17 @@ export const settingsSchema = z.object({
    * Exam spacing and a `checkExams` call given no threshold have to mean the same thing.
    */
   examSpacingDays: z.number().int().min(0).default(DEFAULT_EXAM_SPACING_DAYS),
+  /**
+   * A Semester whose credits add up to more than this raises a credit-load Warning (#291). Bounded
+   * the way `examSpacingDays` is and for the reasons its doc gives: whole, never negative, no
+   * ceiling, the stored value is what the check gets, and a file holding anything else still
+   * opens with the field at its default and a `settings-unreadable` Warning. `0` warns about every
+   * Semester that holds any credits at all, which is true and is what a student who chose it chose.
+   *
+   * Added beside the others without moving the schema version, since a file without it reads as
+   * the default, which is what it meant.
+   */
+  creditLoadLimit: z.number().int().min(0).default(DEFAULT_CREDIT_LOAD_LIMIT),
 });
 
 export const stateSchema = z.object({

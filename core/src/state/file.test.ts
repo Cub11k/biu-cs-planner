@@ -90,7 +90,7 @@ function fullFile() {
     cohort: { academicYear: 2026, semester: "fall" },
     programs: [{ requirementsFile: "cs-2027", track: "ai" }, { requirementsFile: "math-2027" }],
     manualTicks: [{ requirementId: "hebrew-expression", requirementsFile: "cs-2027" }],
-    settings: { language: "he", examSpacingDays: 5 },
+    settings: { language: "he", examSpacingDays: 5, creditLoadLimit: 30 },
   };
 }
 
@@ -202,7 +202,7 @@ it("opens a file that is a version and nothing else", () => {
     pins: [],
     programs: [],
     manualTicks: [],
-    settings: { language: "en", examSpacingDays: 3 },
+    settings: { language: "en", examSpacingDays: 3, creditLoadLimit: 24 },
   });
 });
 
@@ -415,7 +415,7 @@ it("keeps the settings it can read and defaults only the one it cannot", () => {
     settings: { language: "he", examSpacingDays: "five" },
   });
 
-  expect(result.state?.settings).toEqual({ language: "he", examSpacingDays: 3 });
+  expect(result.state?.settings).toEqual({ language: "he", examSpacingDays: 3, creditLoadLimit: 24 });
   expect(result.warnings).toEqual([{ kind: "settings-unreadable", field: "examSpacingDays" }]);
 });
 
@@ -425,7 +425,7 @@ it("falls back to every default when settings are not settings at all", () => {
     settings: "hebrew, three days",
   });
 
-  expect(result.state?.settings).toEqual({ language: "en", examSpacingDays: 3 });
+  expect(result.state?.settings).toEqual({ language: "en", examSpacingDays: 3, creditLoadLimit: 24 });
   expect(result.warnings).toEqual([{ kind: "settings-unreadable" }]);
 });
 
@@ -435,7 +435,7 @@ it("strips a setting it does not know", () => {
     settings: { language: "he", theme: "dark" },
   });
 
-  expect(result.state?.settings).toEqual({ language: "he", examSpacingDays: 3 });
+  expect(result.state?.settings).toEqual({ language: "he", examSpacingDays: 3, creditLoadLimit: 24 });
   expect(result.warnings).toEqual([]);
 });
 
@@ -659,6 +659,8 @@ it("names Courses by course number and nothing by Catalog entry", () => {
     // #287: the Cohort and the Programs name a Requirements File by its name, never by content
     "cohort",
     "courseNumber",
+    // #291: the credit load a Semester may carry before it raises a Warning
+    "creditLoadLimit",
     "day",
     "end",
     "examSpacingDays",
