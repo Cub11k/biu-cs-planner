@@ -21,6 +21,8 @@ import { semesterIndex, type SemesterAt } from "../state/semester-order.ts";
  *
  * Pure: the same Attempts and files always give the same totals.
  */
+
+/** What one Semester of the Plan adds up to. */
 export type SemesterCredits = SemesterAt & {
   /** The credits of the Attempts whose credits a Program's file gives. */
   credits: number;
@@ -34,7 +36,7 @@ export type CreditsProgram = { file: RequirementsFile; track?: string };
 const NOT_A_LOAD: ReadonlySet<Attempt["status"]> = new Set(["exempt", "credited"]);
 
 /** Whether an Attempt is a load the student carried or will carry in its Semester. */
-export const isLoad = (attempt: Attempt): boolean => !NOT_A_LOAD.has(attempt.status);
+const isLoad = (attempt: Attempt): boolean => !NOT_A_LOAD.has(attempt.status);
 
 /**
  * One Attempt's share of credits, from the first compiled Program whose file gives them, or

@@ -24,8 +24,8 @@ import { StateFileChangedError, WorkspaceRefusedError, type Workspace } from "@b
  *     which lives outside the Workspace, so none should carry it — and every line is scrubbed of it
  *     anyway before it is written, so that staying true does not depend on every adapter.
  *   - **And every other error the port throws** (#357), `StateFileChangedError` still excepted:
- *     its name and message, the errno and the `cause` chain, scrubbed the same way. Since #324 and #344 a read made after a landed save
- *     catches *any* failure — a refusal or not — and answers with the new revision and a marker
+ *     its name and message, the errno and the `cause` chain, scrubbed the same way. Since #324
+ *     and #344 a read made after a landed save catches *any* failure — a refusal or not — and answers with the new revision and a marker
  *     instead of a 500, so a disk failing under the Catalog or `requirements/` after an edit was
  *     silent even under `--debug`, though it is what a student reporting "my edit seemed to fail"
  *     needs seen. Logged at the port, so it is every such throw rather than only the ones `app`

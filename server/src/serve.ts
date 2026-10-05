@@ -22,7 +22,7 @@ function workspacePathFromArgv(argv: string[]): string {
 
 const path = workspacePathFromArgv(process.argv);
 const token = await launchToken();
-// `--debug` as the real CLI takes it: every Workspace refusal on stderr, off otherwise (#165)
+// `--debug` as the real CLI takes it: every Workspace refusal and failure on stderr, off otherwise (#165, #357)
 const workspace = process.argv.includes("--debug")
   ? loggingWorkspace(fileSystemWorkspace(path), (line) => console.error(line), token)
   : fileSystemWorkspace(path);
