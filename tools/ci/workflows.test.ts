@@ -56,7 +56,8 @@ describe("the workflows in this repository", () => {
   // here, so a workflow reaching for a new one has to come through this line and say
   // why. Every other scope any workflow holds is read.
   it("grants write only where this repository has a reason for it", () => {
-    // pull-requests: pr-report.yml and pr-review.yml each edit one sticky comment.
+    // pull-requests: pr-report.yml, pr-review.yml and closing-refs.yml each edit one
+    // sticky comment.
     // id-token: release.yml's publish job proves who it is to npm, which is what
     // replaces an npm token sitting in a secret.
     const allowed = ["pull-requests", "id-token"];
@@ -68,6 +69,25 @@ describe("the workflows in this repository", () => {
     );
 
     expect(unexpected).toEqual([]);
+  });
+});
+
+// The closing-references check advises and never gates (#260). These are the lines in its
+// workflow that keep it that way, read as text the way the checks above read every workflow.
+describe("closing-refs.yml", () => {
+  const yaml = (): string => read("closing-refs.yml");
+
+  it("runs on every pull request, docs-only ones included", () => {
+    expect(yaml()).toMatch(/^on:\n  pull_request:\n    types: \[[^\]]*\bedited\b[^\]]*\]\n/m);
+    expect(yaml()).not.toMatch(/^\s+paths(-ignore)?:/m);
+  });
+
+  it("cannot fail its job, even when the script itself does", () => {
+    expect(yaml()).toMatch(/^\s+continue-on-error: true$/m);
+  });
+
+  it("installs nothing, so no dependency runs beside its write token", () => {
+    expect(installCommands("closing-refs.yml", yaml())).toEqual([]);
   });
 });
 

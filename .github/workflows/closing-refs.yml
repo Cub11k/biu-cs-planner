@@ -1,0 +1,60 @@
+# Tells a pull request that closes a composed parent about any of that parent's open
+# children it does not close. The manual version of this is in docs/agents/issue-tracker.md,
+# "Verify the links from GitHub, not from the body you wrote"; this runs it on every pull
+# request so the answer is on the thread before a merge (#260). The logic is
+# tools/closing-refs/closing-refs.ts.
+#
+# Advice, never a gate: a pull request may close two of three children on purpose, so a
+# finding is a comment and the job stays green whatever happens. A pull request that closes
+# no parent hears nothing.
+#
+# Its own workflow rather than a step in pr-report.yml, for two reasons. pr-report.yml runs
+# only when code changes, and the pull requests most likely to close a parent are often
+# docs-only. And pr-report.yml installs every dependency and a Chromium on a runner that
+# holds a write token; this installs nothing at all — it needs only node and the two files it
+# runs — so the token sits on a runner where no dependency's code ever executes.
+name: Closing references
+
+# `edited` is the body changing, which is where closing keywords are written; `synchronize`
+# is a push, whose commit messages can carry them too.
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+# Read the tree for the script, read the parent's sub-issues, and write the one comment.
+# `pull-requests: write` is the narrowest scope that can post on a pull request.
+permissions:
+  contents: read
+  issues: read
+  pull-requests: write
+
+concurrency:
+  group: closing-refs-${{ github.event.number }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    # A fork's pull request gets a read-only token, so the comment could not be posted; the
+    # script would only turn that into a warning, and skipping says so more plainly.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      # Nothing here needs git credentials, so the write token is not left in .git/config.
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      # No install: the script uses only `fetch` and node's own type stripping. It already
+      # turns every failure into a warning; `continue-on-error` covers the ones it cannot
+      # catch, such as a file that does not parse. Checkout and setup-node can still fail on
+      # an outage of their own; that is the runner, not this check.
+      - name: Check the closing references
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.number }}
+        run: node tools/closing-refs/main.ts
