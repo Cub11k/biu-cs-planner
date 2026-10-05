@@ -32,6 +32,8 @@ let ticked: boolean;
 let version: number;
 let refuseNextEdit: string | undefined;
 let stoppedEarly: boolean;
+let onlyUnreadableFiles: boolean;
+let canUndo: boolean;
 
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -107,6 +109,8 @@ beforeEach(() => {
   version = 1;
   refuseNextEdit = undefined;
   stoppedEarly = false;
+  onlyUnreadableFiles = false;
+  canUndo = false;
   ROOT.lang = "en";
   ROOT.dir = "ltr";
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -118,8 +122,16 @@ beforeEach(() => {
     const body = typeof text === "string" && text !== "" ? (JSON.parse(text) as Record<string, unknown>) : undefined;
     sent.push({ method, pathname, body });
 
-    if (pathname === "/api/history") return json({ canUndo: false, canRedo: false });
+    if (pathname === "/api/history") return json({ canUndo, canRedo: false });
+    if (pathname === "/api/history/undo") {
+      canUndo = false;
+      version += 1;
+      return json({ label: "pin-course", at: 1, version: `v${version}`, canUndo: false, canRedo: true, warnings: [] });
+    }
     if (pathname === "/api/progress") return json(progressBody());
+    if (pathname === "/api/requirements" && onlyUnreadableFiles) {
+      return json({ files: [{ name: "notes", status: "not-requirements", warnings: [{ kind: "file-unreadable" }] }] });
+    }
     if (pathname === "/api/requirements") {
       return json({
         files: [
@@ -418,4 +430,41 @@ it("reads Progress again when the Workspace changes, from another tab or an edit
     if (treeItem(mounted, "hebrew").dataset.status !== "satisfied") throw new Error("not read again");
   });
   expect(sent.filter((request) => request.pathname === "/api/progress").length).toBe(reads + 1);
+});
+
+it("says there is nothing to choose a Program from when no file in the folder is a Requirements File", async () => {
+  programs = [];
+  onlyUnreadableFiles = true;
+  const mounted = await mount();
+
+  await vi.waitFor(() => {
+    if (!(mounted.textContent ?? "").includes(t("en", "progressNoRequirementsFiles"))) {
+      throw new Error("the empty folder was not said");
+    }
+  });
+  expect(mounted.querySelector('select[data-choose="file"]')).toBeNull();
+});
+
+it("offers undo on the Progress screen, based on the revision it shows, and reads again after it", async () => {
+  canUndo = true;
+  const mounted = await mount();
+  await served(mounted);
+  const reads = sent.filter((request) => request.pathname === "/api/progress").length;
+
+  const undo = await vi.waitFor(() => {
+    const found = mounted.querySelector<HTMLButtonElement>('button[data-history="undo"]');
+    if (found === null || found.disabled) throw new Error("undo was never offered");
+    return found;
+  });
+  undo.click();
+
+  await vi.waitFor(() => {
+    if (sent.filter((request) => request.pathname === "/api/progress").length <= reads) {
+      throw new Error("the screen did not read again after the undo");
+    }
+  });
+  expect(lastSent("/api/history/undo")?.body).toEqual({ basedOn: "v1" });
+  expect(mounted.querySelector('[role="status"]')?.textContent).toContain(
+    t("en", "undoneEdit", { edit: t("en", "editPinCourse") }),
+  );
 });

@@ -21,7 +21,9 @@ const SERVED = {
   stoppedEarly: false,
   solverWarnings: [],
   programWarnings: [],
-  pinWarnings: [],
+  pinWarnings: [
+    { kind: "pin-file-not-chosen", courseNumber: "89-110", requirementId: "intro", requirementsFile: "math" },
+  ],
   version: "a".repeat(64),
   warnings: [],
 };
@@ -49,7 +51,7 @@ it("asks for Progress with the launch token, and reads what is served", async ()
     stoppedEarly: false,
     solverWarnings: [],
     programWarnings: [],
-    pinWarnings: [],
+    pinWarnings: SERVED.pinWarnings,
     version: "a".repeat(64),
   });
 });
