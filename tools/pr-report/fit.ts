@@ -8,9 +8,10 @@
  * what of it the comment can carry.
  *
  * **Whatever is cut is cut visibly.** A report that silently drops part of the test list reads as
- * an absence of tests, which is worse than no report. So a cut is made a whole fold at a time,
- * largest first, and each fold left out stays in the comment as its own one-line summary — which
- * already carries its size — saying it was left out and where it is. The comment opens by naming
+ * an absence of tests, which is worse than no report. So a cut is made a whole fold at a time —
+ * the smallest that is enough on its own, or else the largest — and each fold left out stays in
+ * the comment as its own one-line summary, which already carries its size, saying it was left
+ * out and where it is. The comment opens by naming
  * every section it left out. Only if every fold is gone and the rest is still too long is the tail
  * cut by lines, and that cut says how many lines it took.
  *
@@ -57,7 +58,7 @@ const bytes = (n: number): string => `${n.toLocaleString("en-US")} bytes`;
 
 /**
  * The comment to post: `report` itself when it fits in `limit`, and otherwise the report with
- * whole folds left out, largest first, until it does — each one named where it stood and in a
+ * whole folds left out until it does — each one named where it stood and in a
  * notice at the top, both pointing at `fullReport`, a markdown phrase saying where the whole
  * report is ("in [the `pr-report` artifact](…)").
  */
@@ -68,6 +69,7 @@ export function fitComment(report: string, limit: number, fullReport: string): s
   const folds = foldsOf(lines);
   const bodySize = (fold: Fold): number => size(lines.slice(fold.start, fold.end + 1).join("\n"));
   const largestFirst = [...folds].sort((a, b) => bodySize(b) - bodySize(a));
+  const smallestFirst = [...largestFirst].reverse();
 
   const omitted = new Set<Fold>();
   const build = (): { text: string; kept: string[] } => {
@@ -98,8 +100,19 @@ export function fitComment(report: string, limit: number, fullReport: string): s
     ].join("\n");
   };
 
-  for (const fold of largestFirst) {
-    omitted.add(fold);
+  // Each round leaves out the smallest fold that is enough on its own to make the comment fit,
+  // and when none is, the largest. Largest-first alone gives the fewest sections left out but can
+  // drop a 43 KB section where a 4 KB one would have done; this keeps as much as it can.
+  for (;;) {
+    const kept = folds.filter((fold) => !omitted.has(fold));
+    if (kept.length === 0) break;
+    const enough = smallestFirst.filter((fold) => kept.includes(fold)).find((fold) => {
+      omitted.add(fold);
+      const fits = size(notice("") + build().text) <= limit;
+      omitted.delete(fold);
+      return fits;
+    });
+    omitted.add(enough ?? largestFirst.find((fold) => !omitted.has(fold))!);
     const text = notice("") + build().text;
     if (size(text) <= limit) return text;
   }

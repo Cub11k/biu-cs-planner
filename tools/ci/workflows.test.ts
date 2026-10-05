@@ -98,9 +98,10 @@ describe("pr-report.yml", () => {
   const yaml = (): string => read("pr-report.yml");
 
   it("keeps the full report as an artifact", () => {
-    expect(yaml()).toMatch(
-      /uses: actions\/upload-artifact@v\d+\n\s+with:\n\s+name: pr-report\n\s+path: pr-report\.md\n/,
-    );
+    // the step from its `uses:` to the next step, read as one block whatever order its keys are in
+    const step = /uses: actions\/upload-artifact@v\d+\n(?:(?! {6}- ).*\n)*/.exec(yaml())?.[0] ?? "";
+    expect(step).toMatch(/^\s+name: pr-report$/m);
+    expect(step).toMatch(/^\s+path: pr-report\.md$/m);
   });
 
   it("posts the report cut to fit, never the raw file", () => {

@@ -53,7 +53,7 @@ it("cuts a report over the limit to under it, saying what was left out and where
   expect(fitted).not.toContain("מציג את הקורס בשבוע");
 });
 
-it("leaves out the largest folds first, and only as many as it has to", () => {
+it("leaves out the largest fold while no single fold is enough, and only as many as it has to", () => {
   const big = report(
     fold("<strong>Small</strong>", 20),
     fold("<strong>Largest</strong>", 1500),
@@ -99,4 +99,20 @@ it("counts bytes, so a Hebrew report under the limit in characters but over it i
 
   expect(fitted).not.toBe(hebrew);
   expect(bytes(fitted)).toBeLessThanOrEqual(GITHUB_COMMENT_LIMIT);
+});
+
+it("leaves out a small fold that is enough rather than a larger one", () => {
+  const big = report(
+    fold("<strong>Small</strong>", 100),
+    fold("<strong>Largest</strong>", 1500),
+    fold("<strong>Middle</strong>", 1000),
+  );
+  // leaving out the largest and then the small one fits; the middle need not go
+  const limit = bytes(big) - bytes(fold("<strong>Largest</strong>", 1500)) - 2000;
+
+  const fitted = fitComment(big, limit, WHERE);
+
+  expect(bytes(fitted)).toBeLessThanOrEqual(limit);
+  expect(fitted).toContain("> - <strong>Small</strong>\n> - <strong>Largest</strong>\n");
+  expect(fitted).toContain("<summary><strong>Middle</strong></summary>");
 });
