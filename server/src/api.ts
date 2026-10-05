@@ -19,8 +19,10 @@ import {
   duplicateVariantAs,
   makeVariantPrimary,
   pickGroup,
+  pinCourseTo,
   readExams,
   readPrograms,
+  readProgress,
   readSettings,
   readTimetable,
   removeBlockedTimeAt,
@@ -31,8 +33,12 @@ import {
   replaceBlockedTimeAt,
   restoreBackup,
   setSettings,
+  tickManualRequirement,
+  unpinCourseFrom,
+  untickManualRequirement,
   workspaceStatus,
   type ProgramsResult,
+  type ProgressResult,
   type QueryWarning,
   type TimetableRef,
   type TimetableResult,
@@ -356,6 +362,36 @@ function programsAnswer(c: Context, result: ProgramsResult) {
 }
 
 /**
+ * Which Manual Requirement a tick is about (#288): its id and the Requirements File it is an id in
+ * — always the file, since an id is unique only within one (`CONTEXT.md`, Pin) — and the revision
+ * the page was based on.
+ */
+const savedTickSchema = z.object({
+  requirementsFile: z.string().min(1),
+  requirementId: z.string().min(1),
+  basedOn: basedOnSchema,
+});
+
+/** A Pin: a Course, and the Requirement of one Requirements File it counts toward. */
+const savedPinSchema = z.object({
+  courseNumber: z.string().min(1),
+  requirementsFile: z.string().min(1),
+  requirementId: z.string().min(1),
+  basedOn: basedOnSchema,
+});
+
+/**
+ * Every Progress answer, read or write, in one shape: the evaluated Programs and the revision they
+ * were read from, or the named 409 a refusal has always been.
+ */
+function progressAnswer(c: Context, result: ProgressResult) {
+  if (result.kind === "refused") {
+    return c.json({ reason: result.reason, warnings: result.warnings }, 409);
+  }
+  return c.json({ ...result.view, version: result.version, warnings: result.warnings });
+}
+
+/**
  * A request body, read the way the import route reads one: JSON, no dangerous key, then
  * the schema for the shape the route actually takes. It hands back the **name** of what
  * was wrong rather than a response, so the route says `c.json(...)` itself and the
@@ -669,6 +705,55 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
       return programsAnswer(
         c,
         await chooseCohort(workspace, cohort ?? undefined, { basedOn, history: into }),
+      );
+    })
+
+    /**
+     * Progress (#288): each chosen Program's Requirement tree, evaluated in both lenses, with the
+     * Courses counting toward each node, the student's Pins, where each attempted Course could be
+     * pinned, whether the solver stopped early, and the Warnings. Recomputed from the State File
+     * and the Requirements Files on every request; nothing is cached. No path is named.
+     */
+    .get("/api/progress", async (c) => progressAnswer(c, await readProgress(workspace)))
+
+    /**
+     * Pins a Course to a Requirement of one Program, replacing the Pin it had there, and unpins
+     * one. A save each, carrying its revision and refused `state-file-changed` when the file moved
+     * since; one undo step each because `into` hears it (ADR-0013). A Pin the engine cannot honour
+     * is stored and comes back as a Warning.
+     */
+    .post("/api/progress/pins", capped, async (c) => {
+      const body = await bodyAs(c, savedPinSchema, "not-a-pin");
+      if (!body.ok) return c.json({ error: body.error }, 400);
+      const { basedOn, ...pin } = body.value;
+      return progressAnswer(c, await pinCourseTo(workspace, pin, { basedOn, history: into }));
+    })
+
+    .delete("/api/progress/pins", capped, async (c) => {
+      const body = await bodyAs(c, savedPinSchema, "not-a-pin");
+      if (!body.ok) return c.json({ error: body.error }, 400);
+      const { basedOn, ...pin } = body.value;
+      return progressAnswer(c, await unpinCourseFrom(workspace, pin, { basedOn, history: into }));
+    })
+
+    /** Ticks a Manual Requirement, and unticks one: a save each, one undo step each. */
+    .post("/api/progress/ticks", capped, async (c) => {
+      const body = await bodyAs(c, savedTickSchema, "not-a-tick");
+      if (!body.ok) return c.json({ error: body.error }, 400);
+      const { basedOn, ...tick } = body.value;
+      return progressAnswer(
+        c,
+        await tickManualRequirement(workspace, tick, { basedOn, history: into }),
+      );
+    })
+
+    .delete("/api/progress/ticks", capped, async (c) => {
+      const body = await bodyAs(c, savedTickSchema, "not-a-tick");
+      if (!body.ok) return c.json({ error: body.error }, 400);
+      const { basedOn, ...tick } = body.value;
+      return progressAnswer(
+        c,
+        await untickManualRequirement(workspace, tick, { basedOn, history: into }),
       );
     })
 

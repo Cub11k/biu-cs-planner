@@ -91,6 +91,8 @@ export {
 } from "./state/blocked.ts";
 export type { BlockedRange, BlockedTimeWarning } from "./state/blocked.ts";
 export { effectiveFile, programWarnings, setCohort, setPrograms } from "./state/programs.ts";
+export { pinCourse, tickManual, unpinCourse, untickManual } from "./state/pins.ts";
+export type { PinRef, RequirementRef } from "./state/pins.ts";
 export type { ListedRequirementsFile, ProgramWarning } from "./state/programs.ts";
 export {
   blockedTimeSchema,
@@ -159,4 +161,11 @@ export type {
   RequirementStatus,
 } from "./requirements/evaluate.ts";
 export { DEFAULT_SOLVE_LIMITS, solveAssignment } from "./requirements/solve.ts";
-export type { Solution, SolveInput, SolveLimits, SolverWarning } from "./requirements/solve.ts";
+export type {
+  Solution,
+  SolveInput,
+  SolveLimits,
+  SolvePin,
+  SolverWarning,
+} from "./requirements/solve.ts";
+export { requirementsAccepting } from "./requirements/candidates.ts";

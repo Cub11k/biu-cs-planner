@@ -18,7 +18,7 @@ import {
   type StateEditing,
 } from "./edit.ts";
 import { DEFAULT_STATE_FILE } from "./picks.ts";
-import { loadRequirementsFiles } from "./requirements.ts";
+import { loadRequirementsFiles, type RequirementsListing } from "./requirements.ts";
 import type { Workspace } from "./workspace.ts";
 
 /**
@@ -59,10 +59,9 @@ export type ProgramsOptions = {
   history?: EditHistory;
 };
 
-/** The Warnings for a State's Programs, against what `requirements/` holds right now. */
-async function warningsFor(workspace: Workspace, state: State): Promise<ProgramsWarning[]> {
+/** The Warnings for a State's Programs, against a reading of `requirements/`. */
+export function programsWarnings(state: State, loaded: RequirementsListing): ProgramsWarning[] {
   if (state.programs.length === 0) return [];
-  const loaded = await loadRequirementsFiles(workspace);
   if (loaded.kind === "refused") return [{ kind: "requirements-unlisted" }];
   const listing: ListedRequirementsFile[] = loaded.files.map(({ listed }) =>
     listed.status === "read"
@@ -70,6 +69,12 @@ async function warningsFor(workspace: Workspace, state: State): Promise<Programs
       : { name: listed.name },
   );
   return programWarnings(state, listing);
+}
+
+/** The Warnings for a State's Programs, against what `requirements/` holds right now. */
+async function warningsFor(workspace: Workspace, state: State): Promise<ProgramsWarning[]> {
+  if (state.programs.length === 0) return [];
+  return programsWarnings(state, await loadRequirementsFiles(workspace));
 }
 
 async function viewOf(workspace: Workspace, state: State): Promise<ProgramsView> {

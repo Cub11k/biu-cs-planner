@@ -10,9 +10,26 @@ export {
   type RequirementsImportResult,
   type RequirementsListing,
 } from "./requirements.ts";
+// Progress, Pins and ticked Manual Requirements (#288).
+export {
+  pinCourseTo,
+  readProgress,
+  tickManualRequirement,
+  unpinCourseFrom,
+  untickManualRequirement,
+  type PinCandidates,
+  type ProgramPin,
+  type ProgramProgress,
+  type ProgressEditOptions,
+  type ProgressReadOptions,
+  type ProgressResult,
+  type ProgressView,
+  type ProgressWarningAbout,
+} from "./progress.ts";
 export {
   chooseCohort,
   choosePrograms,
+  programsWarnings,
   readPrograms,
   type ProgramsOptions,
   type ProgramsResult,

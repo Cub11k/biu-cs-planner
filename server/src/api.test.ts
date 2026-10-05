@@ -2859,3 +2859,218 @@ it("names no path in any Requirements File or Programs answer", async () => {
     expect(text).not.toContain("requirements/");
   }
 });
+
+/**
+ * #288: Progress over a real temporary folder with fixture Requirements Files — a single and a
+ * double major, no Program chosen, after a Pin, after a tick, a stale refusal and an undo. The
+ * Programs and the Attempts are invented (ADR-0006); the State File is written by hand because
+ * Attempts have no route yet (the Plan cluster).
+ */
+const CS_PROGRESS = {
+  schemaVersion: 1,
+  program: { id: "cs", name: { he: "מדעי המחשב", en: "Computer Science" } },
+  courses: [
+    { number: "89-110", credits: 5 },
+    { number: "89-320", credits: 3 },
+  ],
+  pools: [{ id: "cs", kind: "prefix", prefix: "89-" }],
+  requirements: [
+    { id: "intro", kind: "course", course: "89-110" },
+    { id: "electives", kind: "credits", min: 6, pool: "cs" },
+    { id: "hebrew", kind: "manual", text: { he: "הבעה עברית", en: "Hebrew expression" } },
+  ],
+};
+const MATH_PROGRESS = {
+  schemaVersion: 1,
+  program: { id: "math", name: { he: "מתמטיקה" } },
+  courses: [{ number: "89-110", credits: 5 }],
+  requirements: [{ id: "intro", kind: "course", course: "89-110" }],
+};
+
+async function progressWorkspace(programs: unknown[]): Promise<void> {
+  await post("/api/workspace", {});
+  await dropRequirements("cs-2027", CS_PROGRESS);
+  await dropRequirements("math-2027", MATH_PROGRESS);
+  await writeFile(
+    join(root, "me.state.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      attempts: [
+        { courseNumber: "89-110", academicYear: 2027, semester: "fall", status: "passed" },
+        { courseNumber: "89-320", academicYear: 2027, semester: "spring", status: "planned" },
+      ],
+      programs,
+    }),
+    "utf8",
+  );
+}
+
+type ProgressBody = {
+  programs: Array<{
+    requirementsFile: string;
+    status: string;
+    pins?: unknown[];
+    progress?: { requirements: Array<{ id: string; ticked?: boolean; completed: { status: string; courses: string[] } }> };
+  }>;
+  stoppedEarly: boolean;
+  version?: string;
+};
+
+const requirementIn = (body: ProgressBody, program: number, id: string) =>
+  body.programs[program]?.progress?.requirements.find((requirement) => requirement.id === id);
+
+it("serves Progress with no Program chosen as no Programs, and writes nothing", async () => {
+  const read = await get("/api/progress");
+
+  expect(read.status).toBe(200);
+  await expect(read.json()).resolves.toEqual({
+    programs: [],
+    stoppedEarly: false,
+    solverWarnings: [],
+    programWarnings: [],
+    pinWarnings: [],
+    warnings: [],
+  });
+  expect(await readdir(root)).toEqual([]);
+});
+
+it("serves Progress for a single major, both lenses evaluated", async () => {
+  await progressWorkspace([{ requirementsFile: "cs-2027" }]);
+
+  const read = await get("/api/progress");
+
+  expect(read.status).toBe(200);
+  const body = (await read.json()) as ProgressBody;
+  expect(body.programs).toHaveLength(1);
+  expect(body.programs[0]).toMatchObject({
+    requirementsFile: "cs-2027",
+    status: "evaluated",
+    program: { id: "cs" },
+  });
+  expect(requirementIn(body, 0, "intro")?.completed).toMatchObject({
+    status: "satisfied",
+    courses: ["89-110"],
+  });
+  expect(body.stoppedEarly).toBe(false);
+  expect(body.version).toBe(await currentVersion());
+});
+
+it("serves Progress for a double major, the Course counted in one Program", async () => {
+  await progressWorkspace([{ requirementsFile: "cs-2027" }, { requirementsFile: "math-2027" }]);
+
+  const body = (await (await get("/api/progress")).json()) as ProgressBody;
+
+  expect(body.programs.map((program) => program.status)).toEqual(["evaluated", "evaluated"]);
+  const counted = [requirementIn(body, 0, "intro"), requirementIn(body, 1, "intro")].filter(
+    (requirement) => requirement?.completed.status === "satisfied",
+  );
+  expect(counted).toHaveLength(1);
+});
+
+it("pins a Course in the Program named, re-evaluates, and undoes the Pin as one step", async () => {
+  await progressWorkspace([{ requirementsFile: "cs-2027" }, { requirementsFile: "math-2027" }]);
+
+  const pinned = await post("/api/progress/pins", {
+    courseNumber: "89-110",
+    requirementsFile: "math-2027",
+    requirementId: "intro",
+    basedOn: await currentVersion(),
+  });
+
+  expect(pinned.status).toBe(200);
+  const body = (await pinned.json()) as ProgressBody;
+  expect(requirementIn(body, 1, "intro")?.completed.courses).toEqual(["89-110"]);
+  expect(requirementIn(body, 0, "intro")?.completed.courses).toEqual([]);
+  expect(body.programs[1]?.pins).toEqual([{ courseNumber: "89-110", requirementId: "intro" }]);
+  expect(JSON.parse(await readFile(join(root, "me.state.json"), "utf8")).pins).toEqual([
+    { courseNumber: "89-110", requirementsFile: "math-2027", requirementId: "intro" },
+  ]);
+
+  await expect((await step(UNDO)).json()).resolves.toMatchObject({ label: "pin-course" });
+  const after = (await (await get("/api/progress")).json()) as ProgressBody;
+  expect(after.programs[1]?.pins).toEqual([]);
+});
+
+it("unpins a Course, so the solver decides again", async () => {
+  await progressWorkspace([{ requirementsFile: "cs-2027" }]);
+  const pin = { courseNumber: "89-110", requirementsFile: "cs-2027", requirementId: "electives" };
+  await post("/api/progress/pins", { ...pin, basedOn: await currentVersion() });
+
+  const unpinned = await remove("/api/progress/pins", { ...pin, basedOn: await currentVersion() });
+
+  expect(unpinned.status).toBe(200);
+  const body = (await unpinned.json()) as ProgressBody;
+  expect(body.programs[0]?.pins).toEqual([]);
+  expect(requirementIn(body, 0, "intro")?.completed.courses).toEqual(["89-110"]);
+});
+
+it("ticks a Manual Requirement and unticks it, each a save and an undo step", async () => {
+  await progressWorkspace([{ requirementsFile: "cs-2027" }]);
+  const tick = { requirementsFile: "cs-2027", requirementId: "hebrew" };
+
+  const ticked = await post("/api/progress/ticks", { ...tick, basedOn: await currentVersion() });
+  expect(ticked.status).toBe(200);
+  expect(requirementIn((await ticked.json()) as ProgressBody, 0, "hebrew")).toMatchObject({
+    ticked: true,
+    completed: { status: "satisfied" },
+  });
+
+  const unticked = await remove("/api/progress/ticks", { ...tick, basedOn: await currentVersion() });
+  expect(unticked.status).toBe(200);
+  expect(requirementIn((await unticked.json()) as ProgressBody, 0, "hebrew")).toMatchObject({
+    ticked: false,
+  });
+
+  await expect((await step(UNDO)).json()).resolves.toMatchObject({ label: "untick-manual" });
+  await expect((await step(UNDO)).json()).resolves.toMatchObject({ label: "tick-manual" });
+});
+
+it("refuses a Pin or a tick based on a revision the file no longer holds", async () => {
+  await progressWorkspace([{ requirementsFile: "cs-2027" }]);
+  const stale = await currentVersion();
+  await post("/api/progress/ticks", {
+    requirementsFile: "cs-2027",
+    requirementId: "hebrew",
+    basedOn: stale,
+  });
+
+  const pinned = await post("/api/progress/pins", {
+    courseNumber: "89-110",
+    requirementsFile: "cs-2027",
+    requirementId: "intro",
+    basedOn: stale,
+  });
+  expect(pinned.status).toBe(409);
+  await expect(pinned.json()).resolves.toMatchObject({ reason: "state-file-changed" });
+
+  const unticked = await remove("/api/progress/ticks", {
+    requirementsFile: "cs-2027",
+    requirementId: "hebrew",
+    basedOn: stale,
+  });
+  expect(unticked.status).toBe(409);
+});
+
+it("names every bad Pin or tick request as a 400", async () => {
+  await progressWorkspace([{ requirementsFile: "cs-2027" }]);
+
+  for (const body of [{}, { courseNumber: "89-110", requirementId: "intro" }]) {
+    const answered = await post("/api/progress/pins", body);
+    expect(answered.status).toBe(400);
+    await expect(answered.json()).resolves.toEqual({ error: "not-a-pin" });
+  }
+  // a tick names its file, always
+  const answered = await post("/api/progress/ticks", { requirementId: "hebrew" });
+  expect(answered.status).toBe(400);
+  await expect(answered.json()).resolves.toEqual({ error: "not-a-tick" });
+});
+
+it("names no path in a Progress answer", async () => {
+  await progressWorkspace([{ requirementsFile: "cs-2027" }, { requirementsFile: "physics" }]);
+
+  const text = await (await get("/api/progress")).text();
+
+  expect(text).not.toContain(root);
+  expect(text).not.toContain(await realpath(root));
+  expect(text).not.toContain(".json");
+});
