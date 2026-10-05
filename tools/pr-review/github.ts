@@ -215,7 +215,26 @@ export async function fetchStandardsDocs(
 
 type Comment = { id: number; body: string };
 
-/** The review's own comment, found by its marker so `pr-report.yml`'s is left alone. */
+/**
+ * Who the workflows post as: every workflow here writes its comment with the job's own
+ * `GITHUB_TOKEN`, and GitHub attributes that to this login.
+ */
+export const POSTER = "github-actions[bot]";
+
+/**
+ * A sticky comment, found by its marker **and its author**, so `pr-report.yml`'s is left alone
+ * and so is anybody else's.
+ *
+ * The author is half of the match because a marker is only text. A person who quotes a bot's
+ * comment, or pastes its marker, writes a comment that starts with it; matched on the marker
+ * alone that comment was the one found, the edit was refused with a 403 that became a warning,
+ * and the bot's own comment was never posted or updated again (#307). Every caller — the graph
+ * check and the review in `./main.ts`, the outdate step in `./outdate.ts`, and
+ * `tools/closing-refs/main.ts` — gets this through here.
+ *
+ * The match is on who wrote the comment, not on whose token reads it, so a dry run from a laptop
+ * with a personal token (`DRY_RUN=1` in `tools/closing-refs/main.ts`) still finds the bot's.
+ */
 export async function findComment(
   repo: string,
   number: number,
@@ -230,8 +249,10 @@ export async function findComment(
       ),
       "listing the comments",
     );
-    const comments = (await response.json()) as Comment[];
-    const mine = comments.find((c) => c.body.startsWith(marker));
+    const comments = (await response.json()) as (Comment & {
+      user?: { login?: string } | null;
+    })[];
+    const mine = comments.find((c) => c.user?.login === POSTER && c.body.startsWith(marker));
     if (mine) return { id: mine.id, body: mine.body };
     if (comments.length < 100) return undefined;
   }
