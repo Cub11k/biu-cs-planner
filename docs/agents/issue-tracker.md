@@ -42,7 +42,8 @@ Labels and assignees are not the body; change those freely. `gh issue edit --bod
 ## How big a ticket is
 
 **A ticket is two or three atomic asks that share a file lane, stated as one goal.** Three is a
-cap, not a target.
+cap, not a target. **It does not bind a fix sweep**, whose parent holds as many small fixes as the
+sweep does, across lanes — `orchestration.md`, "Which tickets a run carries".
 
 The habit this replaces was one atomic ask per ticket — a single defect, a single untested
 function, a single wrong line in a record. Those tickets are sharp and each is reviewable against

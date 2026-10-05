@@ -5,11 +5,38 @@ outside its lane is read-only to it.** One worktree per piece of work is already
 (`worktrees.md`); this file is what changes when several of them run at the same time.
 
 The ticket is a composed parent: two or three atomic asks that share a file lane, with the atomic
-tickets as its sub-issues (`issue-tracker.md`, "How big a ticket is"). Its lane is therefore
-already drawn by the grouping, and the table below records that lane rather than inventing one.
+tickets as its sub-issues (`issue-tracker.md`, "How big a ticket is"), or a fix sweep, which the
+next section describes. Its lane is therefore already drawn by the grouping, and the table below
+records that lane rather than inventing one.
 
 None of what follows is derivable from the code. Each rule is a mistake that was made once,
 written as the thing that prevents it.
+
+## Which tickets a run carries
+
+**Set by the maintainer on 2026-10-05: larger tasks and clusters of issues first, and above all the
+functionality the ADRs decide.** A run is chosen in that order, not by which tickets are oldest or
+smallest. Bug fixes matter too, but they are usually small, and a fix dispatched on its own pays a
+worktree, an install, two reviewers and a merge for a few lines — the overhead `issue-tracker.md`
+composes tickets to avoid. So fixes go out in large batches, as a **fix sweep**, beside the feature
+work rather than in place of it, and one sweep may cross several lanes.
+
+A fix sweep is:
+
+- **One agent, many small fix tickets, one pull request with one commit per ticket.** The commit is
+  what keeps each fix reviewable alone once they share a diff. A child that turns out to need no
+  change gets no commit; the pull request says so, with the evidence.
+- **A sweep parent with as many children as the sweep holds.** The three-child cap in
+  `issue-tracker.md` does not bind it, and neither does the lane test there: a sweep's children are
+  grouped because each is small, not because they share a module.
+- **Still out of every file another agent in the same run holds.** Crossing lanes means the sweep's
+  row in the lanes table lists files from several places; it does not mean the row may overlap
+  another, and everything in the next section governs a sweep in full. A child whose file another
+  agent holds in this run waits for the next sweep — fixing it "while the file is open" is two agents
+  in one file, neither able to see the other's uncommitted work.
+
+The first run under this rule, dispatched the same day, carried two sweeps (#313, #314) beside two
+feature parents (#298, #299): four rows with no file in common.
 
 ## Lanes
 
