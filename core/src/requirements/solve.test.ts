@@ -417,6 +417,41 @@ describe("a double major", () => {
     });
     expect(solution.assignments[1]!.completed).toEqual([]);
   });
+
+  /**
+   * #287's case: an id both files of a double major use. A Pin naming its Program is honoured in
+   * that Program alone; one naming none is honoured wherever the id is, which is what every Pin
+   * meant before Pins named their Requirements File — and here costs the later Program its Pin.
+   */
+  it("honours a Pin naming its Program in that Program alone, though both have the id", () => {
+    const sharing = (file: RequirementsFile, requirement: Record<string, unknown>) =>
+      program({ ...file, requirements: [...file.requirements, requirement] });
+    const csShared = sharing(cs, { id: "shared", kind: "credits", min: 1, pool: "math" });
+    const mathShared = sharing(math, { id: "shared", kind: "course", course: "88-101" });
+
+    const named = solveAssignment({
+      programs: [{ file: csShared }, { file: mathShared }],
+      attempts: [attempt("88-101")],
+      pins: [{ courseNumber: "88-101", requirementId: "shared", program: 1 }],
+    });
+    expect(named.warnings).toEqual([]);
+    expect(named.assignments[0]!.completed).toEqual([]);
+    expect(named.assignments[1]!.completed).toEqual([
+      { courseNumber: "88-101", requirementIds: ["shared"] },
+    ]);
+
+    const unnamed = solveAssignment({
+      programs: [{ file: csShared }, { file: mathShared }],
+      attempts: [attempt("88-101")],
+      pins: [pin("88-101", "shared")],
+    });
+    expect(unnamed.warnings).toEqual([
+      { kind: "pin-conflict", courseNumber: "88-101", requirementId: "shared" },
+    ]);
+    expect(unnamed.assignments[0]!.completed).toEqual([
+      { courseNumber: "88-101", requirementIds: ["shared"] },
+    ]);
+  });
 });
 
 it("does not stop early when every Course is pinned and nothing is left to search", () => {

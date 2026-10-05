@@ -1,4 +1,5 @@
 import {
+  isRequirementsFileName,
   isStateFileName,
   WORKSPACE_LAYOUT,
   type WorkspaceFolder,
@@ -81,10 +82,10 @@ const BECAUSE: Record<WorkspaceRefusalReason, string> = {
   "not-a-workspace": "the Workspace Layout is not there to write into",
   "not-created": "it could not be made",
   "not-json": "it is not a kind of file a Workspace holds",
-  "not-a-name": "a State File's name is a name, never a path",
+  "not-a-name": "a file's name in a Workspace is a name, never a path",
   "not-a-year": "an Academic Year is a whole number",
   "not-a-moment": "a snapshot's moment is a whole number of milliseconds",
-  "not-a-catalog": "only a Catalog is read or written whole, and this is not one",
+  "not-a-catalog": "only a Catalog or a Requirements File is read or written whole, and this is neither",
   "mixed-snapshots": "snapshots are pruned one State File at a time",
 };
 
@@ -123,6 +124,10 @@ function aboutAsked(asked: WorkspaceRefusalSubject): string {
         : "a Catalog whose Academic Year is not one";
     case "state":
       return stateFile(asked.name);
+    case "requirements":
+      return typeof asked.name === "string" && isRequirementsFileName(asked.name)
+        ? `the Requirements File ${JSON.stringify(asked.name)}`
+        : "a Requirements File whose name is not one";
     case "backup":
       return (
         `the snapshot of ${stateFile(asked.name)} ` +

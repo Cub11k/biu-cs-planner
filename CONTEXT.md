@@ -76,7 +76,7 @@ The Academic Year and Semester in which a student started; it selects which Requ
 _Avoid_: class of, shnaton
 
 **Requirements File**:
-The rules of one Program for one or more Cohorts, converted by hand from the department's published PDF or Excel.
+The rules of one Program for one or more Cohorts, converted by hand from the department's published PDF or Excel. It sits in the Workspace's `requirements/` folder and is named by its file name there without the `.json` — `cs-2027` for `requirements/cs-2027.json` — which is what a student's Programs and Pins refer to it by.
 _Avoid_: yedion, curriculum
 
 **Requirement**:
@@ -92,7 +92,7 @@ A Requirement that must hold before a Course is taken, possibly allowing concurr
 _Avoid_: dependency
 
 **Manual Requirement**:
-A Requirement the engine cannot evaluate and the student ticks off, such as lecturer approval or Hebrew expression.
+A Requirement the engine cannot evaluate and the student ticks off, such as lecturer approval or Hebrew expression. The ticks are kept in the State File, referenced the way a Pin references its Requirement.
 _Avoid_: custom rule
 
 **Equivalence**:
@@ -112,7 +112,7 @@ The Requirement a passed or planned Course counts toward, computed by the solver
 _Avoid_: allocation
 
 **Pin**:
-A student's override that fixes an Assignment.
+A student's override that fixes an Assignment: this Course counts toward this Requirement. A Pin names the Requirement by its id **and the Requirements File by its name**, because an id is unique only within one file and a double major has two, so a Pin on `core` in one Program is not a Pin on whatever the other Program calls `core`. A Pin written before Pins named their file is read as naming the student's first Program's file. Choosing Programs so that another file comes first stamps such a Pin with the file that was first, so it keeps meaning what it meant. A ticked Manual Requirement is referenced the same way, by id and file. Pinning a Course replaces any Pin the Course already had in that Program. The ruling is on issue #287.
 _Avoid_: lock
 
 ### Student
@@ -131,7 +131,7 @@ The secret the server is started with and every request must carry, delivered to
 _Avoid_: api key, secret, session
 
 **State File**:
-One student's or one scenario's personal data: Attempts, Timetables, Pins and settings.
+One student's or one scenario's personal data: Attempts, Timetables, Pins, ticked Manual Requirements, the student's Cohort and Programs, and settings.
 _Avoid_: save, profile
 
 **Revision**:

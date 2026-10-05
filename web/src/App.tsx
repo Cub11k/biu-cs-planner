@@ -2,11 +2,13 @@ import { useEffect } from "react";
 import { hasLaunchToken } from "./api.ts";
 import { useWorkspaceChanges } from "./changes.ts";
 import { DIRECTION, type Language } from "./i18n/strings.ts";
+import { AppShell } from "./AppShell.tsx";
+import { SCREENS } from "./screens.tsx";
 import { useSettings } from "./settings.ts";
-import { TimetableScreen } from "./timetable/TimetableScreen.tsx";
 
 /**
- * Opening the app lands on the Timetable (docs/design.md, "Screens").
+ * Opening the app lands on the Timetable (docs/design.md, "Screens"), inside the app shell that
+ * holds what every screen shares and switches between the screens that are built (#294).
  *
  * The language lives here because `dir` and `lang` belong on the root element: switching to
  * Hebrew has to flip the whole document, not one pane of it.
@@ -53,7 +55,8 @@ export function App(): React.JSX.Element {
   }, [settings.language]);
 
   return (
-    <TimetableScreen
+    <AppShell
+      screens={SCREENS}
       language={settings.language}
       // `undefined` while the settings have not been read, or while a change is in flight: the
       // switch is then a control that cannot be honoured, and `useSettings` decides which it is
