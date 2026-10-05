@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import { createApiClient } from "../api.ts";
 import {
+  chooseCohort,
   choosePrograms,
   fetchProgress,
   fetchRequirementsFiles,
@@ -8,6 +9,8 @@ import {
   tickManual,
   unpinCourse,
   untickManual,
+  whatIfChanges,
+  type EvaluatedProgram,
 } from "./progress.ts";
 
 /**
@@ -17,6 +20,7 @@ import {
 const TOKEN = "Zm9vYmFyLXRoaXMtaXMtd2hhdC1hLXJlYWwtdG9rZW4tbG9va3MtbGlrZQ";
 
 const SERVED = {
+  cohort: { academicYear: 2026, semester: "fall" },
   programs: [],
   stoppedEarly: false,
   solverWarnings: [],
@@ -47,6 +51,7 @@ it("asks for Progress with the launch token, and reads what is served", async ()
   expect(sent[0]!.headers.get("Authorization")).toBe(`Bearer ${TOKEN}`);
   expect(result).toEqual({
     kind: "served",
+    cohort: { academicYear: 2026, semester: "fall" },
     programs: [],
     stoppedEarly: false,
     solverWarnings: [],
@@ -129,4 +134,84 @@ it("lists the Requirements Files, or nothing when they cannot be had", async () 
   expect(
     await fetchRequirementsFiles(client(() => Response.json({ reason: "workspace-refused" }, { status: 409 })).api),
   ).toBeUndefined();
+});
+
+it("reads a server that sends no Cohort as having none", async () => {
+  const { cohort: _left, ...older } = SERVED;
+  const result = await fetchProgress(client(() => Response.json(older)).api);
+  expect(result).toMatchObject({ kind: "served", cohort: null });
+});
+
+it("sets the Cohort, clears it with null, and reads a refusal and a missing server apart (#331)", async () => {
+  const saved = client(() => Response.json({ cohort: null, programs: [], programWarnings: [], warnings: [] }));
+  expect(await chooseCohort(saved.api, { academicYear: 2026, semester: "spring" }, "v1")).toEqual({ kind: "saved" });
+  expect(await chooseCohort(saved.api, null, "v2")).toEqual({ kind: "saved" });
+  expect(saved.sent.map((request) => `${request.method} ${new URL(request.url).pathname}`)).toEqual([
+    "PUT /api/cohort",
+    "PUT /api/cohort",
+  ]);
+  expect(await Promise.all(saved.sent.map((request) => request.json()))).toEqual([
+    { cohort: { academicYear: 2026, semester: "spring" }, basedOn: "v1" },
+    { cohort: null, basedOn: "v2" },
+  ]);
+
+  const refused = client(() => Response.json({ reason: "state-file-changed", warnings: [] }, { status: 409 }));
+  expect(await chooseCohort(refused.api, null, "v1")).toEqual({ kind: "refused", reason: "state-file-changed" });
+  const unreadable = client(() => new Response("<html>", { status: 500 }));
+  expect(await chooseCohort(unreadable.api, null, "v1")).toEqual({ kind: "unreadable-answer" });
+  const gone = client(() => {
+    throw new TypeError("fetch failed");
+  });
+  expect(await chooseCohort(gone.api, null, "v1")).toEqual({ kind: "unreachable" });
+});
+
+it("asks for a what-if's Progress with the Programs as JSON in the query, and nothing else (#289)", async () => {
+  const { sent, api } = client(() => Response.json(SERVED));
+
+  const result = await fetchProgress(api, [{ requirementsFile: "cs-2027", track: "ai" }]);
+
+  expect(sent[0]!.method).toBe("GET");
+  const url = new URL(sent[0]!.url);
+  expect(url.pathname).toBe("/api/progress");
+  expect(JSON.parse(url.searchParams.get("whatIf")!)).toEqual([{ requirementsFile: "cs-2027", track: "ai" }]);
+  expect(result).toMatchObject({ kind: "served", version: "a".repeat(64) });
+  // and a plain read carries no what-if at all
+  await fetchProgress(api);
+  expect(new URL(sent[1]!.url).search).toBe("");
+});
+
+/** A Program evaluated with these nodes, each `[id, completed, projected, children]`. */
+type Node = [string, string, string, Node[]?];
+function program(nodes: Node[]): EvaluatedProgram {
+  const node = ([id, completed, projected, children = []]: Node): unknown => ({
+    id,
+    kind: "course",
+    completed: { status: completed, courses: [] },
+    projected: { status: projected, courses: [] },
+    children: children.map(node),
+  });
+  return { progress: { requirements: nodes.map(node) } } as unknown as EvaluatedProgram;
+}
+
+it("pairs a what-if's Requirements with the real ones by id, never by position", () => {
+  const real = program([
+    ["intro", "satisfied", "satisfied"],
+    ["electives", "missing", "satisfied"],
+    ["robotics", "partial", "satisfied"],
+  ]);
+  // the same base in another order, the robotics Track swapped for the AI one
+  const whatIf = program([
+    ["electives", "satisfied", "satisfied"],
+    ["ai", "missing", "missing", [["ml", "satisfied", "satisfied"]]],
+    ["intro", "missing", "satisfied"],
+  ]);
+
+  expect(whatIfChanges(real, whatIf, "completed")).toEqual({
+    satisfied: ["electives"],
+    missing: ["ai", "intro"],
+    dropped: ["robotics"],
+  });
+  // a nested Requirement only the what-if has, already met, is neither gained nor lost
+  expect(whatIfChanges(real, whatIf, "projected")).toEqual({ satisfied: [], missing: ["ai"], dropped: ["robotics"] });
+  expect(whatIfChanges(real, real, "completed")).toEqual({ satisfied: [], missing: [], dropped: [] });
 });
