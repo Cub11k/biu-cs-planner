@@ -197,3 +197,13 @@ it("answers a name that is a path as the Workspace's refusal, and stores nothing
   });
   expect(workspace.written()).toEqual([]);
 });
+
+it("takes a name given with its .json as the file's name, not a second extension", async () => {
+  const workspace = memoryWorkspace({ created: true });
+
+  expect(await importRequirementsFile(workspace, "cs-2027.json", CS)).toMatchObject({
+    stored: true,
+    listed: { name: "cs-2027" },
+  });
+  expect(await workspace.list("requirements")).toEqual([{ kind: "requirements", name: "cs-2027" }]);
+});

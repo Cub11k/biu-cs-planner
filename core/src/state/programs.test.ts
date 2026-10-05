@@ -122,3 +122,19 @@ it("reads a Pin or a tick that names no file as naming the first Program's", () 
   );
   expect(effectiveFile(empty(), { requirementId: "core" })).toBeUndefined();
 });
+
+it("stamps a Pin or tick naming no file with the first Program's when the first Program changes", () => {
+  const before = {
+    ...setPrograms(empty(), [{ requirementsFile: "cs-2027" }, { requirementsFile: "math-2027" }]),
+    pins: [{ courseNumber: "89-110", requirementId: "core" }],
+    manualTicks: [{ requirementId: "hebrew" }],
+  };
+
+  const swapped = setPrograms(before, [{ requirementsFile: "math-2027" }, { requirementsFile: "cs-2027" }]);
+  expect(swapped.pins).toEqual([{ courseNumber: "89-110", requirementId: "core", requirementsFile: "cs-2027" }]);
+  expect(swapped.manualTicks).toEqual([{ requirementId: "hebrew", requirementsFile: "cs-2027" }]);
+
+  // the first Program unchanged: nothing to stamp, and the Pin keeps reading as the first's
+  const trackChanged = setPrograms(before, [{ requirementsFile: "cs-2027", track: "ai" }]);
+  expect(trackChanged.pins).toEqual([{ courseNumber: "89-110", requirementId: "core" }]);
+});

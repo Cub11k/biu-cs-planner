@@ -112,7 +112,7 @@ The Requirement a passed or planned Course counts toward, computed by the solver
 _Avoid_: allocation
 
 **Pin**:
-A student's override that fixes an Assignment: this Course counts toward this Requirement. A Pin names the Requirement by its id **and the Requirements File by its name**, because an id is unique only within one file and a double major has two, so a Pin on `core` in one Program is not a Pin on whatever the other Program calls `core`. A Pin written before Pins named their file is read as naming the student's first Program's file. A ticked Manual Requirement is referenced the same way, by id and file. Pinning a Course replaces any Pin the Course already had in that Program. The ruling is on issue #287.
+A student's override that fixes an Assignment: this Course counts toward this Requirement. A Pin names the Requirement by its id **and the Requirements File by its name**, because an id is unique only within one file and a double major has two, so a Pin on `core` in one Program is not a Pin on whatever the other Program calls `core`. A Pin written before Pins named their file is read as naming the student's first Program's file. Choosing Programs so that another file comes first stamps such a Pin with the file that was first, so it keeps meaning what it meant. A ticked Manual Requirement is referenced the same way, by id and file. Pinning a Course replaces any Pin the Course already had in that Program. The ruling is on issue #287.
 _Avoid_: lock
 
 ### Student

@@ -19,6 +19,7 @@ import {
   type ProgressRefusal,
   type ProgressResult,
   type SolverWarning,
+  type StateWarning,
 } from "./progress.ts";
 
 /**
@@ -69,9 +70,13 @@ const WARNING_STRING = new Map<string, StringKey>([
   ["program-track-unknown", "progressWarnTrackUnknown"],
   ["requirements-unlisted", "progressWarnUnlisted"],
   ["pin-file-not-chosen", "progressWarnPinFileNotChosen"],
+  ["tick-file-not-chosen", "progressWarnTickFileNotChosen"],
+  // the State File's own, so a Program, Pin or tick the reader had to leave out is not lost unseen
+  ["entry-dropped", "progressWarnEntryDropped"],
+  ["cohort-unreadable", "progressWarnCohortUnreadable"],
 ]);
 
-type AnyWarning = EngineWarning | SolverWarning | ProgramsWarning | PinWarning;
+type AnyWarning = EngineWarning | SolverWarning | ProgramsWarning | PinWarning | StateWarning;
 
 /** One Warning in words, its values filled in from the fields the kind carries. */
 function warningSaid(language: Language, warning: AnyWarning): string {
@@ -82,6 +87,7 @@ function warningSaid(language: Language, warning: AnyWarning): string {
     requirement: text("requirementId"),
     file: text("requirementsFile"),
     track: text("track"),
+    at: text("at"),
   });
 }
 
@@ -226,11 +232,17 @@ export function ProgressScreen({
           <>
             <Warnings
               language={language}
-              warnings={[...progress.programWarnings, ...progress.solverWarnings, ...progress.pinWarnings]}
+              warnings={[
+                ...progress.stateWarnings.filter((warning) => WARNING_STRING.has(warning.kind)),
+                ...progress.programWarnings,
+                ...progress.solverWarnings,
+                ...progress.pinWarnings,
+              ]}
             />
             {progress.programs.length === 0 ? (
               <ProgramChooser
                 language={language}
+                workspaceChanges={workspaceChanges}
                 disabled={sending}
                 onChoose={(programs) =>
                   send(async (basedOn) => {
@@ -330,15 +342,20 @@ function Warnings({ language, warnings }: { language: Language; warnings: readon
 
 /**
  * The screen when no Program is chosen: it says so, and offers the Requirements Files in the
- * Workspace to choose one from, with its Track. A double major's second Program is chosen the
- * same way once the first is in (the Programs are a list the server keeps whole).
+ * Workspace to choose one from, with its Track. Re-read when the Workspace changes, so a file
+ * dropped into `requirements/` is offered without leaving the screen.
+ *
+ * It chooses one Program. Changing a choice, adding a double major's second Program and setting
+ * the Cohort are the API's (`PUT /api/programs`, `PUT /api/cohort`) and have no control here yet.
  */
 function ProgramChooser({
   language,
+  workspaceChanges,
   disabled,
   onChoose,
 }: {
   language: Language;
+  workspaceChanges: number;
   disabled: boolean;
   onChoose: (programs: { requirementsFile: string; track?: string }[]) => void;
 }): React.JSX.Element {
@@ -347,7 +364,7 @@ function ProgramChooser({
   const [track, setTrack] = useState<string>("");
   useEffect(() => {
     void fetchRequirementsFiles(api).then(setFiles);
-  }, []);
+  }, [workspaceChanges]);
 
   const readable = Array.isArray(files) ? files.filter((entry) => entry.status === "read") : [];
   const chosen = readable.find((entry) => entry.name === file);
@@ -579,7 +596,9 @@ function ProgramTree({
                     value={pin?.requirementId ?? ""}
                     disabled={disabled}
                     onChange={(event) => {
+                      // "decided for you" is the Pin taken away, so the solver decides again
                       if (event.target.value !== "") onPin(courseNumber, event.target.value);
+                      else if (pin !== undefined) onUnpin(courseNumber, pin.requirementId);
                     }}
                     className="rounded-sm border border-rule bg-paper px-2 py-0.5"
                   >

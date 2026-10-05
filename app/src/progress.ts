@@ -80,7 +80,9 @@ export type ProgramProgress =
 
 export type ProgressWarningAbout =
   /** A Pin naming a Requirements File that is none of the student's Programs: it reaches nothing. */
-  | { kind: "pin-file-not-chosen"; courseNumber: string; requirementId: string; requirementsFile: string };
+  | { kind: "pin-file-not-chosen"; courseNumber: string; requirementId: string; requirementsFile: string }
+  /** A tick naming a Requirements File that is none of the student's Programs, likewise. */
+  | { kind: "tick-file-not-chosen"; requirementId: string; requirementsFile: string };
 
 export type ProgressView = {
   /** Each chosen Program, in the order the student chose them. Empty when none is chosen. */
@@ -163,6 +165,13 @@ async function progressOf(
         requirementId: pin.requirementId,
         requirementsFile: file,
       });
+    }
+  }
+
+  for (const tick of state.manualTicks) {
+    const file = effectiveFile(state, tick);
+    if (file !== undefined && !state.programs.some((p) => p.requirementsFile === file)) {
+      pinWarnings.push({ kind: "tick-file-not-chosen", requirementId: tick.requirementId, requirementsFile: file });
     }
   }
 

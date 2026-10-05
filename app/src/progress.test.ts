@@ -310,3 +310,16 @@ it("stops on nothing when the clock stands still", async () => {
 
   expect(served(await readProgress(workspace, { ...ALICE, now: () => 0 })).stoppedEarly).toBe(false);
 });
+
+it("warns about a tick naming a file that is none of the student's Programs", async () => {
+  const workspace = await ready([{ requirementsFile: "cs-2027" }]);
+  await tickManualRequirement(
+    workspace,
+    { requirementsFile: "math-2027", requirementId: "hebrew" },
+    { ...ALICE, basedOn: await versionOf(workspace) },
+  );
+
+  expect(served(await readProgress(workspace, ALICE)).pinWarnings).toEqual([
+    { kind: "tick-file-not-chosen", requirementId: "hebrew", requirementsFile: "math-2027" },
+  ]);
+});

@@ -170,7 +170,9 @@ export async function importRequirementsFile(
     return { stored: false, reason: "not-requirements", warnings: parsed.warnings };
   }
 
-  const ref = { kind: "requirements", name } as const;
+  // A name given with the extension is the file's name as it sits in the folder; the ref names it
+  // without one, so `cs-2027.json` is stored as `requirements/cs-2027.json` and not `.json.json`.
+  const ref = { kind: "requirements", name: name.endsWith(".json") ? name.slice(0, -".json".length) : name } as const;
   let existing: unknown;
   try {
     existing = await workspace.read(ref);
@@ -183,6 +185,6 @@ export async function importRequirementsFile(
   return {
     stored: true,
     replaced: existing !== undefined,
-    listed: listedAs(name, parsed.file, parsed.warnings),
+    listed: listedAs(ref.name, parsed.file, parsed.warnings),
   };
 }

@@ -34,6 +34,7 @@ let refuseNextEdit: string | undefined;
 let stoppedEarly: boolean;
 let onlyUnreadableFiles: boolean;
 let canUndo: boolean;
+let stateWarnings: unknown[];
 
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -97,7 +98,7 @@ function progressBody(): unknown {
     programWarnings: [],
     pinWarnings: [],
     version: `v${version}`,
-    warnings: [],
+    warnings: stateWarnings,
   };
 }
 
@@ -111,6 +112,7 @@ beforeEach(() => {
   stoppedEarly = false;
   onlyUnreadableFiles = false;
   canUndo = false;
+  stateWarnings = [];
   ROOT.lang = "en";
   ROOT.dir = "ltr";
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -467,4 +469,51 @@ it("offers undo on the Progress screen, based on the revision it shows, and read
   expect(mounted.querySelector('[role="status"]')?.textContent).toContain(
     t("en", "undoneEdit", { edit: t("en", "editPinCourse") }),
   );
+});
+
+it("puts the Pin back in the solver's hands when \"decided for you\" is chosen", async () => {
+  pins = [{ courseNumber: "89-110", requirementId: "electives" }];
+  const mounted = await mount();
+  await served(mounted);
+  const select = mounted.querySelector<HTMLSelectElement>('select[data-pin-course="89-110"]')!;
+  expect(select.value).toBe("electives");
+
+  select.value = "";
+  select.dispatchEvent(new Event("change", { bubbles: true }));
+
+  await vi.waitFor(() => {
+    if (mounted.querySelector('button[data-unpin="89-110"]') !== null) throw new Error("still pinned");
+  });
+  expect(lastSent("/api/progress/pins")).toMatchObject({
+    method: "DELETE",
+    body: { courseNumber: "89-110", requirementsFile: "cs-2027", requirementId: "electives" },
+  });
+});
+
+it("shows what reading the saved file had to leave out", async () => {
+  stateWarnings = [
+    { kind: "entry-dropped", at: "pins[0]", field: "requirementId" },
+    { kind: "cohort-unreadable", field: "semester" },
+  ];
+  const mounted = await mount();
+  await served(mounted);
+
+  expect(mounted.textContent).toContain(t("en", "progressWarnEntryDropped", { at: "pins[0]" }));
+  expect(mounted.textContent).toContain(t("en", "progressWarnCohortUnreadable"));
+});
+
+it("offers a Requirements File dropped into the folder while the chooser is open", async () => {
+  programs = [];
+  onlyUnreadableFiles = true;
+  const mounted = await mount();
+  await vi.waitFor(() => {
+    if (!(mounted.textContent ?? "").includes(t("en", "progressNoRequirementsFiles"))) throw new Error("not said");
+  });
+
+  onlyUnreadableFiles = false; // a file arrived, and the watcher moved the change count
+  await mount("en", 1);
+
+  await vi.waitFor(() => {
+    if (mounted.querySelector('select[data-choose="file"]') === null) throw new Error("the new file was not offered");
+  });
 });

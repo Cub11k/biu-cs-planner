@@ -25,7 +25,7 @@ const SERVED = {
     { kind: "pin-file-not-chosen", courseNumber: "89-110", requirementId: "intro", requirementsFile: "math" },
   ],
   version: "a".repeat(64),
-  warnings: [],
+  warnings: [{ kind: "cohort-unreadable" }],
 };
 
 function client(answer: (request: Request) => Response | Promise<Response>) {
@@ -52,6 +52,7 @@ it("asks for Progress with the launch token, and reads what is served", async ()
     solverWarnings: [],
     programWarnings: [],
     pinWarnings: SERVED.pinWarnings,
+    stateWarnings: [{ kind: "cohort-unreadable" }],
     version: "a".repeat(64),
   });
 });

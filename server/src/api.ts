@@ -367,16 +367,16 @@ function programsAnswer(c: Context, result: ProgramsResult) {
  * the page was based on.
  */
 const savedTickSchema = z.object({
-  requirementsFile: z.string().min(1),
-  requirementId: z.string().min(1),
+  requirementsFile: z.string().min(1).max(200),
+  requirementId: z.string().min(1).max(200),
   basedOn: basedOnSchema,
 });
 
 /** A Pin: a Course, and the Requirement of one Requirements File it counts toward. */
 const savedPinSchema = z.object({
-  courseNumber: z.string().min(1),
-  requirementsFile: z.string().min(1),
-  requirementId: z.string().min(1),
+  courseNumber: z.string().min(1).max(200),
+  requirementsFile: z.string().min(1).max(200),
+  requirementId: z.string().min(1).max(200),
   basedOn: basedOnSchema,
 });
 

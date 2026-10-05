@@ -31,6 +31,8 @@ export type SolverWarning = ServedProgress["solverWarnings"][number];
 export type ProgramsWarning = ServedProgress["programWarnings"][number];
 export type PinWarning = ServedProgress["pinWarnings"][number];
 export type EngineWarning = EvaluatedProgram["progress"]["warnings"][number];
+/** What reading the State File raised: an entry left out, a Cohort that could not be read. */
+export type StateWarning = ServedProgress["warnings"][number];
 
 /** Why the API would not serve or edit Progress: the State File's refusals. */
 export type ProgressRefusal = Extract<Answer, { reason: unknown }>["reason"];
@@ -46,6 +48,7 @@ export type ProgressResult =
       solverWarnings: SolverWarning[];
       programWarnings: ProgramsWarning[];
       pinWarnings: PinWarning[];
+      stateWarnings: StateWarning[];
       version: ProgressVersion;
     }
   | { kind: "refused"; reason: ProgressRefusal | undefined }
@@ -77,6 +80,7 @@ async function read(answer: Sent): Promise<ProgressResult> {
     solverWarnings: body.solverWarnings ?? [],
     programWarnings: body.programWarnings ?? [],
     pinWarnings: body.pinWarnings ?? [],
+    stateWarnings: body.warnings ?? [],
     version: body.version,
   };
 }

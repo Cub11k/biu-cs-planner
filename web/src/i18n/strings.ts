@@ -76,11 +76,11 @@ const english = {
   progressPartial: "Partial",
   progressMissing: "Missing",
   progressLoading: "Reading your progress…",
-  progressFileUnreadable: "Your saved plan could not be read, so your progress cannot be shown.",
+  progressFileUnreadable: "The file your work is saved in could not be read, so your progress cannot be shown.",
   progressStale:
-    "Your plan changed somewhere else since this page read it, so that change was not saved. The page has been reloaded.",
+    "The file your work is saved in changed somewhere else since this page read it, so that change was not saved. The page has been reloaded.",
   progressBackupRefused:
-    "That change was not saved: a backup of your plan could not be made first.",
+    "That change was not saved: a backup of the file your work is saved in could not be made first.",
   progressNotDone: "That change was not made.",
   progressAnswerUnreadable:
     "The answer could not be read, so whether that was saved is not known. The page is reading your progress again.",
@@ -118,6 +118,9 @@ const english = {
   progressWarnFileUnreadable: "{file} is not a Requirements File this version can read.",
   progressWarnUnlisted: "Your Workspace's requirements folder could not be read.",
   progressWarnPinFileNotChosen: "{course} is pinned in {file}, which is not one of your programs.",
+  progressWarnTickFileNotChosen: "{requirement} is ticked in {file}, which is not one of your programs.",
+  progressWarnEntryDropped: "Part of the file your work is saved in could not be read and was left out ({at}).",
+  progressWarnCohortUnreadable: "Your cohort could not be read from the file your work is saved in; choose it again.",
   progressWarningOther: "Something in your progress could not be worked out.",
   /** The labels `app/src/progress.ts` attaches to the Progress edits (#288). */
   editPinCourse: "pinning a course",
@@ -609,10 +612,10 @@ const hebrew: Record<StringKey, string> = {
   progressPartial: "חלקי",
   progressMissing: "חסר",
   progressLoading: "קורא את ההתקדמות שלך…",
-  progressFileUnreadable: "לא ניתן היה לקרוא את התוכנית השמורה שלך, ולכן לא ניתן להציג את ההתקדמות.",
+  progressFileUnreadable: "לא ניתן היה לקרוא את הקובץ שבו העבודה שלך שמורה, ולכן לא ניתן להציג את ההתקדמות.",
   progressStale:
-    "התוכנית שלך השתנתה במקום אחר מאז שהדף קרא אותה, ולכן השינוי לא נשמר. הדף נטען מחדש.",
-  progressBackupRefused: "השינוי לא נשמר: לא ניתן היה ליצור קודם גיבוי של התוכנית שלך.",
+    "הקובץ שבו העבודה שלך שמורה השתנה במקום אחר מאז שהדף קרא אותו, ולכן השינוי לא נשמר. הדף נטען מחדש.",
+  progressBackupRefused: "השינוי לא נשמר: לא ניתן היה ליצור קודם גיבוי של הקובץ שבו העבודה שלך שמורה.",
   progressNotDone: "השינוי לא בוצע.",
   progressAnswerUnreadable:
     "לא ניתן היה לקרוא את התשובה, ולכן לא ידוע אם השינוי נשמר. הדף קורא את ההתקדמות שלך שוב.",
@@ -648,6 +651,9 @@ const hebrew: Record<StringKey, string> = {
   progressWarnFileUnreadable: "{file} אינו קובץ דרישות שגרסה זו יודעת לקרוא.",
   progressWarnUnlisted: "לא ניתן היה לקרוא את תיקיית הדרישות של סביבת העבודה שלך.",
   progressWarnPinFileNotChosen: "{course} מוצמד ב-{file}, שאינו אחת התוכניות שלך.",
+  progressWarnTickFileNotChosen: "{requirement} מסומנת ב-{file}, שאינו אחת התוכניות שלך.",
+  progressWarnEntryDropped: "חלק מהקובץ שבו העבודה שלך שמורה לא ניתן היה לקריאה והושמט ({at}).",
+  progressWarnCohortUnreadable: "לא ניתן היה לקרוא את המחזור שלך מהקובץ שבו העבודה שלך שמורה; יש לבחור אותו מחדש.",
   progressWarningOther: "משהו בהתקדמות שלך לא ניתן היה לחישוב.",
   editPinCourse: "הצמדת קורס",
   editUnpinCourse: "ביטול הצמדת קורס",

@@ -38,7 +38,14 @@ export function setCohort(state: State, cohort: StudentCohort | undefined): Stat
 const sameProgram = (a: Program, b: Program): boolean =>
   a.requirementsFile === b.requirementsFile && a.track === b.track;
 
-/** Sets the whole list of Programs: one for a single major, two for a double major. */
+/**
+ * Sets the whole list of Programs: one for a single major, two for a double major.
+ *
+ * **A Pin or tick that names no file keeps the file it meant.** Such a one is read as naming the
+ * first Program's (`effectiveFile`), so when this edit changes which file is first — the order of
+ * a double major swapped, or the first Program replaced — it is stamped with the file that was
+ * first, in the same edit, rather than silently moving to another Program's Requirement.
+ */
 export function setPrograms(state: State, programs: readonly Program[]): State {
   if (
     programs.length === state.programs.length &&
@@ -46,8 +53,15 @@ export function setPrograms(state: State, programs: readonly Program[]): State {
   ) {
     return state;
   }
+  const wasFirst = state.programs[0]?.requirementsFile;
+  const keepMeaning = <T extends { requirementsFile?: string | undefined }>(held: T): T =>
+    held.requirementsFile === undefined && wasFirst !== undefined && programs[0]?.requirementsFile !== wasFirst
+      ? { ...held, requirementsFile: wasFirst }
+      : held;
   return {
     ...state,
+    pins: state.pins.map(keepMeaning),
+    manualTicks: state.manualTicks.map(keepMeaning),
     programs: programs.map((program) =>
       program.track === undefined
         ? { requirementsFile: program.requirementsFile }
