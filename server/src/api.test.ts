@@ -2910,6 +2910,13 @@ const CS_PROGRESS = {
     { id: "electives", kind: "credits", min: 6, pool: "cs" },
     { id: "hebrew", kind: "manual", text: { he: "הבעה עברית", en: "Hebrew expression" } },
   ],
+  tracks: [
+    {
+      id: "ai",
+      name: { he: "בינה מלאכותית", en: "AI" },
+      requirements: [{ id: "ml", kind: "course", course: "89-391" }],
+    },
+  ],
 };
 const MATH_PROGRESS = {
   schemaVersion: 1,
@@ -2955,6 +2962,7 @@ it("serves Progress with no Program chosen as no Programs, and writes nothing", 
 
   expect(read.status).toBe(200);
   await expect(read.json()).resolves.toEqual({
+    cohort: null,
     programs: [],
     stoppedEarly: false,
     solverWarnings: [],
@@ -2984,6 +2992,21 @@ it("serves Progress for a single major, both lenses evaluated", async () => {
   });
   expect(body.stoppedEarly).toBe(false);
   expect(body.version).toBe(await currentVersion());
+});
+
+it("serves the Cohort with Progress once one is set, and null before (#331)", async () => {
+  await progressWorkspace([{ requirementsFile: "cs-2027" }]);
+  await expect((await get("/api/progress")).json()).resolves.toMatchObject({ cohort: null });
+
+  const set = await put("/api/cohort", {
+    cohort: { academicYear: 2026, semester: "fall" },
+    basedOn: await currentVersion(),
+  });
+  expect(set.status).toBe(200);
+
+  await expect((await get("/api/progress")).json()).resolves.toMatchObject({
+    cohort: { academicYear: 2026, semester: "fall" },
+  });
 });
 
 it("serves Progress for a double major, the Course counted in one Program", async () => {
@@ -3094,6 +3117,62 @@ it("names every bad Pin or tick request as a 400", async () => {
   const answered = await post("/api/progress/ticks", { requirementId: "hebrew" });
   expect(answered.status).toBe(400);
   await expect(answered.json()).resolves.toEqual({ error: "not-a-tick" });
+});
+
+/** #289: a Progress read for other Programs, the what-if, carried as the JSON of the list. */
+const whatIf = (programs: unknown) => `/api/progress?whatIf=${encodeURIComponent(JSON.stringify(programs))}`;
+
+it("previews another Track without saving: the file's bytes, its revision and undo stay", async () => {
+  await progressWorkspace([{ requirementsFile: "cs-2027" }]);
+  // an edit first, so there is an undo step a preview could disturb
+  await post("/api/progress/ticks", { requirementsFile: "cs-2027", requirementId: "hebrew", basedOn: await currentVersion() });
+  const bytes = await readFile(join(root, "me.state.json"));
+  const version = await currentVersion();
+  const history = await (await get("/api/history")).json();
+
+  const preview = await get(whatIf([{ requirementsFile: "cs-2027", track: "ai" }]));
+
+  expect(preview.status).toBe(200);
+  const body = (await preview.json()) as ProgressBody;
+  expect(body.programs[0]).toMatchObject({ requirementsFile: "cs-2027", track: "ai", status: "evaluated" });
+  expect(requirementIn(body, 0, "ml")?.completed.status).toBe("missing");
+  expect(body.version).toBe(version);
+  expect(await readFile(join(root, "me.state.json"))).toEqual(bytes);
+  expect(await currentVersion()).toBe(version);
+  await expect((await get("/api/history")).json()).resolves.toEqual(history);
+  // the stored choice is what a plain read still evaluates, and undo still undoes the tick
+  const real = (await (await get("/api/progress")).json()) as ProgressBody;
+  expect(requirementIn(real, 0, "ml")).toBeUndefined();
+  await expect((await step(UNDO)).json()).resolves.toMatchObject({ label: "tick-manual" });
+});
+
+it("adopts a previewed Track as one ordinary edit on the revision the preview was read from", async () => {
+  await progressWorkspace([{ requirementsFile: "cs-2027" }]);
+  const hypothetical = [{ requirementsFile: "cs-2027", track: "ai" }];
+  const preview = (await (await get(whatIf(hypothetical))).json()) as ProgressBody;
+
+  const adopted = await put("/api/programs", { programs: hypothetical, basedOn: preview.version });
+
+  expect(adopted.status).toBe(200);
+  const real = (await (await get("/api/progress")).json()) as ProgressBody;
+  expect(requirementIn(real, 0, "ml")?.completed.status).toBe("missing");
+  await expect((await step(UNDO)).json()).resolves.toMatchObject({ label: "set-programs" });
+});
+
+it("names a what-if that is not a Programs list as a 400, and evaluates nothing", async () => {
+  await progressWorkspace([{ requirementsFile: "cs-2027" }]);
+
+  for (const [path, error] of [
+    ["/api/progress?whatIf=not-json", "body-not-json"],
+    [whatIf([{ requirementsFile: "cs-2027", constructor: {} }]), "unsafe-keys"],
+    [whatIf({ requirementsFile: "cs-2027" }), "not-programs"],
+    [whatIf([{ track: "ai" }]), "not-programs"],
+    [whatIf(Array.from({ length: 9 }, () => ({ requirementsFile: "cs-2027" }))), "not-programs"],
+  ]) {
+    const answered = await get(path!);
+    expect(answered.status).toBe(400);
+    await expect(answered.json()).resolves.toEqual({ error });
+  }
 });
 
 it("names no path in a Progress answer", async () => {
