@@ -1,4 +1,5 @@
 import type { ScreenDefinition } from "./AppShell.tsx";
+import { PROGRESS_SCREEN } from "./progress/ProgressScreen.tsx";
 import { TIMETABLE_SCREEN } from "./timetable/TimetableScreen.tsx";
 
 /**
@@ -9,4 +10,4 @@ import { TIMETABLE_SCREEN } from "./timetable/TimetableScreen.tsx";
  * placeholder: a screen in the navigation that shows nothing is a dead end, and the shell leaves a
  * screen that is not here out of the navigation altogether.
  */
-export const SCREENS: readonly ScreenDefinition[] = [TIMETABLE_SCREEN];
+export const SCREENS: readonly ScreenDefinition[] = [TIMETABLE_SCREEN, PROGRESS_SCREEN];

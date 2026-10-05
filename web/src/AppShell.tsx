@@ -185,6 +185,10 @@ const EDIT_LABEL_STRING = new Map<string, StringKey>([
   ["copy-blocked-times", "editCopyBlockedTimes"],
   ["set-cohort", "editSetCohort"],
   ["set-programs", "editSetPrograms"],
+  ["pin-course", "editPinCourse"],
+  ["unpin-course", "editUnpinCourse"],
+  ["tick-manual", "editTickManual"],
+  ["untick-manual", "editUntickManual"],
 ]);
 
 export function AppShell({
