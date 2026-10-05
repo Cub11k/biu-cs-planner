@@ -97,7 +97,7 @@ Anything the vocabulary cannot express becomes a Manual Requirement with its tex
   - credit load per Semester, against the student's credit load limit (a setting, default 24)
   - missing Requirements
   - progression deadlines, when the Requirements File defines them
-- **Each Warning names its target**, so a screen can put it on the right card: an Attempt (by its id) for the Prerequisite, Offering Pattern and Year-long checks, a Semester for credit load and a deadline, and a Program (by its Requirements File) for the missing Requirements, which it lists by id. For planning, a planned or registered Attempt counts as passed by the end of its Semester, and **a Warning that relied on one says which** (`reliesOn`, by Attempt id), so the screen can say "assuming you pass 89-110". See `core/src/plan/checks.ts` and `CONTEXT.md`.
+- **Each Warning names its target**, so a screen can put it on the right card: an Attempt (by its id) for the Prerequisite, Offering Pattern and Year-long checks, a Semester for credit load and a deadline, and a Program (by its Requirements File) for the missing Requirements, which it lists by id. For planning, a planned or registered Attempt counts as passed by the end of its Semester, and **a Warning that relied on one says which** (`reliesOn`, by Attempt id), so the screen can say "assuming you pass 89-110". See `core/src/plan/checks.ts`.
 
 ## Timetable
 
