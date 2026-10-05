@@ -350,6 +350,23 @@ describe("a double major", () => {
     expect(solution.assignments.flatMap((a) => a.completed)).toHaveLength(1);
   });
 
+  it("lets the later Program's Pin give way when two would count one Course in both", () => {
+    const solution = solveAssignment({
+      programs: [{ file: cs }, { file: math }],
+      attempts,
+      pins: [pin("88-101", "math-electives"), pin("88-101", "calculus")],
+    });
+
+    expect(solution.warnings).toEqual([
+      { kind: "pin-conflict", courseNumber: "88-101", requirementId: "calculus" },
+    ]);
+    expect(solution.assignments[0]!.completed).toContainEqual({
+      courseNumber: "88-101",
+      requirementIds: ["math-electives"],
+    });
+    expect(solution.assignments[1]!.completed).toEqual([]);
+  });
+
   it("applies a Pin in whichever Program has the Requirement", () => {
     const solution = solveAssignment({
       programs: [{ file: cs }, { file: math }],

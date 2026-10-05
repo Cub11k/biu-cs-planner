@@ -235,6 +235,7 @@ describe("allOf and nOf", () => {
       {
         id: "core",
         kind: "allOf",
+        name: { he: "חובה", en: "Core" },
         of: [
           { id: "intro", kind: "course", course: "89-110" },
           { id: "ds", kind: "course", course: "89-111" },
@@ -258,6 +259,7 @@ describe("allOf and nOf", () => {
     const some = evaluate(file, [attempt("89-110", "passed")]);
     const none = evaluate(file, []);
 
+    expect(node(all, "core").name).toEqual({ he: "חובה", en: "Core" });
     expect(node(all, "core").completed).toEqual({
       status: "satisfied",
       courses: ["89-110", "89-111"],
@@ -360,11 +362,13 @@ describe("credits and Pools", () => {
         { number: "89-99", credits: 1 },
         { number: "88-150", credits: 1 },
         { number: "89-1a0", credits: 1 },
+        { number: "89-1e2", credits: 1 },
       ],
       pools: [{ id: "first", kind: "range", department: "89", from: 100, to: 199 }],
       requirements: [{ id: "c", kind: "credits", min: 10, pool: "first" }],
     });
-    const attempts = ["89-150", "89-1195", "89-99", "88-150", "89-1a0"].map((c) =>
+    // `89-1e2` is 100 to `Number`, but its number part is not all digits, so it is in no range.
+    const attempts = ["89-150", "89-1195", "89-99", "88-150", "89-1a0", "89-1e2"].map((c) =>
       attempt(c, "passed"),
     );
 
@@ -394,6 +398,7 @@ describe("credits and Pools", () => {
         { number: "89-210", credits: 1 },
         { number: "88-101", credits: 1 },
         { number: "88-1010", credits: 1 },
+        { number: "189-310", credits: 1 },
       ],
       pools: [
         { id: "adv", kind: "prefix", prefix: "89-3" },
@@ -404,7 +409,7 @@ describe("credits and Pools", () => {
         { id: "b", kind: "credits", min: 10, pool: "calc" },
       ],
     });
-    const attempts = ["89-310", "89-3001", "89-210", "88-101", "88-1010"].map((c) =>
+    const attempts = ["89-310", "89-3001", "89-210", "88-101", "88-1010", "189-310"].map((c) =>
       attempt(c, "passed"),
     );
     const progress = evaluate(file, attempts);
@@ -581,6 +586,30 @@ describe("Equivalence", () => {
 
     expect(progress.totalCredits.completed).toBe(5);
     expect(progress.warnings).toEqual([]);
+  });
+
+  it("reads the old number wherever the file or the Assignment writes it", () => {
+    const old = program({
+      courses: COURSES,
+      equivalences: [{ from: "89-109", to: "89-110" }],
+      pools: [{ id: "legacy", kind: "list", courses: ["89-109"] }],
+      requirements: [
+        { id: "by-old-number", kind: "course", course: "89-109" },
+        { id: "from-a-list", kind: "credits", min: 5, pool: "legacy" },
+      ],
+    });
+    const attempts = [attempt("89-110", "passed")];
+    const placed = (requirementId: string): Assignment => ({
+      completed: [{ courseNumber: "89-109", requirementIds: [requirementId] }],
+      projected: [],
+    });
+
+    const onLeaf = evaluateProgress({ file: old, attempts, assignment: placed("by-old-number") });
+    const inList = evaluateProgress({ file: old, attempts, assignment: placed("from-a-list") });
+
+    expect(onLeaf.warnings).toEqual([]);
+    expect(node(onLeaf, "by-old-number").completed.status).toBe("satisfied");
+    expect(node(inList, "from-a-list").completed.status).toBe("satisfied");
   });
 
   it("does not loop on a cycle of Equivalences", () => {
@@ -763,6 +792,36 @@ describe("the Assignment", () => {
     expect(node(progress, "ai").completed.status).toBe("satisfied");
     expect(node(progress, "electives").completed.status).toBe("satisfied");
     expect(progress.warnings).toEqual([]);
+  });
+
+  it("does not let a permission naming one Requirement share between two leaves below it", () => {
+    const nested = program({
+      courses: COURSES,
+      pools: [{ id: "all", kind: "prefix", prefix: "89-" }],
+      requirements: [
+        {
+          id: "block",
+          kind: "allOf",
+          of: [
+            { id: "first", kind: "credits", min: 3, pool: "all" },
+            { id: "second", kind: "credits", min: 3, pool: "all" },
+          ],
+        },
+        { id: "elsewhere", kind: "credits", min: 3, pool: "all" },
+      ],
+      doubleCounting: { within: [{ requirements: ["block", "elsewhere"] }] },
+    });
+
+    const progress = evaluateProgress({
+      file: nested,
+      attempts,
+      assignment: only(["first", "second"]),
+    });
+
+    expect(node(progress, "second").completed.status).toBe("missing");
+    expect(progress.warnings).toEqual([
+      { kind: "assignment-double-count", courseNumber: "89-310", requirementId: "second" },
+    ]);
   });
 
   it("holds a permission to its Pool: a Course outside it still counts once", () => {
