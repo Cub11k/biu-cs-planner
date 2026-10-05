@@ -9,8 +9,9 @@ tickets as its sub-issues (`issue-tracker.md`, "How big a ticket is"), or a fix 
 next section describes. Its lane is therefore already drawn by the grouping, and the table below
 records that lane rather than inventing one.
 
-None of what follows is derivable from the code. Each rule is a mistake that was made once,
-written as the thing that prevents it.
+None of what follows is derivable from the code. The first section is the maintainer's standing
+choice of what a run carries; every rule after it is a mistake that was made once, written as the
+thing that prevents it.
 
 ## Which tickets a run carries
 
