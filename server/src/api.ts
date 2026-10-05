@@ -387,20 +387,23 @@ const savedPinSchema = z.object({
  * it is a query on this route and not a body on a route that writes.
  *
  * The text is parsed as JSON and checked like a body (no dangerous key, then the schema), never
- * evaluated (CLAUDE.md). `undefined` is no what-if; `false` is one that is not a Programs list.
+ * evaluated (CLAUDE.md), and what was wrong is named the way `bodyAs` names it. No `whatIf` at all
+ * is no what-if.
  */
-function whatIfOf(c: Context): z.infer<typeof savedProgramsSchema>["programs"] | undefined | false {
+function whatIfOf(
+  c: Context,
+): { ok: true; value: z.infer<typeof savedProgramsSchema>["programs"] | undefined } | { ok: false; error: string } {
   const text = c.req.query("whatIf");
-  if (text === undefined) return undefined;
+  if (text === undefined) return { ok: true, value: undefined };
   let value: unknown;
   try {
     value = JSON.parse(text);
   } catch {
-    return false;
+    return { ok: false, error: "body-not-json" };
   }
-  if (hasDangerousKey(value)) return false;
+  if (hasDangerousKey(value)) return { ok: false, error: "unsafe-keys" };
   const parsed = savedProgramsSchema.shape.programs.safeParse(value);
-  return parsed.success ? parsed.data : false;
+  return parsed.success ? { ok: true, value: parsed.data } : { ok: false, error: "not-programs" };
 }
 
 /**
@@ -748,8 +751,11 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
      */
     .get("/api/progress", async (c) => {
       const whatIf = whatIfOf(c);
-      if (whatIf === false) return c.json({ error: "not-programs" }, 400);
-      return progressAnswer(c, await readProgress(workspace, whatIf === undefined ? {} : { whatIf }));
+      if (!whatIf.ok) return c.json({ error: whatIf.error }, 400);
+      return progressAnswer(
+        c,
+        await readProgress(workspace, whatIf.value === undefined ? {} : { whatIf: whatIf.value }),
+      );
     })
 
     /**

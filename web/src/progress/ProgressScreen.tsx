@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { api } from "../api.ts";
 import { unauthorizedSaid, type ScreenDefinition, type ScreenProps } from "../AppShell.tsx";
 import { t, type Language, type StringKey } from "../i18n/strings.ts";
+import { academicYearOf, academicYearSpan } from "../timetable/calendar.ts";
 import {
   chooseCohort,
   choosePrograms,
@@ -367,8 +368,9 @@ export function ProgressScreen({
                 <button
                   type="button"
                   data-what-if="start"
+                  disabled={sending}
                   onClick={() => setWhatIf(choicesOf(progress.programs))}
-                  className="mb-6 rounded-sm border border-rule bg-paper px-3 py-1 text-sm text-ink-soft"
+                  className="mb-6 rounded-sm border border-rule bg-paper px-3 py-1 text-sm text-ink-soft disabled:opacity-50"
                 >
                   {t(language, "progressWhatIfStart")}
                 </button>
@@ -389,13 +391,15 @@ export function ProgressScreen({
                   files={files}
                   warnings={preview?.kind === "served" ? preview.programWarnings : []}
                   disabled={sending}
+                  keepOne
                   onPrograms={setWhatIf}
                 />
                 <span className="flex flex-wrap gap-2">
                   <button
                     type="button"
                     data-what-if="adopt"
-                    disabled={sending || unchanged}
+                    // adopting what has been shown, never a list whose Progress is still unread
+                    disabled={sending || unchanged || preview?.kind !== "served"}
                     // adopting is the set-Programs edit #331 puts on screen: one save, one undo step
                     onClick={() =>
                       send(
@@ -544,10 +548,8 @@ function WhatIfView({
       {preview.programs.map((program, index) => {
         const key = `${program.requirementsFile}:${index}`;
         if (program.status !== "evaluated") return <Unevaluated key={key} language={language} program={program} />;
-        const now = real.find(
-          (held): held is Extract<ProgramProgress, { status: "evaluated" }> =>
-            held.status === "evaluated" && held.requirementsFile === program.requirementsFile,
-        );
+        const held = real.find((chosen) => chosen.requirementsFile === program.requirementsFile);
+        const now = held?.status === "evaluated" ? held : undefined;
         const changes = now === undefined ? undefined : whatIfChanges(now, program, lens);
         const names = new Map(
           [...walk(now?.progress.requirements ?? []), ...walk(program.progress.requirements)].map(({ node }) => [
@@ -559,7 +561,11 @@ function WhatIfView({
           <div key={key}>
             <div data-what-if-changes={program.requirementsFile} className="mb-3 text-sm">
               {changes === undefined ? (
-                <p className="text-pencil">{t(language, "progressWhatIfOtherProgram", { file: program.requirementsFile })}</p>
+                <p className="text-pencil">
+                  {t(language, held === undefined ? "progressWhatIfOtherProgram" : "progressWhatIfNotEvaluated", {
+                    file: program.requirementsFile,
+                  })}
+                </p>
               ) : changes.satisfied.length + changes.missing.length + changes.dropped.length === 0 ? (
                 <p className="text-pencil">{t(language, "progressWhatIfNoChange")}</p>
               ) : (
@@ -734,10 +740,15 @@ const SEMESTER_STRING = {
   summer: "semesterSummer",
 } as const satisfies Record<(typeof SEMESTERS)[number], StringKey>;
 
+/** How many Academic Years back the Cohort form offers, before the one now. */
+const COHORT_YEARS_BACK = 15;
+
 /**
- * The student's Cohort (#331): what it is, and a form to set or clear it. The year is the Academic
- * Year, named by the Gregorian year it ends in (`CONTEXT.md`), so it is typed as a number. The form
- * starts from the Cohort the server holds, and starts again whenever that changes.
+ * The student's Cohort (#331): what it is, and a form to set or clear it. An Academic Year is named
+ * by the Gregorian year it ends in (`CONTEXT.md`), which is not the year a student would type for
+ * "the year I started", so the year is never typed as a bare number: it is chosen, and said, as the
+ * span the Timetable shows (`2025-26`). The form starts from the Cohort the server holds, and
+ * starts again whenever that changes.
  */
 function CohortForm({
   language,
@@ -750,14 +761,17 @@ function CohortForm({
   disabled: boolean;
   onCohort: (cohort: Cohort) => void;
 }): React.JSX.Element {
-  const [year, setYear] = useState(cohort === null ? "" : String(cohort.academicYear));
+  const now = academicYearOf(new Date());
+  const [year, setYear] = useState(String(cohort?.academicYear ?? now));
   const [semester, setSemester] = useState<(typeof SEMESTERS)[number]>(cohort?.semester ?? "fall");
   useEffect(() => {
-    setYear(cohort === null ? "" : String(cohort.academicYear));
+    setYear(String(cohort?.academicYear ?? academicYearOf(new Date())));
     setSemester(cohort?.semester ?? "fall");
   }, [cohort?.academicYear, cohort?.semester]);
-  const typed = Number(year);
-  const valid = year.trim() !== "" && Number.isInteger(typed);
+  // from next year back, and the one held even when it is further back than that
+  const years = Array.from({ length: COHORT_YEARS_BACK + 2 }, (_, back) => now + 1 - back);
+  if (cohort !== null && !years.includes(cohort.academicYear)) years.push(cohort.academicYear);
+  const yearSaid = (academicYear: number): string => t(language, "academicYear", academicYearSpan(academicYear));
 
   return (
     <form
@@ -766,30 +780,34 @@ function CohortForm({
       className="mb-4 flex flex-wrap items-end gap-3 text-sm"
       onSubmit={(event) => {
         event.preventDefault();
-        if (valid) onCohort({ academicYear: typed, semester });
+        onCohort({ academicYear: Number(year), semester });
       }}
     >
       <span className="self-center">
-        {t(language, "progressCohort")}:{" "}
+        {t(language, "progressCohortIs")}{" "}
         <span data-cohort-said className="font-semibold">
           {cohort === null
             ? t(language, "progressCohortNone")
             : t(language, "progressCohortSaid", {
-                year: cohort.academicYear,
+                year: yearSaid(cohort.academicYear),
                 semester: t(language, SEMESTER_STRING[cohort.semester]),
               })}
         </span>
       </span>
       <label className="flex flex-col">
         {t(language, "progressCohortYear")}
-        <input
-          type="number"
-          inputMode="numeric"
+        <select
           data-cohort-year
           value={year}
           onChange={(event) => setYear(event.target.value)}
-          className="w-24 rounded-sm border border-rule bg-paper px-2 py-1"
-        />
+          className="rounded-sm border border-rule bg-paper px-2 py-1"
+        >
+          {years.map((academicYear) => (
+            <option key={academicYear} value={String(academicYear)}>
+              {yearSaid(academicYear)}
+            </option>
+          ))}
+        </select>
       </label>
       <label className="flex flex-col">
         {t(language, "progressCohortSemester")}
@@ -809,7 +827,7 @@ function CohortForm({
       <button
         type="submit"
         data-cohort-set
-        disabled={disabled || !valid}
+        disabled={disabled}
         className="rounded-sm border border-rule bg-paper px-3 py-1 text-ink-soft disabled:opacity-50"
       >
         {t(language, "progressCohortSet")}
@@ -851,6 +869,7 @@ function ProgramsPanel({
   files,
   warnings,
   disabled,
+  keepOne = false,
   onPrograms,
 }: {
   language: Language;
@@ -858,6 +877,8 @@ function ProgramsPanel({
   files: ListedRequirements[] | undefined | "loading";
   warnings: readonly ProgramsWarning[];
   disabled: boolean;
+  /** A what-if is of some Programs: its last one is changed, never removed. */
+  keepOne?: boolean;
   onPrograms: (programs: ProgramChoice[]) => void;
 }): React.JSX.Element {
   const [adding, setAdding] = useState("");
@@ -934,7 +955,7 @@ function ProgramsPanel({
               <button
                 type="button"
                 data-program-remove={index}
-                disabled={disabled}
+                disabled={disabled || (keepOne && programs.length === 1)}
                 onClick={() => onPrograms(programs.filter((_, at) => at !== index))}
                 className="rounded-sm border border-rule bg-paper px-3 py-1 text-ink-soft disabled:opacity-50"
               >

@@ -3131,16 +3131,16 @@ it("adopts a previewed Track as one ordinary edit on the revision the preview wa
 it("names a what-if that is not a Programs list as a 400, and evaluates nothing", async () => {
   await progressWorkspace([{ requirementsFile: "cs-2027" }]);
 
-  for (const path of [
-    "/api/progress?whatIf=not-json",
-    whatIf({ requirementsFile: "cs-2027" }),
-    whatIf([{ track: "ai" }]),
-    whatIf([{ requirementsFile: "cs-2027", constructor: {} }]),
-    whatIf(Array.from({ length: 9 }, () => ({ requirementsFile: "cs-2027" }))),
+  for (const [path, error] of [
+    ["/api/progress?whatIf=not-json", "body-not-json"],
+    [whatIf([{ requirementsFile: "cs-2027", constructor: {} }]), "unsafe-keys"],
+    [whatIf({ requirementsFile: "cs-2027" }), "not-programs"],
+    [whatIf([{ track: "ai" }]), "not-programs"],
+    [whatIf(Array.from({ length: 9 }, () => ({ requirementsFile: "cs-2027" }))), "not-programs"],
   ]) {
-    const answered = await get(path);
+    const answered = await get(path!);
     expect(answered.status).toBe(400);
-    await expect(answered.json()).resolves.toEqual({ error: "not-programs" });
+    await expect(answered.json()).resolves.toEqual({ error });
   }
 });
 

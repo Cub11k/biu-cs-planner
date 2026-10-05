@@ -31,6 +31,8 @@ let cohort: { academicYear: number; semester: string } | null;
 let programWarnings: unknown[];
 /** Every what-if the screen asked Progress for, as the Programs it carried (#289). */
 let previews: unknown[];
+/** Files the real read finds missing and a what-if's read, made later, finds there. */
+let unreadableInReal: string[];
 let pins: Array<{ courseNumber: string; requirementId: string }>;
 let ticked: boolean;
 let version: number;
@@ -51,7 +53,7 @@ const KNOWN_FILES = ["cs-2027", "math-2027"];
  * is asked about: the stored ones, or a what-if's. Under the AI Track the electives are met and an
  * AI core is added, still to do, so a switch has something to compare.
  */
-function progressBody(of: typeof programs = programs): unknown {
+function progressBody(of: typeof programs = programs, real = true): unknown {
   const pinnedToElectives = pins.some((pin) => pin.courseNumber === "89-110" && pin.requirementId === "electives");
   const evaluation = (status: string, courses: string[], extra: object = {}) => ({ status, courses, ...extra });
   const tree = (track: string | undefined) => [
@@ -105,7 +107,9 @@ function progressBody(of: typeof programs = programs): unknown {
     cohort,
     programs: of.map(({ requirementsFile, track }) => {
       const named = { requirementsFile, ...(track === undefined ? {} : { track }) };
-      if (!KNOWN_FILES.includes(requirementsFile)) return { ...named, status: "missing" };
+      if (!KNOWN_FILES.includes(requirementsFile) || (real && unreadableInReal.includes(requirementsFile))) {
+        return { ...named, status: "missing" };
+      }
       return {
         ...named,
         status: "evaluated",
@@ -142,6 +146,7 @@ beforeEach(() => {
   cohort = null;
   programWarnings = [];
   previews = [];
+  unreadableInReal = [];
   pins = [];
   ticked = false;
   version = 1;
@@ -170,7 +175,7 @@ beforeEach(() => {
     if (pathname === "/api/progress" && searchParams.has("whatIf")) {
       const whatIf = JSON.parse(searchParams.get("whatIf")!) as typeof programs;
       previews.push(whatIf);
-      return json(progressBody(whatIf));
+      return json(progressBody(whatIf, false));
     }
     if (pathname === "/api/progress") return json(progressBody());
     if (pathname === "/api/requirements" && onlyUnreadableFiles) {
@@ -672,7 +677,12 @@ it("sets the Cohort, says it, and clears it", async () => {
   expect((await found(mounted, "[data-cohort-said]")).textContent).toBe(t("en", "progressCohortNone"));
   expect(mounted.querySelector("button[data-cohort-clear]")).toBeNull();
 
-  await userEvent.fill(await found<HTMLInputElement>(mounted, "input[data-cohort-year]"), "2026");
+  const year = await found<HTMLSelectElement>(mounted, "select[data-cohort-year]");
+  // the Academic Year is offered as the span it is, never as a bare year to guess the meaning of
+  expect(year.querySelector('option[value="2026"]')?.textContent).toBe(
+    t("en", "academicYear", { first: "2025", second: "26" }),
+  );
+  choose(year, "2026");
   choose(await found<HTMLSelectElement>(mounted, "select[data-cohort-semester]"), "spring");
   (await found<HTMLButtonElement>(mounted, "button[data-cohort-set]")).click();
 
@@ -684,7 +694,13 @@ it("sets the Cohort, says it, and clears it", async () => {
   });
   await vi.waitFor(() => {
     const said = mounted.querySelector("[data-cohort-said]")?.textContent;
-    if (said !== t("en", "progressCohortSaid", { year: 2026, semester: t("en", "semesterSpring") })) {
+    if (
+      said !==
+      t("en", "progressCohortSaid", {
+        year: t("en", "academicYear", { first: "2025", second: "26" }),
+        semester: t("en", "semesterSpring"),
+      })
+    ) {
       throw new Error(`the Cohort said ${said}`);
     }
   });
@@ -758,7 +774,10 @@ it("says the Programs and the Cohort in Hebrew, right to left", async () => {
 
   expect(mounted.querySelector("[data-programs]")?.textContent).toContain(t("he", "progressProgramsHeading"));
   expect(mounted.querySelector("[data-cohort-said]")?.textContent).toBe(
-    t("he", "progressCohortSaid", { year: 2026, semester: t("he", "semesterFall") }),
+    t("he", "progressCohortSaid", {
+      year: t("he", "academicYear", { first: "2025", second: "26" }),
+      semester: t("he", "semesterFall"),
+    }),
   );
   const file = mounted.querySelector<HTMLElement>('select[data-program-file="0"]')!;
   const remove = mounted.querySelector<HTMLElement>('button[data-program-remove="0"]')!;
@@ -940,4 +959,49 @@ it("drops an open what-if once no Program is chosen any more, as after an undo",
   await mount("en", 2);
   await served(mounted);
   expect(mounted.querySelector("section[data-what-if]")).toBeNull();
+});
+
+it("offers a Cohort held further back than the form's years, as what it is", async () => {
+  cohort = { academicYear: 1999, semester: "summer" };
+  const mounted = await mount();
+  await served(mounted);
+
+  const year = await found<HTMLSelectElement>(mounted, "select[data-cohort-year]");
+  expect(year.value).toBe("1999");
+  expect(mounted.querySelector<HTMLSelectElement>("select[data-cohort-semester]")!.value).toBe("summer");
+});
+
+it("keeps a what-if's last Program, and offers adopting only what has been shown", async () => {
+  const mounted = await mount();
+  await served(mounted);
+  const whatIf = await startWhatIf(mounted);
+  // a what-if of no Program at all is not one: its last Program is changed, never removed
+  expect(whatIf.querySelector<HTMLButtonElement>('button[data-program-remove="0"]')!.disabled).toBe(true);
+  // nothing tried yet, so nothing to adopt
+  expect(mounted.querySelector<HTMLButtonElement>('button[data-what-if="adopt"]')!.disabled).toBe(true);
+
+  choose(whatIf.querySelector<HTMLSelectElement>('select[data-program-track="0"]')!, "ai");
+  await previewShown(mounted);
+
+  expect(mounted.querySelector<HTMLButtonElement>('button[data-what-if="adopt"]')!.disabled).toBe(false);
+});
+
+it("says a what-if of a Program held but not evaluated has nothing to compare with, not that it is not held", async () => {
+  // the file could not be read for the real Progress, and could by the time the what-if was asked
+  unreadableInReal = ["math-2027"];
+  programs = [{ requirementsFile: "math-2027" }];
+  const mounted = await mount();
+  await found(mounted, '[data-program-row="0"]');
+  const whatIf = await startWhatIf(mounted);
+
+  choose(whatIf.querySelector<HTMLSelectElement>("select[data-program-add]")!, "cs-2027");
+  whatIf.querySelector<HTMLButtonElement>("button[data-program-add-submit]")!.click();
+
+  await previewShown(mounted);
+  expect(mounted.querySelector('[data-what-if-changes="math-2027"]')?.textContent).toBe(
+    t("en", "progressWhatIfNotEvaluated", { file: "math-2027" }),
+  );
+  expect(mounted.querySelector('[data-what-if-changes="cs-2027"]')?.textContent).toBe(
+    t("en", "progressWhatIfOtherProgram", { file: "cs-2027" }),
+  );
 });
