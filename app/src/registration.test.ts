@@ -77,6 +77,13 @@ async function ready(): Promise<MemoryWorkspace> {
 const A = { ...FALL_2027, variant: "A" } as const;
 const B = { ...FALL_2027, variant: "B" } as const;
 
+/** "Apply all", as the page sends it: with the digest of the preview the student was shown. */
+async function acceptAll(workspace: MemoryWorkspace, at: TimetableRef) {
+  const preview = await readRegistration(workspace, at);
+  if (preview.kind !== "served") throw new Error(`no preview: ${preview.kind}`);
+  return { applyDiffs: true, digest: preview.digest } as const;
+}
+
 it("previews the Plan Diffs and the registered statuses, and writes nothing", async () => {
   const workspace = await ready();
   const written = workspace.written().length;
@@ -121,7 +128,7 @@ it("applies all and registers in one save and one undo step when the student acc
   const result = await markVariantRegistered(
     workspace,
     A,
-    { applyDiffs: true },
+    await acceptAll(workspace, A),
     { ...(await now(workspace)), history, newId: () => "new-1" },
   );
 
@@ -141,10 +148,11 @@ it("applies all and registers in one save and one undo step when the student acc
 it("refuses the whole mark on a stale revision, and writes none of it", async () => {
   const workspace = await ready();
   const { basedOn } = await now(workspace);
+  const choice = await acceptAll(workspace, A);
   await addVariant(workspace, FALL_2027, { name: "C" }, { basedOn });
   const written = workspace.written().length;
 
-  const result = await markVariantRegistered(workspace, A, { applyDiffs: true }, { basedOn });
+  const result = await markVariantRegistered(workspace, A, choice, { basedOn });
 
   expect(result).toMatchObject({ kind: "refused", reason: "state-file-changed" });
   expect(workspace.written()).toHaveLength(written);
@@ -152,7 +160,7 @@ it("refuses the whole mark on a stale revision, and writes none of it", async ()
 
 it("unmarks the Variant and leaves what the mark did to the Plan", async () => {
   const workspace = await ready();
-  await markVariantRegistered(workspace, A, { applyDiffs: true }, await now(workspace));
+  await markVariantRegistered(workspace, A, await acceptAll(workspace, A), await now(workspace));
   const marked = await stored(workspace);
 
   const result = await unmarkVariantRegistered(workspace, A, await now(workspace));
@@ -162,4 +170,59 @@ it("unmarks the Variant and leaves what the mark did to the Plan", async () => {
     { name: "B", primary: false },
   ]);
   expect((await stored(workspace)).attempts).toEqual(marked.attempts);
+});
+
+/* #355: "apply all" applies the list the student read, and the preview and the mark agree on a name. */
+
+it("refuses apply all as stale when the Catalog changed since the preview, and writes nothing", async () => {
+  const workspace = await ready();
+  const choice = await acceptAll(workspace, A);
+  const { basedOn } = await now(workspace);
+  // a crawl lands: 89-230 is now given in Fall too, so the move the student was shown is gone
+  workspace.seed({ kind: "catalog", academicYear: 2027 }, { ...CATALOG, offerings: [...CATALOG.offerings, offering("89-230", "fall")] });
+  const written = workspace.written().length;
+  const history = collecting();
+
+  const result = await markVariantRegistered(workspace, A, choice, { basedOn, history });
+
+  expect(result).toEqual({ kind: "plan-diff-stale", version: basedOn, warnings: [] });
+  expect(workspace.written()).toHaveLength(written);
+  expect(history.edits).toEqual([]);
+  // and the preview read now is a different list, whose digest is accepted
+  const fresh = await acceptAll(workspace, A);
+  expect(fresh.digest).not.toBe(choice.digest);
+  expect((await markVariantRegistered(workspace, A, fresh, { basedOn })).kind).toBe("served");
+});
+
+it("refuses a name the file does not hold in the preview and in the mark alike", async () => {
+  const workspace = await ready();
+  const { basedOn } = await now(workspace);
+  const missing = { ...FALL_2027, variant: "Z" };
+  const written = workspace.written().length;
+
+  expect(await readRegistration(workspace, missing)).toEqual({ kind: "variant-not-found", version: basedOn, warnings: [] });
+  for (const choice of [{ applyDiffs: false } as const, await acceptAll(workspace, A)]) {
+    expect(await markVariantRegistered(workspace, missing, choice, { basedOn })).toEqual({
+      kind: "variant-not-found",
+      version: basedOn,
+      warnings: [],
+    });
+  }
+  expect(workspace.written()).toHaveLength(written);
+  // with no name both mean the primary, A
+  expect(await readRegistration(workspace, FALL_2027)).toMatchObject({ kind: "served", variantName: "A", variantPosition: 0 });
+  const marked = await markVariantRegistered(workspace, FALL_2027, { applyDiffs: false }, { basedOn });
+  expect(marked.kind === "served" && marked.view.variants[0]).toEqual({ name: "A", primary: true, registered: true });
+});
+
+it("refuses both for a Semester whose Timetable has no Variant yet, rather than reading one that is not there", async () => {
+  const workspace = memoryWorkspace({ created: true });
+  workspace.seed(REF, { schemaVersion: 1, attempts: [planned("a1", "89-110")] });
+  const { basedOn } = await now(workspace);
+
+  expect((await readRegistration(workspace, FALL_2027)).kind).toBe("variant-not-found");
+  expect((await markVariantRegistered(workspace, FALL_2027, { applyDiffs: false }, { basedOn })).kind).toBe(
+    "variant-not-found",
+  );
+  expect(workspace.written()).toHaveLength(0);
 });

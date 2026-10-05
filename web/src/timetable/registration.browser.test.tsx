@@ -142,7 +142,8 @@ it("sends apply all as the mark with applyDiffs, and the tab shows the mark", as
   expect(marksSent()).toEqual([
     expect.objectContaining({
       method: "POST",
-      body: { variant: "A", position: 0, applyDiffs: true, basedOn: "v0" },
+      // with the digest of the list the confirmation showed (#355)
+      body: { variant: "A", position: 0, applyDiffs: true, digest: JSON.stringify([MOVE, ADD]), basedOn: "v0" },
     }),
   ]);
   expect(confirmation(mounted)).toBeNull();
@@ -235,4 +236,21 @@ it("marks the tab it was pressed on, even when another tab is shown before the p
 
   await until(() => expect(marks(mounted)).toEqual(["A"]));
   expect(marksSent()[0]?.body).toMatchObject({ variant: "A", position: 0, applyDiffs: false });
+});
+
+it("refuses apply all when the list changed since the confirmation was read, and says so (#355)", async () => {
+  const mounted = await openWeek({ A: [MOVE, ADD] });
+  action(mounted, "mark-registered").click();
+  await until(() => expect(confirmation(mounted)).not.toBeNull());
+  // a new Catalog lands while the student reads: the move is gone, so "all" is no longer what was listed
+  fake!.planDiffs.A = [ADD];
+
+  answer(mounted, "apply").click();
+
+  await until(() => expect(mounted.textContent).toContain(t("en", "planDiffStale")));
+  expect(marksSent()).toHaveLength(1);
+  expect(fake!.labels).toEqual([]);
+  expect(marks(mounted)).toEqual([]);
+  // and the Timetable is read again, so the list on screen is the one the server has
+  await until(() => expect(mounted.querySelectorAll(".plan-diff-badge")).toHaveLength(1));
 });

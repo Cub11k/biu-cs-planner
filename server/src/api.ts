@@ -269,7 +269,7 @@ const trayCourseSchema = z.object({
 const appliedPlanDiffSchema = z.object({
   variant: variantSchema,
   position: positionSchema,
-  kind: z.enum(["add", "drop", "move"]),
+  kind: z.enum(["add", "move-here", "drop", "move"]),
   courseNumber: z.string().min(1).max(200),
   basedOn: basedOnSchema,
 });
@@ -278,14 +278,15 @@ const appliedPlanDiffSchema = z.object({
  * Marking a Variant as the one the student registered with (#297): which Variant — always named,
  * as a make-primary is, because it acts on one tab — and whether the student accepted the offer to
  * apply all its Plan Diffs. Required rather than defaulted, so a client that forgot to ask the
- * student cannot have the Plan rewritten by leaving it out (ADR-0008).
+ * student cannot have the Plan rewritten by leaving it out (ADR-0008). Accepting carries the
+ * `digest` of the Plan Diffs the preview listed, so what is applied is what the student read (#355);
+ * declining needs none.
  */
-const registeredVariantSchema = z.object({
-  variant: variantNameSchema,
-  position: positionSchema,
-  applyDiffs: z.boolean(),
-  basedOn: basedOnSchema,
-});
+const registeredVariantShape = { variant: variantNameSchema, position: positionSchema, basedOn: basedOnSchema };
+const registeredVariantSchema = z.discriminatedUnion("applyDiffs", [
+  z.object({ ...registeredVariantShape, applyDiffs: z.literal(false) }),
+  z.object({ ...registeredVariantShape, applyDiffs: z.literal(true), digest: z.string().max(100_000) }),
+]);
 
 /**
  * A Blocked Time as a student types it (#282): a Day, a start, an end and a label. The shapes
@@ -1373,11 +1374,15 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
       if (result.kind === "refused") {
         return c.json({ reason: result.reason, warnings: result.warnings }, 409);
       }
+      if (result.kind === "variant-not-found") {
+        return c.json({ reason: result.kind, version: result.version, warnings: result.warnings }, 404);
+      }
       return c.json({
         variantName: result.variantName,
         variantPosition: result.variantPosition,
         planDiffs: result.planDiffs,
         registers: result.registers,
+        digest: result.digest,
         version: result.version,
         warnings: result.warnings,
       });
@@ -1387,6 +1392,10 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
      * Marks a Variant registered and primary (#297), and with `applyDiffs` applies all its Plan
      * Diffs and registers its Courses' planned Attempts in the same edit: one save, one undo step,
      * all or nothing. Answered with the Timetable, whose tab now carries the mark.
+     *
+     * "Apply all" whose `digest` is not that of the Plan Diffs as they are now — the Catalog moved
+     * since the preview — is refused `plan-diff-stale` and writes nothing, as one stale apply is
+     * (#355). A Variant name the file does not hold is a 404 `variant-not-found`, as the preview's is.
      */
     .post("/api/timetable/:year/:semester/variants/registered", capped, async (c) => {
       const ref = timetableRef(c);
@@ -1394,14 +1403,18 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
       const body = await bodyAs(c, registeredVariantSchema, "not-a-registration");
       if (!body.ok) return c.json({ error: body.error }, 400);
 
-      const { basedOn, variant, position, applyDiffs } = body.value;
-      return timetableAnswer(
-        c,
-        await markVariantRegistered(workspace, { ...ref.at, variant, position }, { applyDiffs }, {
-          basedOn,
-          history: into,
-        }),
-      );
+      const { basedOn, variant, position, ...choice } = body.value;
+      const result = await markVariantRegistered(workspace, { ...ref.at, variant, position }, choice, {
+        basedOn,
+        history: into,
+      });
+      if (result.kind === "plan-diff-stale") {
+        return c.json({ reason: result.kind, version: result.version, warnings: result.warnings }, 409);
+      }
+      if (result.kind === "variant-not-found") {
+        return c.json({ reason: result.kind, version: result.version, warnings: result.warnings }, 404);
+      }
+      return timetableAnswer(c, result);
     })
 
     /** Takes the registered mark off a Variant, and nothing else: the Plan is left as it is. */

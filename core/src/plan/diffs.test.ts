@@ -8,6 +8,7 @@ import {
   findPlanDiff,
   isActionable,
   planDiffs,
+  planDiffsDigest,
   type PlanDiffContext,
   type PlanDiffOffering,
 } from "./diffs.ts";
@@ -321,4 +322,129 @@ it("applies a move by moving the Attempt to the Semester it names, and touches n
   ]);
   expect(allButAttempts(after)).toEqual(allButAttempts(before));
   expect(planDiffs(after, FALL, CATALOG)).toEqual([]);
+});
+
+/* #355: no apply leaves a Course planned twice in one Academic Year. */
+
+/** 89-220 is given in Fall and again in Spring, as two Offerings: not Year-long, and either Semester will do. */
+const TWICE: PlanDiffContext = {
+  offerings: [...CATALOG.offerings!, offering("89-220", "fall"), offering("89-220", "spring")],
+};
+
+it("offers to move a Course planned in another Semester here, rather than adding it a second time", () => {
+  const state = addToTray(withAttempts(empty(), [{ courseNumber: "89-220", semester: "spring" }]), FALL, "89-220");
+
+  expect(planDiffs(state, FALL, TWICE)).toEqual([
+    { kind: "move-here", courseNumber: "89-220", academicYear: 2027, semester: "fall", from: "spring", attemptIds: ["a1"] },
+  ]);
+});
+
+it("moves a Course here from the summer as well, and only planned Attempts", () => {
+  const summer = addToTray(withAttempts(empty(), [{ courseNumber: "89-210", semester: "summer" }]), FALL, "89-210");
+  const passed = addToTray(
+    withAttempts(empty(), [{ courseNumber: "89-110" }, { courseNumber: "89-210", semester: "summer", status: "failed" }]),
+    FALL,
+    "89-110",
+  );
+
+  expect(planDiffs(summer, FALL, CATALOG).map((d) => [d.kind, d.courseNumber])).toEqual([["move-here", "89-210"]]);
+  // an Attempt that is history is never moved: a Course failed in the summer is added again
+  expect(planDiffs(addToTray(passed, FALL, "89-210"), FALL, CATALOG).map((d) => [d.kind, d.courseNumber])).toEqual([
+    ["add", "89-210"],
+  ]);
+});
+
+it("applies a move-here by moving the Attempt into the Variant's Semester, and touches nothing else", () => {
+  const before = addToTray(withAttempts(empty(), [{ courseNumber: "89-220", semester: "spring" }]), FALL, "89-220");
+  const diff = planDiffs(before, FALL, TWICE)[0]!;
+
+  const after = applyPlanDiff(before, diff, newId);
+
+  expect(after.attempts).toEqual([
+    { id: "a1", courseNumber: "89-220", academicYear: 2027, semester: "fall", status: "planned" },
+  ]);
+  expect(allButAttempts(after)).toEqual(allButAttempts(before));
+  expect(planDiffs(after, FALL, TWICE)).toEqual([]);
+});
+
+it("reports a move whose target Semester already holds the Course, with nothing to apply", () => {
+  const twice = withAttempts(empty(), [{ courseNumber: "89-230" }, { courseNumber: "89-230", semester: "spring" }]);
+  const registered = withAttempts(empty(), [
+    { courseNumber: "89-230" },
+    { courseNumber: "89-230", semester: "spring", status: "registered" },
+  ]);
+
+  for (const state of [twice, registered]) {
+    const diffs = planDiffs(state, FALL, CATALOG);
+    expect(diffs).toEqual([
+      {
+        kind: "move",
+        courseNumber: "89-230",
+        academicYear: 2027,
+        semester: "fall",
+        to: "spring",
+        attemptIds: ["a1"],
+        targetHolds: true,
+      },
+    ]);
+    expect(diffs.filter(isActionable)).toEqual([]);
+    expect(applyPlanDiff(state, diffs[0]!, newId)).toBe(state);
+  }
+});
+
+/** How many planned Attempts of each Course the Academic Year holds, by course number. */
+const plannedCounts = (state: State): Map<string, number> =>
+  state.attempts
+    .filter((attempt) => attempt.status === "planned" && attempt.academicYear === 2027)
+    .reduce((counts, attempt) => counts.set(attempt.courseNumber, (counts.get(attempt.courseNumber) ?? 0) + 1), new Map());
+
+it("never leaves a Course planned twice in one Academic Year, whichever Plan Diff is applied", () => {
+  // every arrangement of one Course between the Plan's Semesters and the Fall Variant, for a Course
+  // given in Fall only, in Spring only, in both as two Offerings, and Year-long
+  const courses = ["89-110", "89-230", "89-220", "89-385"];
+  const placements: Attempt["semester"][][] = [[], ["fall"], ["spring"], ["summer"], ["fall", "spring"]];
+  let applied = 0;
+
+  for (const courseNumber of courses) {
+    for (const semesters of placements) {
+      for (const held of [false, true]) {
+        for (const context of [TWICE, { offerings: undefined, yearLong: ["89-385"] }]) {
+          const attempts: Planned[] = [{ courseNumber: "89-999", semester: "spring" }];
+          attempts.push(...semesters.map((semester) => ({ courseNumber, semester })));
+          const base = createVariant(withAttempts(empty(), attempts), FALL);
+          const state = held ? addToTray(base, FALL, courseNumber) : base;
+          // a Year-long Course is planned once per half, so its unit is the pair
+          const limit = (n: string) => (n === "89-385" ? 2 : 1);
+          const already = plannedCounts(state);
+
+          for (const diff of planDiffs(state, FALL, context).filter(isActionable)) {
+            const after = applyPlanDiff(state, diff, newId);
+            applied += 1;
+            for (const [course, count] of plannedCounts(after)) {
+              expect(count, `${diff.kind} ${courseNumber} from [${semesters.join(",")}]`).toBeLessThanOrEqual(
+                Math.max(limit(course), already.get(course) ?? 0),
+              );
+            }
+          }
+        }
+      }
+    }
+  }
+  expect(applied).toBeGreaterThan(20);
+});
+
+it("digests a list of Plan Diffs so that any change to it, and only a change, changes the digest", () => {
+  const state = recordPick(withAttempts(empty(), [{ courseNumber: "89-230" }]), FALL, pick("89-210"));
+  const diffs = planDiffs(state, FALL, CATALOG);
+
+  expect(planDiffsDigest(planDiffs(state, FALL, CATALOG))).toBe(planDiffsDigest(diffs));
+  // a Catalog that now gives 89-230 in Fall: no move any more
+  const moved = planDiffs(state, FALL, { offerings: [...CATALOG.offerings!, offering("89-230", "fall")] });
+  expect(planDiffsDigest(moved)).not.toBe(planDiffsDigest(diffs));
+  // a Year-long Course whose halves changed is a different add, though its kind and Course are the same
+  const yearLong = recordPick(withAttempts(empty(), [{ courseNumber: "89-110" }]), FALL, pick("89-385"));
+  expect(planDiffsDigest(planDiffs(yearLong, FALL, CATALOG))).not.toBe(
+    planDiffsDigest(planDiffs(yearLong, FALL, { offerings: [...CATALOG.offerings!.slice(0, 3), offering("89-385", "fall")] })),
+  );
+  expect(planDiffsDigest([])).toBe(planDiffsDigest([]));
 });

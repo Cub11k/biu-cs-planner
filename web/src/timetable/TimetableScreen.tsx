@@ -39,6 +39,7 @@ import { applyPlanDiff, isActionable, type ActionablePlanDiff } from "./planDiff
 import { RegistrationConfirm } from "./RegistrationConfirm.tsx";
 import {
   fetchRegistration,
+  type MarkAnswer,
   markRegistered,
   unmarkRegistered,
   type RegistrationPreview,
@@ -772,7 +773,9 @@ export function TimetablePane({
               const pressedOn = { variant: on.variantName, position: on.variantPosition };
               void sendEdit(
                 (query, basedOn) =>
-                  markRegistered(api, { ...query, ...pressedOn }, pressedOn.variant, false, basedOn),
+                  markRegistered(api, { ...query, ...pressedOn }, pressedOn.variant, { applyDiffs: false }, basedOn).then(
+                    (answer) => markAnswered(answer, query),
+                  ),
                 followAnswer,
               );
             });
@@ -839,17 +842,37 @@ export function TimetablePane({
   const answerRegistration = (applyDiffs: boolean): void => {
     const preview = registering?.preview;
     setRegistering(undefined);
+    // "apply all" carries the digest of the list it showed (#355); without a served preview there
+    // was no list, and the button is not offered
+    const accepted = applyDiffs && preview?.kind === "served" ? preview : undefined;
     void sendEdit(
       (query, basedOn) =>
         markRegistered(
           api,
           query,
           query.variant ?? "",
-          applyDiffs,
-          applyDiffs && preview?.kind === "served" ? preview.version : basedOn,
-        ),
+          accepted === undefined ? { applyDiffs: false } : { applyDiffs: true, digest: accepted.digest },
+          accepted === undefined ? basedOn : accepted.version,
+        ).then((answer) => markAnswered(answer, query)),
       followAnswer,
     );
+  };
+
+  /**
+   * A mark refused with nothing written (#355): "apply all" of a list that is no longer the one the
+   * server would apply is said in the stale sentence a single apply uses, and a Variant the file
+   * does not hold as a stale view. Either way the Timetable is read again in its place.
+   */
+  const markAnswered = (answer: MarkAnswer, query: TimetableQuery): TimetableResult | Promise<TimetableResult> => {
+    if (answer.kind === "plan-diff-stale") {
+      setPlanDiffStale(true);
+      return fetchTimetable(api, query);
+    }
+    if (answer.kind === "variant-not-found") {
+      setStaleSave(true);
+      return fetchTimetable(api, query);
+    }
+    return answer;
   };
 
   /** The Blocked Time edits (#282): the Semester's, whichever Variant is shown. */

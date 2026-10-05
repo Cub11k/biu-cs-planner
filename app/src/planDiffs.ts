@@ -37,11 +37,16 @@ import type { Workspace } from "./workspace.ts";
 /** The label an apply hands the guarded writer, which names the kind of Plan Diff it applied. */
 export const APPLY_PLAN_DIFF_LABEL = {
   add: "apply-plan-diff-add",
+  "move-here": "apply-plan-diff-move-here",
   drop: "apply-plan-diff-drop",
   move: "apply-plan-diff-move",
 } as const;
 
-/** The kinds that have an "apply to Plan": every kind but `not-offered`. */
+/**
+ * The kinds that have an "apply to Plan": every kind but `not-offered`. A `move` whose target already
+ * holds the Course has none either, and an apply naming one is refused as stale like any other key
+ * the file does not have an actionable Plan Diff for.
+ */
 export type ActionableKind = keyof typeof APPLY_PLAN_DIFF_LABEL;
 
 export type PlanDiffOptions = PickOptions & {

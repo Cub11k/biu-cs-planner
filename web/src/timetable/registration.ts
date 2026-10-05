@@ -33,6 +33,8 @@ export type RegistrationPreview =
       planDiffs: PlanDiff[];
       /** The Courses whose Attempt "apply all" would set to registered. */
       registers: string[];
+      /** The digest of `planDiffs`, which "apply all" sends back so it applies this list or nothing (#355). */
+      digest: string;
       /** The revision the preview was read from: what the mark is based on. */
       version: StateFileVersion;
     }
@@ -60,7 +62,12 @@ export async function fetchRegistration(client: ApiClient, query: TimetableQuery
   }
   if (!answer.ok) return { kind: "unavailable" };
   const served = await readBody(() => answer.json() as Promise<ServedPreview>);
-  if (!served.readable || !Array.isArray(served.body.planDiffs) || !Array.isArray(served.body.registers)) {
+  if (
+    !served.readable ||
+    !Array.isArray(served.body.planDiffs) ||
+    !Array.isArray(served.body.registers) ||
+    typeof served.body.digest !== "string"
+  ) {
     return { kind: "unavailable" };
   }
   return {
@@ -68,26 +75,56 @@ export async function fetchRegistration(client: ApiClient, query: TimetableQuery
     variantName: served.body.variantName,
     planDiffs: served.body.planDiffs,
     registers: served.body.registers,
+    digest: served.body.digest,
     version: served.body.version,
   };
 }
 
 /**
- * Marks the Variant `variant` and `query.position` name registered and primary. `applyDiffs` is the
+ * The student's answer to the offer: only mark, or apply all — with the digest of the preview they
+ * read, so the server applies that list or refuses (#355).
+ */
+export type RegistrationChoice = { applyDiffs: false } | { applyDiffs: true; digest: string };
+
+/**
+ * Every answer a Timetable edit can have, and two more, each with nothing written: the Plan Diffs
+ * are not the list the preview showed (the Catalog moved since), or the file holds no Variant by
+ * that name. The page says the first in the stale sentence a single apply uses, and the second as
+ * a stale view; it reads the Timetable again after either.
+ */
+export type MarkAnswer = TimetableResult | { kind: "plan-diff-stale" } | { kind: "variant-not-found" };
+
+const CONFLICT = 409;
+const NOT_FOUND = 404;
+
+/**
+ * Marks the Variant `variant` and `query.position` name registered and primary. `choice` is the
  * student's answer to the offer, always sent: the server takes no default for it (ADR-0008).
  */
 export async function markRegistered(
   client: ApiClient,
   query: TimetableQuery,
   variant: string,
-  applyDiffs: boolean,
+  choice: RegistrationChoice,
   basedOn: StateFileVersion,
-): Promise<TimetableResult> {
+): Promise<MarkAnswer> {
   const request = {
     ...asRead(query),
-    json: { variant, ...positionOf(query), applyDiffs, basedOn },
+    json: { variant, ...positionOf(query), ...choice, basedOn },
   } as InferRequestType<RegisteredRoutes["$post"]>;
-  return ask(() => client.api.timetable[":year"][":semester"].variants.registered.$post(request));
+  let answer: Response & { ok: boolean; status: number };
+  try {
+    answer = await client.api.timetable[":year"][":semester"].variants.registered.$post(request);
+  } catch {
+    return { kind: "unreachable" };
+  }
+  if (answer.status === CONFLICT || answer.status === NOT_FOUND) {
+    // read off a copy, so every other refusal is still read by the one reader the screen knows
+    const peek = await readBody(() => answer.clone().json() as Promise<{ reason?: unknown }>);
+    if (peek.readable && peek.body.reason === "plan-diff-stale") return { kind: "plan-diff-stale" };
+    if (peek.readable && peek.body.reason === "variant-not-found") return { kind: "variant-not-found" };
+  }
+  return ask(() => Promise.resolve(answer));
 }
 
 /** Takes the registered mark off the Variant `variant` and `query.position` name, and nothing else. */

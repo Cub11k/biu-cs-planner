@@ -270,6 +270,8 @@ export function installFakeApi(options: {
         variantPosition: variant === undefined ? undefined : fake.variants.indexOf(variant),
         planDiffs: fake.planDiffs[name] ?? [],
         registers: options.registers?.[name] ?? [],
+        // the fake's digest is the list itself, which is what the server's is too (#355)
+        digest: JSON.stringify(fake.planDiffs[name] ?? []),
         version: `v${fake.version}`,
         warnings: [],
       });
@@ -304,6 +306,13 @@ export function installFakeApi(options: {
         return json({ reason: "plan-diff-stale", version: `v${fake.version}`, warnings: [] }, 409);
       }
       fake.planDiffs[name] = held.filter((d) => d !== applied);
+    }
+    // "apply all" of a list that is not the one served now writes nothing (#355)
+    if (key === "POST /variants/registered" && request.applyDiffs === true) {
+      const name = resolve(request.variant, at);
+      if (request.digest !== JSON.stringify(fake.planDiffs[name] ?? [])) {
+        return json({ reason: "plan-diff-stale", version: `v${fake.version}`, warnings: [] }, 409);
+      }
     }
     fake.version += 1;
 

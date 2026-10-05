@@ -226,3 +226,27 @@ it("translates the badges and the panel, right to left, in Hebrew", async () => 
   // the panel sits on the end side, which is the left in Hebrew
   expect(section!.closest("aside")?.className).toContain("border-s");
 });
+
+it("offers to move a Course planned in another Semester here, and says a held move with nothing to apply (#355)", async () => {
+  const moveHere: PlanDiff = { kind: "move-here", courseNumber: "89-210", ...at, from: "spring", attemptIds: ["a4"] };
+  const held: PlanDiff = { ...MOVE, targetHolds: true } as PlanDiff;
+  const mounted = await openWeek({ A: [held, moveHere] });
+
+  await until(() => expect(badges(mounted, "89-210")).toEqual(["move-here: planned in Semester B"]));
+  expect(badges(mounted, "89-230")).toEqual(["move: offered in Semester B, already planned there"]);
+  // the held move is a label, as a not-offered one is: there is nothing to press
+  expect(badge(mounted, "89-230", "move").tagName).toBe("SPAN");
+  const said = [...panel(mounted)!.querySelectorAll("li")].map((li) => li.querySelector("span")?.textContent);
+  expect(said).toEqual([
+    "89-230 is planned for this semester, but this year's catalog offers it in Semester B, where your plan already has it.",
+    "Data Structures is in this variant, and your plan has it in Semester B.",
+  ]);
+  const buttons = [...panel(mounted)!.querySelectorAll<HTMLButtonElement>("button[data-plan-diff-apply]")];
+  expect(buttons.map((button) => button.textContent)).toEqual(["Move to this semester in plan"]);
+
+  buttons[0]!.click();
+
+  await until(() => expect(panelEntries(mounted)).toEqual(["move:89-230"]));
+  expect(applies()[0]?.body).toMatchObject({ kind: "move-here", courseNumber: "89-210" });
+  expect(fake!.labels).toEqual(["apply-plan-diff-move-here"]);
+});

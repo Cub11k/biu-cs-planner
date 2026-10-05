@@ -213,3 +213,29 @@ it("follows a Pick with the Plan Diffs it settles, in the Pick's own answer", as
 
   expect(diffsOf(picked)).toEqual([]);
 });
+
+/* #355: a Course planned in another Semester is moved here, never planned twice. */
+
+it("applies a move-here by taking the Attempt from the other Semester, one save and one undo step", async () => {
+  const workspace = ready([planned("a1", "89-110", "spring")]);
+  await addCourseToTray(workspace, FALL_2027, "89-110", await now(workspace));
+  const history = collecting();
+
+  expect(diffsOf(await readTimetable(workspace, FALL_2027))).toEqual([
+    { kind: "move-here", courseNumber: "89-110", academicYear: 2027, semester: "fall", from: "spring", attemptIds: ["a1"] },
+  ]);
+  const result = await applyPlanDiffTo(
+    workspace,
+    FALL_2027,
+    { kind: "move-here", courseNumber: "89-110" },
+    { ...(await now(workspace)), history },
+  );
+
+  expect(diffsOf(result as never)).toEqual([]);
+  expect((await stored(workspace)).attempts).toEqual([planned("a1", "89-110")]);
+  expect(history.edits.map((edit) => edit.label)).toEqual(["apply-plan-diff-move-here"]);
+  // and an add is no longer there to plan it a second time
+  expect(await applyPlanDiffTo(workspace, FALL_2027, { kind: "add", courseNumber: "89-110" }, await now(workspace))).toMatchObject({
+    kind: "plan-diff-stale",
+  });
+});
