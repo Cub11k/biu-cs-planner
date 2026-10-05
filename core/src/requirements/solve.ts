@@ -1,4 +1,4 @@
-import type { Attempt } from "../state/schema.ts";
+import type { AttemptFacts } from "../state/schema.ts";
 import { countedIn, type Assignment, type Placement } from "./evaluate.ts";
 import {
   accepts,
@@ -96,7 +96,7 @@ export interface SolvePin {
 export interface SolveInput {
   /** One Program, or the two of a double major, each with its Track. */
   programs: readonly { file: RequirementsFile; track?: string }[];
-  attempts: readonly Attempt[];
+  attempts: readonly AttemptFacts[];
   pins?: readonly SolvePin[];
   limits?: SolveLimits;
 }
@@ -215,17 +215,21 @@ class Search {
   private readonly order: number[];
   private readonly programs: readonly CompiledProgram[];
   private readonly choices: Choice[];
+  /** Per Program, every Course the lens counts: what a `total` adds up, placed or not. */
+  private readonly counted: readonly (readonly string[])[];
   private readonly maxIterations: number;
   private readonly outOfTime: () => boolean;
 
   constructor(
     programs: readonly CompiledProgram[],
     choices: Choice[],
+    counted: readonly (readonly string[])[],
     maxIterations: number,
     outOfTime: () => boolean,
   ) {
     this.programs = programs;
     this.choices = choices;
+    this.counted = counted;
     this.maxIterations = maxIterations;
     this.outOfTime = outOfTime;
     this.picked = choices.map((choice) => choice.pinned);
@@ -272,7 +276,7 @@ class Search {
     const allDemands: number[] = [];
     let separately = 0;
     this.programs.forEach((program, p) => {
-      const outcomes = score(program, placements[p]!, new Set(), relaxed);
+      const outcomes = score(program, placements[p]!, new Set(), this.counted[p]!, relaxed);
       const demands: number[] = [];
       outcomes.forEach((outcome, index) => {
         if (outcome.status === "satisfied") satisfied++;
@@ -447,7 +451,7 @@ class Search {
 /** The Courses one lens counts, as choices for the search, across every Program. */
 function choicesFor(
   programs: readonly CompiledProgram[],
-  attempts: readonly Attempt[],
+  attempts: readonly AttemptFacts[],
   pinned: readonly Map<string, number[]>[],
   lens: Lens,
 ): Choice[] {
@@ -582,7 +586,8 @@ export function solveAssignment(input: SolveInput): Solution {
   for (const lens of ["completed", "projected"] as const) {
     const choices = choicesFor(programs, input.attempts, pinned, lens);
     settleCrossPins(programs, choices, warn);
-    const search = new Search(programs, choices, maxIterations, outOfTime);
+    const counted = programs.map((program) => countedIn(standings(program, input.attempts), lens));
+    const search = new Search(programs, choices, counted, maxIterations, outOfTime);
     const picked = search.run();
     stoppedEarly ||= search.stopped;
     byLens[lens] = programs.map((program, p) => placementsOf(program, choices, picked, p));

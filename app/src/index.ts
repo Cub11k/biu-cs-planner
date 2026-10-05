@@ -26,6 +26,22 @@ export {
   type ProgressView,
   type ProgressWarningAbout,
 } from "./progress.ts";
+// The Plan: the student's Attempts, adding, changing, moving and removing them (#290), with the
+// Plan checks (#291), and New Plan from Suggested Layout (#293).
+export {
+  addAttemptTo,
+  moveAttemptTo,
+  planFromSuggestedLayout,
+  readPlan,
+  removeAttemptFrom,
+  updateAttemptOf,
+  type LayoutResult,
+  type LayoutUnavailable,
+  type PlanEditOptions,
+  type PlanReadOptions,
+  type PlanResult,
+  type PlanView,
+} from "./plan.ts";
 export {
   chooseCohort,
   choosePrograms,

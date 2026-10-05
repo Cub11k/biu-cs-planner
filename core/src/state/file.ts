@@ -15,6 +15,7 @@ import {
   stateSchema,
   timetableHeadSchema,
   variantHeadSchema,
+  type Attempt,
   type BlockedTime,
   type GroupPick,
   type Settings,
@@ -51,7 +52,13 @@ export type StateFileWarning =
   | { kind: "blocked-time-semester-mismatch"; at: string; semester: Semester }
   | { kind: "blocked-time-does-not-advance"; at: string; start: string; end: string }
   | { kind: "pick-not-unique"; at: string; courseNumber: string; lessonType: string }
-  | { kind: "timetable-not-unique"; at: string; academicYear: number; semester: Semester };
+  | { kind: "timetable-not-unique"; at: string; academicYear: number; semester: Semester }
+  /**
+   * An Attempt whose id an earlier Attempt in the file already holds: a copied entry, or two
+   * files merged by hand. Both are kept, and this one is given a fresh id, so each id names one
+   * Attempt; `id` is the one it was written with.
+   */
+  | { kind: "attempt-id-not-unique"; at: string; id: string };
 
 /**
  * Migrations that bring an older State File up to the current version, keyed by the version
@@ -360,6 +367,41 @@ function checkTimetablesUnique(
   });
 }
 
+/** An Attempt as a file may hold it: one written before Attempts had ids has none. */
+const storedAttemptSchema = attemptSchema.extend({ id: attemptSchema.shape.id.optional() });
+
+/**
+ * The Attempts, each with an id (#290). An Attempt without one — every Attempt a build before ids
+ * wrote — or with one an earlier Attempt took is given `attempt-<n>`, the smallest `n` no Attempt
+ * in the file uses. Deterministic, so two reads of one unchanged file name its Attempts alike;
+ * which is all two tabs need, since an edit made on a read of a file that changed since is
+ * refused (#90). Only a duplicate is reported: a missing id is simply a file older than ids.
+ */
+function readAttempts(raw: unknown, warnings: StateFileWarning[]): Attempt[] {
+  const stored = readList(raw, "attempts", warnings, (entry, at) => {
+    const parsed = storedAttemptSchema.safeParse(entry);
+    if (parsed.success) return { attempt: parsed.data, at };
+    warnings.push(dropped(at, parsed.error));
+    return undefined;
+  });
+
+  const written = new Set(stored.flatMap(({ attempt }) => (attempt.id === undefined ? [] : [attempt.id])));
+  const taken = new Set<string>();
+  let next = 1;
+  const fresh = (): string => {
+    while (written.has(`attempt-${next}`) || taken.has(`attempt-${next}`)) next++;
+    return `attempt-${next}`;
+  };
+
+  return stored.map(({ attempt, at }) => {
+    const { id, ...fields } = attempt;
+    if (id !== undefined && taken.has(id)) warnings.push({ kind: "attempt-id-not-unique", at, id });
+    const kept = id !== undefined && !taken.has(id) ? id : fresh();
+    taken.add(kept);
+    return { id: kept, ...fields };
+  });
+}
+
 /**
  * The Cohort, or nothing (#287). Optional in the file, so absence is no Warning; a value that is
  * there and is not a Cohort is reported and read as absent, which costs the student one choice to
@@ -384,7 +426,7 @@ function readState(raw: Record<string, unknown>, warnings: StateFileWarning[]): 
 
   return {
     schemaVersion: CURRENT_STATE_SCHEMA_VERSION,
-    attempts: readEach(attemptSchema, raw.attempts, "attempts", warnings),
+    attempts: readAttempts(raw.attempts, warnings),
     timetables,
     pins: readEach(pinSchema, raw.pins, "pins", warnings),
     ...(cohort === undefined ? {} : { cohort }),

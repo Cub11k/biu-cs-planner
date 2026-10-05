@@ -28,6 +28,7 @@ const FILE: RequirementsFile = parseRequirementsFile({
     },
     { id: "general", kind: "credits", min: 4, pool: "cs" },
     { id: "english", kind: "manual", text: { he: "אנגלית" } },
+    { id: "overall", kind: "total", min: 120, pool: "cs" },
   ],
   tracks: [
     {
@@ -52,7 +53,7 @@ it("includes the chosen Track's Requirements, and only the chosen Track's", () =
   expect(requirementsAccepting(FILE, undefined, "89-391")).toEqual(["advanced-electives", "general"]);
 });
 
-it("names none for a Course nothing takes, and never a cap or a Manual Requirement", () => {
+it("names none for a Course nothing takes, and never a cap, a total or a Manual Requirement", () => {
   expect(requirementsAccepting(FILE, undefined, "10-001")).toEqual([]);
   expect(requirementsAccepting(FILE, undefined, "89-320")).not.toContain("seminar-cap");
 });

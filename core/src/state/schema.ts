@@ -28,6 +28,15 @@ import { DEFAULT_EXAM_SPACING_DAYS } from "../timetable/exams.ts";
  */
 export const CURRENT_STATE_SCHEMA_VERSION = 1;
 
+/**
+ * The credit load above which a Semester raises a Warning when the student has set no limit
+ * (#291). A full-time BIU Semester carries around 20 credits, the norm a three-year degree of
+ * about 120 spreads over six; 24 leaves room for an ordinary heavy Semester and flags one a
+ * fifth past the norm. One constant, which the setting defaults to and the Plan checks fall back
+ * to, so the two cannot mean different numbers (the rule #164 set for Exam spacing).
+ */
+export const DEFAULT_CREDIT_LOAD_LIMIT = 24;
+
 /** Literal pattern, never built from data (ADR-0007). */
 const CLOCK_TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -51,11 +60,30 @@ export const gradeSchema = z.discriminatedUnion("kind", [
 ]);
 
 /**
+ * What names one Attempt (#290). Opaque: a UUID for an Attempt this build created, and
+ * `attempt-<n>` for one a file held without an id, which the reader fills in (`file.ts`).
+ */
+export const attemptIdSchema = z.string().min(1).max(200);
+
+/**
  * One instance of taking a Course in a Semester. A retake is simply another Attempt, so
  * nothing may assume one Attempt per Course — there is deliberately no key here that would
  * make a second one for the same Course impossible.
+ *
+ * **`id` is what names an Attempt** (#290), because nothing else can: a retake makes course
+ * number plus Semester non-unique, and a position moves with every add and remove. Two tabs and
+ * Plan Diffs both have to name one Attempt and mean the same one tomorrow. `CONTEXT.md` records
+ * the decision under Attempt.
+ *
+ * **Required in the State, and the schema version did not move for it.** A file written before
+ * Attempts had ids still opens: `file.ts` reads an Attempt with no id, or with an id an earlier
+ * Attempt already took, and gives it `attempt-<n>`, the smallest `n` no other Attempt in the file
+ * uses. That is deterministic, so every read of an unchanged file names its Attempts alike, and
+ * the first save writes the ids down. It needs no migration, by the rule `variantSchema`'s `tray`
+ * set: an older build strips the field on save, and the next read here fills it in again.
  */
 export const attemptSchema = z.object({
+  id: attemptIdSchema,
   courseNumber: z.string(),
   academicYear: z.number(),
   semester: semesterSchema,
@@ -248,6 +276,17 @@ export const settingsSchema = z.object({
    * Exam spacing and a `checkExams` call given no threshold have to mean the same thing.
    */
   examSpacingDays: z.number().int().min(0).default(DEFAULT_EXAM_SPACING_DAYS),
+  /**
+   * A Semester whose credits add up to more than this raises a credit-load Warning (#291). Bounded
+   * the way `examSpacingDays` is and for the reasons its doc gives: whole, never negative, no
+   * ceiling, the stored value is what the check gets, and a file holding anything else still
+   * opens with the field at its default and a `settings-unreadable` Warning. `0` warns about every
+   * Semester that holds any credits at all, which is true and is what a student who chose it chose.
+   *
+   * Added beside the others without moving the schema version, since a file without it reads as
+   * the default, which is what it meant.
+   */
+  creditLoadLimit: z.number().int().min(0).default(DEFAULT_CREDIT_LOAD_LIMIT),
 });
 
 export const stateSchema = z.object({
@@ -270,6 +309,9 @@ export const stateSchema = z.object({
 export type Status = z.infer<typeof statusSchema>;
 export type Grade = z.infer<typeof gradeSchema>;
 export type Attempt = z.infer<typeof attemptSchema>;
+export type AttemptId = z.infer<typeof attemptIdSchema>;
+/** An Attempt without its id: what the Requirement engine reads, since it never names one. */
+export type AttemptFacts = Omit<Attempt, "id">;
 export type PickedMeeting = z.infer<typeof pickedMeetingSchema>;
 export type GroupPick = z.infer<typeof groupPickSchema>;
 export type Variant = z.infer<typeof variantSchema>;

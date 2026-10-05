@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
-import type { Attempt } from "../state/schema.ts";
+import type { AttemptFacts as Attempt } from "../state/schema.ts";
 import { evaluateProgress, type EvaluatedRequirement } from "./evaluate.ts";
 import { parseRequirementsFile } from "./file.ts";
 import { solveAssignment } from "./solve.ts";
