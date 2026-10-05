@@ -72,6 +72,8 @@ let refuseRead: string | undefined;
  * is the thing nobody can establish, so no test may assert it either way.
  */
 let unreadableChange: { status: number } | undefined;
+/** The next change is made, and then answered `save-revision-unreadable` (#326, #344). */
+let unconfirmedChange: boolean;
 /** The same for every read, which is the other place the folded sentence was shown. */
 let unreadableRead: { status: number } | undefined;
 /** Holds the settings GET open, so a test can look at the switch before an answer exists. */
@@ -136,6 +138,11 @@ function change(body: Record<string, unknown>): Response {
   if (typeof body.examSpacingDays === "number") examSpacingDays = body.examSpacingDays;
   hasFile = true;
   version += 1;
+  if (unconfirmedChange) {
+    // written, and the revision it wrote could not be read back, as the real route answers it
+    unconfirmedChange = false;
+    return conflict({ reason: "save-revision-unreadable", warnings: [] });
+  }
   return json(settings());
 }
 
@@ -149,6 +156,7 @@ beforeEach(() => {
   refuseChange = undefined;
   refuseRead = undefined;
   unreadableChange = undefined;
+  unconfirmedChange = false;
   unreadableRead = undefined;
   settingsHeld = undefined;
   changeCount = 0;
@@ -630,6 +638,33 @@ it("reads the preferences again after a change it could not read the answer to",
   await vi.waitFor(() => {
     expect(switchFor(mounted).disabled).toBe(false);
   });
+});
+
+/**
+ * #344: a change whose save was made and whose revision could not be read may have landed (#326),
+ * so the switch reads the preferences again, as the Timetable does, rather than keeping a language
+ * and a revision that may both be spent. The fake lands the change, so the document turning Hebrew
+ * is the re-read's doing and the visible change this waits on.
+ */
+it("reads the preferences again after a change that may have been saved", async () => {
+  const mounted = mount();
+  await settingsReady(mounted);
+  unconfirmedChange = true;
+
+  switchFor(mounted).click();
+
+  await vi.waitFor(() => {
+    expect([ROOT.lang, ROOT.dir]).toEqual(["he", "rtl"]);
+  });
+  // said in the language the re-read brought, since that is the language now on screen
+  expect(said(mounted)).toContain(t("he", "saveUnconfirmed"));
+  // and the switch is offered again, on the revision the re-read brought
+  await settingsReady(mounted);
+  switchFor(mounted).click();
+  await vi.waitFor(() => {
+    expect([ROOT.lang, ROOT.dir]).toEqual(["en", "ltr"]);
+  });
+  expect(changesSent().at(-1)).toMatchObject({ basedOn: "v2" });
 });
 
 /** In Hebrew too, because a sentence in one language is half a sentence (`CLAUDE.md`). */

@@ -29,8 +29,8 @@ import {
   type StateEditing,
 } from "./edit.ts";
 import { DEFAULT_STATE_FILE } from "./picks.ts";
-import { programsWarnings, type ProgramsWarning } from "./programs.ts";
-import { loadRequirementsFiles, type LoadedRequirements } from "./requirements.ts";
+import { programsWarnings, requirementsFiles, type ProgramsWarning } from "./programs.ts";
+import type { LoadedRequirements } from "./requirements.ts";
 import type { Workspace } from "./workspace.ts";
 
 /**
@@ -144,8 +144,10 @@ async function progressOf(
   workspace: Workspace,
   state: State,
   now: () => number,
+  afterSave = false,
 ): Promise<ProgressView> {
-  const loaded = await loadRequirementsFiles(workspace);
+  // after a landed save a failed read is a listing that would not be made, never a 500 (#344)
+  const loaded = await requirementsFiles(workspace, afterSave);
   const programWarnings = programsWarnings(state, loaded);
   const byName = new Map<string, LoadedRequirements>(
     loaded.kind === "served" ? loaded.files.map((entry) => [entry.listed.name, entry]) : [],
@@ -275,7 +277,7 @@ async function edit(
   }
   return {
     kind: "served",
-    view: await progressOf(workspace, outcome.state, options.now ?? Date.now),
+    view: await progressOf(workspace, outcome.state, options.now ?? Date.now, true),
     version: outcome.version,
     warnings: outcome.warnings,
   };

@@ -204,6 +204,14 @@ beforeEach(() => {
         ],
       });
     }
+    // #326's reason, which is not the claim that nothing was written: the fake makes the edit, as
+    // the server did, and then cannot say the revision it wrote (#344)
+    if (method !== "GET" && refuseNextEdit === "save-revision-unreadable" && pathname === "/api/progress/ticks") {
+      refuseNextEdit = undefined;
+      ticked = method === "POST";
+      version += 1;
+      return json({ reason: "save-revision-unreadable", warnings: [] }, 409);
+    }
     if (method !== "GET" && refuseNextEdit !== undefined) {
       const reason = refuseNextEdit;
       refuseNextEdit = undefined;
@@ -447,6 +455,39 @@ it("says a Pin was refused over a stale view, and reads the screen again", async
       throw new Error("the screen did not read again");
     }
   });
+});
+
+/**
+ * #344: a save whose revision could not be read may have landed (#326), so the screen says so and
+ * reads the file again, as the Timetable does — rather than keeping a view that may be stale and a
+ * revision the next edit would be refused on. The fake lands the tick, so the re-read is what
+ * draws it: the box turning checked is the visible change this waits on.
+ */
+it("reads the screen again when a tick may have been saved and its revision could not be read", async () => {
+  const mounted = await mount();
+  await served(mounted);
+  refuseNextEdit = "save-revision-unreadable";
+  const box = (): HTMLInputElement => mounted.querySelector<HTMLInputElement>('input[data-tick="hebrew"]')!;
+  expect(box().checked).toBe(false);
+
+  box().click();
+
+  await vi.waitFor(() => {
+    if (!(mounted.querySelector('[role="status"]')?.textContent ?? "").includes(t("en", "saveUnconfirmed"))) {
+      throw new Error("the sentence was not said");
+    }
+  });
+  await vi.waitFor(() => {
+    if (!box().checked || treeItem(mounted, "hebrew").dataset.status !== "satisfied") {
+      throw new Error("the screen did not read the landed tick again");
+    }
+  });
+  // and the next edit is based on the revision the re-read brought, not the spent one
+  box().click();
+  await vi.waitFor(() => {
+    if (box().checked) throw new Error("the untick was not drawn");
+  });
+  expect(lastSent("/api/progress/ticks")).toMatchObject({ method: "DELETE", body: { basedOn: "v2" } });
 });
 
 it("moves between the nodes of the tree with the arrow keys", async () => {

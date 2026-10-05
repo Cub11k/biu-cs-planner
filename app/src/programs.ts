@@ -71,17 +71,35 @@ export function programsWarnings(state: State, loaded: RequirementsListing): Pro
   return programWarnings(state, listing);
 }
 
-/** The Warnings for a State's Programs, against what `requirements/` holds right now. */
-async function warningsFor(workspace: Workspace, state: State): Promise<ProgramsWarning[]> {
-  if (state.programs.length === 0) return [];
-  return programsWarnings(state, await loadRequirementsFiles(workspace));
+/**
+ * `requirements/` as `loadRequirementsFiles` reads it — except that, **after a save has landed, a
+ * read that fails in any way is read as a folder that would not be listed** (#344, the shape #324
+ * gave the Timetable's Catalog read). `loadRequirementsFiles` answers a refusal itself and lets
+ * anything else propagate, which on a read is a 500 that changed nothing. Built after a save, the
+ * same throw answered 500 for an edit that had been written, and the page told the student it
+ * failed. So the answer carries the new revision, and the listing it could not make is marked —
+ * `requirements-unlisted` among the Programs Warnings — rather than left out or made up.
+ */
+export async function requirementsFiles(workspace: Workspace, afterSave: boolean): Promise<RequirementsListing> {
+  if (!afterSave) return loadRequirementsFiles(workspace);
+  try {
+    return await loadRequirementsFiles(workspace);
+  } catch {
+    return { kind: "refused", reason: "workspace-refused" };
+  }
 }
 
-async function viewOf(workspace: Workspace, state: State): Promise<ProgramsView> {
+/** The Warnings for a State's Programs, against what `requirements/` holds right now. */
+async function warningsFor(workspace: Workspace, state: State, afterSave: boolean): Promise<ProgramsWarning[]> {
+  if (state.programs.length === 0) return [];
+  return programsWarnings(state, await requirementsFiles(workspace, afterSave));
+}
+
+async function viewOf(workspace: Workspace, state: State, afterSave = false): Promise<ProgramsView> {
   return {
     cohort: state.cohort,
     programs: state.programs,
-    programWarnings: await warningsFor(workspace, state),
+    programWarnings: await warningsFor(workspace, state, afterSave),
   };
 }
 
@@ -116,7 +134,8 @@ async function edit(
   }
   return {
     kind: "served",
-    view: await viewOf(workspace, outcome.state),
+    // the save has landed, so nothing read from here on may answer as if it had not (#344)
+    view: await viewOf(workspace, outcome.state, true),
     version: outcome.version,
     warnings: outcome.warnings,
   };
