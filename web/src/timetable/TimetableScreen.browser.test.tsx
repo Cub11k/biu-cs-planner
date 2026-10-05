@@ -18,8 +18,9 @@
  * is the retired token as a student meets it, and `picking.browser.test.tsx` has the Pick path's
  * `workspace-not-ready`.
  *
- * Every expected sentence comes out of `t()`, so these fail when a sentence changes as well as
- * when a key does (#252).
+ * Every expected sentence comes out of `t()`, so these fail when the wrong key reaches a site or
+ * when what a site shows is not the sentence its key holds — and not when a sentence is reworded
+ * in the translation files, which is no business of theirs (#252).
  *
  * Fixture data is invented: 89-110 is a real BIU course number, the name and the times are not,
  * and no crawled data is committed to this repo (ADR-0006).
@@ -110,8 +111,11 @@ beforeEach(() => {
       if (timetableRefused) return unauthorized();
       return json({ variantName: "A", picks: [PICK], clashes: [], version: "v1", warnings: [] });
     }
-    if (catalogRefused) return unauthorized();
-    return json({ offerings: [OFFERING] });
+    if (pathname.startsWith("/api/catalog/")) {
+      if (catalogRefused) return unauthorized();
+      return json({ offerings: [OFFERING] });
+    }
+    throw new Error(`the screen asked ${pathname}, which this fake does not answer`);
   }) as typeof fetch;
 });
 
@@ -262,7 +266,7 @@ it.each(TOKEN_STATES)(
   async ({ tokenHeld, said, notSaid }) => {
     timetableRefused = true;
     const mounted = mount({ tokenHeld });
-    // the Catalog is served, so the sidebar is the Course list and says no refusal
+    // the Catalog is served, so the sidebar lists the Catalog's Courses and says no refusal
     await vi.waitFor(() => {
       expect(sidebar(mounted)).toContain(OFFERING.courseNumber);
     });
