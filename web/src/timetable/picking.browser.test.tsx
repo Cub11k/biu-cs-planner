@@ -102,6 +102,13 @@ let variantsInFile: Array<{ name: string; primary: boolean }> | undefined;
  * which is the case #231 is about.
  */
 let unreadableSave: number | undefined;
+/**
+ * Set to answer the next save `save-revision-unreadable` **after** the fake has accepted it: the
+ * write landed and the revision it brought back could not be read, which is #326's case.
+ */
+let unconfirmedSave: boolean;
+/** Set to answer the next read of the Timetable with a body nobody can read, or a refusal (#218). */
+let nextRead: "unreadable" | "refused" | undefined;
 /** How many times the screen told its host that the file's revision may have moved. */
 let edits: number;
 /**
@@ -229,6 +236,8 @@ beforeEach(() => {
   changedUnderneath = false;
   variantsInFile = undefined;
   unreadableSave = undefined;
+  unconfirmedSave = false;
+  nextRead = undefined;
   edits = 0;
   readHeld = undefined;
   saveHeld = undefined;
@@ -254,6 +263,16 @@ beforeEach(() => {
     // only the read is held: a save the screen decides to send still goes through at once,
     // so a test can tell "nothing was sent" from "something was sent and is waiting"
     if (method === "GET" && readHeld !== undefined) await readHeld;
+    if (method === "GET" && nextRead !== undefined) {
+      const kind = nextRead;
+      nextRead = undefined;
+      return kind === "unreadable"
+        ? new Response("<!doctype html>", { status: 200, headers: { "content-type": "text/html" } })
+        : new Response(JSON.stringify({ reason: "state-file-unreadable", warnings: [] }), {
+            status: 409,
+            headers: { "content-type": "application/json" },
+          });
+    }
     if (refuse !== undefined) {
       return new Response(JSON.stringify(refuse), {
         status: 409,
@@ -320,6 +339,13 @@ beforeEach(() => {
       );
     }
 
+    if (unconfirmedSave && (method === "POST" || method === "DELETE")) {
+      unconfirmedSave = false;
+      return new Response(JSON.stringify({ reason: "save-revision-unreadable", warnings: [] }), {
+        status: 409,
+        headers: { "content-type": "application/json" },
+      });
+    }
     if (unreadableSave !== undefined && (method === "POST" || method === "DELETE")) {
       const status = unreadableSave;
       unreadableSave = undefined;
@@ -641,6 +667,221 @@ it("says whether a click was saved is not known, and goes and looks, when its an
   });
   // the account outlives the re-read: it is about the click, not about the week
   expect(mounted.textContent).toContain(t("en", "picksSaveAnswerUnreadable"));
+});
+
+/**
+ * #334: a click made after a save was refused `state-file-changed` and before the re-read that
+ * refusal asked for has been applied. The re-read is held open, as PR #333's capture held it for
+ * 200 ms; the click used to go out at once on the revision the refusal had spent, and be refused
+ * again. It is held instead, and sent on the revision the re-read brings.
+ */
+it("holds a click made while a refusal's re-read is in flight, and sends it on the revision it brings", async () => {
+  const mounted = await openWeek();
+  tileFor(mounted, "01").click();
+  await vi.waitFor(() => {
+    if (!tileFor(mounted, "01").classList.contains("is-picked")) throw new Error("not picked");
+  });
+
+  changedUnderneath = true;
+  const release = holdTheRead();
+  tileFor(mounted, "03", "Tirgul").click();
+  await waitForText(mounted, t("en", "picksStale"));
+  const refusedSaves = sent.filter((request) => request.method === "POST").length;
+
+  // the re-read is out and held; this click is made on the week the refusal left
+  tileFor(mounted, "03", "Tirgul").click();
+  await waitForText(mounted, t("en", "picksHeldForReread"));
+  // nothing was sent on the spent revision
+  expect(sent.filter((request) => request.method === "POST").length, traffic()).toBe(refusedSaves);
+
+  release();
+
+  await vi.waitFor(() => {
+    if (!tileFor(mounted, "03", "Tirgul").classList.contains("is-picked")) {
+      throw new Error(`the held click never landed\n${traffic()}`);
+    }
+  });
+  const posts = sent.filter((request) => request.method === "POST");
+  expect(posts.length, traffic()).toBe(refusedSaves + 1);
+  // on the revision the re-read brought, which is the file's now
+  expect((posts.at(-1)?.body as { basedOn?: string }).basedOn, traffic()).toBe(`v${version - 1}`);
+  expect(mounted.textContent).not.toContain(t("en", "picksHeldForReread"));
+  expect(mounted.textContent).not.toContain(t("en", "picksStale"));
+});
+
+/** …and one held while the re-read then fails is said to be not saved, never dropped in silence. */
+it("says a click held for a refusal's re-read was not saved when that re-read fails", async () => {
+  const mounted = await openWeek();
+
+  changedUnderneath = true;
+  const release = holdTheRead();
+  tileFor(mounted, "01").click();
+  await waitForText(mounted, t("en", "picksStale"));
+
+  tileFor(mounted, "03", "Tirgul").click();
+  await waitForText(mounted, t("en", "picksHeldForReread"));
+  const postsBefore = sent.filter((request) => request.method === "POST").length;
+
+  refuse = { reason: "state-file-unreadable", warnings: [] };
+  release();
+
+  await waitForText(mounted, t("en", "picksHeldLost"));
+  expect(sent.filter((request) => request.method === "POST").length, traffic()).toBe(postsBefore);
+  expect(mounted.textContent).not.toContain(t("en", "picksHeldForReread"));
+});
+
+/**
+ * #218, as the maintainer ruled it: a re-read whose answer nobody can read keeps the week the page
+ * had read, with a sentence saying it is the last read — the page learned nothing from it. A
+ * refused re-read still replaces the week, because from that the page did learn something.
+ */
+it("keeps the week it read, labelled as the last read, when a re-read's answer is unreadable", async () => {
+  const mounted = await openWeek();
+  tileFor(mounted, "01").click();
+  await vi.waitFor(() => {
+    if (!tileFor(mounted, "01").classList.contains("is-picked")) throw new Error("not picked");
+  });
+
+  nextRead = "unreadable";
+  changedUnderneath = true;
+  tileFor(mounted, "03", "Tirgul").click();
+
+  await waitForText(mounted, t("en", "picksReadStale"));
+  // the week is still there, as it was read
+  expect(tileFor(mounted, "01").classList.contains("is-picked"), traffic()).toBe(true);
+  expect(mounted.textContent).toContain(t("en", "picksCountOne"));
+  expect(mounted.textContent).not.toContain(t("en", "picksAnswerUnreadable"));
+});
+
+it("replaces the week when a re-read is refused, and says why", async () => {
+  const mounted = await openWeek();
+  tileFor(mounted, "01").click();
+  await vi.waitFor(() => {
+    if (!tileFor(mounted, "01").classList.contains("is-picked")) throw new Error("not picked");
+  });
+
+  nextRead = "refused";
+  changedUnderneath = true;
+  tileFor(mounted, "03", "Tirgul").click();
+
+  await waitForText(mounted, t("en", "picksUnreadable"));
+  expect(tileFor(mounted, "01").classList.contains("is-picked")).toBe(false);
+  expect(mounted.textContent).not.toContain(t("en", "picksReadStale"));
+});
+
+it("reports a click held for a re-read as not sent when that re-read is unreadable, and never re-sends it", async () => {
+  const mounted = await openWeek();
+
+  changedUnderneath = true;
+  const release = holdTheRead();
+  tileFor(mounted, "01").click();
+  await waitForText(mounted, t("en", "picksStale"));
+  tileFor(mounted, "03", "Tirgul").click();
+  await waitForText(mounted, t("en", "picksHeldForReread"));
+  const postsBefore = sent.filter((request) => request.method === "POST").length;
+
+  nextRead = "unreadable";
+  release();
+
+  await waitForText(mounted, t("en", "picksHeldLost"));
+  await waitForText(mounted, t("en", "picksReadStale"));
+  expect(sent.filter((request) => request.method === "POST").length, traffic()).toBe(postsBefore);
+});
+
+/**
+ * #218 for clicks held before the first read: one is sent, its answer is unreadable, and the
+ * re-read that asks for comes back unreadable too, so the week is kept. The clicks still waiting
+ * are reported as not sent — never left waiting in silence, and never sent later on whatever the
+ * next read brings.
+ */
+it("reports clicks held before the first read as not sent when the re-read after one is unreadable", async () => {
+  const releaseRead = holdTheRead();
+  const mounted = await openWeek();
+  tileFor(mounted, "01").click();
+  tileFor(mounted, "03", "Tirgul").click();
+  await waitForText(mounted, STILL_LOADING);
+
+  const releaseSaves = holdTheSaves();
+  unreadableSave = 200;
+  releaseRead();
+  await vi.waitFor(() => {
+    if (sent.filter((request) => request.method === "POST").length === 0) {
+      throw new Error("the first held click was never sent");
+    }
+  });
+  // the re-read the unreadable answer asks for is unreadable as well
+  nextRead = "unreadable";
+  releaseSaves();
+
+  await waitForText(mounted, t("en", "picksHeldLost"));
+  await waitForText(mounted, t("en", "picksReadStale"));
+  // only the first was ever sent
+  expect(sent.filter((request) => request.method === "POST").length, traffic()).toBe(1);
+});
+
+/** #334 still holds while a week kept by an earlier unreadable re-read (#218) is on screen. */
+it("holds a click for a refusal's re-read even while a kept week is on screen", async () => {
+  const mounted = await openWeek();
+  tileFor(mounted, "01").click();
+  await vi.waitFor(() => {
+    if (!tileFor(mounted, "01").classList.contains("is-picked")) throw new Error("not picked");
+  });
+  nextRead = "unreadable";
+  changedUnderneath = true;
+  tileFor(mounted, "03", "Tirgul").click();
+  await waitForText(mounted, t("en", "picksReadStale"));
+
+  // the kept week's revision is spent, so this is refused, and its re-read is held open
+  const release = holdTheRead();
+  const refusedBefore = exchanges.filter((line) => line.includes("-> 409")).length;
+  tileFor(mounted, "03", "Tirgul").click();
+  await vi.waitFor(() => {
+    if (exchanges.filter((line) => line.includes("-> 409")).length === refusedBefore) {
+      throw new Error(`the click on the kept week was never refused\n${traffic()}`);
+    }
+  });
+  await waitForText(mounted, t("en", "picksStale"));
+  const postsBefore = sent.filter((request) => request.method === "POST").length;
+  tileFor(mounted, "03", "Tirgul").click();
+  await waitForText(mounted, t("en", "picksHeldForReread"));
+  expect(sent.filter((request) => request.method === "POST").length, traffic()).toBe(postsBefore);
+
+  release();
+  await vi.waitFor(() => {
+    if (!tileFor(mounted, "03", "Tirgul").classList.contains("is-picked")) {
+      throw new Error(`the held click never landed\n${traffic()}`);
+    }
+  });
+});
+
+/**
+ * #326: a save that was made and whose revision the Workspace could not hand back readably. The
+ * fake accepts the Pick and then refuses as the real server does, so the click landed — and the
+ * sentence must not say nothing changed, the week must stay, and the page goes and re-reads it.
+ */
+it("says a save may have landed, keeps the week and re-reads it, when its revision is unreadable", async () => {
+  const mounted = await openWeek();
+  const readsBefore = timetableReads();
+
+  unconfirmedSave = true;
+  tileFor(mounted, "01").click();
+
+  await waitForText(mounted, t("en", "saveUnconfirmed"));
+  // every sentence that says nothing changed, or that the picks could not be read
+  for (const claim of ["picksStale", "picksUnreadable", "picksBackupRefused", "picksHeldLost"] as const) {
+    expect(mounted.textContent, `${claim} claims what this page cannot know`).not.toContain(
+      t("en", claim),
+    );
+  }
+  await vi.waitFor(() => {
+    if (timetableReads() <= readsBefore) throw new Error("the week was never read again");
+    if (edits === 0) throw new Error("the header was never told the revision may have moved");
+    // the click landed, and the re-read is what shows it
+    if (!tileFor(mounted, "01").classList.contains("is-picked")) {
+      throw new Error("the re-read never drew the Pick the file holds");
+    }
+  });
+  expect(mounted.textContent).toContain(t("en", "saveUnconfirmed"));
 });
 
 /**

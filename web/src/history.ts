@@ -31,7 +31,7 @@ type Moved = Extract<StepAnswer, { label: unknown }>;
 /** The 409: why nothing moved, and the same two flags, so the buttons can correct themselves. */
 type Refused = Extract<StepAnswer, { reason: unknown }>;
 
-/** Why an undo or a redo did not happen. Nine reasons; the component names all nine. */
+/** Why an undo or a redo did not happen. Ten reasons; the component names all ten. */
 export type HistoryRefusal = Refused["reason"];
 
 /** A Warning the answer carried. Reported, never a refusal in itself. */

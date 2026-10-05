@@ -19,6 +19,7 @@ import type { Offering } from "./catalog.ts";
 import { installFakeApi, type FakeApi, type FakeVariant } from "./fakeTimetableApi.ts";
 import type { GroupPick } from "./picks.ts";
 import { TimetableScreen } from "./TimetableScreen.tsx";
+import { claimLaunchToken, TOKEN_STORAGE_KEY } from "../token.ts";
 
 /** October 2026: the Fall Semester of Academic Year 2027, which is what the fixture is. */
 const TODAY = new Date(2026, 9, 15);
@@ -66,7 +67,14 @@ let fake: FakeApi;
 let host: HTMLElement | undefined;
 let root: Root | undefined;
 
+/**
+ * The page's URL as the file started, put back after each test: the open tab is kept in the URL
+ * (#325), and a tab one test opened would otherwise be what the next test's screen opens on.
+ */
+let startedAt: string;
+
 beforeEach(() => {
+  startedAt = `${location.pathname}${location.search}${location.hash}`;
   fake = installFakeApi({ offerings: [OFFERING], variants: twoVariants() });
 });
 
@@ -76,6 +84,7 @@ afterEach(() => {
   root = undefined;
   host = undefined;
   fake.restore();
+  history.replaceState(null, "", startedAt);
 });
 
 function render(language: Language, workspaceChanges: number): void {
@@ -163,7 +172,7 @@ it("redraws the week for the tab clicked, and asks for that Variant by name", as
 
   await until(() => expect(inked(mounted)).toEqual(["01"]));
   expect(selectedTab(mounted)).toBe("A");
-  expect(fake.sent.some((request) => request.search === "?variant=A")).toBe(true);
+  expect(fake.sent.some((request) => request.search === "?variant=A&position=0")).toBe(true);
   // showing a tab is view state, never a State File edit
   expect(saves()).toEqual([]);
 });
@@ -286,7 +295,7 @@ it("keeps the tab chosen when the Workspace changes and the week is read again",
   render("en", 1);
 
   await until(() =>
-    expect(fake.sent.filter((request) => request.search === "?variant=A").length).toBe(2),
+    expect(fake.sent.filter((request) => request.search === "?variant=A&position=0").length).toBe(2),
   );
   expect(selectedTab(mounted)).toBe("A");
 });
@@ -352,4 +361,136 @@ it("draws the tabs right to left in Hebrew, with every word around the names tra
   expect(first!.left).toBeGreaterThan(second!.left);
   expect(tab(mounted, "B").textContent).toContain(t("he", "variantPrimaryMark"));
   expect(action(mounted, "create").textContent).toBe(t("he", "variantNew"));
+});
+
+/**
+ * #324: the tab pattern is complete — every tab names the week in `aria-controls`, and the week is
+ * the `tabpanel`, labelled by the tab shown, which follows a switch.
+ */
+it("makes the week the tabpanel the tabs control, labelled by the tab shown", async () => {
+  const mounted = await openWeek();
+  await until(() => expect(selectedTab(mounted)).toBe("B"));
+
+  const panel = mounted.querySelector<HTMLElement>('[role="tabpanel"]');
+  expect(panel).not.toBeNull();
+  expect(panel!.contains(mounted.querySelector(".day-column"))).toBe(true);
+  for (const each of tabs(mounted)) expect(each.getAttribute("aria-controls")).toBe(panel!.id);
+  expect(panel!.getAttribute("aria-labelledby")).toBe(tab(mounted, "B").id);
+
+  tab(mounted, "A").click();
+
+  await until(() => expect(panel!.getAttribute("aria-labelledby")).toBe(tab(mounted, "A").id));
+  expect(tab(mounted, "A").id).not.toBe(tab(mounted, "B").id);
+});
+
+/**
+ * #322: two Variants of one name are both reachable from the tabs. Renaming B into A goes through
+ * with its Warning; then each tab can be shown on its own — exactly one selected — and each can be
+ * edited, the second by the position its tab sends beside the name.
+ */
+it("opens and edits each of two Variants that share a name", async () => {
+  const mounted = await openWeek();
+  await until(() => expect(selectedTab(mounted)).toBe("B"));
+  const rename = async (to: string): Promise<void> => {
+    action(mounted, "rename").click();
+    await userEvent.fill(await nameField(mounted), to);
+    action(mounted, "save").click();
+  };
+  const selected = (): number[] =>
+    tabs(mounted).flatMap((each, index) => (each.getAttribute("aria-selected") === "true" ? [index] : []));
+
+  await rename("A");
+  await until(() => expect(tabNames(mounted)).toEqual(["A", "A"]));
+  expect(mounted.textContent).toContain(t("en", "variantNameNotUnique", { name: "A" }));
+  // the renamed one is the one shown, and only it
+  expect(selected()).toEqual([1]);
+  expect(inked(mounted)).toEqual(["02"]);
+
+  tabs(mounted)[0]!.click();
+  await until(() => expect(inked(mounted)).toEqual(["01"]));
+  expect(selected()).toEqual([0]);
+
+  tabs(mounted)[1]!.click();
+  await until(() => expect(inked(mounted)).toEqual(["02"]));
+  expect(selected()).toEqual([1]);
+  expect(fake.sent.some((request) => request.search === "?variant=A&position=1")).toBe(true);
+
+  // the second, edited: renamed out of the collision, its Picks with it
+  await rename("C");
+  await until(() => expect(tabNames(mounted)).toEqual(["A", "C"]));
+  expect(fake.variants.map((v) => [v.name, v.picks.map((p) => p.groupNumber)])).toEqual([
+    ["A", ["01"]],
+    ["C", ["02"]],
+  ]);
+
+  // and back into it, then the first, edited
+  await rename("A");
+  await until(() => expect(tabNames(mounted)).toEqual(["A", "A"]));
+  tabs(mounted)[0]!.click();
+  await until(() => expect(selected()).toEqual([0]));
+  await rename("Z");
+  await until(() => expect(tabNames(mounted)).toEqual(["Z", "A"]));
+  expect(fake.variants.map((v) => [v.name, v.picks.map((p) => p.groupNumber)])).toEqual([
+    ["Z", ["01"]],
+    ["A", ["02"]],
+  ]);
+});
+
+/**
+ * #325: a full reload opens the Variant that was open — kept in the URL, so a bookmark or a second
+ * tab opens it too — and the primary when it no longer exists. The page is thrown away and mounted
+ * again against the same fake server, with nothing surviving but the URL.
+ */
+function reload(language: Language = "en"): void {
+  root?.unmount();
+  root = createRoot(host!);
+  render(language, 0);
+}
+
+it("opens the tab that was open after a reload, from the URL", async () => {
+  const mounted = await openWeek();
+  await until(() => expect(selectedTab(mounted)).toBe("B"));
+  tab(mounted, "A").click();
+  await until(() => expect(selectedTab(mounted)).toBe("A"));
+  await until(() => expect(new URLSearchParams(location.search).get("variant")).toBe("A"));
+
+  reload();
+
+  await until(() => expect(selectedTab(mounted)).toBe("A"));
+  expect(inked(mounted)).toEqual(["01"]);
+  // the first read after the reload asked for it, rather than for the primary and then switching
+  const reads = fake.sent.filter((request) => request.method === "GET" && request.pathname.endsWith("/fall"));
+  expect(reads.at(-1)?.search).toBe("?variant=A&position=0");
+});
+
+it("opens the primary after a reload when the tab that was open is gone", async () => {
+  const mounted = await openWeek();
+  tab(mounted, "A").click();
+  await until(() => expect(new URLSearchParams(location.search).get("variant")).toBe("A"));
+  // another window deleted A while this page was away
+  fake.variants = fake.variants.filter((variant) => variant.name !== "A");
+
+  reload();
+
+  await until(() => expect(tabNames(mounted)).toEqual(["B"]));
+  await until(() => expect(selectedTab(mounted)).toBe("B"));
+  await until(() => expect(new URLSearchParams(location.search).get("variant")).toBe("B"));
+});
+
+it("still takes the Launch Token out of the fragment, and opens the tab the URL names", async () => {
+  const token = "a-launch-token-long-enough-to-pass-the-pattern-0123456789";
+  history.replaceState(null, "", `${location.pathname}?variant=A&position=0#t=${token}`);
+  try {
+    // what `main.tsx` does before anything renders
+    expect(claimLaunchToken(window)).toBe(token);
+    expect(location.hash).toBe("");
+    expect(localStorage.getItem(TOKEN_STORAGE_KEY)).toBe(token);
+
+    const mounted = await openWeek();
+
+    await until(() => expect(selectedTab(mounted)).toBe("A"));
+    expect(location.hash).not.toContain(token);
+  } finally {
+    localStorage.removeItem(TOKEN_STORAGE_KEY);
+  }
 });

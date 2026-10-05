@@ -3,7 +3,7 @@ import {
   clashesIn,
   recordPick,
   removePick,
-  resolveVariantName,
+  resolveVariant,
   timetableAt,
   trayEntries,
   variantAt,
@@ -61,6 +61,12 @@ export type TimetableRef = {
    * `DEFAULT_VARIANT_NAME`, which a first Pick creates as the primary one.
    */
   variant?: string | undefined;
+  /**
+   * Which Variant of that name, by position in file order, while two share it (#322): how the
+   * second of two same-named tabs is reached. Honoured only when the Variant there carries the
+   * name, so leaving it out addresses by name alone, as every caller did before.
+   */
+  position?: number | undefined;
 };
 
 /** One Variant of a Timetable as its tab shows it: the name, and whether it is the primary. */
@@ -75,6 +81,11 @@ export type TimetableView = {
    * it, so for an empty Timetable this is a name no tab carries yet.
    */
   variantName: string;
+  /**
+   * Where that Variant stands in file order, which is what tells it from another of the same name
+   * (#322): a page sends it back with its next edit. Absent while the Variant does not exist yet.
+   */
+  variantPosition: number | undefined;
   /** Every Variant of the Timetable, in file order — the tabs above the week (#281). */
   variants: VariantTab[];
   picks: GroupPick[];
@@ -126,8 +137,8 @@ export type PickOptions = {
 };
 
 /**
- * Which Variant a **read** of a `TimetableRef` is about: the one named while it exists, and the
- * primary otherwise (`resolveVariantName`).
+ * Which Variant a **read** of a `TimetableRef` is about: the one named while it exists — of two
+ * that share the name, the one at `position` — and the primary otherwise (`resolveVariant`).
  *
  * Exported because `./exams.ts` answers about the same Variant this one does, and a second copy
  * of the fallback would let the exam rail quietly be about a different Variant than the week
@@ -136,7 +147,7 @@ export type PickOptions = {
 export const variantShownIn = (state: State, at: TimetableRef): VariantRef => ({
   academicYear: at.academicYear,
   semester: at.semester,
-  variant: resolveVariantName(state, at, at.variant),
+  ...resolveVariant(state, at, at.variant, at.position),
 });
 
 /**
@@ -151,7 +162,12 @@ export const variantShownIn = (state: State, at: TimetableRef): VariantRef => ({
 export const variantEditedIn = (state: State, at: TimetableRef): VariantRef =>
   at.variant === undefined
     ? variantShownIn(state, at)
-    : { academicYear: at.academicYear, semester: at.semester, variant: at.variant };
+    : {
+        academicYear: at.academicYear,
+        semester: at.semester,
+        variant: at.variant,
+        position: at.position,
+      };
 
 /**
  * The Timetable as the screen shows it, built from one State.
@@ -163,21 +179,35 @@ export const variantEditedIn = (state: State, at: TimetableRef): VariantRef =>
  * beside it would be a Tray disagreeing with the week. A Catalog that cannot be read is not a
  * refusal and carries no Warning here — the Catalog's own routes say what is wrong with it — and
  * every entry is simply `known: false`.
+ *
+ * **After a save, a Catalog read that fails in any way is that same `known: false`** (#324).
+ * `listOfferings` answers a refusal as a Warning and lets anything else propagate, which for a read
+ * is a 500 that changed nothing. Built after a save, the same throw used to answer 500 for an edit
+ * that had landed, and the page told the student it failed. So `afterSave` reads the Catalog as
+ * not there when the read throws: the answer carries the new revision and the parts it could read,
+ * and the Tray says which part it could not.
  */
-async function view(workspace: Workspace, state: State, at: TimetableRef): Promise<TimetableView> {
+async function view(
+  workspace: Workspace,
+  state: State,
+  at: TimetableRef,
+  afterSave = false,
+): Promise<TimetableView> {
   const shown = variantShownIn(state, at);
   const unread = trayEntries(state, shown, undefined);
-  const tray =
-    unread.length === 0
-      ? unread
-      : trayEntries(
-          state,
-          shown,
-          (await listOfferings(workspace, { academicYear: at.academicYear, semester: at.semester }))
-            .offerings,
-        );
+  const catalog = async () => {
+    const asked = listOfferings(workspace, { academicYear: at.academicYear, semester: at.semester });
+    if (!afterSave) return (await asked).offerings;
+    try {
+      return (await asked).offerings;
+    } catch {
+      return undefined;
+    }
+  };
+  const tray = unread.length === 0 ? unread : trayEntries(state, shown, await catalog());
   return {
     variantName: shown.variant,
+    variantPosition: shown.position,
     variants: (timetableAt(state, at)?.variants ?? []).map((variant) => ({ name: variant.name, primary: variant.primary })),
     picks: variantAt(state, shown)?.picks ?? [],
     clashes: clashesIn(state, shown),
@@ -235,7 +265,8 @@ export async function editTimetable(
 
   return {
     kind: "served",
-    view: await view(workspace, outcome.state, answerAbout()),
+    // the save has landed, so nothing read from here on may answer as if it had not (#324)
+    view: await view(workspace, outcome.state, answerAbout(), true),
     version: outcome.version,
     warnings: outcome.warnings,
   };

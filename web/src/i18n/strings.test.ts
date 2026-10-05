@@ -45,6 +45,7 @@ it.each([
   "historyBackupRefused",
   "settingsBackupRefused",
   "picksSaveAnswerUnreadable",
+  "saveUnconfirmed",
 ] as const)("has %s in Hebrew, and not as the English sentence", (key) => {
   expect(t("he", key)).not.toBe(t("en", key));
   expect(t("he", key)).toMatch(/[\u0590-\u05FF]/);

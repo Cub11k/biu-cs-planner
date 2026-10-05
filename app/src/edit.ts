@@ -172,7 +172,16 @@ export type EditRefusal =
    * while the week was on screen showing them. `BackupRefusedError` in
    * `./workspace.ts` is how it is told apart.
    */
-  | "backup-refused";
+  | "backup-refused"
+  /**
+   * The save was made and the revision the Workspace handed back for it is not one in the port's
+   * format (#311, #326). **The write may well have landed**, so this is not `workspace-refused`:
+   * that reason reaches the page as an edit that changed nothing, which here may be false. What
+   * is refused is passing the adapter's account of the save on. Every screen words it as a save
+   * that may have landed, never as one that was lost; the Timetable and an undo or redo step also
+   * re-read the State File on it (the Progress screen and the language switch do not yet).
+   */
+  | "save-revision-unreadable";
 
 export type EditOutcome =
   /** `version` is the revision this save wrote: what the caller's next save is based on. */
@@ -358,11 +367,11 @@ export async function editStateFile(
   // The revision the save hands back is held to the port's format as the one a read hands back
   // is (#311), and for the same reason: it is served to the page as what the next save is based
   // on. **The write may well have landed** — what is refused is passing on the adapter's account
-  // of it, and the stack is told nothing, because a revision it cannot trust is no revision to
+  // of it, under a reason of its own that says so (#326), and the stack is told nothing, because a revision it cannot trust is no revision to
   // believe. The page's next read then meets the same adapter and is refused there too, or, if
   // that one is honest, sees a revision the stack did not write and starts it afresh.
   if (!isStateFileRevision(version)) {
-    return { kind: "refused", reason: "workspace-refused", warnings: loaded.warnings };
+    return { kind: "refused", reason: "save-revision-unreadable", warnings: loaded.warnings };
   }
 
   // Both revisions first, and on every save: the revision this edit found is how a stack

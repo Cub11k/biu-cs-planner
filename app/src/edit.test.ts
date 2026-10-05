@@ -438,8 +438,13 @@ it("refuses to hand on a revision a save answers with that is not a well-formed 
     { basedOn, history },
   );
 
-  expect(outcome).toEqual({ kind: "refused", reason: "workspace-refused", warnings: [] });
+  // its own reason and not `workspace-refused`, which the page words as an edit that changed
+  // nothing — and this one did (#326)
+  expect(outcome).toEqual({ kind: "refused", reason: "save-revision-unreadable", warnings: [] });
   expect(JSON.stringify(outcome)).not.toContain("the file's content");
+  // the write did land, which is why the reason may not claim otherwise
+  const after = await readStateFile(workspace, ALICE);
+  expect("state" in after && after.state.timetables[0]?.variants[0]?.picks[0]?.groupNumber).toBe("02");
   // the stack believes nothing the adapter said about this save
   expect(heard).toEqual([]);
 });

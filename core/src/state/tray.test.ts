@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { recordPick } from "./picks.ts";
 import { stateSchema, type Attempt, type GroupPick, type State } from "./schema.ts";
 import { addToTray, removeFromTray, trayEntries, type TrayOffering } from "./tray.ts";
@@ -29,13 +29,13 @@ const OFFERINGS: TrayOffering[] = [
   {
     courseNumber: "89-110",
     groups: [
-      { lessonType: "הרצאה" },
-      { lessonType: "תרגיל" },
-      { lessonType: "תרגיל" },
-      { lessonType: "הרצאה" },
+      { lessonType: "הרצאה", number: "01" },
+      { lessonType: "תרגיל", number: "01" },
+      { lessonType: "תרגיל", number: "02" },
+      { lessonType: "הרצאה", number: "02" },
     ],
   },
-  { courseNumber: "89-210", groups: [{ lessonType: "הרצאה" }] },
+  { courseNumber: "89-210", groups: [{ lessonType: "הרצאה", number: "01" }] },
 ];
 
 const tray = (state: State) => state.timetables[0]?.variants[0]?.tray;
@@ -250,4 +250,67 @@ it("derives planned Attempts into the Tray of a Variant that does not exist yet"
       complete: false,
     },
   ]);
+});
+
+/**
+ * #335: a Semester can list two Offerings of one Course — in 2027's data 89-100 is both Year-long
+ * and Fall-only, and both answer to Fall. The entry describes the Offering the Variant's Picks of
+ * the Course belong to, and the first listed when there is no Pick or no single Offering holds them.
+ */
+describe("a Course with two Offerings in the Semester", () => {
+  /** The Year-long one is listed first and has a lab; the Fall-only one has a tirgul. */
+  const TWO: TrayOffering[] = [
+    {
+      courseNumber: "89-100",
+      groups: [
+        { lessonType: "הרצאה", number: "01" },
+        { lessonType: "מעבדה", number: "01" },
+      ],
+    },
+    {
+      courseNumber: "89-100",
+      groups: [
+        { lessonType: "הרצאה", number: "02" },
+        { lessonType: "תרגיל", number: "01" },
+      ],
+    },
+  ];
+
+  it("reads the chips off the Offering the Picks belong to, not the first listed", () => {
+    const state = recordPick(empty(), A, pick("89-100", "הרצאה", "02"));
+
+    expect(trayEntries(state, A, TWO)[0]).toMatchObject({
+      known: true,
+      chips: [{ lessonType: "הרצאה", groupNumber: "02" }, { lessonType: "תרגיל" }],
+      complete: false,
+    });
+  });
+
+  it("is complete by the Offering the Picks belong to", () => {
+    let state = recordPick(empty(), A, pick("89-100", "הרצאה", "02"));
+    state = recordPick(state, A, pick("89-100", "תרגיל", "01"));
+
+    expect(trayEntries(state, A, TWO)[0]).toMatchObject({ complete: true });
+  });
+
+  it("reads the first listed when nothing of the Course is picked", () => {
+    const state = addToTray(empty(), A, "89-100");
+
+    expect(trayEntries(state, A, TWO)[0]?.chips).toEqual([
+      { lessonType: "הרצאה" },
+      { lessonType: "מעבדה" },
+    ]);
+  });
+
+  it("reads the first listed when no single Offering holds every Pick", () => {
+    // a lecture only the first has and a tirgul only the second has
+    let state = recordPick(empty(), A, pick("89-100", "הרצאה", "01"));
+    state = recordPick(state, A, pick("89-100", "תרגיל", "01"));
+
+    expect(trayEntries(state, A, TWO)[0]?.chips).toEqual([
+      { lessonType: "הרצאה", groupNumber: "01" },
+      { lessonType: "מעבדה" },
+      { lessonType: "תרגיל", groupNumber: "01" },
+    ]);
+  });
 });

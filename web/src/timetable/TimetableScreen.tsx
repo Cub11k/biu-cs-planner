@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { api } from "../api.ts";
 import { t, type Language, type StringKey } from "../i18n/strings.ts";
 import { academicYearOf, academicYearSpan, semesterOf } from "./calendar.ts";
@@ -34,7 +34,7 @@ import {
 import { CoursePicker } from "./CoursePicker.tsx";
 import { addToTray, removeFromTray } from "./tray.ts";
 import { TrayColumn } from "./TrayColumn.tsx";
-import { BlockedTimesEditor } from "./BlockedTimesEditor.tsx";
+import { BlockedTimesEditor, type FormAnswer } from "./BlockedTimesEditor.tsx";
 import {
   addBlockedTime,
   copyBlockedTimes,
@@ -42,7 +42,8 @@ import {
   replaceBlockedTime,
 } from "./blockedTimes.ts";
 import { lessonTypeName } from "./lessonType.ts";
-import { VariantTabs } from "./VariantTabs.tsx";
+import { shownTabIndex, VariantTabs, variantTabId } from "./VariantTabs.tsx";
+import { keepVariantInUrl, variantInUrl, type VariantUrlBrowser } from "./variantUrl.ts";
 import { WeekGrid } from "./WeekGrid.tsx";
 
 const SEMESTER_STRING = {
@@ -63,6 +64,26 @@ type TimetableState = { kind: "loading" } | TimetableResult;
  * wrong one. A click is answered by the week it was made on or not at all.
  */
 type HeldClick = { group: WeekGroup; query: TimetableQuery };
+
+/** A served Timetable answer: what an edit can be sent on. */
+type Served = Extract<TimetableResult, { kind: "served" }>;
+
+/**
+ * An edit made while a `state-file-changed` re-read is in flight (#334): sent on the answer that
+ * re-read brings, or dropped and said so when it brings none. `variant` is the Variant on screen
+ * when it was made, because an edit is about the week it was made on or about none.
+ */
+type HeldEdit = {
+  variant: string;
+  send: (on: Served) => Promise<TimetableResult | undefined>;
+  drop: () => void;
+};
+
+/** The tab a student chose: a Variant's name, and its position for when two share it (#322). */
+type VariantWanted = { name: string; position: number | undefined };
+
+/** The page's own URL, where the open tab is kept across a reload (#325); none outside a browser. */
+const pageUrl = (): VariantUrlBrowser | undefined => (typeof window === "undefined" ? undefined : window);
 
 /**
  * Why the API served no Catalog, said in words the student can act on. A Warning nobody
@@ -87,6 +108,9 @@ const REFUSAL_STRING = {
   "workspace-refused": "picksUnreadable",
   // The State File read fine and the backup could not be made, so not `picksUnreadable` (#229).
   "backup-refused": "picksBackupRefused",
+  // The save was made and its revision could not be read (#326): not `picksUnreadable`, which
+  // says nothing changed. `settle` keeps the week and re-reads on it.
+  "save-revision-unreadable": "saveUnconfirmed",
 } as const satisfies Record<NonNullable<StateRefusal>, StringKey>;
 
 /**
@@ -111,12 +135,27 @@ const isAbsence = (warnings: readonly CatalogWarning[]): boolean =>
  *
  * `load` is the question: memoise it on what it asks for, and a change to it is a change of
  * question rather than news about the folder.
+ *
+ * `keep` decides whether a fresh answer is **not** put on screen, the one on screen being kept
+ * instead (#218). The count that comes back third is how many answers in a row were kept, `0`
+ * once one is taken, so the screen can say what it is showing is the last it read.
  */
 function useReloading<T>(
   load: () => Promise<T>,
   workspaceChanges: number,
-): [{ kind: "loading" } | T, (answer: T) => void] {
-  const [answer, setAnswer] = useState<{ kind: "loading" } | T>({ kind: "loading" });
+  keep: (fresh: T, onScreen: { kind: "loading" } | T) => boolean = () => false,
+): [{ kind: "loading" } | T, (answer: T) => void, number] {
+  const [answer, setAnswerState] = useState<{ kind: "loading" } | T>({ kind: "loading" });
+  const [kept, setKept] = useState(0);
+  /** What is on screen, for `keep` to compare a fresh answer with. */
+  const onScreen = useRef<{ kind: "loading" } | T>({ kind: "loading" });
+  const setAnswer = useCallback((next: { kind: "loading" } | T): void => {
+    onScreen.current = next;
+    setAnswerState(next);
+    setKept(0);
+  }, []);
+  const keepRef = useRef(keep);
+  keepRef.current = keep;
   const shownFor = useRef<typeof load | undefined>(undefined);
   /**
    * Which answer the screen is showing. It has to be counted rather than flagged, because
@@ -128,10 +167,13 @@ function useReloading<T>(
   const shown = useRef(0);
 
   /** An answer from outside the effect — an edit's own — is the newest by definition. */
-  const showAnswer = useCallback((fresh: T): void => {
-    shown.current += 1;
-    setAnswer(fresh);
-  }, []);
+  const showAnswer = useCallback(
+    (fresh: T): void => {
+      shown.current += 1;
+      setAnswer(fresh);
+    },
+    [setAnswer],
+  );
 
   useEffect(() => {
     const mine = (shown.current += 1);
@@ -142,17 +184,34 @@ function useReloading<T>(
     void load().then((fresh) => {
       if (shown.current !== mine) return;
       shownFor.current = load;
-      setAnswer(fresh);
+      if (keepRef.current(fresh, onScreen.current)) setKept((count) => count + 1);
+      else setAnswer(fresh);
     });
 
     return () => {
       // whatever this run asked for is no longer what the screen is waiting on
       shown.current += 1;
     };
-  }, [load, workspaceChanges]);
+  }, [load, workspaceChanges, setAnswer]);
 
-  return [answer, showAnswer];
+  return [answer, showAnswer, kept];
 }
+
+/**
+ * Which re-read of the State File keeps the week on screen rather than replacing it (#218, ruled by
+ * the maintainer on 2026-10-04, consistent with #184's ruling): **an answer nobody could read, over
+ * a week the page had read.** The page learned nothing from it, so what it last read is still its
+ * best account, and it stays with a sentence saying it is the last read (`picksReadStale`).
+ *
+ * **`refused` and `unauthorized` still replace the week**, and that difference is deliberate: from
+ * those the page *did* learn something — the folder is not a Workspace or the file cannot be read,
+ * or the Launch Token is retired — and a week drawn as if neither were so would be data shown as
+ * known that the page now knows it cannot vouch for. `unreachable` replaces it too: a server that
+ * is not there is something learned about everything the page could send. Unread data is never
+ * drawn as known; read data is kept only with an account.
+ */
+const keepReadWeek = (fresh: TimetableResult, onScreen: TimetableState): boolean =>
+  fresh.kind === "unreadable-answer" && onScreen.kind === "served";
 
 /**
  * The Timetable as the app opens it: the screen inside the app shell (`../AppShell.tsx`), which
@@ -227,8 +286,12 @@ export function TimetablePane({
    * so the click may have landed, and the page goes and looks rather than showing a blank week
    * in place of one it can re-read. The re-read would then replace an account held in
    * `timetable`, so the account is held here, and retired as `staleSave` is.
+   *
+   * Held as the sentence to say, because a second case shares everything else: a save refused as
+   * `save-revision-unreadable` was made and its revision could not be read (#326), so it too may
+   * have landed, and the page re-reads rather than replacing the week with a refusal.
    */
-  const [unknownSave, setUnknownSave] = useState(false);
+  const [unknownSave, setUnknownSave] = useState<StringKey | undefined>(undefined);
   const [rereads, setRereads] = useState(0);
   /**
    * The answer a click was sent on, while the re-read its unreadable answer asked for is still in
@@ -265,6 +328,19 @@ export function TimetablePane({
    * had is still news, and waiting for a different string would wait for ever.
    */
   const refusedOn = useRef<TimetableState | undefined>(undefined);
+  /**
+   * The answer a save was refused `state-file-changed` on, while the re-read that refusal asked
+   * for is still in flight (#334). The revision on screen is spent until that re-read lands, so an
+   * edit made now would be refused again — the second click in PR #333's capture left 28 ms after
+   * the re-read was answered and before it was drawn. So an edit made while this is the answer on
+   * screen is held in `heldEdits`, and sent on whatever the re-read brings: the wait undo already
+   * makes after a step (`steppedOn` in `../AppShell.tsx`, ADR-0013). Held by identity, as
+   * `refusedOn` is.
+   */
+  const [rereadingFrom, setRereadingFrom] = useState<TimetableState | undefined>(undefined);
+  const heldEdits = useRef<HeldEdit[]>([]);
+  /** How many edits are held, so the screen can say so while they wait. */
+  const [heldEditCount, setHeldEditCount] = useState(0);
 
   /**
    * The Variant tab the student chose, or `undefined` for the primary — which is what a Semester
@@ -276,8 +352,23 @@ export function TimetablePane({
    * screen *shows* is never read from here — it is `timetable.variantName`, the Variant the
    * answer on screen is about — so a click made while the next tab is on its way still names the
    * Variant the student was looking at when they clicked.
+   *
+   * By name **and position** (#322): two Variants may share a name, and the position is what
+   * reaches the second of them. The server honours the position only while the Variant there
+   * carries the name.
    */
-  const variantWanted = useRef<string | undefined>(undefined);
+  const variantWanted = useRef<VariantWanted | undefined>(undefined);
+  /**
+   * Seeded once from the URL, so a reload opens the tab that was open (#325) — the server answers
+   * with the primary when it no longer exists, and the page follows that answer below.
+   */
+  const seeded = useRef(false);
+  if (!seeded.current) {
+    seeded.current = true;
+    variantWanted.current = variantInUrl(pageUrl());
+  }
+  /** The week, as the panel the Variant tabs control (#324). */
+  const weekPanelId = useId();
 
   const askCatalog = useCallback(
     () => fetchOfferings(api, { academicYear, semester }),
@@ -285,7 +376,12 @@ export function TimetablePane({
   );
   const askTimetable = useCallback(() => {
     const asked = variantWanted.current;
-    return fetchTimetable(api, { academicYear, semester, variant: asked }).then((answer) => {
+    return fetchTimetable(api, {
+      academicYear,
+      semester,
+      variant: asked?.name,
+      position: asked?.position,
+    }).then((answer) => {
       // The tab asked for is gone — another window deleted or renamed it — and the server has
       // answered with the primary instead. The page follows the answer rather than going on
       // asking for a Variant no file holds, so the next new Variant of that name cannot steal
@@ -293,7 +389,7 @@ export function TimetablePane({
       if (
         answer.kind === "served" &&
         asked !== undefined &&
-        answer.variantName !== asked &&
+        answer.variantName !== asked.name &&
         variantWanted.current === asked
       ) {
         variantWanted.current = undefined;
@@ -302,9 +398,35 @@ export function TimetablePane({
     });
   }, [academicYear, semester]);
 
-  const [catalog]: [CatalogState, unknown] = useReloading(askCatalog, workspaceChanges);
-  const [timetable, setTimetable]: [TimetableState, (answer: TimetableResult) => void] =
-    useReloading(askTimetable, workspaceChanges + rereads + stepRereads);
+  const [catalog]: [CatalogState, unknown, unknown] = useReloading(askCatalog, workspaceChanges);
+  /** How many re-reads in a row came back unreadable over the week on screen, which stays (#218). */
+  const [timetable, setTimetable, readsKept]: [
+    TimetableState,
+    (answer: TimetableResult) => void,
+    number,
+  ] = useReloading(askTimetable, workspaceChanges + rereads + stepRereads, keepReadWeek);
+  /**
+   * `readsKept` as of now, for the two waits below to note when they start: a wait ends with a
+   * kept read only if the count rose **after** it began, since an earlier kept read may already
+   * be on screen when a refusal starts a new one.
+   */
+  const readsKeptNow = useRef(readsKept);
+  readsKeptNow.current = readsKept;
+  /** `readsKept` when the current `state-file-changed` wait began (#334). */
+  const keptWhenRereadBegan = useRef(0);
+  /** `readsKept` when the held-click drain's `refusedOn` was set. */
+  const keptWhenRefused = useRef(0);
+  /**
+   * Whether an edit made now has to wait for a `state-file-changed` re-read (#334): the answer the
+   * refusal was sent on is still the one on screen, **and** that re-read has not come back
+   * unreadable and been kept (#218). Decided from this render, not from the effect below that ends
+   * the wait: the render that draws a kept week comes before that effect, and a click landing
+   * between the two used to be held and then dropped, though the re-read it waited for was over.
+   */
+  const waitingForReread =
+    rereadingFrom !== undefined &&
+    rereadingFrom === timetable &&
+    readsKept <= keptWhenRereadBegan.current;
 
   const offerings = catalog.kind === "served" ? catalog.offerings : [];
   /**
@@ -317,6 +439,11 @@ export function TimetablePane({
   const clashes = timetable.kind === "served" ? timetable.clashes : [];
   const variantWarnings = timetable.kind === "served" ? timetable.variantWarnings : [];
   const chosen = offerings.find((offering) => offering.courseNumber === selected);
+  /** Which tab is shown, by position, or -1 while there is none. */
+  const shownTab =
+    timetable.kind === "served"
+      ? shownTabIndex(timetable.variants, { name: timetable.variantName, position: timetable.variantPosition })
+      : -1;
 
   /** A picked Course the Catalog no longer names shows its number, which it always has. */
   const nameOf = (courseNumber: string): string => {
@@ -343,6 +470,9 @@ export function TimetablePane({
     // see, and would throw away the revision the next click needs.
     if (answer.kind === "refused" && answer.reason === "state-file-changed") {
       setStaleSave(true);
+      // and until the re-read lands, an edit made on this answer waits for it (#334)
+      keptWhenRereadBegan.current = readsKeptNow.current;
+      setRereadingFrom(sentOn);
       setRereads((count) => count + 1);
       return answer;
     }
@@ -358,9 +488,15 @@ export function TimetablePane({
     // lands goes out on a revision the first may have spent, and comes back
     // `state-file-changed` if it did. Held clicks are spared by the drain's wait below;
     // routing a direct click into `held` instead would change what it means, since a held
-    // click asks for a Pick and a click on ink asks for its removal. Left as an open window.
-    if (answer.kind === "unreadable-answer") {
-      setUnknownSave(true);
+    // click asks for a Pick and a click on ink asks for its removal. Left as an open window
+    // here; the `state-file-changed` arm above closes it for its own re-read (#334).
+    if (
+      answer.kind === "unreadable-answer" ||
+      (answer.kind === "refused" && answer.reason === "save-revision-unreadable")
+    ) {
+      setUnknownSave(
+        answer.kind === "unreadable-answer" ? "picksSaveAnswerUnreadable" : "saveUnconfirmed",
+      );
       // and the undo buttons wait for that re-read, as they do after a step: a press sent
       // on a revision this click may have spent would come back `historyStale`
       setAwaitingFrom(sentOn);
@@ -434,9 +570,16 @@ export function TimetablePane({
   useEffect(() => {
     if (steps === 0) return;
     setStaleSave(false);
-    setUnknownSave(false);
+    setUnknownSave(undefined);
     setHeldLost(false);
   }, [steps]);
+
+  /** The tab shown goes into the URL, so a reload or a bookmark opens it again (#325). */
+  const shownName = timetable.kind === "served" ? timetable.variantName : undefined;
+  const shownPosition = timetable.kind === "served" ? timetable.variantPosition : undefined;
+  useEffect(() => {
+    if (shownName !== undefined) keepVariantInUrl(pageUrl(), { name: shownName, position: shownPosition });
+  }, [shownName, shownPosition]);
 
   /**
    * Which revision the shell may step from: the one on screen, once the State File has been read
@@ -449,17 +592,20 @@ export function TimetablePane({
    */
   useLayoutEffect(() => {
     onRevision(
-      timetable.kind === "served" && timetable.version !== undefined && awaitingFrom !== timetable
+      timetable.kind === "served" &&
+        timetable.version !== undefined &&
+        awaitingFrom !== timetable &&
+        !waitingForReread
         ? { version: timetable.version, answer: timetable }
         : undefined,
     );
-  }, [timetable, awaitingFrom, onRevision]);
+  }, [timetable, awaitingFrom, waitingForReread, onRevision]);
 
   /** Whatever became of the last click or press, the one being made now is the account owed. */
   const retireNotices = (): void => {
     setHeldLost(false);
     setStaleSave(false);
-    setUnknownSave(false);
+    setUnknownSave(undefined);
     onActed();
   };
 
@@ -471,23 +617,94 @@ export function TimetablePane({
   const sendEdit = (
     edit: TimetableEdit,
     follow?: (served: Extract<TimetableResult, { kind: "served" }>) => void,
-  ): void => {
-    if (timetable.kind !== "served") return;
+  ): Promise<TimetableResult | undefined> => {
+    if (timetable.kind !== "served") return Promise.resolve(undefined);
     retireNotices();
-    const sentOn = timetable;
-    const query = { academicYear, semester, variant: timetable.variantName };
-    void edit(query, timetable.version).then((answer) => settle(answer, sentOn, follow));
+    const sendOn = (on: Served): Promise<TimetableResult> => {
+      const query = { academicYear, semester, variant: on.variantName, position: on.variantPosition };
+      return edit(query, on.version).then((answer) => settle(answer, on, follow));
+    };
+    return waitingForReread ? hold(timetable.variantName, sendOn) : sendOn(timetable);
   };
 
+  /**
+   * Holds an edit until the re-read a `state-file-changed` refusal asked for has landed (#334),
+   * and answers with what became of it once it is sent — or `undefined` if it is dropped.
+   */
+  const hold = (
+    variant: string,
+    send: (on: Served) => Promise<TimetableResult | undefined>,
+  ): Promise<TimetableResult | undefined> =>
+    new Promise((resolve) => {
+      heldEdits.current.push({
+        variant,
+        send: (on) => send(on).then((answer) => (resolve(answer), answer)),
+        drop: () => resolve(undefined),
+      });
+      setHeldEditCount(heldEdits.current.length);
+    });
+
+  /**
+   * The held edits, once the answer they wait for is on screen: sent one after another, each on
+   * the answer the one before it brought, because each save moves the revision. One that is
+   * refused, or a re-read that brought no week, ends the queue, and the rest are dropped with
+   * `picksHeldLost` rather than vanishing (#334). So is one made on a Variant no longer shown.
+   */
+  useEffect(() => {
+    if (rereadingFrom === undefined || timetable.kind === "loading") return;
+    // The re-read came back unreadable and the week on screen was kept (#218): no revision came
+    // with it, so the held edits are not sent on the one they were waiting to leave — they are
+    // reported as not sent, never re-sent on a state that may have changed.
+    if (timetable === rereadingFrom && readsKept > keptWhenRereadBegan.current) {
+      setRereadingFrom(undefined);
+      const dropped = heldEdits.current.splice(0);
+      setHeldEditCount(0);
+      for (const edit of dropped) edit.drop();
+      if (dropped.length > 0) setHeldLost(true);
+      return;
+    }
+    if (timetable === rereadingFrom) return;
+    setRereadingFrom(undefined);
+    const waiting = heldEdits.current.splice(0);
+    setHeldEditCount(0);
+    if (waiting.length === 0) return;
+
+    void waiting.reduce<Promise<TimetableState | undefined>>(
+      (previous, next) =>
+        previous.then((on) => {
+          if (on?.kind !== "served" || on.variantName !== next.variant) {
+            next.drop();
+            setHeldLost(true);
+            return undefined;
+          }
+          return next.send(on);
+        }),
+      Promise.resolve(timetable),
+    );
+  }, [timetable, rereadingFrom, readsKept]);
+
+  /**
+   * A form's edit, answered with whether it landed (#324): the Blocked Time form stays open, with
+   * what the student typed, until the answer says the save went through, and says beside itself why
+   * it did not. Anything but a served answer is not "landed" — an answer nobody could read may have
+   * landed, and the form is then the student's to close.
+   */
+  const formEdit = (edit: TimetableEdit): Promise<FormAnswer> =>
+    sendEdit(edit).then((answer) =>
+      answer?.kind === "served"
+        ? { landed: true }
+        : { landed: false, said: answer === undefined ? undefined : notSavedSaid(language, answer, tokenHeld) },
+    );
+
   /** Showing another tab: a re-read of the same question, never a State File edit. */
-  const showVariant = (name: string): void => {
-    variantWanted.current = name;
+  const showVariant = (name: string, position: number): void => {
+    variantWanted.current = { name, position };
     setRereads((count) => count + 1);
   };
 
   /** After an edit that moves the student to a Variant, the page asks about that one from now on. */
   const followAnswer = (served: Extract<TimetableResult, { kind: "served" }>): void => {
-    variantWanted.current = served.variantName;
+    variantWanted.current = { name: served.variantName, position: served.variantPosition };
   };
 
   const variantEdits =
@@ -541,13 +758,13 @@ export function TimetablePane({
     timetable.kind === "served"
       ? {
           add: (range: Parameters<typeof addBlockedTime>[2]) =>
-            sendEdit((query, basedOn) => addBlockedTime(api, query, range, basedOn)),
+            formEdit((query, basedOn) => addBlockedTime(api, query, range, basedOn)),
           replace: (index: number, range: Parameters<typeof addBlockedTime>[2]) =>
-            sendEdit((query, basedOn) => replaceBlockedTime(api, query, index, range, basedOn)),
+            formEdit((query, basedOn) => replaceBlockedTime(api, query, index, range, basedOn)),
           remove: (index: number) =>
-            sendEdit((query, basedOn) => removeBlockedTime(api, query, index, basedOn)),
+            void sendEdit((query, basedOn) => removeBlockedTime(api, query, index, basedOn)),
           copyTo: (target: Semester) =>
-            sendEdit((query, basedOn) =>
+            void sendEdit((query, basedOn) =>
               copyBlockedTimes(api, query, { academicYear, semester: target }, basedOn),
             ),
         }
@@ -557,19 +774,31 @@ export function TimetablePane({
     retireNotices();
     // the Variant on screen when the click was made, or — before the first answer — the one
     // being asked for, which is the one that answer will be about
-    const query = {
-      academicYear,
-      semester,
-      variant: timetable.kind === "served" ? timetable.variantName : variantWanted.current,
-    };
+    const query =
+      timetable.kind === "served"
+        ? { academicYear, semester, variant: timetable.variantName, position: timetable.variantPosition }
+        : {
+            academicYear,
+            semester,
+            variant: variantWanted.current?.name,
+            position: variantWanted.current?.position,
+          };
 
     if (timetable.kind !== "served") {
       setHeld((waiting) => [...waiting, { group, query }]);
       return;
     }
     // Only a served answer knows this, and `picked` is a `boolean` once it does. A click on
-    // ink removes the Pick; a click on pencil records one.
-    void save(group, group.picked === true, timetable.version, query, timetable);
+    // ink removes the Pick; a click on pencil records one — decided on the week it was made on,
+    // and kept if it has to wait for a re-read (#334).
+    const remove = group.picked === true;
+    if (waitingForReread) {
+      void hold(timetable.variantName, (on) =>
+        save(group, remove, on.version, { ...query, position: on.variantPosition }, on),
+      );
+      return;
+    }
+    void save(group, remove, timetable.version, query, timetable);
   };
 
   /**
@@ -582,6 +811,15 @@ export function TimetablePane({
   useEffect(() => {
     const next = held[0];
     if (next === undefined || sending.current) return;
+    // The re-read that refusal asked for came back unreadable and the week was kept (#218): no
+    // revision is coming for these clicks, so they are reported as not sent, never sent later on
+    // whatever the next read happens to bring.
+    if (refusedOn.current === timetable && readsKept > keptWhenRefused.current) {
+      refusedOn.current = undefined;
+      setHeld([]);
+      setHeldLost(true);
+      return;
+    }
     // this revision has already been refused once; the re-read it triggered is what to wait for
     if (refusedOn.current === timetable) return;
 
@@ -629,14 +867,17 @@ export function TimetablePane({
       // rest of the queue must not be fired at the revision that refused it — nor at one an
       // unreadable answer may already have spent, which the re-read it triggered will settle.
       if (
-        (answer.kind === "refused" && answer.reason === "state-file-changed") ||
+        (answer.kind === "refused" &&
+          (answer.reason === "state-file-changed" ||
+            answer.reason === "save-revision-unreadable")) ||
         answer.kind === "unreadable-answer"
       ) {
+        keptWhenRefused.current = readsKeptNow.current;
         refusedOn.current = sentOn;
       }
       setHeld((waiting) => waiting.slice(1));
     });
-  }, [held, timetable, save, academicYear, semester]);
+  }, [held, timetable, save, academicYear, semester, readsKept]);
 
   // one spelling of the year on the whole screen: the header and the sidebar disagreeing
   // about 2026-27 and 2027 reads as if a different year were the one missing
@@ -715,8 +956,13 @@ export function TimetablePane({
           <VariantTabs
             language={language}
             variants={timetable.kind === "served" ? timetable.variants : []}
-            shown={timetable.kind === "served" ? timetable.variantName : undefined}
+            shown={
+              timetable.kind === "served"
+                ? { name: timetable.variantName, position: timetable.variantPosition }
+                : undefined
+            }
             onShow={showVariant}
+            panelId={weekPanelId}
             edits={variantEdits}
           />
           <p className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-rule bg-hint px-4 py-2 text-sm text-ink-soft">
@@ -737,9 +983,15 @@ export function TimetablePane({
               {held.length > 0 && timetable.kind !== "served" && (
                 <span>{t(language, "picksHeld")}</span>
               )}
+              {/* an edit waiting for the re-read a refusal asked for (#334) */}
+              {heldEditCount > 0 && <span>{t(language, "picksHeldForReread")}</span>}
               {heldLost && <span>{t(language, "picksHeldLost")}</span>}
               {staleSave && <span>{t(language, "picksStale")}</span>}
-              {unknownSave && <span>{t(language, "picksSaveAnswerUnreadable")}</span>}
+              {unknownSave !== undefined && <span>{t(language, unknownSave)}</span>}
+              {/* the week is the last one read, kept over an answer nobody could read (#218) */}
+              {readsKept > 0 && timetable.kind === "served" && (
+                <span>{t(language, "picksReadStale")}</span>
+              )}
               {/* the shell's own: the last press of undo or redo, the last preference */}
               {notices}
               {clashes.length > 0 && <span>{clashesSaid(language, clashes.length)}</span>}
@@ -774,7 +1026,15 @@ export function TimetablePane({
             </span>
           </p>
 
-          <div className="min-h-0 flex-1 overflow-auto">
+          {/* the panel the Variant tabs control, labelled by the tab shown — a tab pattern without
+              one is incomplete (#324); only while there are tabs to control it */}
+          <div
+            className="min-h-0 flex-1 overflow-auto"
+            id={weekPanelId}
+            {...(shownTab === -1
+              ? {}
+              : { role: "tabpanel", "aria-labelledby": variantTabId(weekPanelId, shownTab) })}
+          >
             <WeekGrid
               language={language}
               semester={semester}
@@ -794,6 +1054,22 @@ export function TimetablePane({
       </div>
     </>
   );
+}
+
+/** Why a form's edit did not land, said beside the form (#324). */
+function notSavedSaid(language: Language, answer: TimetableResult, tokenHeld: boolean): string | undefined {
+  switch (answer.kind) {
+    case "served":
+      return undefined;
+    case "refused":
+      return t(language, answer.reason === undefined ? "picksUnreadable" : REFUSAL_STRING[answer.reason]);
+    case "unreadable-answer":
+      return t(language, "picksSaveAnswerUnreadable");
+    case "unauthorized":
+      return unauthorizedSaid(language, tokenHeld);
+    case "unreachable":
+      return t(language, "apiUnreachable");
+  }
 }
 
 /**

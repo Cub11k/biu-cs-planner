@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { DEFAULT_VARIANT_NAME, recordPick } from "./picks.ts";
 import { stateSchema, type GroupPick, type State } from "./schema.ts";
 import {
@@ -7,8 +7,10 @@ import {
   duplicateVariant,
   freeVariantName,
   renameVariant,
+  resolveVariant,
   resolveVariantName,
   setPrimaryVariant,
+  variantPosition,
   variantWarnings,
 } from "./variants.ts";
 
@@ -290,4 +292,72 @@ it("warns about a Timetable whose Variants have no primary", () => {
   expect(variantWarnings(noPrimary, FALL_2027)).toEqual([
     { kind: "primary-variant-not-unique", primaries: 0 },
   ]);
+});
+
+/**
+ * #322: two Variants of one name, which is a Warning and never a refusal, are both reachable. A
+ * `VariantRef` may carry the Variant's position in file order, and every edit and read honours it
+ * while the Variant there carries the name. Without one, the name reaches the first, as before.
+ */
+describe("two Variants sharing a name", () => {
+  /** A (primary, with lecture 01) then a second A, made by renaming B into the taken name. */
+  const collided = (): State => renameVariant(createVariant(recordPick(empty(), at("A"), LECTURE), at("B")), at("B"), "A");
+  const second = { ...at("A"), position: 1 };
+
+  it("is made by a rename into a taken name, with its Warning", () => {
+    const state = collided();
+    expect(tabs(state)).toEqual([
+      ["A", true],
+      ["A", false],
+    ]);
+    expect(variantWarnings(state, FALL_2027)).toEqual([{ kind: "variant-name-not-unique", name: "A" }]);
+  });
+
+  it("reaches the second by its position, for a read and for every edit", () => {
+    const state = collided();
+
+    expect(resolveVariant(state, FALL_2027, "A", 1)).toEqual({ variant: "A", position: 1 });
+    expect(variantPosition(state, second)).toBe(1);
+
+    const picked = recordPick(state, second, { ...LECTURE, groupNumber: "02" });
+    expect(picked.timetables[0]?.variants.map((v) => v.picks.map((p) => p.groupNumber))).toEqual([
+      ["01"],
+      ["02"],
+    ]);
+
+    expect(tabs(renameVariant(state, second, "C"))).toEqual([
+      ["A", true],
+      ["C", false],
+    ]);
+    expect(tabs(setPrimaryVariant(state, second))).toEqual([
+      ["A", false],
+      ["A", true],
+    ]);
+    expect(deleteVariant(state, second).timetables[0]?.variants.map((v) => v.picks.length)).toEqual([1]);
+    expect(duplicateVariant(state, second, "D").timetables[0]?.variants.map((v) => v.name)).toEqual([
+      "A",
+      "A",
+      "D",
+    ]);
+  });
+
+  it("reaches the first by the name alone, as every caller that sends no position did", () => {
+    const state = collided();
+
+    expect(resolveVariant(state, FALL_2027, "A")).toEqual({ variant: "A", position: 0 });
+    expect(resolveVariantName(state, FALL_2027, "A")).toBe("A");
+    expect(tabs(renameVariant(state, at("A"), "C"))).toEqual([
+      ["C", true],
+      ["A", false],
+    ]);
+  });
+
+  it("falls back to the name when the position names another Variant", () => {
+    const state = createVariant(collided(), at("Z"));
+
+    // position 2 is Z, not an A, so the position does not count and the first A is reached
+    expect(variantPosition(state, { ...at("A"), position: 2 })).toBe(0);
+    expect(variantPosition(state, { ...at("A"), position: 9 })).toBe(0);
+    expect(variantPosition(state, at("nothing"))).toBeUndefined();
+  });
 });

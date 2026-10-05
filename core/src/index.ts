@@ -74,8 +74,10 @@ export {
   duplicateVariant,
   freeVariantName,
   renameVariant,
+  resolveVariant,
   resolveVariantName,
   setPrimaryVariant,
+  variantPosition,
   variantWarnings,
 } from "./state/variants.ts";
 export type { VariantWarning } from "./state/variants.ts";

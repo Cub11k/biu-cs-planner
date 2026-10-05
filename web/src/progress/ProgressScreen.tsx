@@ -67,6 +67,7 @@ const REFUSAL_STRING = {
   "state-file-changed": "progressStale",
   "workspace-refused": "progressFileUnreadable",
   "backup-refused": "progressBackupRefused",
+  "save-revision-unreadable": "saveUnconfirmed",
 } as const satisfies Record<NonNullable<ProgressRefusal>, StringKey>;
 
 /**

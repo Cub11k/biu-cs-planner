@@ -17,6 +17,12 @@ export type Language = (typeof LANGUAGES)[number];
 const english = {
   apiUnreachable: "API unreachable",
 
+  /**
+   * The app's name, which the document title follows when the language changes (#310).
+   * `index.html` carries the English one as the first-paint title.
+   */
+  appName: "BIU CS Planner",
+
   /** The other language, named in itself: the switch says where it takes you. */
   otherLanguage: "עברית",
 
@@ -507,6 +513,27 @@ const english = {
   picksHeldLost: "Your click was not saved.",
 
   /**
+   * A save that was made and whose revision the Workspace could not hand back readably (#326). It
+   * may well have landed, so unlike every other refusal sentence this does not say nothing changed.
+   * One sentence for every screen, since it is about the save and not about what was saved.
+   */
+  saveUnconfirmed:
+    "Your change may have been saved, but the app could not confirm it. Check that it is there before making it again.",
+  /**
+   * An edit made while the page re-reads a file that changed under it (#334): it is held, and sent
+   * on what the re-read brings.
+   */
+  picksHeldForReread: "Reading the file again. Your change will be sent once it has been read.",
+  /**
+   * A re-read whose answer could not be read, over a week the page had read (#218): the week stays,
+   * as the last one read, and this says so.
+   */
+  picksReadStale:
+    "The file could not be read again just now, so this is the week as it was last read. It may be out of date.",
+  /** Beside the Blocked Time form when its save did not land; the reason follows it (#324). */
+  blockedNotSaved: "Not saved. What you typed is still here.",
+
+  /**
    * The Variant tabs above the week (#281). A Variant's own name is the student's text and is
    * never translated; these are the words around it.
    */
@@ -604,6 +631,8 @@ export const STRING_KEYS = Object.keys(english) as StringKey[];
 /** Typed against the English keys, so a missing Hebrew string is a compile error. */
 const hebrew: Record<StringKey, string> = {
   apiUnreachable: "ה-API אינו זמין",
+
+  appName: "מתכנן מדעי המחשב בר־אילן",
 
   otherLanguage: "English",
 
@@ -833,6 +862,11 @@ const hebrew: Record<StringKey, string> = {
     "היישום לא הצליח ליצור גיבוי של העבודה השמורה שלכם לפני שינויה, ולכן הלחיצה לא נשמרה.",
   picksHeld: "הבחירות השמורות עדיין נטענות. הלחיצה שלכם ממתינה להן.",
   picksHeldLost: "הלחיצה שלכם לא נשמרה.",
+
+  saveUnconfirmed: "ייתכן שהשינוי נשמר, אך היישום לא הצליח לאשר זאת. בדקו שהוא מופיע לפני שתבצעו אותו שוב.",
+  blockedNotSaved: "לא נשמר. מה שהקלדתם עדיין כאן.",
+  picksHeldForReread: "הקובץ נקרא שוב. השינוי שלכם יישלח מיד לאחר מכן.",
+  picksReadStale: "לא ניתן היה לקרוא שוב את הקובץ כרגע, ולכן זה השבוע כפי שנקרא לאחרונה. ייתכן שאינו עדכני.",
 
   variantTabs: "חלופות",
   variantPrimaryMark: "ראשית",

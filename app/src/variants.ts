@@ -5,6 +5,9 @@ import {
   freeVariantName,
   renameVariant,
   setPrimaryVariant,
+  timetableAt,
+  variantPosition,
+  type State,
 } from "@biu-cs-planner/core";
 import {
   editTimetable,
@@ -14,6 +17,10 @@ import {
   type TimetableResult,
 } from "./picks.ts";
 import type { Workspace } from "./workspace.ts";
+
+/** How many Variants the Timetable of `at` holds in this State, or `undefined` for no Timetable. */
+const variantCount = (state: State, at: TimetableRef): number | undefined =>
+  timetableAt(state, at)?.variants.length;
 
 /**
  * The use cases behind the Variant tabs (#281): create, duplicate, rename, delete and make
@@ -46,19 +53,24 @@ export async function addVariant(
 ): Promise<TimetableResult> {
   // The name is decided against the State the edit is applied to, so a default letter is free
   // in the file actually written rather than in whatever the page last saw.
-  let created: string | undefined;
+  let created: { variant: string; position: number | undefined } | undefined;
   return editTimetable(
     workspace,
     at,
     {
       label: "create-variant",
       apply: (state) => {
-        created = naming.name ?? freeVariantName(state, at);
-        return createVariant(state, { ...at, variant: created });
+        const name = naming.name ?? freeVariantName(state, at);
+        const next = createVariant(state, { ...at, variant: name });
+        // the new Variant is the last in file order: its position is what reaches it when another
+        // Variant already has its name (#322)
+        const position = (variantCount(next, at) ?? 1) - 1;
+        created = { variant: name, position };
+        return next;
       },
     },
     options,
-    () => ({ ...at, variant: created }),
+    () => ({ ...at, ...created }),
   );
 }
 
@@ -69,19 +81,23 @@ export async function duplicateVariantAs(
   naming: VariantNaming,
   options: PickOptions,
 ): Promise<TimetableResult> {
-  let copy: string | undefined;
+  let copy: { variant: string; position: number | undefined } | undefined;
   return editTimetable(
     workspace,
     at,
     {
       label: "duplicate-variant",
       apply: (state) => {
-        copy = naming.name ?? freeVariantName(state, at);
-        return duplicateVariant(state, variantEditedIn(state, at), copy);
+        const name = naming.name ?? freeVariantName(state, at);
+        const source = variantEditedIn(state, at);
+        const from = variantPosition(state, source);
+        // the copy goes right after its source, so that is where it is reached (#322)
+        copy = { variant: name, position: from === undefined ? undefined : from + 1 };
+        return duplicateVariant(state, source, name);
       },
     },
     options,
-    () => ({ ...at, variant: copy }),
+    () => ({ ...at, ...copy }),
   );
 }
 
@@ -92,15 +108,21 @@ export async function renameVariantAs(
   name: string,
   options: PickOptions,
 ): Promise<TimetableResult> {
+  let position: number | undefined;
   return editTimetable(
     workspace,
     at,
     {
       label: "rename-variant",
-      apply: (state) => renameVariant(state, variantEditedIn(state, at), name),
+      apply: (state) => {
+        const renamed = variantEditedIn(state, at);
+        // renamed where it stands, so its position still reaches it under a name another has (#322)
+        position = variantPosition(state, renamed);
+        return renameVariant(state, renamed, name);
+      },
     },
     options,
-    () => ({ ...at, variant: name }),
+    () => ({ ...at, variant: name, position }),
   );
 }
 

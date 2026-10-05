@@ -11,6 +11,7 @@ import type { ApiClient } from "./offerings.ts";
 import {
   ask,
   asRead,
+  positionOf,
   variantOf,
   type StateFileVersion,
   type TimetableQuery,
@@ -46,7 +47,7 @@ export async function duplicateVariant(
   return ask(() => client.api.timetable[":year"][":semester"].variants.duplicate.$post(request));
 }
 
-/** The Variant `variant` names, renamed. */
+/** The Variant `variant` names — of two that share it, the one at `query.position` — renamed. */
 export async function renameVariant(
   client: ApiClient,
   query: TimetableQuery,
@@ -56,12 +57,12 @@ export async function renameVariant(
 ): Promise<TimetableResult> {
   const request = {
     ...asRead(query),
-    json: { variant, name, basedOn },
+    json: { variant, name, ...positionOf(query), basedOn },
   } as InferRequestType<VariantRoutes["rename"]["$post"]>;
   return ask(() => client.api.timetable[":year"][":semester"].variants.rename.$post(request));
 }
 
-/** The Variant `variant` names, made the primary one. */
+/** The Variant `variant` and `query.position` name, made the primary one. */
 export async function setPrimaryVariant(
   client: ApiClient,
   query: TimetableQuery,
@@ -70,12 +71,15 @@ export async function setPrimaryVariant(
 ): Promise<TimetableResult> {
   const request = {
     ...asRead(query),
-    json: { variant, basedOn },
+    json: { variant, ...positionOf(query), basedOn },
   } as InferRequestType<VariantRoutes["primary"]["$post"]>;
   return ask(() => client.api.timetable[":year"][":semester"].variants.primary.$post(request));
 }
 
-/** The Variant `variant` names, deleted. The answer is about the primary that is left. */
+/**
+ * The Variant `variant` and `query.position` name, deleted. The answer is about the primary that
+ * is left.
+ */
 export async function deleteVariant(
   client: ApiClient,
   query: TimetableQuery,
@@ -84,7 +88,7 @@ export async function deleteVariant(
 ): Promise<TimetableResult> {
   const request = {
     ...asRead(query),
-    json: { variant, basedOn },
+    json: { variant, ...positionOf(query), basedOn },
   } as InferRequestType<VariantRoutes["$delete"]>;
   return ask(() => client.api.timetable[":year"][":semester"].variants.$delete(request));
 }
