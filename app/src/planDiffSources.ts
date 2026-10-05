@@ -5,8 +5,10 @@ import {
   type PlanDiff,
   type PlanDiffContext,
   type State,
+  type StateFileVersion,
   type VariantRef,
 } from "@biu-cs-planner/core";
+import { readStateFile } from "./edit.ts";
 import { loadRequirementsFiles, type RequirementsListing } from "./requirements.ts";
 import { WorkspaceRefusedError, type Workspace } from "./workspace.ts";
 
@@ -31,8 +33,14 @@ export type PlanDiffSources = {
   requirements: RequirementsListing | undefined;
 };
 
-/** Every Offering of the year, whatever its Semester, or `undefined` when there is none to read. */
-async function yearOfferings(
+/**
+ * Every Offering of the year, whatever its Semester, or `undefined` when there is none to read.
+ *
+ * Exported for the Timetable view (`./picks.ts`), which reads the Catalog once and takes both the
+ * Tray's chips and the Plan Diffs from that one read (#356). Before a save, a read that throws for
+ * any reason but the Workspace's refusal propagates, which is what `listOfferings` does too.
+ */
+export async function yearOfferings(
   workspace: Workspace,
   academicYear: number,
   afterSave: boolean,
@@ -75,6 +83,27 @@ export async function loadPlanDiffSources(
 }
 
 /**
+ * The sources for an edit that computes Plan Diffs inside the guarded writer: an apply, or a mark
+ * with "apply all". They are loaded before the State the edit is applied to is in hand, so the
+ * State File is read first to learn whether it names a Program, and a student who has none costs no
+ * listing of `requirements/` (#356).
+ *
+ * That read is only a hint. It is trusted only when it is the revision the edit is based on — the
+ * guard in `editStateFile` then applies the edit to that very State, or refuses it — and anything
+ * else (no file to read, a refusal, another revision) loads the Requirements Files as before.
+ */
+export async function loadPlanDiffSourcesForEdit(
+  workspace: Workspace,
+  stateFile: string,
+  academicYear: number,
+  basedOn: StateFileVersion | undefined,
+): Promise<PlanDiffSources> {
+  const loaded = await readStateFile(workspace, stateFile);
+  const noProgram = "state" in loaded && loaded.version === basedOn && loaded.state.programs.length === 0;
+  return loadPlanDiffSources(workspace, academicYear, { wantRequirements: !noProgram });
+}
+
+/**
  * The context for this State: the Catalog as loaded, and the Equivalences and Year-long Courses of
  * the Requirements Files of the Programs **this State** names, in the order it names them.
  */
@@ -97,22 +126,22 @@ export function planDiffContext(state: State, sources: PlanDiffSources): PlanDif
 }
 
 /**
- * The Plan Diffs of the Variant `shown` in this State, for a read of the Timetable. A State with no
- * planned Attempt in the year has none and reads nothing (ADR-0008: a Timetable works with no Plan).
+ * The Plan Diffs of the Variant `shown` in this State, for a read of the Timetable, given the year's
+ * Offerings the view has already read (`yearOfferings`), so the Catalog is read once per view
+ * (#356). A State with no planned Attempt in the year has none and reads nothing more (ADR-0008: a
+ * Timetable works with no Plan), and one naming no Program lists no Requirements Files.
  */
 export async function planDiffsOf(
   workspace: Workspace,
   state: State,
   shown: VariantRef,
+  offerings: Offering[] | undefined,
   afterSave: boolean,
 ): Promise<PlanDiff[]> {
   const planned = state.attempts.some(
     (attempt) => attempt.status === "planned" && attempt.academicYear === shown.academicYear,
   );
   if (!planned) return [];
-  const sources = await loadPlanDiffSources(workspace, shown.academicYear, {
-    afterSave,
-    wantRequirements: state.programs.length > 0,
-  });
-  return planDiffs(state, shown, planDiffContext(state, sources));
+  const requirements = state.programs.length > 0 ? await requirementsListing(workspace, afterSave) : undefined;
+  return planDiffs(state, shown, planDiffContext(state, { offerings, requirements }));
 }

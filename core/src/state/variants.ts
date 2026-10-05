@@ -251,8 +251,9 @@ export function clearRegisteredVariant(state: State, at: VariantRef): State {
  *
  * Computed from a State rather than read off the file, so it describes the file **after** an
  * edit: an edit's answer carries the Warnings of the file it read, and a collision the edit has
- * just made is not among those. `parseStateFile` still reports a broken primary as it reads, for
- * whoever reads a whole file; this is the Timetable screen's account of the Timetable it shows.
+ * just made is not among those. `parseStateFile` still reports a broken primary and a second
+ * registered Variant as it reads, for whoever reads a whole file; this is the Timetable screen's
+ * account of the Timetable it shows.
  */
 export function variantWarnings(state: State, at: TimetableAt): VariantWarning[] {
   const variants = timetableAt(state, at)?.variants ?? [];
@@ -273,7 +274,21 @@ export function variantWarnings(state: State, at: TimetableAt): VariantWarning[]
     warnings.push({ kind: "primary-variant-not-unique", primaries });
   }
 
-  const registered = variants.filter((variant) => variant.registered === true).length;
-  if (registered > 1) warnings.push({ kind: "registered-variant-not-unique", registered });
+  const registered = registeredNotUnique(variants);
+  if (registered !== undefined) warnings.push(registered);
   return warnings;
+}
+
+/**
+ * The one rule for "at most one registered Variant" (#297), and the one place its Warning is made
+ * (#356): `parseStateFile` reports it for whoever reads the whole file, with where it is, and
+ * `variantWarnings` for the Timetable screen, about the State after an edit — the way
+ * `primary-variant-not-unique` is reported by both. Only a hand-edited file holds two, since
+ * `setRegisteredVariant` clears the others.
+ */
+export function registeredNotUnique(
+  variants: readonly Variant[],
+): Extract<VariantWarning, { kind: "registered-variant-not-unique" }> | undefined {
+  const registered = variants.filter((variant) => variant.registered === true).length;
+  return registered > 1 ? { kind: "registered-variant-not-unique", registered } : undefined;
 }

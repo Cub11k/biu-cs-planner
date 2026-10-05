@@ -22,6 +22,7 @@ const bearer = { Authorization: `Bearer ${TOKEN}` };
 
 let root: string;
 let api: ReturnType<typeof createApi>;
+let workspace: ReturnType<typeof fileSystemWorkspace>;
 
 const offering = (courseNumber: string, ...semesters: Semester[]): Offering => ({
   courseNumber,
@@ -34,7 +35,7 @@ const offering = (courseNumber: string, ...semesters: Semester[]): Offering => (
 
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "biu-plan-diffs-"));
-  const workspace = fileSystemWorkspace(root);
+  workspace = fileSystemWorkspace(root);
   api = createApi({ workspace, token: TOKEN, changes: { changeCount: () => 0 } });
   await post("/api/workspace", {});
   await workspace.write(
@@ -218,6 +219,12 @@ const REGISTRATION = `${TIMETABLE}/registration`;
 type Tabs = { variants: Array<{ name: string; primary: boolean; registered?: true }> };
 
 /** A Fall Plan of 89-110 and 89-230; Variant A holds 89-110 and 89-210, and B nothing. */
+/** "Apply all" as the page sends it, with the digest of the preview the student read. */
+async function acceptAll(variant = "A") {
+  const preview = (await (await get(`${REGISTRATION}?variant=${variant}`)).json()) as { digest: string; version: string };
+  return { variant, applyDiffs: true, digest: preview.digest, basedOn: preview.version };
+}
+
 async function registering(): Promise<void> {
   await plan("89-110");
   await plan("89-230");
@@ -263,7 +270,7 @@ it("marks with apply all as one undo step, and undoes the whole of it at once", 
   const before = await attempts();
   const tabsBefore = ((await read()) as unknown as Tabs).variants;
 
-  const marked = await post(REGISTERED, { variant: "A", applyDiffs: true, basedOn: await version() });
+  const marked = await post(REGISTERED, await acceptAll());
 
   expect(marked.status).toBe(200);
   expect(((await marked.json()) as View).planDiffs).toEqual([]);
@@ -281,7 +288,7 @@ it("marks with apply all as one undo step, and undoes the whole of it at once", 
 
 it("unmarks a Variant and leaves the Plan it registered", async () => {
   await registering();
-  await post(REGISTERED, { variant: "A", applyDiffs: true, basedOn: await version() });
+  await post(REGISTERED, await acceptAll());
   const after = await attempts();
 
   const unmarked = await send("DELETE", REGISTERED, { variant: "A", basedOn: await version() });
@@ -296,11 +303,11 @@ it("unmarks a Variant and leaves the Plan it registered", async () => {
 
 it("refuses the combined edit on a stale revision, and applies none of it", async () => {
   await registering();
-  const basedOn = await version();
-  await post(`${TIMETABLE}/variants`, { name: "C", basedOn });
+  const accepted = await acceptAll();
+  await post(`${TIMETABLE}/variants`, { name: "C", basedOn: accepted.basedOn });
   const before = await attempts();
 
-  const refused = await post(REGISTERED, { variant: "A", applyDiffs: true, basedOn });
+  const refused = await post(REGISTERED, accepted);
 
   expect(refused.status).toBe(409);
   await expect(refused.json()).resolves.toMatchObject({ reason: "state-file-changed" });
@@ -315,6 +322,67 @@ it("names a mark that does not say whether to apply as a 400, so nothing is appl
 
   expect(unsaid.status).toBe(400);
   await expect(unsaid.json()).resolves.toEqual({ error: "not-a-registration" });
+  // and "apply all" without the list it accepted is not one either (#355)
+  const undigested = await post(REGISTERED, { variant: "A", applyDiffs: true, basedOn: await version() });
+  expect(undigested.status).toBe(400);
+  await expect(undigested.json()).resolves.toEqual({ error: "not-a-registration" });
   const badVariant = await get(`${REGISTRATION}?variant=`);
   expect(badVariant.status).toBe(400);
+});
+
+// --- #355: apply all applies what was shown, and one rule for a missing Variant -------------------
+
+it("refuses apply all as stale when the Catalog changed since the preview, and writes nothing", async () => {
+  await registering();
+  const accepted = await acceptAll();
+  const before = await attempts();
+  // a crawl lands between the preview and the click: 89-230 is now given in Fall as well
+  await workspace.write(
+    { kind: "catalog", academicYear: 2027 },
+    {
+      schemaVersion: CURRENT_CATALOG_SCHEMA_VERSION,
+      academicYear: 2027,
+      sources: [],
+      offerings: [offering("89-110", "fall"), offering("89-210", "fall"), offering("89-230", "spring"), offering("89-230", "fall")],
+    },
+  );
+
+  const refused = await post(REGISTERED, accepted);
+
+  expect(refused.status).toBe(409);
+  await expect(refused.json()).resolves.toEqual({ reason: "plan-diff-stale", version: accepted.basedOn, warnings: [] });
+  expect(await attempts()).toEqual(before);
+  expect(await version()).toBe(accepted.basedOn);
+  expect(((await read()) as unknown as Tabs).variants.some((tab) => tab.registered)).toBe(false);
+});
+
+it("refuses a Variant name the file does not hold in the preview and the mark alike, as a 404", async () => {
+  await registering();
+  const basedOn = await version();
+  const { digest } = await acceptAll();
+
+  const preview = await get(`${REGISTRATION}?variant=Z`);
+  expect(preview.status).toBe(404);
+  await expect(preview.json()).resolves.toEqual({ reason: "variant-not-found", version: basedOn, warnings: [] });
+
+  for (const choice of [{ applyDiffs: false }, { applyDiffs: true, digest }]) {
+    const marked = await post(REGISTERED, { variant: "Z", ...choice, basedOn });
+    expect(marked.status).toBe(404);
+    await expect(marked.json()).resolves.toEqual({ reason: "variant-not-found", version: basedOn, warnings: [] });
+  }
+  expect(await version()).toBe(basedOn);
+});
+
+it("applies a move-here by its kind and Course, and never plans the Course twice", async () => {
+  await plan("89-110", "spring");
+  await post(`${TIMETABLE}/tray`, { courseNumber: "89-110", basedOn: await version() });
+  expect(kinds(await read())).toEqual([["move-here", "89-110"]]);
+
+  const applied = await post(APPLY, { kind: "move-here", courseNumber: "89-110", basedOn: await version() });
+
+  expect(applied.status).toBe(200);
+  expect(await attempts()).toEqual([["89-110", "fall", "planned"]]);
+  const add = await post(APPLY, { kind: "add", courseNumber: "89-110", basedOn: await version() });
+  expect(add.status).toBe(409);
+  expect(await attempts()).toEqual([["89-110", "fall", "planned"]]);
 });

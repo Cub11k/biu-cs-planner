@@ -70,7 +70,9 @@ export function RegistrationConfirm({
             })}
             {served.registers.length > 0 && (
               <li data-registration-change="registers">
-                {t(language, "registrationRegisters", { courses: served.registers.map(nameOf).join(", ") })}
+                {t(language, "registrationRegisters", {
+                  courses: served.registers.map(nameOf).join(t(language, "registrationSeparator")),
+                })}
               </li>
             )}
           </ul>

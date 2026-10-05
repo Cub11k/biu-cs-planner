@@ -25,6 +25,7 @@ import {
   type Variant,
 } from "./schema.ts";
 import { findUnsafeKey } from "./unsafe-keys.ts";
+import { registeredNotUnique } from "./variants.ts";
 
 export type StateFileWarning =
   /** Not a State File at all: no object, or no `schemaVersion` to go on. */
@@ -49,6 +50,8 @@ export type StateFileWarning =
   /** One setting could not be read and kept its default; absent `field` means all of them. */
   | { kind: "settings-unreadable"; field?: string }
   | { kind: "primary-variant-not-unique"; at: string; primaries: number }
+  /** More than one Variant of the Timetable at `at` carries the registered mark (#297, #356). */
+  | { kind: "registered-variant-not-unique"; at: string; registered: number }
   | { kind: "blocked-time-semester-mismatch"; at: string; semester: Semester }
   | { kind: "blocked-time-does-not-advance"; at: string; start: string; end: string }
   | { kind: "pick-not-unique"; at: string; courseNumber: string; lessonType: string }
@@ -327,6 +330,8 @@ function readTimetable(
   );
 
   checkPrimary(variants, at, warnings);
+  const registered = registeredNotUnique(variants);
+  if (registered !== undefined) warnings.push({ ...registered, at });
   checkBlockedSemesters(blockedTimes, head.data.semester, `${at}.blockedTimes`, warnings);
   checkBlockedRanges(blockedTimes, `${at}.blockedTimes`, warnings);
 

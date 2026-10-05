@@ -2,7 +2,15 @@ import type { AttemptId, State } from "../state/schema.ts";
 import { updateAttempt } from "../state/attempts.ts";
 import { variantAt, type VariantRef } from "../state/picks.ts";
 import { clearRegisteredVariant, setRegisteredVariant } from "../state/variants.ts";
-import { applyPlanDiff, canonicalizer, isActionable, planDiffs, type PlanDiff, type PlanDiffContext } from "./diffs.ts";
+import {
+  applyPlanDiff,
+  canonicalizer,
+  isActionable,
+  planDiffs,
+  planDiffsDigest,
+  type PlanDiff,
+  type PlanDiffContext,
+} from "./diffs.ts";
 
 /**
  * Marking a Variant as the one the student registered with (#297), and the offer that comes with
@@ -62,6 +70,11 @@ export type RegistrationPreview = {
   planDiffs: PlanDiff[];
   /** The Courses whose Attempt in the Semester would become registered, in Plan order. */
   registers: string[];
+  /**
+   * `planDiffsDigest` of `planDiffs`: what "apply all" sends back, so that it applies the list the
+   * student was shown or nothing (#355).
+   */
+  digest: string;
 };
 
 /**
@@ -76,6 +89,7 @@ export function registrationPreview(state: State, at: VariantRef, context: PlanD
   const before = new Map(state.attempts.map((attempt) => [attempt.id, attempt.status]));
   return {
     planDiffs: diffs,
+    digest: planDiffsDigest(diffs),
     registers: after.attempts
       .filter((attempt) => attempt.status === "registered" && before.get(attempt.id) !== "registered")
       .map((attempt) => attempt.courseNumber),

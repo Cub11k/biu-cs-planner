@@ -197,7 +197,7 @@ export { checkPlan } from "./plan/checks.ts";
 export { semesterCredits } from "./plan/credits.ts";
 export type { CreditsProgram, SemesterCredits } from "./plan/credits.ts";
 // Plan Diffs between a Variant and the Plan, and "apply to Plan" (#295).
-export { applyPlanDiff, findPlanDiff, isActionable, planDiffs } from "./plan/diffs.ts";
+export { applyPlanDiff, findPlanDiff, isActionable, planDiffs, planDiffsDigest } from "./plan/diffs.ts";
 export type {
   PlanDiff,
   PlanDiffContext,

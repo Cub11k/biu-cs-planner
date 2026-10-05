@@ -21,6 +21,7 @@ const SEMESTER_STRING = {
 
 const BADGE = {
   add: "planDiffBadgeAdd",
+  "move-here": "planDiffBadgeMoveHere",
   drop: "planDiffBadgeDrop",
   move: "planDiffBadgeMove",
   "not-offered": "planDiffBadgeNotOffered",
@@ -28,24 +29,33 @@ const BADGE = {
 
 const APPLY = {
   add: "planDiffApplyAdd",
+  "move-here": "planDiffApplyMoveHere",
   drop: "planDiffApplyDrop",
   move: "planDiffApplyMove",
 } as const satisfies Record<ActionablePlanDiff["kind"], StringKey>;
 
 const SAID = {
   add: "planDiffSaidAdd",
+  "move-here": "planDiffSaidMoveHere",
   drop: "planDiffSaidDrop",
   move: "planDiffSaidMove",
   "not-offered": "planDiffSaidNotOffered",
 } as const satisfies Record<PlanDiff["kind"], StringKey>;
 
-/** The Semester a `move` goes to, named; nothing for the other kinds. */
+/** The other Semester a Plan Diff names — where a `move` goes, where a `move-here` comes from — or nothing. */
 const targetOf = (language: Language, diff: PlanDiff): Record<string, string> =>
-  diff.kind === "move" ? { semester: t(language, SEMESTER_STRING[diff.to]) } : {};
+  diff.kind === "move"
+    ? { semester: t(language, SEMESTER_STRING[diff.to]) }
+    : diff.kind === "move-here"
+      ? { semester: t(language, SEMESTER_STRING[diff.from]) }
+      : {};
+
+/** A `move` whose target already holds the Course (#355): said in words of its own, with nothing to apply. */
+const targetHolds = (diff: PlanDiff): boolean => diff.kind === "move" && diff.targetHolds === true;
 
 /** What a Tray badge says. */
 export const planDiffBadge = (language: Language, diff: PlanDiff): string =>
-  t(language, BADGE[diff.kind], targetOf(language, diff));
+  t(language, targetHolds(diff) ? "planDiffBadgeMoveHeld" : BADGE[diff.kind], targetOf(language, diff));
 
 /** What the button that applies a Plan Diff says. */
 export const planDiffApply = (language: Language, diff: ActionablePlanDiff): string =>
@@ -53,7 +63,7 @@ export const planDiffApply = (language: Language, diff: ActionablePlanDiff): str
 
 /** The sentence the side panel says about a Plan Diff. */
 export const planDiffSaid = (language: Language, diff: PlanDiff, course: string): string =>
-  t(language, SAID[diff.kind], { course, ...targetOf(language, diff) });
+  t(language, targetHolds(diff) ? "planDiffSaidMoveHeld" : SAID[diff.kind], { course, ...targetOf(language, diff) });
 
 /** What tells two Plan Diffs of one Variant apart: their kind and their Course (#295). */
 export const planDiffKey = (diff: PlanDiff): string => `${diff.kind}:${diff.courseNumber}`;

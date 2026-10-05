@@ -265,11 +265,12 @@ const BODIES: Record<string, (staged: Staged, basedOn: string) => unknown> = {
     kind: "drop",
   }),
   // #297: marking B registered moves both flags to it; the unmark takes the shared body's A, which
-  // is not marked, so it saves nothing and only the read half reaches it
+  // is not marked, so it saves nothing and only the read half reaches it. Only the mark: "apply
+  // all" needs the digest of a preview (#355), and the flags alone are a save
   "POST /api/timetable/:year/:semester/variants/registered": (staged, basedOn) => ({
     ...shared(staged, basedOn),
     variant: "B",
-    applyDiffs: true,
+    applyDiffs: false,
   }),
 };
 

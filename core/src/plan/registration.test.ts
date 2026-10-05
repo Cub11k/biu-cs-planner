@@ -3,7 +3,7 @@ import { recordPick } from "../state/picks.ts";
 import { stateSchema, type Attempt, type GroupPick, type State } from "../state/schema.ts";
 import { addToTray } from "../state/tray.ts";
 import { createVariant } from "../state/variants.ts";
-import type { PlanDiffContext } from "./diffs.ts";
+import { planDiffsDigest, type PlanDiffContext } from "./diffs.ts";
 import { markRegistered, registrationPreview, unmarkRegistered } from "./registration.ts";
 
 /**
@@ -122,6 +122,8 @@ it("previews exactly what apply all would do, before anything is written", () =>
   ]);
   expect(preview.registers).toEqual(["89-110", "89-210"]);
   expect(registrationPreview(before, B, CATALOG)).toEqual(preview);
+  // the digest is of the list shown, which "apply all" carries back (#355)
+  expect(preview.digest).toBe(planDiffsDigest(preview.planDiffs));
 });
 
 it("unmarks the registered Variant and nothing else: it stays primary and the Plan stays", () => {

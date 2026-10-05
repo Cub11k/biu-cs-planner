@@ -9,13 +9,14 @@ import {
   type StateFileWarning,
 } from "@biu-cs-planner/core";
 import {
+  DEFAULT_STATE_FILE,
   editTimetable,
   variantEditedIn,
   type PickOptions,
   type TimetableRef,
   type TimetableResult,
 } from "./picks.ts";
-import { loadPlanDiffSources, planDiffContext } from "./planDiffSources.ts";
+import { loadPlanDiffSourcesForEdit, planDiffContext } from "./planDiffSources.ts";
 import type { Workspace } from "./workspace.ts";
 
 /**
@@ -37,11 +38,16 @@ import type { Workspace } from "./workspace.ts";
 /** The label an apply hands the guarded writer, which names the kind of Plan Diff it applied. */
 export const APPLY_PLAN_DIFF_LABEL = {
   add: "apply-plan-diff-add",
+  "move-here": "apply-plan-diff-move-here",
   drop: "apply-plan-diff-drop",
   move: "apply-plan-diff-move",
 } as const;
 
-/** The kinds that have an "apply to Plan": every kind but `not-offered`. */
+/**
+ * The kinds that have an "apply to Plan": every kind but `not-offered`. A `move` whose target already
+ * holds the Course has none either, and an apply naming one is refused as stale like any other key
+ * the file does not have an actionable Plan Diff for.
+ */
 export type ActionableKind = keyof typeof APPLY_PLAN_DIFF_LABEL;
 
 export type PlanDiffOptions = PickOptions & {
@@ -63,7 +69,12 @@ export async function applyPlanDiffTo(
   key: PlanDiffKey & { kind: ActionableKind },
   options: PlanDiffOptions,
 ): Promise<ApplyPlanDiffResult> {
-  const sources = await loadPlanDiffSources(workspace, at.academicYear);
+  const sources = await loadPlanDiffSourcesForEdit(
+    workspace,
+    at.stateFile ?? DEFAULT_STATE_FILE,
+    at.academicYear,
+    options.basedOn,
+  );
   const newId = options.newId ?? uuid;
   let stale = false;
 
