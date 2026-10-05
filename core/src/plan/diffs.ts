@@ -39,7 +39,9 @@ import type { Attempt, AttemptId, State } from "../state/schema.ts";
  * **A Year-long Course is one unit across Fall and Spring** (CONTEXT.md: two Attempts, a Fall half
  * and a Spring half of one Academic Year). Adding one adds every half the Plan lacks; dropping one
  * drops both planned halves, so neither half is left behind as a split the Plan checks would then
- * report. Whether a Course is Year-long is the Catalog's to say when there is one — every Offering
+ * report. A planned half that some Variant of the other half's Timetable holds is never a drop:
+ * the Course is scheduled, as the one unit it is, so a Spring week not built yet does not offer to
+ * take away the Course the Fall week holds. Whether a Course is Year-long is the Catalog's to say when there is one — every Offering
  * of it given in the Variant's Semester spans Fall and Spring — and otherwise the Requirements
  * Files' Offering Pattern.
  *
@@ -150,6 +152,18 @@ export function planDiffs(state: State, at: VariantRef, context: PlanDiffContext
     if (!scheduled.has(course)) scheduled.set(course, courseNumber);
   }
 
+  /** Whether any Variant of the other half's Timetable, this Academic Year, holds the Course. */
+  const heldInOtherHalf = (course: string): boolean =>
+    state.timetables.some(
+      (timetable) =>
+        timetable.academicYear === academicYear &&
+        timetable.semester !== semester &&
+        HALVES.includes(timetable.semester) &&
+        timetable.variants.some((other) =>
+          [...other.tray, ...other.picks.map((pick) => pick.courseNumber)].some((held) => canonical(held) === course),
+        ),
+    );
+
   const diffs: PlanDiff[] = [];
 
   const plannedHere = inYear.filter((attempt) => attempt.status === "planned" && attempt.semester === semester);
@@ -171,6 +185,9 @@ export function planDiffs(state: State, at: VariantRef, context: PlanDiffContext
       continue;
     }
     if (scheduled.has(course)) continue;
+    // A Year-long Course a Variant of its other half holds is scheduled, as one unit: the half
+    // here is not missing, and dropping both would take the half the other Timetable holds.
+    if (isYearLong(course) && heldInOtherHalf(course)) continue;
 
     const otherHalf = isYearLong(course)
       ? inYear.filter(

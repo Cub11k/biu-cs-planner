@@ -232,6 +232,20 @@ it("drops a Year-long Course as one unit, both planned halves, from either Semes
   ]);
 });
 
+it("never drops a Year-long Course a Variant of its other half holds, so the two weeks agree", () => {
+  const state = withAttempts(empty(), [
+    { courseNumber: "89-385", semester: "fall" },
+    { courseNumber: "89-385", semester: "spring" },
+  ]);
+  const fallHolds = recordPick(state, FALL, pick("89-385"));
+
+  // the Spring week, not built yet, does not offer to take away what the Fall week holds
+  expect(planDiffs(createVariant(fallHolds, SPRING), SPRING, CATALOG)).toEqual([]);
+  // and a Course that is not Year-long is still a drop there
+  const single = recordPick(withAttempts(empty(), [{ courseNumber: "89-230", semester: "spring" }]), FALL, pick("89-230"));
+  expect(planDiffs(createVariant(single, SPRING), SPRING, CATALOG).map((d) => d.kind)).toEqual(["drop"]);
+});
+
 it("never reports a Year-long half as offered elsewhere: the Course is given in both its Semesters", () => {
   const state = withAttempts(empty(), [
     { courseNumber: "89-385", semester: "fall" },
