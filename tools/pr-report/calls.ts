@@ -67,7 +67,7 @@ import {
  *   open (#167).** `workspace.saveStateFile(…)` is a property access on a parameter, so no
  *   import binding names it and no edge is drawn — and every crossing of the Workspace port is
  *   written that way, so the graph holds no arrow for what touches the disk. Measured on `dev`
- *   when this was ruled: 216 call edges, 160 distinct pairs, not one mentioning
+ *   on 2026-10-05, when the ruling was recorded: 216 call edges, 160 distinct pairs, not one mentioning
  *   `saveStateFile`. Two ways to draw them were weighed and refused. Recording a call by method
  *   name alone is noise: the port's methods are called `read`, `list` and `status`, names that
  *   say nothing about whose method was called. Resolving the receiver through its declared type

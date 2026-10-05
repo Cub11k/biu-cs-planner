@@ -52,9 +52,10 @@ export const SOURCE_DIRS = ["core/src", "app/src", "server/src", "web/src"];
  * directory is small enough to read; and "a test of this module", without coverage to prove
  * it, would be a test file's imports standing in for a measurement — one more mechanism in the
  * report that can itself drift, which is the failure the report exists to prevent. What covers
- * it is the sentence `render` already prints: a `tools/` file's titles are the whole of what
- * the report knows about it, so for a `tools/` change the diff is the record and the report is
- * not a substitute for reading it.
+ * it is the scope sentence `render` already prints: `tools/` is in neither graph and no coverage
+ * row, so "read nothing here as a claim about `tools/` that this report did not measure" — not
+ * measured, "which is a different thing from being empty". A module with no entry is one more
+ * thing the report did not measure.
  *
  * Every entry is a repo-relative directory, matched whole. `render` compares by path segment,
  * so `tools` never matches a `toolsmith/` that is not in the list.

@@ -23,14 +23,14 @@
  * literals, and drawn here rather than left to be discovered.
  *
  * Ruled on #132, which asked whether to cross that line, and the answer is no. The scan
- * already fails towards the loud side -- a `host:port` or `file:line:column` regex reads as a
- * clock -- and extending it to strings makes it louder for no measured gain. It is also mostly
+ * already fails towards the loud side -- a `file:line:column` regex reads as a clock, and so
+ * does a `host:port` one wherever the host side ends in a digit matcher -- and extending it to strings makes it louder for no measured gain. It is also mostly
  * a theoretical gap: `CLAUDE.md` and ADR-0007 forbid building a regex from data, so a clock
  * pattern in a string would have to be a string literal written in source, which review sees.
  *
  * **Nor does it read prose.** ADR-0012 writes the body out in its own text, and so do
- * `docs/research/` and comments in the code -- this one included -- and nothing pins any of
- * those spellings to the code they describe. Walking `docs/**` was weighed on #132 and
+ * comments in the code -- this one included -- and nothing pins any of those spellings to
+ * the code they describe. Walking `docs/**` was weighed on #132 and
  * refused: a document sometimes quotes an *old* spelling on purpose (ADR-0012 records what
  * `core/src/clock.ts` read before #54), so a check would first have to tell a current quotation
  * from a historical one, and that judgement costs more than the drift it would catch. The
