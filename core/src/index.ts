@@ -191,6 +191,16 @@ export type {
 } from "./requirements/solve.ts";
 export { requirementsAccepting } from "./requirements/candidates.ts";
 export { checkPlan } from "./plan/checks.ts";
+// Plan Diffs between a Variant and the Plan, and "apply to Plan" (#295).
+export { applyPlanDiff, findPlanDiff, isActionable, planDiffs } from "./plan/diffs.ts";
+export type {
+  PlanDiff,
+  PlanDiffContext,
+  PlanDiffEquivalence,
+  PlanDiffKey,
+  PlanDiffKind,
+  PlanDiffOffering,
+} from "./plan/diffs.ts";
 export type {
   PlanCheckInput,
   PlanProgram,
