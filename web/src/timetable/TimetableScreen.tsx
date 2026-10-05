@@ -13,7 +13,15 @@ import {
   type StateRefusal,
   type TimetableQuery,
   type TimetableResult,
+  type VariantWarning,
 } from "./picks.ts";
+import {
+  createVariant,
+  deleteVariant,
+  duplicateVariant,
+  renameVariant,
+  setPrimaryVariant,
+} from "./variants.ts";
 import { clashingGroups, isPicked, weekGroups, type WeekGroup } from "./week.ts";
 import {
   useHistory,
@@ -30,6 +38,7 @@ import type {
 } from "../settings.ts";
 import { SchemeControl } from "../SchemeControl.tsx";
 import { CoursePicker } from "./CoursePicker.tsx";
+import { VariantTabs } from "./VariantTabs.tsx";
 import { WeekGrid } from "./WeekGrid.tsx";
 
 const SEMESTER_STRING = {
@@ -158,7 +167,19 @@ const SETTING_NAME_STRING = new Map<string, StringKey>([
 const EDIT_LABEL_STRING = new Map<string, StringKey>([
   ["pick-group", "editPickGroup"],
   ["remove-pick", "editRemovePick"],
+  ["create-variant", "editCreateVariant"],
+  ["duplicate-variant", "editDuplicateVariant"],
+  ["rename-variant", "editRenameVariant"],
+  ["delete-variant", "editDeleteVariant"],
+  ["set-primary-variant", "editSetPrimaryVariant"],
 ]);
+
+/**
+ * An edit the screen sends on the view on screen: given the week it was made on — its Semester
+ * and the Variant shown — and that view's revision, it asks the API and answers with the
+ * Timetable afterwards.
+ */
+type TimetableEdit = (query: TimetableQuery, basedOn: StateFileVersion) => Promise<TimetableResult>;
 
 /** Absence is not a fault: the year simply has no Catalog yet, and one can be imported. */
 const isAbsence = (warnings: readonly CatalogWarning[]): boolean =>
@@ -405,14 +426,41 @@ export function TimetableScreen({
   const history = useHistory({ changes: workspaceChanges });
   const askHistory = history.ask;
 
+  /**
+   * The Variant tab the student chose, or `undefined` for the primary — which is what a Semester
+   * opens on (#281). View state and never a State File edit.
+   *
+   * A ref rather than state, so that choosing a tab is a **re-read** of the same question and not
+   * a new question: `useReloading` blanks the screen to `loading` for a new one, and a student
+   * flicking between tabs should keep a week to look at until the next one arrives. What the
+   * screen *shows* is never read from here — it is `timetable.variantName`, the Variant the
+   * answer on screen is about — so a click made while the next tab is on its way still names the
+   * Variant the student was looking at when they clicked.
+   */
+  const variantWanted = useRef<string | undefined>(undefined);
+
   const askCatalog = useCallback(
     () => fetchOfferings(api, { academicYear, semester }),
     [academicYear, semester],
   );
-  const askTimetable = useCallback(
-    () => fetchTimetable(api, { academicYear, semester }),
-    [academicYear, semester],
-  );
+  const askTimetable = useCallback(() => {
+    const asked = variantWanted.current;
+    return fetchTimetable(api, { academicYear, semester, variant: asked }).then((answer) => {
+      // The tab asked for is gone — another window deleted or renamed it — and the server has
+      // answered with the primary instead. The page follows the answer rather than going on
+      // asking for a Variant no file holds, so the next new Variant of that name cannot steal
+      // the screen. Only if nobody has chosen another tab since this read went out.
+      if (
+        answer.kind === "served" &&
+        asked !== undefined &&
+        answer.variantName !== asked &&
+        variantWanted.current === asked
+      ) {
+        variantWanted.current = undefined;
+      }
+      return answer;
+    });
+  }, [academicYear, semester]);
 
   const [catalog]: [CatalogState, unknown] = useReloading(askCatalog, workspaceChanges);
   const [timetable, setTimetable]: [TimetableState, (answer: TimetableResult) => void] =
@@ -427,6 +475,7 @@ export function TimetableScreen({
    */
   const picks = timetable.kind === "served" ? timetable.picks : undefined;
   const clashes = timetable.kind === "served" ? timetable.clashes : [];
+  const variantWarnings = timetable.kind === "served" ? timetable.variantWarnings : [];
   const chosen = offerings.find((offering) => offering.courseNumber === selected);
 
   /** A picked Course the Catalog no longer names shows its number, which it always has. */
@@ -434,6 +483,69 @@ export function TimetableScreen({
     const known = offerings.find((offering) => offering.courseNumber === courseNumber);
     return known === undefined ? courseNumber : courseName(known, language);
   };
+
+  /**
+   * What the screen does with the answer to any edit it sent — a Pick, and every Variant edit
+   * after #281, which all answer with the Timetable and can all be refused the same ways.
+   *
+   * `follow` runs on a served answer only, for an edit that moves which Variant the student is
+   * looking at: the one just made, renamed or made primary, and the primary after a delete.
+   */
+  const settle = useCallback(
+    (
+      answer: TimetableResult,
+      sentOn: TimetableState,
+      follow?: (served: Extract<TimetableResult, { kind: "served" }>) => void,
+    ): TimetableResult => {
+    // The file is not what this page was showing, so the click was refused rather than
+    // allowed to destroy whoever else's edit (#90). The week on screen is kept and
+    // re-read: replacing it with the refusal would blank a week the student can still
+    // see, and would throw away the revision the next click needs.
+    if (answer.kind === "refused" && answer.reason === "state-file-changed") {
+      setStaleSave(true);
+      setRereads((count) => count + 1);
+      return answer;
+    }
+    // An answer nobody could read, which is **not** the claim that nothing was written: the
+    // arm is reached from the 200 as well as from the refusal (#231). So everything that
+    // holds a revision goes and looks, as `takeStep` does for a step whose answer could not
+    // be read (#206) — the week, the two buttons, and the header's switch — and the week on
+    // screen is kept until the re-read replaces it. None of the three is a claim about
+    // whether the click landed; all three are ways of finding out.
+    //
+    // **One thing `takeStep` has that this does not**: a press waits for that re-read
+    // (`steppedOn`, which this sets too), and a direct click does not. A second click made before the re-read
+    // lands goes out on a revision the first may have spent, and comes back
+    // `state-file-changed` if it did. Held clicks are spared by the drain's wait below;
+    // routing a direct click into `held` instead would change what it means, since a held
+    // click asks for a Pick and a click on ink asks for its removal. Left as an open window.
+    if (answer.kind === "unreadable-answer") {
+      setUnknownSave(true);
+      // and the undo buttons wait for that re-read, as they do after a step: a press sent
+      // on a revision this click may have spent would come back `historyStale`
+      setSteppedOn(sentOn);
+      setRereads((count) => count + 1);
+      askHistory();
+      onEdited?.();
+      return answer;
+    }
+    if (answer.kind === "served") follow?.(answer);
+    setTimetable(answer);
+    // An edit makes an undo available and empties the redo stack, and a save's answer
+    // does not carry the two flags. The change count reports it a poll later, which is
+    // seconds of a greyed-out button the student has already earned — so it is asked for
+    // here, and the poll's own answer is then the same one.
+    //
+    // `onEdited` is the same argument for the same reason: this write moved the file's
+    // revision, and the header's language switch is holding its own.
+    if (answer.kind === "served") {
+      askHistory();
+      onEdited?.();
+    }
+    return answer;
+    },
+    [setTimetable, askHistory, onEdited],
+  );
 
   /**
    * Picking, and un-picking. One call per click, which is what ADR-0013 makes one undo
@@ -473,55 +585,9 @@ export function TimetableScreen({
             basedOn,
           );
 
-      return done.then((answer): TimetableResult => {
-        // The file is not what this page was showing, so the click was refused rather than
-        // allowed to destroy whoever else's edit (#90). The week on screen is kept and
-        // re-read: replacing it with the refusal would blank a week the student can still
-        // see, and would throw away the revision the next click needs.
-        if (answer.kind === "refused" && answer.reason === "state-file-changed") {
-          setStaleSave(true);
-          setRereads((count) => count + 1);
-          return answer;
-        }
-        // An answer nobody could read, which is **not** the claim that nothing was written: the
-        // arm is reached from the 200 as well as from the refusal (#231). So everything that
-        // holds a revision goes and looks, as `takeStep` does for a step whose answer could not
-        // be read (#206) — the week, the two buttons, and the header's switch — and the week on
-        // screen is kept until the re-read replaces it. None of the three is a claim about
-        // whether the click landed; all three are ways of finding out.
-        //
-        // **One thing `takeStep` has that this does not**: a press waits for that re-read
-        // (`steppedOn`, which this sets too), and a direct click does not. A second click made before the re-read
-        // lands goes out on a revision the first may have spent, and comes back
-        // `state-file-changed` if it did. Held clicks are spared by the drain's wait below;
-        // routing a direct click into `held` instead would change what it means, since a held
-        // click asks for a Pick and a click on ink asks for its removal. Left as an open window.
-        if (answer.kind === "unreadable-answer") {
-          setUnknownSave(true);
-          // and the undo buttons wait for that re-read, as they do after a step: a press sent
-          // on a revision this click may have spent would come back `historyStale`
-          setSteppedOn(sentOn);
-          setRereads((count) => count + 1);
-          askHistory();
-          onEdited?.();
-          return answer;
-        }
-        setTimetable(answer);
-        // An edit makes an undo available and empties the redo stack, and a save's answer
-        // does not carry the two flags. The change count reports it a poll later, which is
-        // seconds of a greyed-out button the student has already earned — so it is asked for
-        // here, and the poll's own answer is then the same one.
-        //
-        // `onEdited` is the same argument for the same reason: this write moved the file's
-        // revision, and the header's language switch is holding its own.
-        if (answer.kind === "served") {
-          askHistory();
-          onEdited?.();
-        }
-        return answer;
-      });
+      return done.then((answer) => settle(answer, sentOn));
     },
-    [setTimetable, askHistory, onEdited],
+    [settle],
   );
 
   /**
@@ -594,13 +660,78 @@ export function TimetableScreen({
     });
   };
 
-  const onPick = (group: WeekGroup): void => {
-    // whatever became of the last click, this one is the account the student is owed now
+  /** Whatever became of the last click or press, the one being made now is the account owed. */
+  const retireNotices = (): void => {
     setHeldLost(false);
     setStaleSave(false);
     setUnknownSave(false);
     setLastStep(undefined);
-    const query = { academicYear, semester };
+  };
+
+  /**
+   * Sends one edit on the view on screen, naming the Variant it shows. Not offered before the
+   * State File has been read — there is no revision to base it on (#111) — which is why the
+   * controls that call this are disabled until then.
+   */
+  const sendEdit = (
+    edit: TimetableEdit,
+    follow?: (served: Extract<TimetableResult, { kind: "served" }>) => void,
+  ): void => {
+    if (timetable.kind !== "served") return;
+    retireNotices();
+    const sentOn = timetable;
+    const query = { academicYear, semester, variant: timetable.variantName };
+    void edit(query, timetable.version).then((answer) => settle(answer, sentOn, follow));
+  };
+
+  /** Showing another tab: a re-read of the same question, never a State File edit. */
+  const showVariant = (name: string): void => {
+    variantWanted.current = name;
+    setRereads((count) => count + 1);
+  };
+
+  /** After an edit that moves the student to a Variant, the page asks about that one from now on. */
+  const followAnswer = (served: Extract<TimetableResult, { kind: "served" }>): void => {
+    variantWanted.current = served.variantName;
+  };
+
+  const variantEdits =
+    timetable.kind === "served"
+      ? {
+          create: (name: string | undefined) =>
+            sendEdit((query, basedOn) => createVariant(api, query, name, basedOn), followAnswer),
+          duplicate: () =>
+            sendEdit((query, basedOn) => duplicateVariant(api, query, basedOn), followAnswer),
+          rename: (name: string) =>
+            sendEdit(
+              (query, basedOn) => renameVariant(api, query, query.variant ?? "", name, basedOn),
+              followAnswer,
+            ),
+          makePrimary: () =>
+            sendEdit(
+              (query, basedOn) => setPrimaryVariant(api, query, query.variant ?? "", basedOn),
+              followAnswer,
+            ),
+          // the answer is about the primary that is left, which is what no choice means
+          remove: () =>
+            sendEdit(
+              (query, basedOn) => deleteVariant(api, query, query.variant ?? "", basedOn),
+              () => {
+                variantWanted.current = undefined;
+              },
+            ),
+        }
+      : undefined;
+
+  const onPick = (group: WeekGroup): void => {
+    retireNotices();
+    // the Variant on screen when the click was made, or — before the first answer — the one
+    // being asked for, which is the one that answer will be about
+    const query = {
+      academicYear,
+      semester,
+      variant: timetable.kind === "served" ? timetable.variantName : variantWanted.current,
+    };
 
     if (timetable.kind !== "served") {
       setHeld((waiting) => [...waiting, { group, query }]);
@@ -786,6 +917,13 @@ export function TimetableScreen({
         </aside>
 
         <section className="flex min-w-0 flex-col">
+          <VariantTabs
+            language={language}
+            variants={timetable.kind === "served" ? timetable.variants : []}
+            shown={timetable.kind === "served" ? timetable.variantName : undefined}
+            onShow={showVariant}
+            edits={variantEdits}
+          />
           <p className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-rule bg-hint px-4 py-2 text-sm text-ink-soft">
             {chosen === undefined
               ? t(language, "hintChoose")
@@ -822,6 +960,13 @@ export function TimetableScreen({
                 <span key={warning.field ?? "all"}>{settingSaid(language, warning)}</span>
               ))}
               {clashes.length > 0 && <span>{clashesSaid(language, clashes.length)}</span>}
+              {/* a Warning about the Variants and never a refusal: the edit that made it went
+                  through, and the tabs above show it */}
+              {variantWarnings.map((warning) => (
+                <span key={`${warning.kind}:${"name" in warning ? warning.name : ""}`}>
+                  {variantWarningSaid(language, warning)}
+                </span>
+              ))}
             </span>
             <span className="ms-auto flex items-center gap-2 text-xs text-pencil">
               <span className="legend-swatch inline-block h-3 w-4 rounded-xs" />
@@ -1005,6 +1150,13 @@ function settingSaid(language: Language, warning: UnreadableSetting): string {
 function picksSaid(language: Language, count: number): string {
   if (count === 0) return t(language, "picksNone");
   return count === 1 ? t(language, "picksCountOne") : t(language, "picksCount", { count });
+}
+
+/** What a Variant Warning says. The name is the student's own text and is shown as written. */
+function variantWarningSaid(language: Language, warning: VariantWarning): string {
+  return warning.kind === "variant-name-not-unique"
+    ? t(language, "variantNameNotUnique", { name: warning.name })
+    : t(language, "variantPrimaryNotUnique");
 }
 
 /** A Clash is a Warning: it is counted and shown, and it refuses nothing. */

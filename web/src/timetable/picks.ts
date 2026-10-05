@@ -32,6 +32,12 @@ export type GroupPick = ServedTimetable["picks"][number];
 /** A Clash the API found among the Picks: a Warning, never a refusal. */
 export type Clash = ServedTimetable["clashes"][number];
 
+/** One Variant of the Timetable as its tab shows it: its name, and whether it is the primary. */
+export type VariantTab = ServedTimetable["variants"][number];
+
+/** What is wrong with the Timetable's Variants after the edit: a Warning, never a refusal. */
+export type VariantWarning = ServedTimetable["variantWarnings"][number];
+
 /** What one Pick occupies: one Lesson Type of one Offering. */
 export type PickSlot = { courseNumber: string; lessonType: string };
 
@@ -56,7 +62,11 @@ export type StateFileVersion = ServedTimetable["version"];
 export type TimetableResult =
   | {
       kind: "served";
+      /** The Variant on screen, and the one an edit made on this view names. */
       variantName: string;
+      /** Every Variant of the Timetable, in file order: the tabs (#281). */
+      variants: VariantTab[];
+      variantWarnings: VariantWarning[];
       picks: GroupPick[];
       clashes: Clash[];
       /** What this view is, so an edit made on it can say what it was based on. */
@@ -86,7 +96,15 @@ export type TimetableResult =
   /** The request never arrived: the server is not running, or not running here. */
   | { kind: "unreachable" };
 
-export type TimetableQuery = { academicYear: number; semester: Semester };
+/**
+ * Which week: a Semester of an Academic Year, and which of its Variants. No `variant` means the
+ * primary one, which is what a Semester opens on (#281).
+ */
+export type TimetableQuery = {
+  academicYear: number;
+  semester: Semester;
+  variant?: string | undefined;
+};
 
 /**
  * The routes read their parameters with `c.req.param()` rather than through a validator,
@@ -94,10 +112,14 @@ export type TimetableQuery = { academicYear: number; semester: Semester };
  * so it is sent; typing it in server/src/api.ts would remove these casts, exactly as
  * `offerings.ts` says of its query.
  */
-const asRead = (query: TimetableQuery): InferRequestType<ReadRoute> =>
+export const asRead = (query: TimetableQuery): InferRequestType<ReadRoute> =>
   ({
     param: { year: String(query.academicYear), semester: query.semester },
   }) as InferRequestType<ReadRoute>;
+
+/** The Variant an edit names, spread into its body: nothing at all for the primary. */
+export const variantOf = (query: TimetableQuery): { variant?: string } =>
+  query.variant === undefined ? {} : { variant: query.variant };
 
 /** Every answer read the same way, so one place decides what each status means. */
 async function read(
@@ -130,6 +152,10 @@ async function read(
   return {
     kind: "served",
     variantName: body.variantName,
+    // An older server, or a fake written before #281, sends neither: no tabs and no Warnings is
+    // what that answer is about, and the week it carries is still the week.
+    variants: body.variants ?? [],
+    variantWarnings: body.variantWarnings ?? [],
     picks: body.picks,
     clashes: body.clashes,
     version: body.version,
@@ -143,7 +169,7 @@ async function read(
  * server that answered them — so a body that is not JSON comes back as `unreadable-answer`
  * (see `read`) rather than as either a rejection or a lie about where the server is.
  */
-async function ask(
+export async function ask(
   send: () => Promise<Response & { ok: boolean; status: number }>,
 ): Promise<TimetableResult> {
   let answer: Response & { ok: boolean; status: number };
@@ -160,7 +186,11 @@ export async function fetchTimetable(
   client: ApiClient,
   query: TimetableQuery,
 ): Promise<TimetableResult> {
-  return ask(() => client.api.timetable[":year"][":semester"].$get(asRead(query)));
+  const request = {
+    ...asRead(query),
+    ...(query.variant === undefined ? {} : { query: { variant: query.variant } }),
+  } as InferRequestType<ReadRoute>;
+  return ask(() => client.api.timetable[":year"][":semester"].$get(request));
 }
 
 /**
@@ -182,7 +212,7 @@ export async function recordPick(
 ): Promise<TimetableResult> {
   const request = {
     ...asRead(query),
-    json: { ...pick, basedOn },
+    json: { ...pick, ...variantOf(query), basedOn },
   } as InferRequestType<PickRoute>;
   return ask(() => client.api.timetable[":year"][":semester"].picks.$post(request));
 }
@@ -196,7 +226,7 @@ export async function removePick(
 ): Promise<TimetableResult> {
   const request = {
     ...asRead(query),
-    json: { ...slot, basedOn },
+    json: { ...slot, ...variantOf(query), basedOn },
   } as InferRequestType<UnpickRoute>;
   return ask(() => client.api.timetable[":year"][":semester"].picks.$delete(request));
 }

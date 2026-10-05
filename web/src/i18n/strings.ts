@@ -47,6 +47,12 @@ const english = {
   /** The two labels `app/src/picks.ts` attaches to an edit, as the name of the thing done. */
   editPickGroup: "picking a group",
   editRemovePick: "removing a pick",
+  /** The labels `app/src/variants.ts` attaches to the Variant edits (#281). */
+  editCreateVariant: "creating a variant",
+  editDuplicateVariant: "duplicating a variant",
+  editRenameVariant: "renaming a variant",
+  editDeleteVariant: "deleting a variant",
+  editSetPrimaryVariant: "making a variant primary",
   /**
    * A label this build has no name for. The API types `label` as a `string`, so a server
    * newer than this page can send one — and "an edit" is true of every label there will
@@ -392,6 +398,28 @@ const english = {
    */
   picksHeldLost: "Your click was not saved.",
 
+  /**
+   * The Variant tabs above the week (#281). A Variant's own name is the student's text and is
+   * never translated; these are the words around it.
+   */
+  variantTabs: "Variants",
+  variantPrimaryMark: "primary",
+  variantNew: "New variant",
+  variantDuplicate: "Duplicate",
+  variantRename: "Rename",
+  variantMakePrimary: "Make primary",
+  variantDelete: "Delete",
+  variantNameNew: "Name of the new variant",
+  variantNameRename: "New name",
+  /** What an empty name will become: the server picks the first free letter. */
+  variantNamePlaceholder: "Leave empty for the next letter",
+  variantSave: "Save",
+  variantCancel: "Cancel",
+  /** Warnings and never refusals: the edit went through, and the tabs show it. */
+  variantNameNotUnique: "Two variants are named “{name}”. Rename one so each tab says which it is.",
+  variantPrimaryNotUnique:
+    "This timetable does not have exactly one primary variant. Mark the one you register with.",
+
   noFixedTime: "No fixed time",
   groupsCount: "{count} groups",
   groupsCountOne: "1 group",
@@ -445,6 +473,11 @@ const hebrew: Record<StringKey, string> = {
   redoneEdit: "הפעולה בוצעה מחדש: {edit}.",
   editPickGroup: "בחירת קבוצה",
   editRemovePick: "הסרת בחירה",
+  editCreateVariant: "יצירת חלופה",
+  editDuplicateVariant: "שכפול חלופה",
+  editRenameVariant: "שינוי שם של חלופה",
+  editDeleteVariant: "מחיקת חלופה",
+  editSetPrimaryVariant: "קביעת חלופה ראשית",
   editUnknown: "עריכה",
 
   historyNothingToUndo: "אין עוד מה לבטל.",
@@ -558,6 +591,21 @@ const hebrew: Record<StringKey, string> = {
     "היישום לא הצליח ליצור גיבוי של העבודה השמורה שלכם לפני שינויה, ולכן הלחיצה לא נשמרה.",
   picksHeld: "הבחירות השמורות עדיין נטענות. הלחיצה שלכם ממתינה להן.",
   picksHeldLost: "הלחיצה שלכם לא נשמרה.",
+
+  variantTabs: "חלופות",
+  variantPrimaryMark: "ראשית",
+  variantNew: "חלופה חדשה",
+  variantDuplicate: "שכפול",
+  variantRename: "שינוי שם",
+  variantMakePrimary: "קביעה כראשית",
+  variantDelete: "מחיקה",
+  variantNameNew: "שם החלופה החדשה",
+  variantNameRename: "שם חדש",
+  variantNamePlaceholder: "השאירו ריק לאות הבאה",
+  variantSave: "שמירה",
+  variantCancel: "ביטול",
+  variantNameNotUnique: "שתי חלופות נקראות „{name}”. שנו את שמה של אחת מהן כדי שכל לשונית תאמר מהי.",
+  variantPrimaryNotUnique: "למערכת השעות הזו אין בדיוק חלופה ראשית אחת. סמנו את זו שאיתה תירשמו.",
 
   noFixedTime: "ללא שעה קבועה",
   groupsCount: "{count} קבוצות",

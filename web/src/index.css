@@ -346,6 +346,41 @@
     color: var(--ink-soft);
   }
 
+  /**
+   * The Variant tabs (#281). The tab shown carries a thick block-end edge in ink — a second
+   * property beside the weight, so it does not depend on a hue to read — and the primary mark
+   * is pencil grey, because it is a fact about the Variant rather than about the selection.
+   */
+  .variant-tab {
+    background: var(--paper);
+    color: var(--ink-soft);
+    cursor: pointer;
+  }
+
+  .variant-tab.is-selected {
+    color: var(--ink);
+    font-weight: 600;
+    border-block-end-width: 3px;
+  }
+
+  .variant-primary {
+    color: var(--pencil);
+  }
+
+  .variant-action {
+    border: 1px solid var(--rule);
+    border-radius: 2px;
+    background: var(--paper);
+    color: var(--ink-soft);
+    padding: 0.125rem 0.5rem;
+    cursor: pointer;
+  }
+
+  .variant-action:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
   /* An Untimed Group sits here and never on the grid. */
   .untimed .tile {
     position: static;
