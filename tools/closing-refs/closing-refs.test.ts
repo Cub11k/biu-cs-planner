@@ -96,9 +96,22 @@ describe("renderFindings", () => {
 });
 
 describe("renderResolved", () => {
+  const fixed = [
+    { number: 205, children: [open(203)] },
+    { number: 203, children: [] },
+  ];
+
   it("keeps the marker and says what changed", () => {
-    expect(renderResolved([205, 203]).startsWith(MARKER)).toBe(true);
-    expect(renderResolved([205, 203])).toContain("closes #205 and #203");
+    expect(renderResolved(fixed).startsWith(MARKER)).toBe(true);
+    expect(renderResolved(fixed)).toContain(
+      "closes #205 and #203, and every open child of a parent among them is in that list",
+    );
+  });
+
+  it("says so when the parent left the list instead of its children joining it", () => {
+    expect(renderResolved([{ number: 260, children: [] }])).toContain(
+      "closes #260, and none of them is a parent",
+    );
     expect(renderResolved([])).toContain("no longer closes any issue");
   });
 });

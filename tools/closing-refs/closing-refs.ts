@@ -93,12 +93,15 @@ export function renderFindings(closes: readonly number[], findings: readonly Fin
  * What an earlier finding becomes once nothing is missing any more. Edited in place rather
  * than deleted, so the thread still shows that something was flagged and then answered.
  */
-export function renderResolved(closes: readonly number[]): string {
+export function renderResolved(closes: readonly Closed[]): string {
+  const numbers = closes.map((issue) => issue.number);
   const now =
-    closes.length === 0
+    numbers.length === 0
       ? "This pull request no longer closes any issue."
-      : `This pull request closes ${issueList(closes)}, and every open child of a parent ` +
-        "among them is in that list.";
+      : !closes.some((issue) => issue.children.length > 0)
+        ? `This pull request closes ${issueList(numbers)}, and none of them is a parent.`
+        : `This pull request closes ${issueList(numbers)}, and every open child of a parent ` +
+          "among them is in that list.";
   return [MARKER, "", "### Closing references", "", `Resolved. ${now}`].join("\n");
 }
 
@@ -124,7 +127,7 @@ export function decide(closes: readonly Closed[], existing: Existing | undefined
   if (findings.length === 0 && !existing) return { kind: "silent" };
 
   const body =
-    findings.length > 0 ? renderFindings(numbers, findings) : renderResolved(numbers);
+    findings.length > 0 ? renderFindings(numbers, findings) : renderResolved(closes);
 
   if (!existing) return { kind: "post", body };
   if (existing.body === body) return { kind: "silent" };
