@@ -163,7 +163,7 @@ it("redraws the week for the tab clicked, and asks for that Variant by name", as
 
   await until(() => expect(inked(mounted)).toEqual(["01"]));
   expect(selectedTab(mounted)).toBe("A");
-  expect(fake.sent.some((request) => request.search === "?variant=A")).toBe(true);
+  expect(fake.sent.some((request) => request.search === "?variant=A&position=0")).toBe(true);
   // showing a tab is view state, never a State File edit
   expect(saves()).toEqual([]);
 });
@@ -286,7 +286,7 @@ it("keeps the tab chosen when the Workspace changes and the week is read again",
   render("en", 1);
 
   await until(() =>
-    expect(fake.sent.filter((request) => request.search === "?variant=A").length).toBe(2),
+    expect(fake.sent.filter((request) => request.search === "?variant=A&position=0").length).toBe(2),
   );
   expect(selectedTab(mounted)).toBe("A");
 });
@@ -372,4 +372,57 @@ it("makes the week the tabpanel the tabs control, labelled by the tab shown", as
 
   await until(() => expect(panel!.getAttribute("aria-labelledby")).toBe(tab(mounted, "A").id));
   expect(tab(mounted, "A").id).not.toBe(tab(mounted, "B").id);
+});
+
+/**
+ * #322: two Variants of one name are both reachable from the tabs. Renaming B into A goes through
+ * with its Warning; then each tab can be shown on its own — exactly one selected — and each can be
+ * edited, the second by the position its tab sends beside the name.
+ */
+it("opens and edits each of two Variants that share a name", async () => {
+  const mounted = await openWeek();
+  await until(() => expect(selectedTab(mounted)).toBe("B"));
+  const rename = async (to: string): Promise<void> => {
+    action(mounted, "rename").click();
+    await userEvent.fill(await nameField(mounted), to);
+    action(mounted, "save").click();
+  };
+  const selected = (): number[] =>
+    tabs(mounted).flatMap((each, index) => (each.getAttribute("aria-selected") === "true" ? [index] : []));
+
+  await rename("A");
+  await until(() => expect(tabNames(mounted)).toEqual(["A", "A"]));
+  expect(mounted.textContent).toContain(t("en", "variantNameNotUnique", { name: "A" }));
+  // the renamed one is the one shown, and only it
+  expect(selected()).toEqual([1]);
+  expect(inked(mounted)).toEqual(["02"]);
+
+  tabs(mounted)[0]!.click();
+  await until(() => expect(inked(mounted)).toEqual(["01"]));
+  expect(selected()).toEqual([0]);
+
+  tabs(mounted)[1]!.click();
+  await until(() => expect(inked(mounted)).toEqual(["02"]));
+  expect(selected()).toEqual([1]);
+  expect(fake.sent.some((request) => request.search === "?variant=A&position=1")).toBe(true);
+
+  // the second, edited: renamed out of the collision, its Picks with it
+  await rename("C");
+  await until(() => expect(tabNames(mounted)).toEqual(["A", "C"]));
+  expect(fake.variants.map((v) => [v.name, v.picks.map((p) => p.groupNumber)])).toEqual([
+    ["A", ["01"]],
+    ["C", ["02"]],
+  ]);
+
+  // and back into it, then the first, edited
+  await rename("A");
+  await until(() => expect(tabNames(mounted)).toEqual(["A", "A"]));
+  tabs(mounted)[0]!.click();
+  await until(() => expect(selected()).toEqual([0]));
+  await rename("Z");
+  await until(() => expect(tabNames(mounted)).toEqual(["Z", "A"]));
+  expect(fake.variants.map((v) => [v.name, v.picks.map((p) => p.groupNumber)])).toEqual([
+    ["Z", ["01"]],
+    ["A", ["02"]],
+  ]);
 });

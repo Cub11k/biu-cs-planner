@@ -6,9 +6,12 @@ export type VariantTabsProps = {
   language: Language;
   /** Every Variant of the Timetable, in file order. */
   variants: readonly VariantTab[];
-  /** The Variant on the week, or `undefined` while the Timetable has not been read. */
-  shown: string | undefined;
-  onShow: (name: string) => void;
+  /**
+   * The Variant on the week, or `undefined` while the Timetable has not been read: its name, and
+   * its position among `variants` — which is what tells two of one name apart (#322).
+   */
+  shown: { name: string; position: number | undefined } | undefined;
+  onShow: (name: string, position: number) => void;
   /**
    * The id of the element the tabs control — the week (#324). Each tab names it in
    * `aria-controls`, and the panel names the selected tab back with `aria-labelledby`, using the
@@ -44,6 +47,22 @@ export type VariantTabsProps = {
  * focus, because showing a Variant asks the server, and arrowing past three tabs should not ask
  * three times.
  */
+/**
+ * Which tab is the one shown: the one at the position the answer named while it carries the name,
+ * and otherwise the first of that name — so with two Variants of one name exactly one tab is
+ * selected, and each can be (#322).
+ */
+export function shownTabIndex(
+  variants: readonly VariantTab[],
+  shown: { name: string; position: number | undefined } | undefined,
+): number {
+  if (shown === undefined) return -1;
+  if (shown.position !== undefined && variants[shown.position]?.name === shown.name) {
+    return shown.position;
+  }
+  return variants.findIndex((variant) => variant.name === shown.name);
+}
+
 /** The id of the tab at this position, for the panel's `aria-labelledby`. */
 export const variantTabId = (panelId: string, index: number): string => `${panelId}-tab-${index}`;
 
@@ -61,11 +80,9 @@ export function VariantTabs({
   const inputId = useId();
   const tabs = useRef<Array<HTMLButtonElement | null>>([]);
 
-  const current = variants.find((variant) => variant.name === shown);
-  const focusable = Math.max(
-    0,
-    variants.findIndex((variant) => variant.name === shown),
-  );
+  const shownAt = shownTabIndex(variants, shown);
+  const current = shownAt === -1 ? undefined : variants[shownAt];
+  const focusable = Math.max(0, shownAt);
 
   const moveFocus = (from: number, key: string): void => {
     const forward = DIRECTION[language] === "rtl" ? "ArrowLeft" : "ArrowRight";
@@ -86,7 +103,7 @@ export function VariantTabs({
 
   const open = (mode: "create" | "rename"): void => {
     setNaming(mode);
-    setName(mode === "rename" ? (shown ?? "") : "");
+    setName(mode === "rename" ? (shown?.name ?? "") : "");
   };
 
   const submit = (event: React.FormEvent): void => {
@@ -103,7 +120,7 @@ export function VariantTabs({
       {variants.length > 0 && (
         <div role="tablist" aria-label={t(language, "variantTabs")} className="flex flex-wrap gap-1">
           {variants.map((variant, index) => {
-            const selected = variant.name === shown;
+            const selected = index === shownAt;
             return (
               <button
                 // two Variants can share a name, which is a Warning and not something to crash on
@@ -119,7 +136,7 @@ export function VariantTabs({
                 tabIndex={index === focusable ? 0 : -1}
                 data-variant={variant.name}
                 data-primary={variant.primary}
-                onClick={() => onShow(variant.name)}
+                onClick={() => onShow(variant.name, index)}
                 onKeyDown={(event) => moveFocus(index, event.key)}
                 className={`variant-tab rounded-sm border px-2.5 py-1 ${
                   selected ? "is-selected border-ink" : "border-rule"

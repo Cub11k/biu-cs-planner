@@ -163,10 +163,18 @@ const variantNameSchema = z.string().min(1).max(200).regex(/\S/); // a literal p
  */
 const variantSchema = variantNameSchema.optional();
 
+/**
+ * Which Variant of that name, by its position in file order (#322): two Variants may share a name,
+ * which is a Warning, and the position is how the second is reached. Optional, and honoured only
+ * when the Variant there carries the name, so a client that never sends it addresses by name.
+ */
+const positionSchema = z.number().int().min(0).max(10_000).optional();
+
 /** A Pick, the Variant it goes into, and the revision the page that sends it was based on. */
 const savedPickSchema = z.object({
   ...groupPickSchema.shape,
   variant: variantSchema,
+  position: positionSchema,
   basedOn: basedOnSchema,
 });
 
@@ -174,6 +182,7 @@ const savedPickSchema = z.object({
 const savedSlotSchema = z.object({
   ...pickSlotSchema.shape,
   variant: variantSchema,
+  position: positionSchema,
   basedOn: basedOnSchema,
 });
 
@@ -184,6 +193,7 @@ const newVariantSchema = z.object({ name: variantNameSchema.optional(), basedOn:
 const duplicatedVariantSchema = z.object({
   variant: variantSchema,
   name: variantNameSchema.optional(),
+  position: positionSchema,
   basedOn: basedOnSchema,
 });
 
@@ -191,11 +201,16 @@ const duplicatedVariantSchema = z.object({
 const renamedVariantSchema = z.object({
   variant: variantNameSchema,
   name: variantNameSchema,
+  position: positionSchema,
   basedOn: basedOnSchema,
 });
 
 /** The Variant to delete or to make primary: always named, because both act on one tab. */
-const namedVariantSchema = z.object({ variant: variantNameSchema, basedOn: basedOnSchema });
+const namedVariantSchema = z.object({
+  variant: variantNameSchema,
+  position: positionSchema,
+  basedOn: basedOnSchema,
+});
 
 /**
  * A Course to add to a Variant's Tray or take out of it, by course number — never by Catalog
@@ -204,6 +219,7 @@ const namedVariantSchema = z.object({ variant: variantNameSchema, basedOn: based
 const trayCourseSchema = z.object({
   variant: variantSchema,
   courseNumber: z.string().min(1),
+  position: positionSchema,
   basedOn: basedOnSchema,
 });
 
@@ -226,6 +242,7 @@ const blockedRangeShape = {
 const newBlockedTimeSchema = z.object({
   ...blockedRangeShape,
   variant: variantSchema,
+  position: positionSchema,
   basedOn: basedOnSchema,
 });
 
@@ -236,12 +253,14 @@ const replacedBlockedTimeSchema = z.object({
   ...blockedRangeShape,
   index: blockedIndexSchema,
   variant: variantSchema,
+  position: positionSchema,
   basedOn: basedOnSchema,
 });
 
 const removedBlockedTimeSchema = z.object({
   index: blockedIndexSchema,
   variant: variantSchema,
+  position: positionSchema,
   basedOn: basedOnSchema,
 });
 
@@ -250,6 +269,7 @@ const copiedBlockedTimesSchema = z.object({
   toYear: z.number().int().min(1900).max(2200),
   toSemester: semesterSchema,
   variant: variantSchema,
+  position: positionSchema,
   basedOn: basedOnSchema,
 });
 
@@ -444,9 +464,16 @@ function timetableRef(
  */
 function variantQuery(
   c: Context,
-): { ok: true; variant: string | undefined } | { ok: false; error: "bad-variant" } {
+):
+  | { ok: true; variant: string | undefined; position: number | undefined }
+  | { ok: false; error: "bad-variant" } {
   const variant = variantSchema.safeParse(c.req.query("variant"));
-  return variant.success ? { ok: true, variant: variant.data } : { ok: false, error: "bad-variant" };
+  // `?position=` beside it, for the second of two Variants sharing a name (#322)
+  const asked = c.req.query("position");
+  const position = positionSchema.safeParse(asked === undefined ? undefined : Number(asked));
+  return variant.success && position.success
+    ? { ok: true, variant: variant.data, position: position.data }
+    : { ok: false, error: "bad-variant" };
 }
 
 /**
@@ -799,7 +826,11 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
       const variant = variantQuery(c);
       if (!variant.ok) return c.json({ error: variant.error }, 400);
 
-      const result = await readTimetable(workspace, { ...ref.at, variant: variant.variant });
+      const result = await readTimetable(workspace, {
+        ...ref.at,
+        variant: variant.variant,
+        position: variant.position,
+      });
       if (result.kind === "refused") {
         return c.json({ reason: result.reason, warnings: result.warnings }, 409);
       }
@@ -849,7 +880,11 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
       const variant = variantQuery(c);
       if (!variant.ok) return c.json({ error: variant.error }, 400);
 
-      const result = await readExams(workspace, { ...ref.at, variant: variant.variant });
+      const result = await readExams(workspace, {
+        ...ref.at,
+        variant: variant.variant,
+        position: variant.position,
+      });
       if (result.kind === "refused") {
         return c.json({ reason: result.reason, warnings: result.warnings }, 409);
       }
@@ -883,8 +918,8 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
       const body = await bodyAs(c, savedPickSchema, "not-a-pick");
       if (!body.ok) return c.json({ error: body.error }, 400);
 
-      const { basedOn, variant, ...pick } = body.value;
-      const result = await pickGroup(workspace, { ...ref.at, variant }, pick, {
+      const { basedOn, variant, position, ...pick } = body.value;
+      const result = await pickGroup(workspace, { ...ref.at, variant, position }, pick, {
         basedOn,
         history: into,
       });
@@ -906,8 +941,8 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
       const body = await bodyAs(c, savedSlotSchema, "not-a-pick-slot");
       if (!body.ok) return c.json({ error: body.error }, 400);
 
-      const { basedOn, variant, ...slot } = body.value;
-      const result = await removeGroupPick(workspace, { ...ref.at, variant }, slot, {
+      const { basedOn, variant, position, ...slot } = body.value;
+      const result = await removeGroupPick(workspace, { ...ref.at, variant, position }, slot, {
         basedOn,
         history: into,
       });
@@ -954,12 +989,12 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
       const body = await bodyAs(c, duplicatedVariantSchema, "not-a-variant");
       if (!body.ok) return c.json({ error: body.error }, 400);
 
-      const { basedOn, variant, name } = body.value;
+      const { basedOn, variant, position, name } = body.value;
       return timetableAnswer(
         c,
         await duplicateVariantAs(
           workspace,
-          { ...ref.at, variant },
+          { ...ref.at, variant, position },
           name === undefined ? {} : { name },
           { basedOn, history: into },
         ),
@@ -972,10 +1007,13 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
       const body = await bodyAs(c, renamedVariantSchema, "not-a-variant");
       if (!body.ok) return c.json({ error: body.error }, 400);
 
-      const { basedOn, variant, name } = body.value;
+      const { basedOn, variant, position, name } = body.value;
       return timetableAnswer(
         c,
-        await renameVariantAs(workspace, { ...ref.at, variant }, name, { basedOn, history: into }),
+        await renameVariantAs(workspace, { ...ref.at, variant, position }, name, {
+          basedOn,
+          history: into,
+        }),
       );
     })
 
@@ -985,10 +1023,13 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
       const body = await bodyAs(c, namedVariantSchema, "not-a-variant");
       if (!body.ok) return c.json({ error: body.error }, 400);
 
-      const { basedOn, variant } = body.value;
+      const { basedOn, variant, position } = body.value;
       return timetableAnswer(
         c,
-        await makeVariantPrimary(workspace, { ...ref.at, variant }, { basedOn, history: into }),
+        await makeVariantPrimary(workspace, { ...ref.at, variant, position }, {
+          basedOn,
+          history: into,
+        }),
       );
     })
 
@@ -1003,10 +1044,10 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
       const body = await bodyAs(c, trayCourseSchema, "not-a-tray-course");
       if (!body.ok) return c.json({ error: body.error }, 400);
 
-      const { basedOn, variant, courseNumber } = body.value;
+      const { basedOn, variant, position, courseNumber } = body.value;
       return timetableAnswer(
         c,
-        await addCourseToTray(workspace, { ...ref.at, variant }, courseNumber, {
+        await addCourseToTray(workspace, { ...ref.at, variant, position }, courseNumber, {
           basedOn,
           history: into,
         }),
@@ -1019,10 +1060,10 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
       const body = await bodyAs(c, trayCourseSchema, "not-a-tray-course");
       if (!body.ok) return c.json({ error: body.error }, 400);
 
-      const { basedOn, variant, courseNumber } = body.value;
+      const { basedOn, variant, position, courseNumber } = body.value;
       return timetableAnswer(
         c,
-        await removeCourseFromTray(workspace, { ...ref.at, variant }, courseNumber, {
+        await removeCourseFromTray(workspace, { ...ref.at, variant, position }, courseNumber, {
           basedOn,
           history: into,
         }),
@@ -1042,10 +1083,10 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
       const body = await bodyAs(c, newBlockedTimeSchema, "not-a-blocked-time");
       if (!body.ok) return c.json({ error: body.error }, 400);
 
-      const { basedOn, variant, ...range } = body.value;
+      const { basedOn, variant, position, ...range } = body.value;
       return timetableAnswer(
         c,
-        await addBlockedTimeTo(workspace, { ...ref.at, variant }, range, {
+        await addBlockedTimeTo(workspace, { ...ref.at, variant, position }, range, {
           basedOn,
           history: into,
         }),
@@ -1058,10 +1099,10 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
       const body = await bodyAs(c, replacedBlockedTimeSchema, "not-a-blocked-time");
       if (!body.ok) return c.json({ error: body.error }, 400);
 
-      const { basedOn, variant, index, ...range } = body.value;
+      const { basedOn, variant, position, index, ...range } = body.value;
       return timetableAnswer(
         c,
-        await replaceBlockedTimeAt(workspace, { ...ref.at, variant }, index, range, {
+        await replaceBlockedTimeAt(workspace, { ...ref.at, variant, position }, index, range, {
           basedOn,
           history: into,
         }),
@@ -1074,10 +1115,10 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
       const body = await bodyAs(c, removedBlockedTimeSchema, "not-a-blocked-time");
       if (!body.ok) return c.json({ error: body.error }, 400);
 
-      const { basedOn, variant, index } = body.value;
+      const { basedOn, variant, position, index } = body.value;
       return timetableAnswer(
         c,
-        await removeBlockedTimeAt(workspace, { ...ref.at, variant }, index, {
+        await removeBlockedTimeAt(workspace, { ...ref.at, variant, position }, index, {
           basedOn,
           history: into,
         }),
@@ -1090,12 +1131,12 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
       const body = await bodyAs(c, copiedBlockedTimesSchema, "not-a-blocked-time-copy");
       if (!body.ok) return c.json({ error: body.error }, 400);
 
-      const { basedOn, variant, toYear, toSemester } = body.value;
+      const { basedOn, variant, position, toYear, toSemester } = body.value;
       return timetableAnswer(
         c,
         await copyBlockedTimesTo(
           workspace,
-          { ...ref.at, variant },
+          { ...ref.at, variant, position },
           { academicYear: toYear, semester: toSemester },
           { basedOn, history: into },
         ),
@@ -1108,10 +1149,10 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
       const body = await bodyAs(c, namedVariantSchema, "not-a-variant");
       if (!body.ok) return c.json({ error: body.error }, 400);
 
-      const { basedOn, variant } = body.value;
+      const { basedOn, variant, position } = body.value;
       return timetableAnswer(
         c,
-        await removeVariant(workspace, { ...ref.at, variant }, { basedOn, history: into }),
+        await removeVariant(workspace, { ...ref.at, variant, position }, { basedOn, history: into }),
       );
     })
 

@@ -73,6 +73,12 @@ export type TimetableResult =
       kind: "served";
       /** The Variant on screen, and the one an edit made on this view names. */
       variantName: string;
+      /**
+       * Where that Variant stands among `variants`, which tells it from another of the same name
+       * (#322); an edit made on this view sends it back. `undefined` while the Variant does not
+       * exist yet, and from a server older than #322.
+       */
+      variantPosition: number | undefined;
       /** Every Variant of the Timetable, in file order: the tabs (#281). */
       variants: VariantTab[];
       variantWarnings: VariantWarning[];
@@ -118,6 +124,8 @@ export type TimetableQuery = {
   academicYear: number;
   semester: Semester;
   variant?: string | undefined;
+  /** Which Variant of that name, by position, while two share it (#322). */
+  position?: number | undefined;
 };
 
 /**
@@ -131,9 +139,13 @@ export const asRead = (query: TimetableQuery): InferRequestType<ReadRoute> =>
     param: { year: String(query.academicYear), semester: query.semester },
   }) as InferRequestType<ReadRoute>;
 
+/** The position an edit names beside its Variant, spread into its body: nothing when it has none. */
+export const positionOf = (query: TimetableQuery): { position?: number } =>
+  query.position === undefined ? {} : { position: query.position };
+
 /** The Variant an edit names, spread into its body: nothing at all for the primary. */
-export const variantOf = (query: TimetableQuery): { variant?: string } =>
-  query.variant === undefined ? {} : { variant: query.variant };
+export const variantOf = (query: TimetableQuery): { variant?: string; position?: number } =>
+  query.variant === undefined ? {} : { variant: query.variant, ...positionOf(query) };
 
 /** Every answer read the same way, so one place decides what each status means. */
 async function read(
@@ -166,6 +178,7 @@ async function read(
   return {
     kind: "served",
     variantName: body.variantName,
+    variantPosition: typeof body.variantPosition === "number" ? body.variantPosition : undefined,
     // An older server, or a fake written before #281, sends neither: no tabs and no Warnings is
     // what that answer is about, and the week it carries is still the week.
     variants: body.variants ?? [],
@@ -205,7 +218,14 @@ export async function fetchTimetable(
 ): Promise<TimetableResult> {
   const request = {
     ...asRead(query),
-    ...(query.variant === undefined ? {} : { query: { variant: query.variant } }),
+    ...(query.variant === undefined
+      ? {}
+      : {
+          query: {
+            variant: query.variant,
+            ...(query.position === undefined ? {} : { position: String(query.position) }),
+          },
+        }),
   } as InferRequestType<ReadRoute>;
   return ask(() => client.api.timetable[":year"][":semester"].$get(request));
 }

@@ -61,6 +61,21 @@ export function withTimetable(
   };
 }
 
-/** The first Variant of a Timetable with this name, which is the one a name addresses. */
-export const variantNamed = (timetable: Timetable | undefined, name: string): Variant | undefined =>
-  timetable?.variants.find((variant) => variant.name === name);
+/**
+ * The Variant of a Timetable a name addresses: the first with this name — or, when `position` is
+ * given and the Variant at that position in file order carries this name, that one (#322).
+ *
+ * Two Variants sharing a name is a Warning and not a refusal, so while it lasts the name alone
+ * reaches only the first of them. A position lets the second be reached too. It counts only when
+ * it agrees with the name, so a position that no longer names that Variant falls back to the
+ * name rather than reaching a different Variant; a stale page is refused before any edit is
+ * applied anyway (`editStateFile`).
+ */
+export const variantNamed = (
+  timetable: Timetable | undefined,
+  name: string,
+  position?: number,
+): Variant | undefined => {
+  const at = position === undefined ? undefined : timetable?.variants[position];
+  return at?.name === name ? at : timetable?.variants.find((variant) => variant.name === name);
+};

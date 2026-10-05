@@ -38,6 +38,11 @@ export type VariantRef = {
   semester: Semester;
   /** Variants are named, and the name is what tells them apart (CONTEXT.md). */
   variant: string;
+  /**
+   * Which Variant of that name, by its position in file order, while two share it (#322). Absent
+   * for every caller that addresses by name alone, which reaches the first of them as before.
+   */
+  position?: number | undefined;
 };
 
 /**
@@ -75,7 +80,7 @@ const isSamePick = (held: GroupPick, pick: GroupPick): boolean =>
 
 /** The named Variant, or nothing when neither it nor its Timetable is there yet. */
 export function variantAt(state: State, at: VariantRef): Variant | undefined {
-  return variantNamed(timetableAt(state, at), at.variant);
+  return variantNamed(timetableAt(state, at), at.variant, at.position);
 }
 
 /**
@@ -96,7 +101,7 @@ export function withVariant(
   rewrite: (variant: Variant) => Variant,
 ): State {
   return withTimetable(state, at, (timetable) => {
-    const held = variantNamed(timetable, at.variant);
+    const held = variantNamed(timetable, at.variant, at.position);
     const variant: Variant = held ?? {
       name: at.variant,
       primary: timetable.variants.length === 0,

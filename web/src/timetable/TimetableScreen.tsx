@@ -42,7 +42,7 @@ import {
   replaceBlockedTime,
 } from "./blockedTimes.ts";
 import { lessonTypeName } from "./lessonType.ts";
-import { VariantTabs, variantTabId } from "./VariantTabs.tsx";
+import { shownTabIndex, VariantTabs, variantTabId } from "./VariantTabs.tsx";
 import { WeekGrid } from "./WeekGrid.tsx";
 
 const SEMESTER_STRING = {
@@ -63,6 +63,9 @@ type TimetableState = { kind: "loading" } | TimetableResult;
  * wrong one. A click is answered by the week it was made on or not at all.
  */
 type HeldClick = { group: WeekGroup; query: TimetableQuery };
+
+/** The tab a student chose: a Variant's name, and its position for when two share it (#322). */
+type VariantWanted = { name: string; position: number | undefined };
 
 /**
  * Why the API served no Catalog, said in words the student can act on. A Warning nobody
@@ -283,8 +286,12 @@ export function TimetablePane({
    * screen *shows* is never read from here — it is `timetable.variantName`, the Variant the
    * answer on screen is about — so a click made while the next tab is on its way still names the
    * Variant the student was looking at when they clicked.
+   *
+   * By name **and position** (#322): two Variants may share a name, and the position is what
+   * reaches the second of them. The server honours the position only while the Variant there
+   * carries the name.
    */
-  const variantWanted = useRef<string | undefined>(undefined);
+  const variantWanted = useRef<VariantWanted | undefined>(undefined);
   /** The week, as the panel the Variant tabs control (#324). */
   const weekPanelId = useId();
 
@@ -294,7 +301,12 @@ export function TimetablePane({
   );
   const askTimetable = useCallback(() => {
     const asked = variantWanted.current;
-    return fetchTimetable(api, { academicYear, semester, variant: asked }).then((answer) => {
+    return fetchTimetable(api, {
+      academicYear,
+      semester,
+      variant: asked?.name,
+      position: asked?.position,
+    }).then((answer) => {
       // The tab asked for is gone — another window deleted or renamed it — and the server has
       // answered with the primary instead. The page follows the answer rather than going on
       // asking for a Variant no file holds, so the next new Variant of that name cannot steal
@@ -302,7 +314,7 @@ export function TimetablePane({
       if (
         answer.kind === "served" &&
         asked !== undefined &&
-        answer.variantName !== asked &&
+        answer.variantName !== asked.name &&
         variantWanted.current === asked
       ) {
         variantWanted.current = undefined;
@@ -329,7 +341,7 @@ export function TimetablePane({
   /** Which tab is shown, by position, or -1 while there is none. */
   const shownTab =
     timetable.kind === "served"
-      ? timetable.variants.findIndex((variant) => variant.name === timetable.variantName)
+      ? shownTabIndex(timetable.variants, { name: timetable.variantName, position: timetable.variantPosition })
       : -1;
 
   /** A picked Course the Catalog no longer names shows its number, which it always has. */
@@ -494,7 +506,12 @@ export function TimetablePane({
     if (timetable.kind !== "served") return Promise.resolve(undefined);
     retireNotices();
     const sentOn = timetable;
-    const query = { academicYear, semester, variant: timetable.variantName };
+    const query = {
+      academicYear,
+      semester,
+      variant: timetable.variantName,
+      position: timetable.variantPosition,
+    };
     return edit(query, timetable.version).then((answer) => settle(answer, sentOn, follow));
   };
 
@@ -512,14 +529,14 @@ export function TimetablePane({
     );
 
   /** Showing another tab: a re-read of the same question, never a State File edit. */
-  const showVariant = (name: string): void => {
-    variantWanted.current = name;
+  const showVariant = (name: string, position: number): void => {
+    variantWanted.current = { name, position };
     setRereads((count) => count + 1);
   };
 
   /** After an edit that moves the student to a Variant, the page asks about that one from now on. */
   const followAnswer = (served: Extract<TimetableResult, { kind: "served" }>): void => {
-    variantWanted.current = served.variantName;
+    variantWanted.current = { name: served.variantName, position: served.variantPosition };
   };
 
   const variantEdits =
@@ -589,11 +606,15 @@ export function TimetablePane({
     retireNotices();
     // the Variant on screen when the click was made, or — before the first answer — the one
     // being asked for, which is the one that answer will be about
-    const query = {
-      academicYear,
-      semester,
-      variant: timetable.kind === "served" ? timetable.variantName : variantWanted.current,
-    };
+    const query =
+      timetable.kind === "served"
+        ? { academicYear, semester, variant: timetable.variantName, position: timetable.variantPosition }
+        : {
+            academicYear,
+            semester,
+            variant: variantWanted.current?.name,
+            position: variantWanted.current?.position,
+          };
 
     if (timetable.kind !== "served") {
       setHeld((waiting) => [...waiting, { group, query }]);
@@ -749,7 +770,11 @@ export function TimetablePane({
           <VariantTabs
             language={language}
             variants={timetable.kind === "served" ? timetable.variants : []}
-            shown={timetable.kind === "served" ? timetable.variantName : undefined}
+            shown={
+              timetable.kind === "served"
+                ? { name: timetable.variantName, position: timetable.variantPosition }
+                : undefined
+            }
             onShow={showVariant}
             panelId={weekPanelId}
             edits={variantEdits}

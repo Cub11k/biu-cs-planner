@@ -101,19 +101,28 @@ export function installFakeApi(options: {
     },
   };
 
-  const resolve = (requested: string | null | undefined): string => {
-    if (requested && fake.variants.some((v) => v.name === requested)) return requested;
-    return (fake.variants.find((v) => v.primary) ?? fake.variants[0])?.name ?? "A";
+  /** The Variant a name addresses — of two sharing it, the one at `position` (#322). */
+  const named = (name: string, position: number | undefined): FakeVariant | undefined => {
+    const at = position === undefined ? undefined : fake.variants[position];
+    return at?.name === name ? at : fake.variants.find((v) => v.name === name);
   };
+
+  const resolve = (requested: string | null | undefined, position?: number): string =>
+    resolved(requested, position)?.name ?? "A";
+
+  const resolved = (requested: string | null | undefined, position?: number): FakeVariant | undefined =>
+    (requested ? named(requested, position) : undefined) ??
+    fake.variants.find((v) => v.primary) ??
+    fake.variants[0];
 
   const freeName = (): string =>
     [..."ABCDEFGHIJKLMNOPQRSTUVWXYZ"].find((letter) => !fake.variants.some((v) => v.name === letter)) ??
     "A2";
 
   /** The Variant an edit names, made if it is not there — as a first Pick makes it. */
-  const edited = (requested: string | undefined): FakeVariant => {
+  const edited = (requested: string | undefined, position?: number): FakeVariant => {
     const name = requested ?? resolve(undefined);
-    let variant = fake.variants.find((v) => v.name === name);
+    let variant = named(name, requested === undefined ? undefined : position);
     if (variant === undefined) {
       variant = { name, primary: fake.variants.length === 0, picks: [], tray: [] };
       fake.variants.push(variant);
@@ -148,9 +157,9 @@ export function installFakeApi(options: {
     });
   };
 
-  const view = (requested: string | null | undefined) => {
-    const name = resolve(requested);
-    const variant = fake.variants.find((v) => v.name === name);
+  const view = (requested: string | null | undefined, position?: number) => {
+    const variant = resolved(requested, position);
+    const name = variant?.name ?? "A";
     const picks = variant?.picks ?? [];
     const clashes = picks.flatMap((pick) =>
       pick.meetings.flatMap((meeting) =>
@@ -181,6 +190,7 @@ export function installFakeApi(options: {
     });
     return {
       variantName: name,
+      variantPosition: variant === undefined ? undefined : fake.variants.indexOf(variant),
       variants: fake.variants.map((v) => ({ name: v.name, primary: v.primary })),
       variantWarnings,
       picks,
@@ -214,9 +224,17 @@ export function installFakeApi(options: {
     if (!pathname.startsWith("/api/timetable")) return json({ offerings: options.offerings, warnings: [] });
 
     const route = pathname.replace("/api/timetable/2027/fall", "");
-    if (method === "GET") return json(view(url.searchParams.get("variant")));
+    if (method === "GET") {
+      const position = url.searchParams.get("position");
+      return json(view(url.searchParams.get("variant"), position === null ? undefined : Number(position)));
+    }
 
-    const request = body as Record<string, unknown> & { basedOn?: string; variant?: string };
+    const request = body as Record<string, unknown> & {
+      basedOn?: string;
+      variant?: string;
+      position?: number;
+    };
+    const at = request.position;
     if (fake.changeUnderneath) {
       fake.changeUnderneath = false;
       fake.version += 1;
@@ -229,10 +247,11 @@ export function installFakeApi(options: {
 
     const key = `${method} ${route}`;
     let answerAbout: string | undefined = request.variant;
+    let answerAt: number | undefined = at;
     switch (key) {
       case "POST /picks": {
-        const { basedOn: _b, variant: _v, ...pick } = request;
-        const variant = edited(request.variant);
+        const { basedOn: _b, variant: _v, position: _p, ...pick } = request;
+        const variant = edited(request.variant, at);
         variant.picks = [
           ...variant.picks.filter(
             (p) => p.courseNumber !== pick.courseNumber || p.lessonType !== pick.lessonType,
@@ -243,7 +262,7 @@ export function installFakeApi(options: {
         break;
       }
       case "DELETE /picks": {
-        const variant = edited(request.variant);
+        const variant = edited(request.variant, at);
         variant.picks = variant.picks.filter(
           (p) => p.courseNumber !== request.courseNumber || p.lessonType !== request.lessonType,
         );
@@ -254,13 +273,15 @@ export function installFakeApi(options: {
         const name = (request.name as string | undefined) ?? freeName();
         fake.variants.push({ name, primary: fake.variants.length === 0, picks: [], tray: [] });
         answerAbout = name;
+        answerAt = fake.variants.length - 1;
         fake.labels.push("create-variant");
         break;
       }
       case "POST /variants/duplicate": {
-        const source = edited(request.variant);
+        const source = edited(request.variant, at);
         const name = (request.name as string | undefined) ?? freeName();
-        fake.variants.splice(fake.variants.indexOf(source) + 1, 0, {
+        answerAt = fake.variants.indexOf(source) + 1;
+        fake.variants.splice(answerAt, 0, {
           name,
           primary: false,
           picks: [...source.picks],
@@ -271,19 +292,21 @@ export function installFakeApi(options: {
         break;
       }
       case "POST /variants/rename": {
-        edited(request.variant).name = request.name as string;
+        const renamed = edited(request.variant, at);
+        renamed.name = request.name as string;
         answerAbout = request.name as string;
+        answerAt = fake.variants.indexOf(renamed);
         fake.labels.push("rename-variant");
         break;
       }
       case "POST /variants/primary": {
-        const chosen = edited(request.variant);
+        const chosen = edited(request.variant, at);
         for (const v of fake.variants) v.primary = v === chosen;
         fake.labels.push("set-primary-variant");
         break;
       }
       case "DELETE /variants": {
-        const gone = edited(request.variant);
+        const gone = edited(request.variant, at);
         fake.variants = fake.variants.filter((v) => v !== gone);
         if (gone.primary && fake.variants[0] !== undefined && !fake.variants.some((v) => v.primary)) {
           fake.variants[0].primary = true;
@@ -293,7 +316,7 @@ export function installFakeApi(options: {
         break;
       }
       case "POST /tray": {
-        const variant = edited(request.variant);
+        const variant = edited(request.variant, at);
         if (!variant.tray.includes(request.courseNumber as string)) {
           variant.tray = [...variant.tray, request.courseNumber as string];
         }
@@ -301,7 +324,7 @@ export function installFakeApi(options: {
         break;
       }
       case "DELETE /tray": {
-        const variant = edited(request.variant);
+        const variant = edited(request.variant, at);
         variant.tray = variant.tray.filter((c) => c !== request.courseNumber);
         variant.picks = variant.picks.filter((p) => p.courseNumber !== request.courseNumber);
         fake.labels.push("remove-from-tray");
@@ -340,7 +363,7 @@ export function installFakeApi(options: {
         return json({ error: `the fake has no ${key}` }, 404);
     }
 
-    return json(view(answerAbout));
+    return json(view(answerAbout, answerAt));
   }) as typeof fetch;
 
   return fake;

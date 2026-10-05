@@ -12,9 +12,11 @@ import { timetableAt, variantNamed, withTimetable, type TimetableAt } from "./ti
  * (docs/design.md, "API and data rules").
  *
  * **A Variant is addressed by its name**, as `VariantRef` already has it. Two Variants sharing a
- * name is the collision `variantWarnings` names, and while it lasts the name addresses the
+ * name is the collision `variantWarnings` names, and while it lasts the name alone addresses the
  * first of them in file order — the same one `variantAt` reads — so every edit agrees with
- * every read about which Variant a tab means.
+ * every read about which Variant a tab means. A `VariantRef` may also carry the Variant's
+ * position, which reaches the others of that name (#322); every edit and read here honours it the
+ * same way, through `variantNamed`.
  *
  * **Exactly one primary**, kept by the edits rather than only checked: making one primary
  * clears the flag on every other Variant of the Timetable in the same edit, and deleting the
@@ -64,12 +66,39 @@ export function resolveVariantName(
   at: TimetableAt,
   requested: string | undefined,
 ): string {
+  return resolveVariant(state, at, requested).variant;
+}
+
+/**
+ * `resolveVariantName`, and the position of the Variant it resolved to (#322): `position` is
+ * honoured as `variantNamed` honours it, so of two Variants sharing a name the read is about the
+ * one asked for. The position comes back `undefined` for a Timetable with no such Variant yet.
+ */
+export function resolveVariant(
+  state: State,
+  at: TimetableAt,
+  requested: string | undefined,
+  position?: number,
+): { variant: string; position: number | undefined } {
   const timetable = timetableAt(state, at);
-  if (requested !== undefined && variantNamed(timetable, requested) !== undefined) {
-    return requested;
-  }
   const variants = timetable?.variants ?? [];
-  return (variants.find((variant) => variant.primary) ?? variants[0])?.name ?? DEFAULT_VARIANT_NAME;
+  const found =
+    (requested === undefined ? undefined : variantNamed(timetable, requested, position)) ??
+    variants.find((variant) => variant.primary) ??
+    variants[0];
+  if (found === undefined) return { variant: DEFAULT_VARIANT_NAME, position: undefined };
+  return { variant: found.name, position: variants.indexOf(found) };
+}
+
+/**
+ * Where the Variant a `VariantRef` addresses stands in file order, or `undefined` when there is
+ * none: what an answer about it carries so a page can address it again while its name is shared
+ * (#322).
+ */
+export function variantPosition(state: State, at: VariantRef): number | undefined {
+  const timetable = timetableAt(state, at);
+  const held = variantNamed(timetable, at.variant, at.position);
+  return held === undefined ? undefined : timetable!.variants.indexOf(held);
 }
 
 /**
@@ -107,7 +136,7 @@ export function createVariant(state: State, at: VariantRef): State {
  */
 export function duplicateVariant(state: State, from: VariantRef, name: string): State {
   return withVariants(state, from, (variants, timetable) => {
-    const source = variantNamed(timetable, from.variant);
+    const source = variantNamed(timetable, from.variant, from.position);
     if (source === undefined) return variants;
 
     const copy: Variant = { ...source, name, primary: false };
@@ -119,7 +148,7 @@ export function duplicateVariant(state: State, from: VariantRef, name: string): 
 /** Renames a Variant where it stands. A name already in use is a Warning, not a refusal. */
 export function renameVariant(state: State, at: VariantRef, name: string): State {
   return withVariants(state, at, (variants, timetable) => {
-    const held = variantNamed(timetable, at.variant);
+    const held = variantNamed(timetable, at.variant, at.position);
     if (held === undefined || held.name === name) return variants;
 
     return variants.map((variant) => (variant === held ? { ...variant, name } : variant));
@@ -135,7 +164,7 @@ export function renameVariant(state: State, at: VariantRef, name: string): State
  */
 export function deleteVariant(state: State, at: VariantRef): State {
   return withVariants(state, at, (variants, timetable) => {
-    const held = variantNamed(timetable, at.variant);
+    const held = variantNamed(timetable, at.variant, at.position);
     if (held === undefined) return variants;
 
     const remaining = variants.filter((variant) => variant !== held);
@@ -153,7 +182,7 @@ export function deleteVariant(state: State, at: VariantRef): State {
  */
 export function setPrimaryVariant(state: State, at: VariantRef): State {
   return withVariants(state, at, (variants, timetable) => {
-    const held = variantNamed(timetable, at.variant);
+    const held = variantNamed(timetable, at.variant, at.position);
     if (held === undefined) return variants;
     if (variants.every((variant) => variant.primary === (variant === held))) return variants;
 

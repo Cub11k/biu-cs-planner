@@ -3,7 +3,7 @@ import {
   clashesIn,
   recordPick,
   removePick,
-  resolveVariantName,
+  resolveVariant,
   timetableAt,
   trayEntries,
   variantAt,
@@ -61,6 +61,12 @@ export type TimetableRef = {
    * `DEFAULT_VARIANT_NAME`, which a first Pick creates as the primary one.
    */
   variant?: string | undefined;
+  /**
+   * Which Variant of that name, by position in file order, while two share it (#322): how the
+   * second of two same-named tabs is reached. Honoured only when the Variant there carries the
+   * name, so leaving it out addresses by name alone, as every caller did before.
+   */
+  position?: number | undefined;
 };
 
 /** One Variant of a Timetable as its tab shows it: the name, and whether it is the primary. */
@@ -75,6 +81,11 @@ export type TimetableView = {
    * it, so for an empty Timetable this is a name no tab carries yet.
    */
   variantName: string;
+  /**
+   * Where that Variant stands in file order, which is what tells it from another of the same name
+   * (#322): a page sends it back with its next edit. Absent while the Variant does not exist yet.
+   */
+  variantPosition: number | undefined;
   /** Every Variant of the Timetable, in file order — the tabs above the week (#281). */
   variants: VariantTab[];
   picks: GroupPick[];
@@ -126,8 +137,8 @@ export type PickOptions = {
 };
 
 /**
- * Which Variant a **read** of a `TimetableRef` is about: the one named while it exists, and the
- * primary otherwise (`resolveVariantName`).
+ * Which Variant a **read** of a `TimetableRef` is about: the one named while it exists — of two
+ * that share the name, the one at `position` — and the primary otherwise (`resolveVariant`).
  *
  * Exported because `./exams.ts` answers about the same Variant this one does, and a second copy
  * of the fallback would let the exam rail quietly be about a different Variant than the week
@@ -136,7 +147,7 @@ export type PickOptions = {
 export const variantShownIn = (state: State, at: TimetableRef): VariantRef => ({
   academicYear: at.academicYear,
   semester: at.semester,
-  variant: resolveVariantName(state, at, at.variant),
+  ...resolveVariant(state, at, at.variant, at.position),
 });
 
 /**
@@ -151,7 +162,12 @@ export const variantShownIn = (state: State, at: TimetableRef): VariantRef => ({
 export const variantEditedIn = (state: State, at: TimetableRef): VariantRef =>
   at.variant === undefined
     ? variantShownIn(state, at)
-    : { academicYear: at.academicYear, semester: at.semester, variant: at.variant };
+    : {
+        academicYear: at.academicYear,
+        semester: at.semester,
+        variant: at.variant,
+        position: at.position,
+      };
 
 /**
  * The Timetable as the screen shows it, built from one State.
@@ -191,6 +207,7 @@ async function view(
   const tray = unread.length === 0 ? unread : trayEntries(state, shown, await catalog());
   return {
     variantName: shown.variant,
+    variantPosition: shown.position,
     variants: (timetableAt(state, at)?.variants ?? []).map((variant) => ({ name: variant.name, primary: variant.primary })),
     picks: variantAt(state, shown)?.picks ?? [],
     clashes: clashesIn(state, shown),
