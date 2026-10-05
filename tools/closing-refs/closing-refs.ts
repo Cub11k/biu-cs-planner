@@ -323,7 +323,7 @@ export interface Port {
   readonly repository: string;
   /**
    * The issue numbers in the pull request's `closingIssuesReferences`, every page of them, and
-   * `cutAt` — how many were read — only when the read stopped at its page cap with more left
+   * `cutAt` — how many GitHub listed before the cut, other repositories' included — only when the read stopped at its page cap with more left
    * (#320). Absent means `numbers` is the whole list.
    */
   closingReferences(): Promise<{ numbers: number[]; cutAt?: number }>;

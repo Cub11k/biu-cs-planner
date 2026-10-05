@@ -60,8 +60,9 @@ export type Read = {
   /** The body, or `""` where GitHub would read no closing keyword in it (see `Port.body`). */
   body: string;
   /**
-   * Set only when GitHub held more closing references than the read's page cap: how many were
-   * read. Absent means `references` is all of them.
+   * Set only when GitHub held more closing references than the read's page cap: how many it
+   * listed before the cut, other repositories' included, so it can exceed `references.length`.
+   * Absent means `references` is all of them.
    */
   cutAt?: number;
 };
