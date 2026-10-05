@@ -154,8 +154,11 @@ afterEach(() => {
   globalThis.fetch = realFetch;
 });
 
-/** Opened on a day in the Academic Year 2027 Fall, so the add form starts at a column shown. */
-const TODAY = new Date(2026, 9, 5);
+/**
+ * Opened on a day in the Spring of Academic Year 2027: a column shown, and not the first one, so the
+ * add form starting at this Semester is told from it starting at the first column.
+ */
+const TODAY = new Date(2027, 2, 5);
 
 async function mount(language: Language = "en", workspaceChanges = 0): Promise<HTMLElement> {
   if (host === undefined) {
@@ -207,7 +210,8 @@ function type(input: HTMLInputElement, value: string): void {
 
 it("starts the columns at the Cohort, a column per Semester grouped by Academic Year", async () => {
   cohort = { academicYear: 2027, semester: "spring" };
-  attempts = [{ id: "a1", courseNumber: "89-110", academicYear: 2027, semester: "spring", status: "planned" }];
+  // later than the Cohort, so the columns starting at the Cohort are told from starting at the Attempt
+  attempts = [{ id: "a1", courseNumber: "89-110", academicYear: 2028, semester: "fall", status: "planned" }];
   const mounted = await mount();
   await served(mounted);
 
@@ -352,8 +356,8 @@ it("adds a Course no file knows by the number typed, into this Semester by defau
   const mounted = await mount();
   await served(mounted);
   const form = mounted.querySelector<HTMLFormElement>("form[data-plan-add]")!;
-  // opened in October 2026: Academic Year 2027, Fall
-  expect(form.querySelector<HTMLSelectElement>("select[data-plan-add-semester]")!.value).toBe("2027-fall");
+  // opened in March 2027: Academic Year 2027, Spring
+  expect(form.querySelector<HTMLSelectElement>("select[data-plan-add-semester]")!.value).toBe("2027-spring");
 
   type(form.querySelector<HTMLInputElement>("input[data-plan-add-course]")!, " 10-001 ");
   await vi.waitFor(() => {
@@ -362,9 +366,9 @@ it("adds a Course no file knows by the number typed, into this Semester by defau
   form.querySelector<HTMLButtonElement>("button[data-plan-add-submit]")!.click();
 
   await vi.waitFor(() => {
-    if (card(column(mounted, "2027-fall")!, "n1") === null) throw new Error("the card was not added");
+    if (card(column(mounted, "2027-spring")!, "n1") === null) throw new Error("the card was not added");
   });
-  expect(lastSent("POST", "/api/plan/attempts")?.body).toMatchObject({ courseNumber: "10-001", semester: "fall" });
+  expect(lastSent("POST", "/api/plan/attempts")?.body).toMatchObject({ courseNumber: "10-001", semester: "spring" });
 });
 
 it("changes a card's status and its grade, and clears the grade", async () => {
