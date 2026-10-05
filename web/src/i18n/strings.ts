@@ -61,6 +61,12 @@ const english = {
   editReplaceBlockedTime: "changing a blocked time",
   editRemoveBlockedTime: "removing a blocked time",
   editCopyBlockedTimes: "copying blocked times",
+  /** The labels `app/src/programs.ts` attaches to the Cohort and Programs edits (#287). */
+  editSetCohort: "setting your cohort",
+  editSetPrograms: "choosing your programs",
+
+  /** The app shell's navigation between screens (#294): its landmark's name. */
+  navScreens: "Screens",
   /**
    * A label this build has no name for. The API types `label` as a `string`, so a server
    * newer than this page can send one — and "an edit" is true of every label there will
@@ -533,6 +539,10 @@ const hebrew: Record<StringKey, string> = {
   editReplaceBlockedTime: "שינוי זמן חסום",
   editRemoveBlockedTime: "הסרת זמן חסום",
   editCopyBlockedTimes: "העתקת זמנים חסומים",
+  editSetCohort: "קביעת המחזור שלך",
+  editSetPrograms: "בחירת התוכניות שלך",
+
+  navScreens: "מסכים",
   editUnknown: "עריכה",
 
   historyNothingToUndo: "אין עוד מה לבטל.",
