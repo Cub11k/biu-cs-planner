@@ -17,6 +17,12 @@ export type Language = (typeof LANGUAGES)[number];
 const english = {
   apiUnreachable: "API unreachable",
 
+  /**
+   * The app's name, which the document title follows when the language changes (#310).
+   * `index.html` carries the English one as the first-paint title.
+   */
+  appName: "BIU CS Planner",
+
   /** The other language, named in itself: the switch says where it takes you. */
   otherLanguage: "עברית",
 
@@ -575,6 +581,8 @@ export const STRING_KEYS = Object.keys(english) as StringKey[];
 /** Typed against the English keys, so a missing Hebrew string is a compile error. */
 const hebrew: Record<StringKey, string> = {
   apiUnreachable: "ה-API אינו זמין",
+
+  appName: "מתכנן מדעי המחשב בר־אילן",
 
   otherLanguage: "English",
 

@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { hasLaunchToken } from "./api.ts";
 import { useWorkspaceChanges } from "./changes.ts";
-import { DIRECTION, type Language } from "./i18n/strings.ts";
+import { DIRECTION, t, type Language } from "./i18n/strings.ts";
 import { AppShell } from "./AppShell.tsx";
 import { SCREENS } from "./screens.tsx";
 import { useSettings } from "./settings.ts";
@@ -49,9 +49,12 @@ export function App(): React.JSX.Element {
   const settings = useSettings({ changes: workspaceChanges });
   const { choose } = settings;
 
+  // The title follows the language with `lang` and `dir` (#310). `index.html`'s static title is the
+  // first paint, which this replaces as soon as the language is known.
   useEffect(() => {
     document.documentElement.lang = settings.language;
     document.documentElement.dir = DIRECTION[settings.language];
+    document.title = t(settings.language, "appName");
   }, [settings.language]);
 
   return (
