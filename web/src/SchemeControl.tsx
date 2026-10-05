@@ -37,10 +37,12 @@ const CHOICE_STRING = {
  * buy nothing. `document` and `window` are touched here for that reason, and `scheme.ts`
  * stays free of both so its own tests need no browser.
  *
- * **What it keeps is the word, never the attribute (#168).** `scheme.ts` owns `data-theme`:
- * `main.tsx` stamps it before React mounts and `watchScheme` re-stamps it whenever the store
- * changes anywhere else, so there is nothing for this component to correct and no state of the
- * page it has to reproduce. It writes `<html>` in exactly one place — `chooseScheme`, in the
+ * **What it keeps is the word, never the attribute (#168).** Among the modules `web/src`
+ * ships, `scheme.ts` owns `data-theme`: `main.tsx` stamps it before React mounts and
+ * `watchScheme` re-stamps it whenever the store changes anywhere else, so there is nothing for
+ * this component to correct and no state of the page it has to reproduce. (`web/index.html`'s
+ * blocking script stamps it first, before any module runs; `scheme.ts`'s module header is the
+ * full list of writers, #246.) It writes `<html>` in exactly one place — `chooseScheme`, in the
  * `change` handler, which is the one moment the browser will tell nobody else about. Its
  * `useState` is therefore only what the `<select>` displays, and the `choice` a render
  * captured never reaches the document; before #168 it did, through a mount effect, which is
