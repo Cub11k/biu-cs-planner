@@ -19,7 +19,7 @@ import {
   StateFileChangedError,
   WorkspaceRefusedError,
 } from "@biu-cs-planner/app";
-import type { Workspace, WorkspaceRef } from "@biu-cs-planner/app";
+import type { Workspace, WorkspaceRef, WorkspaceRefusal } from "@biu-cs-planner/app";
 import { fileSystemWorkspace } from "./workspace.fs.ts";
 
 /**
@@ -819,9 +819,10 @@ it("refuses a State File it cannot read, rather than reporting it absent", async
   await expect(workspace.readStateFile(ALICE)).rejects.toThrow(WorkspaceRefusedError);
   // The refusal names the file in the domain's words and no path of any kind — it used to read
   // `refusing ./alice.state.json: …`, the Workspace-relative spelling, which is smaller than an
-  // absolute path and is still a file path (#216). `app/src/queries.ts` puts a message out of
-  // this port into a Warning the API serves, so what is in it is what crosses the API
-  // (CLAUDE.md, "The API exposes domain operations, never file paths").
+  // absolute path and is still a file path (#216). `app/src/queries.ts` used to put a message out
+  // of this port into a Warning the API serves; since #249 it words that Warning itself from the
+  // refusal's code and subject, and the message is for a log — which is still no place for a
+  // path a student did not ask to be told.
   const refusal = await workspace
     .readStateFile(ALICE)
     .then(() => undefined)
@@ -1946,7 +1947,7 @@ it("reads the last stamp of a name that itself ends in one, not the first", asyn
  * `requireJsonName` is the one refusal not here, and it is the one that used to name an
  * **absolute** path. Nothing reachable can provoke it: every name this module builds ends in
  * `.json`, which is the standing its own doc claims. The compiler covers it instead — it takes
- * the domain description as a parameter now, so a future caller cannot reach it without one.
+ * the refusal's subject as a parameter now, so a future caller cannot reach it without one.
  */
 it("names no path in any refusal it can make, over every operation of the port", async () => {
   const made: string[] = [];
@@ -1958,9 +1959,17 @@ it("names no path in any refusal it can make, over every operation of the port",
   };
 
   try {
-    const refusals: [string, () => Promise<unknown>][] = [];
-    const sweep = (where: string, refuse: () => Promise<unknown>): void => {
-      refusals.push([where, refuse]);
+    // Each case also says **which refusal it is**, as the port's reason code and subject (#249):
+    // that pair is all `app` reads off a refusal, and what it words the sentence a route serves
+    // from, so a refusal carrying the wrong one would put a true path-free message beside a
+    // false sentence on the page.
+    const refusals: [string, WorkspaceRefusal, () => Promise<unknown>][] = [];
+    const sweep = (
+      where: string,
+      expected: WorkspaceRefusal,
+      refuse: () => Promise<unknown>,
+    ): void => {
+      refusals.push([where, expected, refuse]);
     };
 
     // 1. a Catalog, a State File and a snapshot that are all directories where files belong
@@ -1982,13 +1991,25 @@ it("names no path in any refusal it can make, over every operation of the port",
         await mkdir(join(path, ".backups", entry));
       }
 
-      sweep("read a Catalog", () => workspace.read({ kind: "catalog", academicYear: 2027 }));
-      sweep("write a Catalog", () =>
-        workspace.write({ kind: "catalog", academicYear: 2027 }, CATALOG),
+      sweep(
+        "read a Catalog",
+        { reason: "unreadable", subject: { kind: "catalog", academicYear: 2027 } },
+        () => workspace.read({ kind: "catalog", academicYear: 2027 }),
       );
-      sweep("read a State File", () => workspace.readStateFile(ALICE));
-      sweep("save a State File", () => workspace.saveStateFile(ALICE, firstSave(STATE)));
-      sweep("read a snapshot", () => workspace.readBackup(held!));
+      sweep(
+        "write a Catalog",
+        { reason: "unwritable", subject: { kind: "catalog", academicYear: 2027 } },
+        () => workspace.write({ kind: "catalog", academicYear: 2027 }, CATALOG),
+      );
+      sweep("read a State File", { reason: "unreadable", subject: ALICE }, () =>
+        workspace.readStateFile(ALICE),
+      );
+      sweep("save a State File", { reason: "unreadable", subject: ALICE }, () =>
+        workspace.saveStateFile(ALICE, firstSave(STATE)),
+      );
+      sweep("read a snapshot", { reason: "unreadable", subject: held! }, () =>
+        workspace.readBackup(held!),
+      );
     }
 
     // 2. a Workspace whose folders are plain files, so a listing meets something that is not one.
@@ -2002,14 +2023,26 @@ it("names no path in any refusal it can make, over every operation of the port",
       const workspace = fileSystemWorkspace(path);
       expect(await workspace.status()).toEqual({ ready: true, missing: [] });
 
-      sweep("list Catalogs", () => workspace.list("catalog"));
-      sweep("list snapshots", () => workspace.listBackups(ALICE));
+      sweep(
+        "list Catalogs",
+        { reason: "not-a-folder", subject: { kind: "folder", folder: "catalogs" } },
+        () => workspace.list("catalog"),
+      );
+      sweep(
+        "list snapshots",
+        { reason: "not-a-folder", subject: { kind: "folder", folder: "backups" } },
+        () => workspace.listBackups(ALICE),
+      );
       // the snapshot a save takes, which refuses before a byte is written when `.backups` is not
       // a folder — reached by a *second* save, since a first one replaces nothing
-      sweep("snapshot inside a save", async () => {
-        const wrote = await workspace.saveStateFile(ALICE, firstSave(STATE));
-        return workspace.saveStateFile(ALICE, { json: { ...STATE }, basedOn: wrote });
-      });
+      sweep(
+        "snapshot inside a save",
+        { reason: "not-a-workspace", subject: { kind: "folder", folder: "backups" } },
+        async () => {
+          const wrote = await workspace.saveStateFile(ALICE, firstSave(STATE));
+          return workspace.saveStateFile(ALICE, { json: { ...STATE }, basedOn: wrote });
+        },
+      );
     }
 
     // 3. a listing of a Workspace root that is itself a plain file — the one folder whose
@@ -2017,7 +2050,9 @@ it("names no path in any refusal it can make, over every operation of the port",
     {
       const path = join(await folder(), "workspace");
       await writeFile(path, "not a folder");
-      sweep("list State Files", () => fileSystemWorkspace(path).list("state"));
+      sweep("list State Files", { reason: "not-a-folder", subject: { kind: "workspace" } }, () =>
+        fileSystemWorkspace(path).list("state"),
+      );
     }
 
     // 4. `contained`'s two arms: the Catalog file points out of the Workspace, and the folder
@@ -2034,8 +2069,10 @@ it("names no path in any refusal it can make, over every operation of the port",
       await mkdir(join(linked, "requirements"));
       await mkdir(join(linked, ".backups"));
       await symlink(emptyAway, join(linked, "catalogs"), "dir");
-      sweep("read through a folder pointing out", () =>
-        fileSystemWorkspace(linked).read({ kind: "catalog", academicYear: 2027 }),
+      sweep(
+        "read through a folder pointing out",
+        { reason: "outside-workspace", subject: { kind: "folder", folder: "catalogs" } },
+        () => fileSystemWorkspace(linked).read({ kind: "catalog", academicYear: 2027 }),
       );
 
       const away = await folder();
@@ -2044,8 +2081,10 @@ it("names no path in any refusal it can make, over every operation of the port",
       await workspace.create();
       await writeFile(join(away, "2027.json"), JSON.stringify(CATALOG));
       await symlink(join(away, "2027.json"), join(path, "catalogs", "2027.json"));
-      sweep("read a file pointing out", () =>
-        workspace.read({ kind: "catalog", academicYear: 2027 }),
+      sweep(
+        "read a file pointing out",
+        { reason: "outside-workspace", subject: { kind: "catalog", academicYear: 2027 } },
+        () => workspace.read({ kind: "catalog", academicYear: 2027 }),
       );
     }
 
@@ -2055,26 +2094,35 @@ it("names no path in any refusal it can make, over every operation of the port",
       const taken = await folder();
       await writeFile(join(taken, "catalogs"), "not a folder");
       await mkdir(join(taken, "requirements"));
-      sweep("create the Workspace Layout", () => fileSystemWorkspace(taken).create());
+      sweep(
+        "create the Workspace Layout",
+        { reason: "not-created", subject: { kind: "folder", folder: "catalogs" } },
+        () => fileSystemWorkspace(taken).create(),
+      );
 
       const bare = await folder();
-      sweep("save into a folder that is not a Workspace", () =>
-        fileSystemWorkspace(bare).saveStateFile(ALICE, firstSave(STATE)),
+      sweep(
+        "save into a folder that is not a Workspace",
+        { reason: "not-a-workspace", subject: { kind: "workspace" } },
+        () => fileSystemWorkspace(bare).saveStateFile(ALICE, firstSave(STATE)),
       );
-      sweep("write into a folder that is not a Workspace", () =>
-        fileSystemWorkspace(bare).write({ kind: "catalog", academicYear: 2027 }, CATALOG),
+      sweep(
+        "write into a folder that is not a Workspace",
+        { reason: "not-a-workspace", subject: { kind: "workspace" } },
+        () => fileSystemWorkspace(bare).write({ kind: "catalog", academicYear: 2027 }, CATALOG),
       );
     }
 
     // the count, so a case silently dropped from the sweep fails rather than shrinking it
     expect(refusals.length).toBe(14);
 
-    for (const [where, refuse] of refusals) {
+    for (const [where, expected, refuse] of refusals) {
       const refusal = await refuse()
         .then(() => undefined)
         .catch((thrown: unknown) => thrown as Error);
       // it refused at all, so a trigger that stops working fails here rather than passing
       expect(refusal, where).toBeInstanceOf(WorkspaceRefusedError);
+      expect((refusal as WorkspaceRefusedError).refusal, where).toEqual(expected);
       const message = refusal?.message ?? "";
       // no absolute path, which `requireJsonName` used to word itself with
       expect(message, where).not.toContain(tmpdir());

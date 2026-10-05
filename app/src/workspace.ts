@@ -441,7 +441,8 @@ export class NotAWorkspaceError extends WorkspaceRefusedError {
    * can be wrong with it is the adapter's business: a filesystem knows a plain file standing
    * where a folder belongs, and another adapter will know something else. A shared sentence
    * covering all of them would have to be vague enough to be useless, so the *stem* is what is
-   * shared and it is here.
+   * shared and it is here. It is a message and so goes only to a log (#165, #249): what `app`
+   * reads is the subject, which names the folder and not what is wrong with it.
    *
    * One thing this is deliberately **not** stretched to cover: `create` failing to make a folder
    * of the Workspace Layout, which `server/src/workspace.fs.ts` refuses with a
@@ -472,8 +473,9 @@ export class NotAWorkspaceError extends WorkspaceRefusedError {
  * cannot be read or written, so `app/src/edit.ts` worded it as one and the page told the
  * student their saved picks could not be read — about a file that had read perfectly well.
  * This subclass is how the one case is told apart: an adapter raises it for whatever went
- * wrong in the snapshot step, with its own refusal on `cause` and that refusal's sentence as
- * its message, so nothing it said is lost.
+ * wrong in the snapshot step, with its own refusal on `cause`, that refusal's sentence as its
+ * message and that refusal's reason code and subject as its own `refusal` (#249), so nothing it
+ * said is lost and `app` can still tell which folder or snapshot the save was refused over.
  *
  * **Still a `WorkspaceRefusedError`**, so every caller that answers one keeps answering this
  * one, and `name` is left as the base class's for `NotAWorkspaceError`'s reason. Nothing is

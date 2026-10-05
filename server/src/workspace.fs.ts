@@ -144,9 +144,9 @@ const WATCHED_FOLDERS: WorkspaceFolder[] = ["catalogs", "requirements"];
  * **It names the ref or its folder and never the path** (#216). It used to word itself
  * `refusing ./catalogs/2027.json: …` — the Workspace-relative spelling of the target, which is
  * smaller than an absolute path and is still a file path, and which travels out as a Warning
- * over the Catalog query routes. `describeRef` and `describeFolder` say which Catalog, which
- * State File, which snapshot instead, which is what a caller that may not know the Workspace
- * has files in it can act on.
+ * over the Catalog query routes. It now carries the ref or its folder as the refusal's subject
+ * (#249), and `describe` words its message from that, saying which Catalog, which State File,
+ * which snapshot instead.
  *
  * **Nothing is kept on `cause` here, and nothing is lost by that.** `UnreadableError` and
  * `UnwritableError` carry the filesystem's own error, which is the only place the path it met
@@ -248,12 +248,10 @@ class UnreadableError extends WorkspaceRefusedError {
  *
  * A `WorkspaceRefusedError`, so a caller can answer it the way every caller of this port
  * already answers one: a Warning and never a crashed server (docs/design.md, "API and data
- * rules"). **What reaches the student today is the `reason` and not this sentence** — the write
- * callers, `app/src/catalog.ts` and `app/src/edit.ts`, return `workspace-refused` — or
- * `backup-refused`, when it came out of a save's snapshot (#229) — and drop the message, and
- * only the read path in `app/src/queries.ts` carries one. So the errno below is
- * for a log and for the arm that will want it, and saying otherwise here would claim something
- * the app does not do.
+ * rules"). **No caller reads this sentence** (#249): the callers in `app` answer a refusal with
+ * a reason of their own, and the one that serves a sentence — the Catalog read in
+ * `app/src/queries.ts` — words its own from the refusal's reason code and subject. So the errno below is for a log (#165), and
+ * saying otherwise here would claim something the app does not do.
  *
  * **Every failure and not a list of codes.** An enumeration is what #109 found the hole in:
  * the code nobody thought of is the one that escapes. So the recognising is done on the way in
@@ -269,10 +267,10 @@ class UnreadableError extends WorkspaceRefusedError {
  *
  * **That is now the rule for every refusal this module makes and not this one's alone** (#216).
  * `UnreadableError` and `OutsideWorkspaceError` worded themselves with a Workspace-relative path
- * and `requireJsonName` with an absolute one; all three now take `describeRef` or
- * `describeFolder`, so no refusal out of this adapter names a path on any route. The one that
- * reached the wire was `UnreadableError` out of a Catalog read, which `app/src/queries.ts`
- * carries as the `reason` on `workspace-refused`.
+ * and `requireJsonName` with an absolute one; all three now take the refusal's subject and word
+ * it through `describe`. The one that reached the wire was `UnreadableError` out of a Catalog
+ * read, whose message `app/src/queries.ts` carried as the `reason` on `workspace-refused` — which
+ * is why, since #249, it carries `app`'s sentence instead and no wording here can reach a route.
  */
 class UnwritableError extends WorkspaceRefusedError {
   constructor(about: WorkspaceRefusalSubject, error: unknown) {
@@ -308,9 +306,9 @@ const describeRef = (ref: WorkspaceRef | BackupRef): string => {
  * What the *container* of a ref is, in the domain's words: the folder of the Workspace Layout it
  * lives in, or the Workspace root for a State File, which is where those live.
  *
- * `describeRef`'s counterpart, and the other half of what #216 needs: a refusal is about a file,
- * which `describeRef` names, or about the folder that file is listed from or written into, which
- * is this. `DIRECTORY` at the top maps the same folders to their names on disk, and the two are
+ * The other half of what #216 needs: a refusal is about a file, which the ref itself names, or
+ * about the folder that file is listed from or written into, which is `folderSubject`'s answer —
+ * a refusal subject (#249) — and this record is how `describe` words it for a message. `DIRECTORY` at the top maps the same folders to their names on disk, and the two are
  * deliberately alike in shape: one is what the filesystem is told, the other what a caller who
  * may not know there is a filesystem is told.
  *
@@ -549,10 +547,10 @@ export function fileSystemWorkspace(
    * because the revision is taken from them: decoding first would hash a normalised copy of
    * the file rather than the file.
    *
-   * **`what` is the file in the domain's words** — `describeRef`'s answer, passed in by the
-   * caller that has the ref — because this is the refusal that reached the wire: a Catalog read
-   * is the one caller whose message `app/src/queries.ts` carries out as a Warning, and it used
-   * to carry `./catalogs/2027.json` with it (#216).
+   * **`about` is the file the refusal is about** — the ref, passed in by the caller that has it —
+   * and is the refusal's subject (#249). This is the refusal that reached the wire: a Catalog
+   * read's message used to go out as a Warning, carrying `./catalogs/2027.json` (#216), and
+   * `app/src/queries.ts` now words that Warning from the subject instead.
    */
   const bytesOrAbsent = async (
     path: string,
@@ -601,8 +599,8 @@ export function fileSystemWorkspace(
    * stand on the same ground. The coverage in a pull request report will show the line, and it is
    * this paragraph rather than a missing case.
    *
-   * **The folder is named rather than spelled as a path**, which is `describeFolder`'s answer and
-   * is passed in by the caller (#216). It used to be `path.replace(root, ".")` — `./catalogs`,
+   * **The folder is named rather than spelled as a path**: the caller passes `folderSubject`'s
+   * answer, which is the refusal's subject and is worded by `describe` (#216, #249). It used to be `path.replace(root, ".")` — `./catalogs`,
    * and for the Workspace root a single dot, which names nothing, so that one case was already
    * special-cased here. Every folder is named now and the special case is gone with it: the
    * degenerate case was the whole of the wording problem in miniature.
@@ -1208,7 +1206,7 @@ function folderFor(ref: {
  *
  * **The path is what is checked and `what` is what is said** (#216). This was the one refusal
  * in the module naming an *absolute* path, which is the largest a leak out of here could be;
- * every caller already has the ref, so it hands `describeRef`'s answer along with the path.
+ * every caller already has the ref, so it hands that along with the path as the subject.
  * Nothing reachable today gets this far, so what the change protects is the future caller the
  * guard exists for — which is exactly the caller that would also be the first to leak a path.
  */
