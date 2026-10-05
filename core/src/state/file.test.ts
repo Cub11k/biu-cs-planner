@@ -680,6 +680,8 @@ it("names Courses by course number and nothing by Catalog entry", () => {
     "pins",
     "primary",
     "programs",
+    // #297: the Variant the student registered with, a flag and no reference to anything
+    "registered",
     "requirementId",
     "requirementsFile",
     "schemaVersion",

@@ -119,6 +119,22 @@ export {
 } from "./variants.ts";
 // The Tray (#283): adding a Course to a Variant's Tray and removing one, with its Picks.
 export { addCourseToTray, removeCourseFromTray } from "./tray.ts";
+// Plan Diffs: "apply to Plan" for one of them (#295).
+export {
+  APPLY_PLAN_DIFF_LABEL,
+  applyPlanDiffTo,
+  type ActionableKind,
+  type ApplyPlanDiffResult,
+  type PlanDiffOptions,
+} from "./planDiffs.ts";
+// Marking the Variant a student registered with, with "apply all" (#297).
+export {
+  markVariantRegistered,
+  readRegistration,
+  REGISTRATION_LABEL,
+  unmarkVariantRegistered,
+  type RegistrationResult,
+} from "./registration.ts";
 // Blocked Times (#282): add, replace, remove, and copy to another Semester.
 export {
   addBlockedTimeTo,

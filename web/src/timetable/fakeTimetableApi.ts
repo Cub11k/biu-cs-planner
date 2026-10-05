@@ -12,9 +12,16 @@
  * Test-only. It lives beside the screen because three browser test files share it.
  */
 import type { Offering } from "./catalog.ts";
-import type { GroupPick } from "./picks.ts";
+import type { GroupPick, PlanDiff } from "./picks.ts";
 
-export type FakeVariant = { name: string; primary: boolean; picks: GroupPick[]; tray: string[] };
+export type FakeVariant = {
+  name: string;
+  primary: boolean;
+  picks: GroupPick[];
+  tray: string[];
+  /** The Variant the student registered with (#297). */
+  registered?: boolean;
+};
 export type FakeBlockedTime = {
   semester: "fall" | "spring" | "summer";
   day: "sunday" | "monday" | "tuesday" | "wednesday" | "thursday" | "friday";
@@ -22,6 +29,14 @@ export type FakeBlockedTime = {
   end: string;
   label: string;
 };
+
+/**
+ * The Plan Diffs the fake serves, by the name of the Variant they are about (#296). The fake does
+ * not compute them — `core` does, and is tested there — it serves what a test says the server
+ * would, and an apply takes the one it names out of the list, as the real answer would no longer
+ * carry it.
+ */
+export type FakePlanDiffs = Record<string, PlanDiff[]>;
 
 export type FakeRequest = { method: string; pathname: string; search: string; body: unknown };
 
@@ -35,6 +50,10 @@ export type FakeApi = {
   sent: FakeRequest[];
   /** The labels of the saves accepted, in order — what the undo stack would hold. */
   labels: string[];
+  /** The Plan Diffs each Variant is served with; a test may change them between answers. */
+  planDiffs: FakePlanDiffs;
+  /** While set, the registration preview waits for it before answering (#297). */
+  registrationGate: Promise<void> | undefined;
   /** Set to refuse the next save as a file that changed under the page. */
   changeUnderneath: boolean;
   version: number;
@@ -86,12 +105,19 @@ export function installFakeApi(options: {
   offerings: Offering[];
   variants?: FakeVariant[];
   blockedTimes?: FakeBlockedTime[];
+  planDiffs?: FakePlanDiffs;
+  /** Courses with a planned Attempt in the Semester, which every Variant's Tray lists (#283). */
+  planned?: string[];
+  /** What "apply all" would register, by Variant name, for the registration preview (#297). */
+  registers?: Record<string, string[]>;
 }): FakeApi {
   const realFetch = globalThis.fetch;
   const fake: FakeApi = {
     variants: options.variants ?? [],
     blockedTimes: options.blockedTimes ?? [],
     copied: new Map(),
+    planDiffs: options.planDiffs ?? {},
+    registrationGate: undefined,
     sent: [],
     labels: [],
     changeUnderneath: false,
@@ -131,11 +157,13 @@ export function installFakeApi(options: {
   };
 
   const trayOf = (variant: FakeVariant | undefined) => {
-    if (variant === undefined) return [];
-    const order = [...new Set([...variant.tray, ...variant.picks.map((p) => p.courseNumber)])];
+    const planned = options.planned ?? [];
+    const order = [
+      ...new Set([...(variant?.tray ?? []), ...(variant?.picks.map((p) => p.courseNumber) ?? []), ...planned]),
+    ];
     return order.map((courseNumber) => {
       const offering = options.offerings.find((o) => o.courseNumber === courseNumber);
-      const mine = variant.picks.filter((p) => p.courseNumber === courseNumber);
+      const mine = variant?.picks.filter((p) => p.courseNumber === courseNumber) ?? [];
       const lessonTypes =
         offering === undefined
           ? mine.map((p) => p.lessonType)
@@ -147,8 +175,9 @@ export function installFakeApi(options: {
       return {
         courseNumber,
         origins: [
-          ...(variant.tray.includes(courseNumber) ? ["added"] : []),
+          ...(variant?.tray.includes(courseNumber) ? ["added"] : []),
           ...(mine.length > 0 ? ["picked"] : []),
+          ...(planned.includes(courseNumber) ? ["planned"] : []),
         ],
         known: offering !== undefined,
         chips,
@@ -181,17 +210,23 @@ export function installFakeApi(options: {
       ),
     );
     const seen = new Set<string>();
-    const variantWarnings = fake.variants.flatMap((v) => {
+    const variantWarnings: Array<Record<string, unknown>> = fake.variants.flatMap((v) => {
       if (!seen.has(v.name)) {
         seen.add(v.name);
         return [];
       }
       return [{ kind: "variant-name-not-unique", name: v.name }];
     });
+    const registered = fake.variants.filter((v) => v.registered === true).length;
+    if (registered > 1) variantWarnings.push({ kind: "registered-variant-not-unique", registered });
     return {
       variantName: name,
       variantPosition: variant === undefined ? undefined : fake.variants.indexOf(variant),
-      variants: fake.variants.map((v) => ({ name: v.name, primary: v.primary })),
+      variants: fake.variants.map((v) => ({
+        name: v.name,
+        primary: v.primary,
+        ...(v.registered === true ? { registered: true } : {}),
+      })),
       variantWarnings,
       picks,
       clashes,
@@ -202,6 +237,7 @@ export function installFakeApi(options: {
           : [{ kind: "blocked-time-does-not-advance", index, start: blocked.start, end: blocked.end }],
       ),
       tray: trayOf(variant),
+      planDiffs: fake.planDiffs[name] ?? [],
       version: `v${fake.version}`,
       warnings: [],
     };
@@ -224,6 +260,20 @@ export function installFakeApi(options: {
     if (!pathname.startsWith("/api/timetable")) return json({ offerings: options.offerings, warnings: [] });
 
     const route = pathname.replace("/api/timetable/2027/fall", "");
+    if (method === "GET" && route === "/registration") {
+      await fake.registrationGate;
+      const position = url.searchParams.get("position");
+      const variant = resolved(url.searchParams.get("variant"), position === null ? undefined : Number(position));
+      const name = variant?.name ?? "A";
+      return json({
+        variantName: name,
+        variantPosition: variant === undefined ? undefined : fake.variants.indexOf(variant),
+        planDiffs: fake.planDiffs[name] ?? [],
+        registers: options.registers?.[name] ?? [],
+        version: `v${fake.version}`,
+        warnings: [],
+      });
+    }
     if (method === "GET") {
       const position = url.searchParams.get("position");
       return json(view(url.searchParams.get("variant"), position === null ? undefined : Number(position)));
@@ -243,9 +293,20 @@ export function installFakeApi(options: {
     if (request.basedOn !== `v${fake.version}`) {
       return json({ reason: "state-file-changed", warnings: [] }, 409);
     }
+    const key = `${method} ${route}`;
+
+    // an apply of a Plan Diff the Variant is no longer served with writes nothing (#295)
+    if (key === "POST /plan-diffs/apply") {
+      const name = resolve(request.variant, at);
+      const held = fake.planDiffs[name] ?? [];
+      const applied = held.find((d) => d.kind === request.kind && d.courseNumber === request.courseNumber);
+      if (applied === undefined) {
+        return json({ reason: "plan-diff-stale", version: `v${fake.version}`, warnings: [] }, 409);
+      }
+      fake.planDiffs[name] = held.filter((d) => d !== applied);
+    }
     fake.version += 1;
 
-    const key = `${method} ${route}`;
     let answerAbout: string | undefined = request.variant;
     let answerAt: number | undefined = at;
     switch (key) {
@@ -328,6 +389,28 @@ export function installFakeApi(options: {
         variant.tray = variant.tray.filter((c) => c !== request.courseNumber);
         variant.picks = variant.picks.filter((p) => p.courseNumber !== request.courseNumber);
         fake.labels.push("remove-from-tray");
+        break;
+      }
+      case "POST /variants/registered": {
+        const chosen = edited(request.variant, at);
+        for (const v of fake.variants) {
+          v.primary = v === chosen;
+          v.registered = v === chosen;
+        }
+        // "apply all": every actionable Plan Diff is applied, so only the not-offered ones are left
+        if (request.applyDiffs === true) {
+          fake.planDiffs[chosen.name] = (fake.planDiffs[chosen.name] ?? []).filter((d) => d.kind === "not-offered");
+        }
+        fake.labels.push("mark-variant-registered");
+        break;
+      }
+      case "DELETE /variants/registered": {
+        edited(request.variant, at).registered = false;
+        fake.labels.push("unmark-variant-registered");
+        break;
+      }
+      case "POST /plan-diffs/apply": {
+        fake.labels.push(`apply-plan-diff-${String(request.kind)}`);
         break;
       }
       case "POST /blocked-times": {

@@ -11,6 +11,7 @@ import {
   type BlockedTime,
   type BlockedTimeWarning,
   type GroupPick,
+  type PlanDiff,
   type TimetableClash,
   type PickSlot,
   type Semester,
@@ -28,6 +29,7 @@ import {
   type EditRefusal,
   type StateEditing,
 } from "./edit.ts";
+import { planDiffsOf } from "./planDiffSources.ts";
 import { listOfferings } from "./queries.ts";
 import type { Workspace } from "./workspace.ts";
 
@@ -69,8 +71,12 @@ export type TimetableRef = {
   position?: number | undefined;
 };
 
-/** One Variant of a Timetable as its tab shows it: the name, and whether it is the primary. */
-export type VariantTab = { name: string; primary: boolean };
+/**
+ * One Variant of a Timetable as its tab shows it: the name, whether it is the primary, and
+ * `registered: true` on the one the student registered with (#297) — absent on every other, so a
+ * Timetable nobody registered answers exactly as it did before the mark existed.
+ */
+export type VariantTab = { name: string; primary: boolean; registered?: true };
 
 /** One Variant's Picks, and the Clashes among them, beside the other Variants of its Timetable. */
 export type TimetableView = {
@@ -112,6 +118,13 @@ export type TimetableView = {
   blockedTimes: BlockedTime[];
   /** A Blocked Time that keeps no time free, by position, as the file stands after the edit. */
   blockedTimeWarnings: BlockedTimeWarning[];
+  /**
+   * Where the Variant shown and the Plan disagree (#295), each resolved only by an explicit
+   * "apply to Plan" (ADR-0008). Recomputed from the State this view was built from, so an edit's
+   * answer — a Pick, an apply — already says which divergences are left. Empty with no planned
+   * Attempt in the Academic Year: a Timetable works with no Plan.
+   */
+  planDiffs: PlanDiff[];
 };
 
 export type TimetableResult =
@@ -205,16 +218,23 @@ async function view(
     }
   };
   const tray = unread.length === 0 ? unread : trayEntries(state, shown, await catalog());
+  // an empty Tray holds nothing planned here and nothing in the Variant, so nothing to diff
+  const planDiffs = unread.length === 0 ? [] : await planDiffsOf(workspace, state, shown, afterSave);
   return {
     variantName: shown.variant,
     variantPosition: shown.position,
-    variants: (timetableAt(state, at)?.variants ?? []).map((variant) => ({ name: variant.name, primary: variant.primary })),
+    variants: (timetableAt(state, at)?.variants ?? []).map((variant): VariantTab => ({
+      name: variant.name,
+      primary: variant.primary,
+      ...(variant.registered === true ? { registered: true } : {}),
+    })),
     picks: variantAt(state, shown)?.picks ?? [],
     clashes: clashesIn(state, shown),
     variantWarnings: variantWarnings(state, at),
     tray,
     blockedTimes: timetableAt(state, at)?.blockedTimes ?? [],
     blockedTimeWarnings: blockedTimeWarnings(state, at),
+    planDiffs,
   };
 }
 
