@@ -264,6 +264,13 @@ const BODIES: Record<string, (staged: Staged, basedOn: string) => unknown> = {
     variant: "B",
     kind: "drop",
   }),
+  // #297: marking B registered moves both flags to it; the unmark takes the shared body's A, which
+  // is not marked, so it saves nothing and only the read half reaches it
+  "POST /api/timetable/:year/:semester/variants/registered": (staged, basedOn) => ({
+    ...shared(staged, basedOn),
+    variant: "B",
+    applyDiffs: true,
+  }),
 };
 
 /** Every route `createApi` registers, once each: the route table, less its middleware. */
@@ -362,6 +369,7 @@ const routesServing = async (): Promise<Learned[]> => {
     "POST /api/progress/pins",
     "POST /api/progress/ticks",
     "POST /api/timetable/:year/:semester/plan-diffs/apply",
+    "POST /api/timetable/:year/:semester/variants/registered",
   ]) {
     expect(saving, `the honest pass should find ${named} saving`).toContain(named);
   }

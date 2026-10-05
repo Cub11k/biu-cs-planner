@@ -76,7 +76,9 @@ export {
   renameVariant,
   resolveVariant,
   resolveVariantName,
+  clearRegisteredVariant,
   setPrimaryVariant,
+  setRegisteredVariant,
   variantPosition,
   variantWarnings,
 } from "./state/variants.ts";
@@ -201,6 +203,9 @@ export type {
   PlanDiffKind,
   PlanDiffOffering,
 } from "./plan/diffs.ts";
+// Marking a Variant registered, with "apply all" (#297).
+export { markRegistered, registrationPreview, unmarkRegistered } from "./plan/registration.ts";
+export type { MarkRegisteredOptions, RegistrationPreview } from "./plan/registration.ts";
 export type {
   PlanCheckInput,
   PlanProgram,

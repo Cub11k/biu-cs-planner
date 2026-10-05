@@ -209,3 +209,112 @@ it("names a request that is not an apply as a 400, a not-offered kind among them
   const badYear = await post("/api/timetable/nope/fall/plan-diffs/apply", { kind: "add", courseNumber: "89-110" });
   expect(badYear.status).toBe(400);
 });
+
+// --- Marking a Variant registered (#297) ---------------------------------------------------------
+
+const REGISTERED = `${TIMETABLE}/variants/registered`;
+const REGISTRATION = `${TIMETABLE}/registration`;
+
+type Tabs = { variants: Array<{ name: string; primary: boolean; registered?: true }> };
+
+/** A Fall Plan of 89-110 and 89-230; Variant A holds 89-110 and 89-210, and B nothing. */
+async function registering(): Promise<void> {
+  await plan("89-110");
+  await plan("89-230");
+  await post(`${TIMETABLE}/tray`, { courseNumber: "89-110", basedOn: await version() });
+  await post(`${TIMETABLE}/tray`, { courseNumber: "89-210", basedOn: await version() });
+  await post(`${TIMETABLE}/variants`, { name: "B", basedOn: await version() });
+}
+
+it("previews what apply all would do for the Variant asked for, and writes nothing", async () => {
+  await registering();
+  const before = await version();
+
+  const preview = await get(`${REGISTRATION}?variant=A`);
+
+  expect(preview.status).toBe(200);
+  const body = (await preview.json()) as View & { variantName: string; registers: string[] };
+  expect(body.variantName).toBe("A");
+  expect(kinds(body)).toEqual([
+    ["move", "89-230"],
+    ["add", "89-210"],
+  ]);
+  expect(body.registers).toEqual(["89-110", "89-210"]);
+  expect(body.version).toBe(before);
+  expect(await version()).toBe(before);
+});
+
+it("marks a Variant registered and primary without touching the Plan when told not to", async () => {
+  await registering();
+  const before = await attempts();
+
+  const marked = await post(REGISTERED, { variant: "B", applyDiffs: false, basedOn: await version() });
+
+  expect(marked.status).toBe(200);
+  expect(((await marked.json()) as Tabs).variants).toEqual([
+    { name: "A", primary: false },
+    { name: "B", primary: true, registered: true },
+  ]);
+  expect(await attempts()).toEqual(before);
+});
+
+it("marks with apply all as one undo step, and undoes the whole of it at once", async () => {
+  await registering();
+  const before = await attempts();
+  const tabsBefore = ((await read()) as unknown as Tabs).variants;
+
+  const marked = await post(REGISTERED, { variant: "A", applyDiffs: true, basedOn: await version() });
+
+  expect(marked.status).toBe(200);
+  expect(((await marked.json()) as View).planDiffs).toEqual([]);
+  expect(await attempts()).toEqual([
+    ["89-110", "fall", "registered"],
+    ["89-230", "spring", "planned"],
+    ["89-210", "fall", "registered"],
+  ]);
+
+  const undone = await post("/api/history/undo", { basedOn: await version() });
+  await expect(undone.json()).resolves.toMatchObject({ label: "mark-variant-registered" });
+  expect(await attempts()).toEqual(before);
+  expect(((await read()) as unknown as Tabs).variants).toEqual(tabsBefore);
+});
+
+it("unmarks a Variant and leaves the Plan it registered", async () => {
+  await registering();
+  await post(REGISTERED, { variant: "A", applyDiffs: true, basedOn: await version() });
+  const after = await attempts();
+
+  const unmarked = await send("DELETE", REGISTERED, { variant: "A", basedOn: await version() });
+
+  expect(unmarked.status).toBe(200);
+  expect(((await unmarked.json()) as Tabs).variants).toEqual([
+    { name: "A", primary: true },
+    { name: "B", primary: false },
+  ]);
+  expect(await attempts()).toEqual(after);
+});
+
+it("refuses the combined edit on a stale revision, and applies none of it", async () => {
+  await registering();
+  const basedOn = await version();
+  await post(`${TIMETABLE}/variants`, { name: "C", basedOn });
+  const before = await attempts();
+
+  const refused = await post(REGISTERED, { variant: "A", applyDiffs: true, basedOn });
+
+  expect(refused.status).toBe(409);
+  await expect(refused.json()).resolves.toMatchObject({ reason: "state-file-changed" });
+  expect(await attempts()).toEqual(before);
+  expect(((await read()) as unknown as Tabs).variants.some((tab) => tab.registered)).toBe(false);
+});
+
+it("names a mark that does not say whether to apply as a 400, so nothing is applied by default", async () => {
+  await registering();
+
+  const unsaid = await post(REGISTERED, { variant: "A", basedOn: await version() });
+
+  expect(unsaid.status).toBe(400);
+  await expect(unsaid.json()).resolves.toEqual({ error: "not-a-registration" });
+  const badVariant = await get(`${REGISTRATION}?variant=`);
+  expect(badVariant.status).toBe(400);
+});

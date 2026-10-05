@@ -125,6 +125,14 @@ export {
   type ApplyPlanDiffResult,
   type PlanDiffOptions,
 } from "./planDiffs.ts";
+// Marking the Variant a student registered with, with "apply all" (#297).
+export {
+  markVariantRegistered,
+  readRegistration,
+  REGISTRATION_LABEL,
+  unmarkVariantRegistered,
+  type RegistrationResult,
+} from "./registration.ts";
 // Blocked Times (#282): add, replace, remove, and copy to another Semester.
 export {
   addBlockedTimeTo,

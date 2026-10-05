@@ -71,8 +71,12 @@ export type TimetableRef = {
   position?: number | undefined;
 };
 
-/** One Variant of a Timetable as its tab shows it: the name, and whether it is the primary. */
-export type VariantTab = { name: string; primary: boolean };
+/**
+ * One Variant of a Timetable as its tab shows it: the name, whether it is the primary, and
+ * `registered: true` on the one the student registered with (#297) — absent on every other, so a
+ * Timetable nobody registered answers exactly as it did before the mark existed.
+ */
+export type VariantTab = { name: string; primary: boolean; registered?: true };
 
 /** One Variant's Picks, and the Clashes among them, beside the other Variants of its Timetable. */
 export type TimetableView = {
@@ -219,7 +223,11 @@ async function view(
   return {
     variantName: shown.variant,
     variantPosition: shown.position,
-    variants: (timetableAt(state, at)?.variants ?? []).map((variant) => ({ name: variant.name, primary: variant.primary })),
+    variants: (timetableAt(state, at)?.variants ?? []).map((variant): VariantTab => ({
+      name: variant.name,
+      primary: variant.primary,
+      ...(variant.registered === true ? { registered: true } : {}),
+    })),
     picks: variantAt(state, shown)?.picks ?? [],
     clashes: clashesIn(state, shown),
     variantWarnings: variantWarnings(state, at),
