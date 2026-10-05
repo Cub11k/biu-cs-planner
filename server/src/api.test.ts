@@ -3472,8 +3472,8 @@ it("names what New Plan from Suggested Layout needs, and refuses a stale revisio
 /**
  * #250, over HTTP: a FIFO with no writer where a Catalog, the State File or a Requirements File
  * belongs. `readFile` on one used to block for good, so `GET /api/catalog/2027/offerings` never
- * answered and the process would not stop. Every route that reads one of them now answers, and
- * none of them with a 5xx: the port refuses a path that is not a regular file before reading it.
+ * answered and the process would not stop. Every route below — the reads, and writes that read
+ * first — now answers, and none of them with a 5xx: the port refuses a path that is not a regular file before reading it.
  *
  * Each request is raced against a timer, so the regression fails here rather than hanging the
  * suite, and each FIFO is released afterwards (opened for writing and closed, which hands a
@@ -3490,13 +3490,13 @@ it.skipIf(process.platform === "win32")(
     ];
     execFileSync("mkfifo", fifos);
 
-    const answered = async (path: string): Promise<number> => {
+    const answered = async (path: string, asked: Response | Promise<Response> = get(path)): Promise<number> => {
       let timer: ReturnType<typeof setTimeout> | undefined;
       const hung = new Promise<never>((_, reject) => {
         timer = setTimeout(() => reject(new Error(`${path} still unanswered after 2000ms`)), 2000);
       });
       try {
-        return (await Promise.race([get(path), hung])).status;
+        return (await Promise.race([asked, hung])).status;
       } finally {
         clearTimeout(timer);
       }
@@ -3513,8 +3513,19 @@ it.skipIf(process.platform === "win32")(
         "/api/programs",
         "/api/requirements",
         "/api/settings",
+        "/api/courses",
+        "/api/backups",
       ]) {
         expect(await answered(path), path).toBeLessThan(500);
+      }
+      // and the writes, each of which reads the file it is about to replace or merge into first
+      const writes: [string, Response | Promise<Response>][] = [
+        ["POST import", post("/api/catalog/2027/import", CRAWL)],
+        ["POST pick", post("/api/timetable/2027/fall/picks", { ...LECTURE, basedOn: undefined })],
+        ["PATCH settings", patch("/api/settings", { language: "he", basedOn: undefined })],
+      ];
+      for (const [where, asked] of writes) {
+        expect(await answered(where, asked), where).toBeLessThan(500);
       }
       // the setup asserted rather than assumed: the Catalog read met the FIFO and refused it
       expect(await answered("/api/catalog/2027/offerings?semester=fall")).toBe(409);
