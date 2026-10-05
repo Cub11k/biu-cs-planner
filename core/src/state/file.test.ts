@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   parseStateFile,
   readStateFile,
@@ -24,6 +24,7 @@ function fullFile() {
     schemaVersion: CURRENT_STATE_SCHEMA_VERSION,
     attempts: [
       {
+        id: "attempt-1",
         courseNumber: "89-110",
         academicYear: 2026,
         semester: "fall",
@@ -31,6 +32,7 @@ function fullFile() {
         grade: { kind: "numeric", value: 44 },
       },
       {
+        id: "attempt-2",
         courseNumber: "89-110",
         academicYear: 2027,
         semester: "fall",
@@ -38,15 +40,17 @@ function fullFile() {
         grade: { kind: "numeric", value: 91 },
       },
       {
+        id: "attempt-3",
         courseNumber: "10-001",
         academicYear: 2026,
         semester: "spring",
         status: "exempt",
         grade: { kind: "pass-fail", passed: true },
       },
-      { courseNumber: "89-230", academicYear: 2027, semester: "spring", status: "planned" },
-      { courseNumber: "89-214", academicYear: 2027, semester: "summer", status: "registered" },
+      { id: "attempt-4", courseNumber: "89-230", academicYear: 2027, semester: "spring", status: "planned" },
+      { id: "attempt-5", courseNumber: "89-214", academicYear: 2027, semester: "summer", status: "registered" },
       {
+        id: "attempt-6",
         courseNumber: "89-550",
         academicYear: 2025,
         semester: "spring",
@@ -103,6 +107,82 @@ it("reads back a State File whole, every status and both grades among it", () =>
   expect(new Set(result.state?.attempts.map((attempt) => attempt.status))).toEqual(
     new Set(statusSchema.options),
   );
+});
+
+/**
+ * #290: Attempts gained an id without the schema version moving. A file written before then has
+ * none, and still opens — each Attempt named `attempt-<n>`, deterministically, so two reads of
+ * one file name its Attempts alike and the first save writes the ids down.
+ */
+describe("an Attempt's id", () => {
+  const withoutIds = () => ({
+    schemaVersion: 1,
+    attempts: fullFile().attempts.map(({ id: _id, ...fields }) => fields),
+  });
+
+  it("is given to every Attempt of a version-1 file written before Attempts had ids", () => {
+    const result = parseStateFile(onDisk(withoutIds()));
+
+    expect(result.warnings).toEqual([]);
+    expect(result.state?.attempts).toEqual(fullFile().attempts);
+    // the same file read twice names its Attempts alike
+    expect(parseStateFile(onDisk(withoutIds())).state?.attempts).toEqual(result.state?.attempts);
+  });
+
+  it("is written by the first save, and read back unchanged after it", () => {
+    const { state } = parseStateFile(onDisk(withoutIds()));
+    const save = writeStateFile(state!, { basedOn: undefined });
+
+    expect((save.json.attempts as { id: string }[]).map((attempt) => attempt.id)).toEqual([
+      "attempt-1",
+      "attempt-2",
+      "attempt-3",
+      "attempt-4",
+      "attempt-5",
+      "attempt-6",
+    ]);
+    expect(parseStateFile(onDisk(save.json)).state).toEqual(state);
+  });
+
+  it("keeps the ids a file holds, and fills a missing one with an n no other Attempt uses", () => {
+    const result = parseStateFile({
+      schemaVersion: 1,
+      attempts: [
+        { courseNumber: "89-110", academicYear: 2027, semester: "fall", status: "planned" },
+        { id: "attempt-1", courseNumber: "89-111", academicYear: 2027, semester: "fall", status: "planned" },
+        { id: "3f2c", courseNumber: "89-112", academicYear: 2027, semester: "fall", status: "planned" },
+      ],
+    });
+
+    expect(result.warnings).toEqual([]);
+    expect(result.state?.attempts.map((attempt) => attempt.id)).toEqual(["attempt-2", "attempt-1", "3f2c"]);
+  });
+
+  it("gives an Attempt whose id an earlier one took a fresh id, keeping both, and says so", () => {
+    const result = parseStateFile({
+      schemaVersion: 1,
+      attempts: [
+        { id: "x", courseNumber: "89-110", academicYear: 2027, semester: "fall", status: "planned" },
+        { id: "x", courseNumber: "89-111", academicYear: 2027, semester: "fall", status: "planned" },
+      ],
+    });
+
+    expect(result.state?.attempts.map((attempt) => [attempt.id, attempt.courseNumber])).toEqual([
+      ["x", "89-110"],
+      ["attempt-1", "89-111"],
+    ]);
+    expect(result.warnings).toEqual([{ kind: "attempt-id-not-unique", at: "attempts[1]", id: "x" }]);
+  });
+
+  it("drops an Attempt whose id is not a name, as any unreadable field drops its entry", () => {
+    const result = parseStateFile({
+      schemaVersion: 1,
+      attempts: [{ id: "", courseNumber: "89-110", academicYear: 2027, semester: "fall", status: "planned" }],
+    });
+
+    expect(result.state?.attempts).toEqual([]);
+    expect(result.warnings).toEqual([{ kind: "entry-dropped", at: "attempts[0]", field: "id" }]);
+  });
 });
 
 it("returns a State that its own schema accepts, so the reader cannot drift from the schema", () => {
@@ -584,6 +664,8 @@ it("names Courses by course number and nothing by Catalog entry", () => {
     "examSpacingDays",
     "grade",
     "groupNumber",
+    // #290: an Attempt's id is opaque, never a Catalog entry
+    "id",
     "kind",
     "label",
     "language",
@@ -974,7 +1056,7 @@ it("refuses a value the reader could not read back, naming the part that was wro
   try {
     writeStateFile(broken, { basedOn: undefined });
   } catch (error) {
-    expect((error as StateFileUnwritableError).at).toBe("attempts.0.academicYear");
+    expect((error as StateFileUnwritableError).at).toBe("attempts.0.id");
   }
 });
 
@@ -987,6 +1069,7 @@ it("writes a value detached from the State it was made from", () => {
 
   const save = writeStateFile(state, { basedOn: undefined });
   state.attempts.push({
+    id: "attempt-99",
     courseNumber: "89-999",
     academicYear: 2027,
     semester: "fall",

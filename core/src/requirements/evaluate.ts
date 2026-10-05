@@ -1,4 +1,4 @@
-import type { Attempt } from "../state/schema.ts";
+import type { AttemptFacts } from "../state/schema.ts";
 import {
   accepts,
   compileProgram,
@@ -98,7 +98,7 @@ export interface ProgressInput {
   file: RequirementsFile;
   /** The Track's id, when the student has chosen one. */
   track?: string;
-  attempts: readonly Attempt[];
+  attempts: readonly AttemptFacts[];
   assignment: Assignment;
   /** Ids of the Manual Requirements the student has ticked. Where ticks live is not ours. */
   ticked?: readonly string[];
@@ -267,7 +267,7 @@ export function evaluateProgress(input: ProgressInput): Progress {
 export function firstFitAssignment(input: {
   file: RequirementsFile;
   track?: string;
-  attempts: readonly Attempt[];
+  attempts: readonly AttemptFacts[];
 }): Assignment {
   const program = compileProgram(input.file, input.track);
   const standing = standings(program, input.attempts);

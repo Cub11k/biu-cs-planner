@@ -16,8 +16,8 @@ it("accepts several Attempts for the same Course in different Semesters", () => 
   const retaken = stateSchema.safeParse({
     schemaVersion: CURRENT_STATE_SCHEMA_VERSION,
     attempts: [
-      { courseNumber: "89-110", academicYear: 2026, semester: "fall", status: "failed" },
-      { courseNumber: "89-110", academicYear: 2027, semester: "fall", status: "passed" },
+      { id: "a", courseNumber: "89-110", academicYear: 2026, semester: "fall", status: "failed" },
+      { id: "b", courseNumber: "89-110", academicYear: 2027, semester: "fall", status: "passed" },
     ],
   });
 
@@ -28,6 +28,7 @@ it("accepts several Attempts for the same Course in different Semesters", () => 
 it("accepts every status", () => {
   for (const status of statusSchema.options) {
     const attempt = attemptSchema.safeParse({
+      id: "a",
       courseNumber: "89-110",
       academicYear: 2027,
       semester: "spring",
@@ -38,7 +39,7 @@ it("accepts every status", () => {
 });
 
 it("accepts both kinds of grade and no grade at all", () => {
-  const base = { courseNumber: "89-110", academicYear: 2027, semester: "fall", status: "passed" };
+  const base = { id: "a", courseNumber: "89-110", academicYear: 2027, semester: "fall", status: "passed" };
 
   expect(attemptSchema.safeParse({ ...base, grade: { kind: "numeric", value: 87 } }).success)
     .toBe(true);
@@ -178,6 +179,7 @@ it("defaults the Exam spacing to the one the check itself defaults to", () => {
 
 it("strips a key it does not know rather than carrying it", () => {
   const parsed = attemptSchema.parse({
+    id: "a",
     courseNumber: "89-110",
     academicYear: 2027,
     semester: "fall",

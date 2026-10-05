@@ -144,7 +144,7 @@ A display preference belonging to the browser and the screen a student is sittin
 _Avoid_: theme, browser setting, local setting
 
 **Attempt**:
-One instance of a student taking a Course in a Semester, with a status (planned, registered, passed, failed, exempt, credited) and an optional grade.
+One instance of a student taking a Course in a Semester, with a status (planned, registered, passed, failed, exempt, credited) and an optional grade. An Attempt is named by its **id**, never by its Course or its position: a retake makes course number plus Semester non-unique, and a position moves with every add and remove, while two tabs and Plan Diffs both have to name one Attempt and mean the same one tomorrow. A new Attempt's id is a UUID. A State File written before Attempts had ids still opens, without a migration and without the schema version moving: each Attempt without an id, or with one an earlier Attempt already holds, is read as `attempt-<n>`, the smallest `n` no other Attempt in the file uses, so every read of an unchanged file names its Attempts alike and the first save writes the ids down. The ruling is on issue #290.
 _Avoid_: enrollment, record
 
 **Plan**:

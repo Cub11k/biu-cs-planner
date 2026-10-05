@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Attempt, Pin, Status } from "../state/schema.ts";
+import type { AttemptFacts as Attempt, Pin, Status } from "../state/schema.ts";
 import { evaluateProgress, firstFitAssignment, type Progress } from "./evaluate.ts";
 import { parseRequirementsFile } from "./file.ts";
 import { CURRENT_REQUIREMENTS_SCHEMA_VERSION, type RequirementsFile } from "./schema.ts";

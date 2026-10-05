@@ -92,21 +92,37 @@ export {
 export type { BlockedRange, BlockedTimeWarning } from "./state/blocked.ts";
 export { effectiveFile, programWarnings, setCohort, setPrograms } from "./state/programs.ts";
 export { pinCourse, tickManual, unpinCourse, untickManual } from "./state/pins.ts";
+export {
+  addAttempt,
+  attemptWarnings,
+  moveAttempt,
+  removeAttempt,
+  updateAttempt,
+} from "./state/attempts.ts";
+export type { AttemptChange, AttemptTarget, AttemptWarning } from "./state/attempts.ts";
+export { semesterIndex } from "./state/semester-order.ts";
+export type { SemesterAt } from "./state/semester-order.ts";
 export type { PinRef, RequirementRef } from "./state/pins.ts";
 export type { ListedRequirementsFile, ProgramWarning } from "./state/programs.ts";
 export {
+  attemptIdSchema,
+  attemptSchema,
   blockedTimeSchema,
   CURRENT_STATE_SCHEMA_VERSION,
+  gradeSchema,
   groupPickSchema,
   manualTickSchema,
   pinSchema,
   programSchema,
   settingsSchema,
   stateSchema,
+  statusSchema,
   studentCohortSchema,
 } from "./state/schema.ts";
 export type {
   Attempt,
+  AttemptFacts,
+  AttemptId,
   BlockedTime,
   Grade,
   GroupPick,

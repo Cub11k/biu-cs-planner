@@ -1,5 +1,5 @@
-import type { Semester } from "../catalog/schema.ts";
-import type { Attempt } from "../state/schema.ts";
+import type { AttemptFacts } from "../state/schema.ts";
+import { semesterIndex } from "../state/semester-order.ts";
 import type { Policies, Pool, Requirement, RequirementsFile } from "./schema.ts";
 
 /**
@@ -230,18 +230,11 @@ export function constrained(program: CompiledProgram, leaf: number, course: stri
 
 // --- Attempts ---------------------------------------------------------------------------------
 
-const SEMESTER_ORDER: Record<Semester, number> = { fall: 0, spring: 1, summer: 2 };
-
-/** Where a Semester of an Academic Year falls in time: Fall < Spring < Summer within a year. */
-export function semesterIndex(point: { academicYear: number; semester: Semester }): number {
-  return point.academicYear * 3 + SEMESTER_ORDER[point.semester];
-}
-
 const DECIDED = new Set(["passed", "failed", "exempt", "credited"]);
 const PENDING = new Set(["planned", "registered"]);
 
 /** Whether one Attempt is a pass under the file's passing grade. Planned and registered never are. */
-export function passes(attempt: Attempt, passingGrade: number): boolean {
+export function passes(attempt: AttemptFacts, passingGrade: number): boolean {
   if (attempt.status === "exempt" || attempt.status === "credited") return true;
   if (attempt.status !== "passed") return false;
   if (attempt.grade?.kind === "numeric") return attempt.grade.value >= passingGrade;
@@ -259,7 +252,7 @@ export function passes(attempt: Attempt, passingGrade: number): boolean {
  * Only passing Attempts are ever in the answer, so a failed retake after a pass changes nothing:
  * the policy chooses *which passing grade* counts, never *whether* the Course was passed.
  */
-export function countingAttempts(attempts: readonly Attempt[], policies: Policies): Attempt[] {
+export function countingAttempts<A extends AttemptFacts>(attempts: readonly A[], policies: Policies): A[] {
   const passing = attempts.filter((a) => DECIDED.has(a.status) && passes(a, policies.passingGrade));
   if (policies.gradeAttempt === "best" || passing.length === 0) return passing;
   const latest = Math.max(...passing.map(semesterIndex));
@@ -284,8 +277,8 @@ export interface Standing {
  *
  * `projected`: completed, or a planned or registered Attempt says the plan will complete it.
  */
-export function standings(program: CompiledProgram, attempts: readonly Attempt[]): Map<string, Standing> {
-  const byCourse = new Map<string, Attempt[]>();
+export function standings(program: CompiledProgram, attempts: readonly AttemptFacts[]): Map<string, Standing> {
+  const byCourse = new Map<string, AttemptFacts[]>();
   for (const attempt of attempts) {
     const course = program.canonical(attempt.courseNumber);
     byCourse.set(course, [...(byCourse.get(course) ?? []), attempt]);

@@ -3074,3 +3074,168 @@ it("names no path in a Progress answer", async () => {
   expect(text).not.toContain(await realpath(root));
   expect(text).not.toContain(".json");
 });
+
+/**
+ * #290: the Plan over a real temporary folder — read, add, update, move and remove an Attempt,
+ * each one undo step, malformed shapes refused at the boundary, a stale revision refused. Course
+ * numbers are invented (ADR-0006).
+ */
+const PLAN = "/api/plan";
+const ATTEMPTS = `${PLAN}/attempts`;
+const PLANNED = { courseNumber: "89-110", academicYear: 2027, semester: "fall", status: "planned" };
+
+type PlanBody = {
+  attempts: { id: string; courseNumber: string; academicYear: number; semester: string; status: string }[];
+  attemptWarnings: unknown[];
+  added?: string;
+  version?: string;
+};
+
+const planVersion = async (): Promise<string | undefined> =>
+  ((await (await get(PLAN)).json()) as PlanBody).version;
+
+it("serves an empty Plan before any Attempt, and writes no State File", async () => {
+  const read = await get(PLAN);
+
+  expect(read.status).toBe(200);
+  await expect(read.json()).resolves.toMatchObject({ attempts: [], attemptWarnings: [], warnings: [] });
+  expect(await readdir(root)).toEqual([]);
+});
+
+it("adds, updates, moves and removes an Attempt by its id, each one undo step", async () => {
+  await post("/api/workspace", {});
+
+  const added = await post(ATTEMPTS, { ...PLANNED, basedOn: await planVersion() });
+  expect(added.status).toBe(200);
+  const body = (await added.json()) as PlanBody;
+  const id = body.added!;
+  expect(body.attempts).toEqual([{ id, ...PLANNED }]);
+  expect(body.version).toBe(await planVersion());
+
+  const updated = await patch(`${ATTEMPTS}/${id}`, {
+    status: "passed",
+    grade: { kind: "numeric", value: 88 },
+    basedOn: await planVersion(),
+  });
+  expect(updated.status).toBe(200);
+  await expect(updated.json()).resolves.toMatchObject({
+    attempts: [{ id, status: "passed", grade: { kind: "numeric", value: 88 } }],
+  });
+
+  const cleared = await patch(`${ATTEMPTS}/${id}`, { grade: null, basedOn: await planVersion() });
+  expect(((await cleared.json()) as PlanBody).attempts[0]).not.toHaveProperty("grade");
+
+  const moved = await put(`${ATTEMPTS}/${id}/semester`, {
+    academicYear: 2028,
+    semester: "spring",
+    basedOn: await planVersion(),
+  });
+  expect(moved.status).toBe(200);
+  await expect(moved.json()).resolves.toMatchObject({
+    attempts: [{ id, academicYear: 2028, semester: "spring" }],
+  });
+
+  const removed = await remove(`${ATTEMPTS}/${id}`, { basedOn: await planVersion() });
+  expect(removed.status).toBe(200);
+  await expect(removed.json()).resolves.toMatchObject({ attempts: [] });
+
+  // the State File on disk holds what the answers said
+  const onDisk = JSON.parse(await readFile(join(root, "me.state.json"), "utf8")) as { attempts: unknown[] };
+  expect(onDisk.attempts).toEqual([]);
+
+  // four edits since the add, undone one at a time, in order
+  for (const label of ["remove-attempt", "move-attempt", "update-attempt", "update-attempt", "add-attempt"]) {
+    await expect((await step(UNDO)).json()).resolves.toMatchObject({ label });
+  }
+  await expect((await get(PLAN)).json()).resolves.toMatchObject({ attempts: [] });
+  await expect((await step(REDO)).json()).resolves.toMatchObject({ label: "add-attempt" });
+  await expect((await get(PLAN)).json()).resolves.toMatchObject({ attempts: [{ id, ...PLANNED }] });
+});
+
+it("accepts a grade outside 0 to 100 and a duplicate, answering with their Warnings", async () => {
+  await post("/api/workspace", {});
+  const added = (await (
+    await post(ATTEMPTS, { ...PLANNED, status: "passed", grade: { kind: "numeric", value: 120 }, basedOn: undefined })
+  ).json()) as PlanBody;
+
+  const again = await post(ATTEMPTS, { ...PLANNED, basedOn: await planVersion() });
+
+  expect(again.status).toBe(200);
+  const body = (await again.json()) as PlanBody;
+  expect(body.attempts).toHaveLength(2);
+  expect(body.attemptWarnings).toEqual([
+    { kind: "grade-out-of-range", target: { kind: "attempt", id: added.added }, value: 120 },
+    {
+      kind: "attempt-duplicate",
+      target: { kind: "attempt", id: body.added },
+      courseNumber: "89-110",
+      academicYear: 2027,
+      semester: "fall",
+      firstId: added.added,
+    },
+  ]);
+});
+
+it("refuses an Attempt edit based on a revision the file no longer holds", async () => {
+  await post("/api/workspace", {});
+  const { added: id } = (await (await post(ATTEMPTS, { ...PLANNED, basedOn: undefined })).json()) as PlanBody;
+  const stale = await planVersion();
+  await patch(`${ATTEMPTS}/${id}`, { status: "registered", basedOn: stale });
+  const before = await readFile(join(root, "me.state.json"), "utf8");
+
+  for (const response of [
+    await post(ATTEMPTS, { ...PLANNED, basedOn: stale }),
+    await patch(`${ATTEMPTS}/${id}`, { status: "passed", basedOn: stale }),
+    await put(`${ATTEMPTS}/${id}/semester`, { academicYear: 2028, semester: "fall", basedOn: stale }),
+    await remove(`${ATTEMPTS}/${id}`, { basedOn: stale }),
+  ]) {
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ reason: "state-file-changed" });
+  }
+  expect(await readFile(join(root, "me.state.json"), "utf8")).toBe(before);
+});
+
+it("names every malformed Attempt request as a 400, before the domain sees it", async () => {
+  await post("/api/workspace", {});
+  const { added: id } = (await (await post(ATTEMPTS, { ...PLANNED, basedOn: undefined })).json()) as PlanBody;
+  const before = await readFile(join(root, "me.state.json"), "utf8");
+
+  for (const body of [
+    {},
+    { ...PLANNED, status: "maybe" },
+    { ...PLANNED, semester: "winter" },
+    { ...PLANNED, academicYear: "2027" },
+    { ...PLANNED, academicYear: 2027.5 },
+    { ...PLANNED, courseNumber: "" },
+    { ...PLANNED, grade: 87 },
+  ]) {
+    const answered = await post(ATTEMPTS, body);
+    expect(answered.status, JSON.stringify(body)).toBe(400);
+    await expect(answered.json()).resolves.toEqual({ error: "not-an-attempt" });
+  }
+  for (const body of [{ status: "maybe" }, { grade: { kind: "letter", value: "A" } }]) {
+    const answered = await patch(`${ATTEMPTS}/${id}`, body);
+    expect(answered.status).toBe(400);
+    await expect(answered.json()).resolves.toEqual({ error: "not-an-attempt-change" });
+  }
+  for (const body of [{}, { academicYear: 2027, semester: "winter" }]) {
+    const answered = await put(`${ATTEMPTS}/${id}/semester`, body);
+    expect(answered.status).toBe(400);
+    await expect(answered.json()).resolves.toEqual({ error: "not-a-semester" });
+  }
+  const tooLong = await remove(`${ATTEMPTS}/${"x".repeat(201)}`, {});
+  expect(tooLong.status).toBe(400);
+  await expect(tooLong.json()).resolves.toEqual({ error: "bad-attempt-id" });
+  expect(await readFile(join(root, "me.state.json"), "utf8")).toBe(before);
+});
+
+it("names no path in a Plan answer", async () => {
+  await post("/api/workspace", {});
+  await post(ATTEMPTS, { ...PLANNED, basedOn: undefined });
+
+  const text = await (await get(PLAN)).text();
+
+  expect(text).not.toContain(root);
+  expect(text).not.toContain(await realpath(root));
+  expect(text).not.toContain(".json");
+});

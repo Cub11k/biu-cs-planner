@@ -1,4 +1,4 @@
-import type { Attempt } from "../state/schema.ts";
+import type { AttemptFacts } from "../state/schema.ts";
 import { countedIn, type Assignment, type Placement } from "./evaluate.ts";
 import {
   accepts,
@@ -96,7 +96,7 @@ export interface SolvePin {
 export interface SolveInput {
   /** One Program, or the two of a double major, each with its Track. */
   programs: readonly { file: RequirementsFile; track?: string }[];
-  attempts: readonly Attempt[];
+  attempts: readonly AttemptFacts[];
   pins?: readonly SolvePin[];
   limits?: SolveLimits;
 }
@@ -451,7 +451,7 @@ class Search {
 /** The Courses one lens counts, as choices for the search, across every Program. */
 function choicesFor(
   programs: readonly CompiledProgram[],
-  attempts: readonly Attempt[],
+  attempts: readonly AttemptFacts[],
   pinned: readonly Map<string, number[]>[],
   lens: Lens,
 ): Choice[] {

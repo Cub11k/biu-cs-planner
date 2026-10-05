@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Attempt, Grade, Status } from "../state/schema.ts";
+import type { AttemptFacts as Attempt, Grade, Status } from "../state/schema.ts";
 import {
   evaluateProgress,
   firstFitAssignment,

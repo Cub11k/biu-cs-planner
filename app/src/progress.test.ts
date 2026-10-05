@@ -1,4 +1,4 @@
-import type { Attempt } from "@biu-cs-planner/core";
+import type { AttemptFacts as Attempt } from "@biu-cs-planner/core";
 import { expect, it } from "vitest";
 import type { EditHistory, StateEdit } from "./edit.ts";
 import { choosePrograms } from "./programs.ts";
