@@ -2924,6 +2924,7 @@ it("serves Progress with no Program chosen as no Programs, and writes nothing", 
 
   expect(read.status).toBe(200);
   await expect(read.json()).resolves.toEqual({
+    cohort: null,
     programs: [],
     stoppedEarly: false,
     solverWarnings: [],
@@ -2953,6 +2954,21 @@ it("serves Progress for a single major, both lenses evaluated", async () => {
   });
   expect(body.stoppedEarly).toBe(false);
   expect(body.version).toBe(await currentVersion());
+});
+
+it("serves the Cohort with Progress once one is set, and null before (#331)", async () => {
+  await progressWorkspace([{ requirementsFile: "cs-2027" }]);
+  await expect((await get("/api/progress")).json()).resolves.toMatchObject({ cohort: null });
+
+  const set = await put("/api/cohort", {
+    cohort: { academicYear: 2026, semester: "fall" },
+    basedOn: await currentVersion(),
+  });
+  expect(set.status).toBe(200);
+
+  await expect((await get("/api/progress")).json()).resolves.toMatchObject({
+    cohort: { academicYear: 2026, semester: "fall" },
+  });
 });
 
 it("serves Progress for a double major, the Course counted in one Program", async () => {

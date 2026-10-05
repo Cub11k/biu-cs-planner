@@ -1,6 +1,6 @@
 /**
  * Asking the API for Progress, and sending the Progress screen's edits (#288): a Pin, an unpin, a
- * tick and an untick, and the Program choice the screen offers when none is chosen.
+ * tick and an untick, the student's Programs (#331) and their Cohort.
  *
  * Beside the screen rather than inside it, as `../timetable/picks.ts` is, so every answer the API
  * can give is testable against a fake fetch. The shapes are read off the contract and never
@@ -17,6 +17,7 @@ type UnpinRoute = ProgressRoutes["pins"]["$delete"];
 type TickRoute = ProgressRoutes["ticks"]["$post"];
 type UntickRoute = ProgressRoutes["ticks"]["$delete"];
 type ProgramsRoute = ApiClient["api"]["programs"]["$put"];
+type CohortRoute = ApiClient["api"]["cohort"]["$put"];
 type RequirementsRoute = ApiClient["api"]["requirements"]["$get"];
 
 type Answer = InferResponseType<ReadRoute>;
@@ -37,12 +38,16 @@ export type StateWarning = ServedProgress["warnings"][number];
 /** Why the API would not serve or edit Progress: the State File's refusals. */
 export type ProgressRefusal = Extract<Answer, { reason: unknown }>["reason"];
 
+/** The Academic Year and Semester the student started in, or `null` when none is chosen. */
+export type Cohort = ServedProgress["cohort"];
+
 /** The revision Progress was read from, and what a Pin or a tick is based on. */
 export type ProgressVersion = ServedProgress["version"];
 
 export type ProgressResult =
   | {
       kind: "served";
+      cohort: Cohort;
       programs: ProgramProgress[];
       stoppedEarly: boolean;
       solverWarnings: SolverWarning[];
@@ -75,6 +80,7 @@ async function read(answer: Sent): Promise<ProgressResult> {
   const body = served.body;
   return {
     kind: "served",
+    cohort: body.cohort ?? null,
     programs: body.programs,
     stoppedEarly: body.stoppedEarly,
     solverWarnings: body.solverWarnings ?? [],
@@ -175,16 +181,11 @@ export type ProgramsChoice =
   | { kind: "unreadable-answer" }
   | { kind: "unreachable" };
 
-/** Chooses the student's Programs, on the revision the view was read from. */
-export async function choosePrograms(
-  client: ApiClient,
-  programs: { requirementsFile: string; track?: string }[],
-  basedOn: ProgressVersion,
-): Promise<ProgramsChoice> {
-  const request = { json: { programs, basedOn } } as InferRequestType<ProgramsRoute>;
+/** A save whose answer is not Progress: saved, or why not. Progress is read again after it. */
+async function saved(send: () => Promise<Sent>): Promise<ProgramsChoice> {
   let answer: Sent;
   try {
-    answer = await client.api.programs.$put(request);
+    answer = await send();
   } catch {
     return { kind: "unreachable" };
   }
@@ -193,4 +194,27 @@ export async function choosePrograms(
   if (status === UNAUTHORIZED) return { kind: "unauthorized" };
   const refused = await readBody(() => answer.json() as Promise<{ reason?: ProgressRefusal }>);
   return refused.readable ? { kind: "refused", reason: refused.body.reason } : { kind: "unreadable-answer" };
+}
+
+/** One Program as the student chooses it: a Requirements File by name, and maybe a Track of it. */
+export type ProgramChoice = { requirementsFile: string; track?: string };
+
+/** Chooses the student's Programs, the whole list, on the revision the view was read from. */
+export function choosePrograms(
+  client: ApiClient,
+  programs: ProgramChoice[],
+  basedOn: ProgressVersion,
+): Promise<ProgramsChoice> {
+  const request = { json: { programs, basedOn } } as InferRequestType<ProgramsRoute>;
+  return saved(() => client.api.programs.$put(request));
+}
+
+/** Sets the student's Cohort, or clears it with `null`, on the revision the view was read from. */
+export function chooseCohort(
+  client: ApiClient,
+  cohort: Cohort,
+  basedOn: ProgressVersion,
+): Promise<ProgramsChoice> {
+  const request = { json: { cohort, basedOn } } as InferRequestType<CohortRoute>;
+  return saved(() => client.api.cohort.$put(request));
 }

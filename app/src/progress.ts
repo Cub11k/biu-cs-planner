@@ -17,6 +17,7 @@ import {
   type State,
   type StateFileVersion,
   type StateFileWarning,
+  type StudentCohort,
 } from "@biu-cs-planner/core";
 import {
   editStateFile,
@@ -85,6 +86,12 @@ export type ProgressWarningAbout =
   | { kind: "tick-file-not-chosen"; requirementId: string; requirementsFile: string };
 
 export type ProgressView = {
+  /**
+   * The student's Cohort, so the screen that shows their Programs can show and change it beside
+   * them (#331) from the one read and the one revision, rather than a second read that could
+   * answer from another revision.
+   */
+  cohort: StudentCohort | undefined;
   /** Each chosen Program, in the order the student chose them. Empty when none is chosen. */
   programs: ProgramProgress[];
   /** The solver hit its time or iteration cap, so the Assignment may not be the best one. */
@@ -214,6 +221,7 @@ async function progressOf(
   const programs = placed.map((slot) => (typeof slot === "number" ? evaluated(slot) : slot));
 
   return {
+    cohort: state.cohort,
     programs,
     stoppedEarly: solution.stoppedEarly,
     solverWarnings: solution.warnings,

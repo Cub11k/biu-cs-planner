@@ -3,6 +3,7 @@ import { api } from "../api.ts";
 import { unauthorizedSaid, type ScreenDefinition, type ScreenProps } from "../AppShell.tsx";
 import { t, type Language, type StringKey } from "../i18n/strings.ts";
 import {
+  chooseCohort,
   choosePrograms,
   fetchProgress,
   fetchRequirementsFiles,
@@ -10,11 +11,14 @@ import {
   tickManual,
   unpinCourse,
   untickManual,
+  type Cohort,
   type EngineWarning,
   type EvaluatedProgram,
   type EvaluatedRequirement,
   type ListedRequirements,
   type PinWarning,
+  type ProgramChoice,
+  type ProgramsChoice,
   type ProgramsWarning,
   type ProgressRefusal,
   type ProgressResult,
@@ -28,6 +32,12 @@ import {
  * would complete — its numbers and the Courses counting toward it; Pinning a Course to another
  * Requirement it can count toward, unpinning it; ticking a Manual Requirement. Every edit is one
  * request, one guarded save and one undo step, and the screen shows what the server answers.
+ *
+ * Above the trees, the student's Programs and Cohort (#331): change a Program or its Track, add or
+ * remove a double major's second Program, set or clear the Cohort. Each change is the whole list or
+ * the Cohort sent to the existing route (`PUT /api/programs`, `PUT /api/cohort`), one undo step, and
+ * the Warning about a Program — its file missing, its Track unknown — is drawn on that Program's row,
+ * beside the controls that fix it.
  *
  * It reaches the domain only through the typed client (`./progress.ts`), and it invents no Pin
  * candidate: the Requirements a Course is offered are the ones the engine says it can count toward.
@@ -129,6 +139,36 @@ function useProgress(changes: number): [ProgressState, (answer: ProgressResult) 
   return [answer, show];
 }
 
+/** The Requirements Files to choose from, re-read when the Workspace changes. */
+function useRequirementsFiles(workspaceChanges: number): ListedRequirements[] | undefined | "loading" {
+  const [files, setFiles] = useState<ListedRequirements[] | undefined | "loading">("loading");
+  useEffect(() => {
+    let current = true;
+    void fetchRequirementsFiles(api).then((listed) => {
+      if (current) setFiles(listed);
+    });
+    return () => {
+      current = false;
+    };
+  }, [workspaceChanges]);
+  return files;
+}
+
+/** The Programs a read was evaluated for, as the student chose them, in their order. */
+const choicesOf = (programs: readonly { requirementsFile: string; track?: string | undefined }[]): ProgramChoice[] =>
+  programs.map(({ requirementsFile, track }) =>
+    track === undefined ? { requirementsFile } : { requirementsFile, track },
+  );
+
+/** A save answered without Progress, as the answer `send` expects: Progress read again after it. */
+async function thenProgress(chosen: Promise<ProgramsChoice>): Promise<ProgressResult> {
+  const answer = await chosen;
+  if (answer.kind !== "saved") {
+    return answer.kind === "refused" ? { kind: "refused", reason: answer.reason } : answer;
+  }
+  return fetchProgress(api);
+}
+
 export function ProgressScreen({
   language,
   tokenHeld,
@@ -147,6 +187,7 @@ export function ProgressScreen({
   const [editRefused, setEditRefused] = useState<StringKey | undefined>(undefined);
   /** An edit is in flight: the controls wait for its answer, which carries the next revision. */
   const [sending, setSending] = useState(false);
+  const files = useRequirementsFiles(workspaceChanges);
 
   useEffect(() => {
     if (steps > 0) setEditRefused(undefined);
@@ -234,29 +275,36 @@ export function ProgressScreen({
               language={language}
               warnings={[
                 ...progress.stateWarnings.filter((warning) => WARNING_STRING.has(warning.kind)),
-                ...progress.programWarnings,
+                // a Warning about one Program is drawn on its row, beside what fixes it
+                ...progress.programWarnings.filter((warning) => !("index" in warning)),
                 ...progress.solverWarnings,
                 ...progress.pinWarnings,
               ]}
             />
+            <CohortForm
+              language={language}
+              cohort={progress.cohort}
+              disabled={sending}
+              onCohort={(cohort) => send((basedOn) => thenProgress(chooseCohort(api, cohort, basedOn)))}
+            />
             {progress.programs.length === 0 ? (
               <ProgramChooser
                 language={language}
-                workspaceChanges={workspaceChanges}
+                files={files}
                 disabled={sending}
-                onChoose={(programs) =>
-                  send(async (basedOn) => {
-                    const chosen = await choosePrograms(api, programs, basedOn);
-                    if (chosen.kind !== "saved") {
-                      return chosen.kind === "refused"
-                        ? { kind: "refused", reason: chosen.reason }
-                        : chosen;
-                    }
-                    return fetchProgress(api);
-                  })
-                }
+                onChoose={(programs) => send((basedOn) => thenProgress(choosePrograms(api, programs, basedOn)))}
               />
             ) : (
+              <ProgramsPanel
+                language={language}
+                programs={choicesOf(progress.programs)}
+                files={files}
+                warnings={progress.programWarnings}
+                disabled={sending}
+                onPrograms={(programs) => send((basedOn) => thenProgress(choosePrograms(api, programs, basedOn)))}
+              />
+            )}
+            {progress.programs.length === 0 ? null : (
               progress.programs.map((program, index) =>
                 program.status === "evaluated" ? (
                   <ProgramTree
@@ -340,33 +388,39 @@ function Warnings({ language, warnings }: { language: Language; warnings: readon
   );
 }
 
+/** The Requirements Files a Program can be chosen from: the ones this build could read. */
+const readableOf = (files: ListedRequirements[] | undefined | "loading"): ListedRequirements[] =>
+  Array.isArray(files) ? files.filter((entry) => entry.status === "read") : [];
+
+/** A Requirements File as the student picks it: its Program's name, and the file's own name. */
+function fileSaid(language: Language, entry: ListedRequirements): string {
+  return entry.status === "read"
+    ? `${localized(language, entry.program.name) ?? entry.program.id} (${entry.name})`
+    : entry.name;
+}
+
 /**
  * The screen when no Program is chosen: it says so, and offers the Requirements Files in the
- * Workspace to choose one from, with its Track. Re-read when the Workspace changes, so a file
- * dropped into `requirements/` is offered without leaving the screen.
+ * Workspace to choose one from, with its Track. The listing is re-read when the Workspace changes,
+ * so a file dropped into `requirements/` is offered without leaving the screen.
  *
- * It chooses one Program. Changing a choice, adding a double major's second Program and setting
- * the Cohort are the API's (`PUT /api/programs`, `PUT /api/cohort`) and have no control here yet.
+ * It chooses one Program; once one is chosen, `ProgramsPanel` is where the list is changed.
  */
 function ProgramChooser({
   language,
-  workspaceChanges,
+  files,
   disabled,
   onChoose,
 }: {
   language: Language;
-  workspaceChanges: number;
+  files: ListedRequirements[] | undefined | "loading";
   disabled: boolean;
-  onChoose: (programs: { requirementsFile: string; track?: string }[]) => void;
+  onChoose: (programs: ProgramChoice[]) => void;
 }): React.JSX.Element {
-  const [files, setFiles] = useState<ListedRequirements[] | undefined | "loading">("loading");
   const [file, setFile] = useState<string>("");
   const [track, setTrack] = useState<string>("");
-  useEffect(() => {
-    void fetchRequirementsFiles(api).then(setFiles);
-  }, [workspaceChanges]);
 
-  const readable = Array.isArray(files) ? files.filter((entry) => entry.status === "read") : [];
+  const readable = readableOf(files);
   const chosen = readable.find((entry) => entry.name === file);
 
   return (
@@ -395,13 +449,11 @@ function ProgramChooser({
               className="rounded-sm border border-rule bg-paper px-2 py-1"
             >
               <option value="">—</option>
-              {readable.map((entry) =>
-                entry.status === "read" ? (
-                  <option key={entry.name} value={entry.name}>
-                    {`${localized(language, entry.program.name) ?? entry.program.id} (${entry.name})`}
-                  </option>
-                ) : null,
-              )}
+              {readable.map((entry) => (
+                <option key={entry.name} value={entry.name}>
+                  {fileSaid(language, entry)}
+                </option>
+              ))}
             </select>
           </label>
           {chosen?.status === "read" && chosen.tracks.length > 0 && (
@@ -429,6 +481,271 @@ function ProgramChooser({
             className="rounded-sm border border-rule bg-paper px-3 py-1 text-sm text-ink-soft disabled:opacity-50"
           >
             {t(language, "progressChoose")}
+          </button>
+        </form>
+      )}
+    </section>
+  );
+}
+
+/** The Semesters a Cohort can start in, in the order of the year. */
+const SEMESTERS = ["fall", "spring", "summer"] as const;
+const SEMESTER_STRING = {
+  fall: "semesterFall",
+  spring: "semesterSpring",
+  summer: "semesterSummer",
+} as const satisfies Record<(typeof SEMESTERS)[number], StringKey>;
+
+/**
+ * The student's Cohort (#331): what it is, and a form to set or clear it. The year is the Academic
+ * Year, named by the Gregorian year it ends in (`CONTEXT.md`), so it is typed as a number. The form
+ * starts from the Cohort the server holds, and starts again whenever that changes.
+ */
+function CohortForm({
+  language,
+  cohort,
+  disabled,
+  onCohort,
+}: {
+  language: Language;
+  cohort: Cohort;
+  disabled: boolean;
+  onCohort: (cohort: Cohort) => void;
+}): React.JSX.Element {
+  const [year, setYear] = useState(cohort === null ? "" : String(cohort.academicYear));
+  const [semester, setSemester] = useState<(typeof SEMESTERS)[number]>(cohort?.semester ?? "fall");
+  useEffect(() => {
+    setYear(cohort === null ? "" : String(cohort.academicYear));
+    setSemester(cohort?.semester ?? "fall");
+  }, [cohort?.academicYear, cohort?.semester]);
+  const typed = Number(year);
+  const valid = year.trim() !== "" && Number.isInteger(typed);
+
+  return (
+    <form
+      data-cohort
+      aria-label={t(language, "progressCohort")}
+      className="mb-4 flex flex-wrap items-end gap-3 text-sm"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (valid) onCohort({ academicYear: typed, semester });
+      }}
+    >
+      <span className="self-center">
+        {t(language, "progressCohort")}:{" "}
+        <span data-cohort-said className="font-semibold">
+          {cohort === null
+            ? t(language, "progressCohortNone")
+            : t(language, "progressCohortSaid", {
+                year: cohort.academicYear,
+                semester: t(language, SEMESTER_STRING[cohort.semester]),
+              })}
+        </span>
+      </span>
+      <label className="flex flex-col">
+        {t(language, "progressCohortYear")}
+        <input
+          type="number"
+          inputMode="numeric"
+          data-cohort-year
+          value={year}
+          onChange={(event) => setYear(event.target.value)}
+          className="w-24 rounded-sm border border-rule bg-paper px-2 py-1"
+        />
+      </label>
+      <label className="flex flex-col">
+        {t(language, "progressCohortSemester")}
+        <select
+          data-cohort-semester
+          value={semester}
+          onChange={(event) => setSemester(event.target.value as (typeof SEMESTERS)[number])}
+          className="rounded-sm border border-rule bg-paper px-2 py-1"
+        >
+          {SEMESTERS.map((which) => (
+            <option key={which} value={which}>
+              {t(language, SEMESTER_STRING[which])}
+            </option>
+          ))}
+        </select>
+      </label>
+      <button
+        type="submit"
+        data-cohort-set
+        disabled={disabled || !valid}
+        className="rounded-sm border border-rule bg-paper px-3 py-1 text-ink-soft disabled:opacity-50"
+      >
+        {t(language, "progressCohortSet")}
+      </button>
+      {cohort === null ? null : (
+        <button
+          type="button"
+          data-cohort-clear
+          disabled={disabled}
+          onClick={() => onCohort(null)}
+          className="rounded-sm border border-rule bg-paper px-3 py-1 text-ink-soft disabled:opacity-50"
+        >
+          {t(language, "progressCohortClear")}
+        </button>
+      )}
+    </form>
+  );
+}
+
+/** A double major is two Programs; the panel offers no third. */
+const MOST_PROGRAMS = 2;
+
+/**
+ * The student's Programs, one row each (#331): its Requirements File and its Track, each a select
+ * whose change is the whole list sent again with that one entry changed, and a remove. Below the
+ * rows, while there is room for one, a second Program to add.
+ *
+ * **What the student holds is always shown, even when it cannot be offered.** A file the Workspace
+ * no longer holds, or a Track its file does not define, stays the select's value as an option that
+ * says so, rather than the select falling back to the first offer and showing a choice nobody made.
+ * The Warning about the row is drawn in it, beside the select that fixes it and the remove.
+ *
+ * `onPrograms` is the only thing a row does, so the same panel drafts a what-if (#289) when its
+ * caller keeps the list instead of saving it.
+ */
+function ProgramsPanel({
+  language,
+  programs,
+  files,
+  warnings,
+  disabled,
+  onPrograms,
+}: {
+  language: Language;
+  programs: ProgramChoice[];
+  files: ListedRequirements[] | undefined | "loading";
+  warnings: readonly ProgramsWarning[];
+  disabled: boolean;
+  onPrograms: (programs: ProgramChoice[]) => void;
+}): React.JSX.Element {
+  const [adding, setAdding] = useState("");
+  const readable = readableOf(files);
+  const replaced = (index: number, program: ProgramChoice): ProgramChoice[] =>
+    programs.map((held, at) => (at === index ? program : held));
+
+  return (
+    <section data-programs className="mb-6 max-w-3xl space-y-2 text-sm">
+      <h2 className="text-base font-semibold">{t(language, "progressProgramsHeading")}</h2>
+      <ul className="space-y-2">
+        {programs.map((program, index) => {
+          const listed = readable.find((entry) => entry.name === program.requirementsFile);
+          const tracks = listed?.status === "read" ? listed.tracks : [];
+          const trackHeld = program.track !== undefined && !tracks.some((track) => track.id === program.track);
+          const mine = warnings.filter((warning) => "index" in warning && warning.index === index);
+          return (
+            <li key={index} data-program-row={index} className="flex flex-wrap items-end gap-3">
+              <label className="flex flex-col">
+                {t(language, "progressChooseProgram")}
+                <select
+                  data-program-file={index}
+                  value={program.requirementsFile}
+                  disabled={disabled}
+                  // another file is another rule set: its Tracks are not this one's
+                  onChange={(event) => onPrograms(replaced(index, { requirementsFile: event.target.value }))}
+                  className="rounded-sm border border-rule bg-paper px-2 py-1"
+                >
+                  {listed === undefined && (
+                    <option value={program.requirementsFile}>
+                      {t(language, "progressFileNotOffered", { file: program.requirementsFile })}
+                    </option>
+                  )}
+                  {readable.map((entry) => (
+                    <option key={entry.name} value={entry.name}>
+                      {fileSaid(language, entry)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {listed !== undefined && (tracks.length > 0 || trackHeld) && (
+                <label className="flex flex-col">
+                  {t(language, "progressChooseTrack")}
+                  <select
+                    data-program-track={index}
+                    value={program.track ?? ""}
+                    disabled={disabled}
+                    onChange={(event) =>
+                      onPrograms(
+                        replaced(
+                          index,
+                          event.target.value === ""
+                            ? { requirementsFile: program.requirementsFile }
+                            : { requirementsFile: program.requirementsFile, track: event.target.value },
+                        ),
+                      )
+                    }
+                    className="rounded-sm border border-rule bg-paper px-2 py-1"
+                  >
+                    <option value="">{t(language, "progressNoTrack")}</option>
+                    {trackHeld && (
+                      <option value={program.track}>
+                        {t(language, "progressTrackNotOffered", { track: program.track ?? "" })}
+                      </option>
+                    )}
+                    {tracks.map((track) => (
+                      <option key={track.id} value={track.id}>
+                        {localized(language, track.name) ?? track.id}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              <button
+                type="button"
+                data-program-remove={index}
+                disabled={disabled}
+                onClick={() => onPrograms(programs.filter((_, at) => at !== index))}
+                className="rounded-sm border border-rule bg-paper px-3 py-1 text-ink-soft disabled:opacity-50"
+              >
+                {t(language, "progressRemoveProgram")}
+              </button>
+              {mine.length === 0 ? null : (
+                <ul data-program-warnings={index} className="basis-full list-disc ps-5 text-ink-soft">
+                  {mine.map((warning, at) => (
+                    <li key={`${warning.kind}:${at}`}>{warningSaid(language, warning)}</li>
+                  ))}
+                </ul>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      {programs.length < MOST_PROGRAMS && readable.length > 0 && (
+        <form
+          className="flex flex-wrap items-end gap-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (adding === "") return;
+            onPrograms([...programs, { requirementsFile: adding }]);
+            setAdding("");
+          }}
+        >
+          <label className="flex flex-col">
+            {t(language, "progressAddProgram")}
+            <select
+              data-program-add
+              value={adding}
+              onChange={(event) => setAdding(event.target.value)}
+              className="rounded-sm border border-rule bg-paper px-2 py-1"
+            >
+              <option value="">—</option>
+              {readable.map((entry) => (
+                <option key={entry.name} value={entry.name}>
+                  {fileSaid(language, entry)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            type="submit"
+            data-program-add-submit
+            disabled={disabled || adding === ""}
+            className="rounded-sm border border-rule bg-paper px-3 py-1 text-ink-soft disabled:opacity-50"
+          >
+            {t(language, "progressAdd")}
           </button>
         </form>
       )}

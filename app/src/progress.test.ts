@@ -103,6 +103,19 @@ it("serves no Programs when none is chosen, and reads nothing it does not need",
   });
 });
 
+it("serves the student's Cohort beside their Programs, from the same read (#331)", async () => {
+  const workspace = await ready([{ requirementsFile: "cs-2027" }]);
+  expect(served(await readProgress(workspace, ALICE)).cohort).toBeUndefined();
+
+  workspace.seed(REF, {
+    schemaVersion: 1,
+    programs: [{ requirementsFile: "cs-2027" }],
+    cohort: { academicYear: 2026, semester: "spring" },
+  });
+
+  expect(served(await readProgress(workspace, ALICE)).cohort).toEqual({ academicYear: 2026, semester: "spring" });
+});
+
 it("evaluates a single major in both lenses, with the Courses counting toward each node", async () => {
   const workspace = await ready([{ requirementsFile: "cs-2027" }]);
 

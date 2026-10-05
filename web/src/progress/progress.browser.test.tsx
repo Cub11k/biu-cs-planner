@@ -26,7 +26,9 @@ let host: HTMLElement | undefined;
 let root: Root | undefined;
 
 let sent: Array<{ method: string; pathname: string; body: unknown }>;
-let programs: string[];
+let programs: Array<{ requirementsFile: string; track?: string }>;
+let cohort: { academicYear: number; semester: string } | null;
+let programWarnings: unknown[];
 let pins: Array<{ courseNumber: string; requirementId: string }>;
 let ticked: boolean;
 let version: number;
@@ -39,11 +41,18 @@ let stateWarnings: unknown[];
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
-/** What the fake's stand-in evaluation makes of the Pins and the tick it holds. */
-function progressBody(): unknown {
+/** The Requirements Files the fake's Workspace holds; a Program naming any other is missing. */
+const KNOWN_FILES = ["cs-2027", "math-2027"];
+
+/**
+ * What the fake's stand-in evaluation makes of the Pins and the tick it holds, for the Programs it
+ * is asked about: the stored ones, or a what-if's. Under the AI Track the electives are met and an
+ * AI core is added, still to do, so a switch has something to compare.
+ */
+function progressBody(of: typeof programs = programs): unknown {
   const pinnedToElectives = pins.some((pin) => pin.courseNumber === "89-110" && pin.requirementId === "electives");
   const evaluation = (status: string, courses: string[], extra: object = {}) => ({ status, courses, ...extra });
-  const tree = [
+  const tree = (track: string | undefined) => [
     {
       id: "intro",
       kind: "course",
@@ -56,9 +65,12 @@ function progressBody(): unknown {
       id: "electives",
       kind: "credits",
       name: { he: "בחירה", en: "Electives" },
-      completed: evaluation(pinnedToElectives ? "partial" : "missing", pinnedToElectives ? ["89-110"] : [], {
-        credits: { counted: pinnedToElectives ? 5 : 0, needed: 6 },
-      }),
+      completed:
+        track === "ai"
+          ? evaluation("satisfied", ["89-110"], { credits: { counted: 5, needed: 5 } })
+          : evaluation(pinnedToElectives ? "partial" : "missing", pinnedToElectives ? ["89-110"] : [], {
+              credits: { counted: pinnedToElectives ? 5 : 0, needed: 6 },
+            }),
       projected: evaluation("satisfied", pinnedToElectives ? ["89-110", "89-320"] : ["89-320"], {
         credits: { counted: pinnedToElectives ? 8 : 6, needed: 6 },
       }),
@@ -74,28 +86,45 @@ function progressBody(): unknown {
       projected: evaluation(ticked ? "satisfied" : "missing", []),
       children: [],
     },
+    ...(track === "ai"
+      ? [
+          {
+            id: "ai-core",
+            kind: "course",
+            name: { he: "ליבת בינה", en: "AI core" },
+            completed: evaluation("missing", []),
+            projected: evaluation("missing", []),
+            children: [],
+          },
+        ]
+      : []),
   ];
   return {
-    programs: programs.map((requirementsFile) => ({
-      requirementsFile,
-      status: "evaluated",
-      program: { id: "cs", name: { he: "מדעי המחשב", en: "Computer Science" } },
-      progress: {
-        requirements: tree,
-        status: { completed: "partial", projected: ticked ? "satisfied" : "partial" },
-        totalCredits: { completed: 5, projected: 11 },
-        warnings: [{ kind: "course-unknown", courseNumber: "10-001" }],
-      },
-      pins,
-      candidates: [
-        { courseNumber: "89-110", requirementIds: ["intro", "electives"] },
-        { courseNumber: "89-320", requirementIds: ["electives"] },
-        { courseNumber: "10-001", requirementIds: [] },
-      ],
-    })),
+    cohort,
+    programs: of.map(({ requirementsFile, track }) => {
+      const named = { requirementsFile, ...(track === undefined ? {} : { track }) };
+      if (!KNOWN_FILES.includes(requirementsFile)) return { ...named, status: "missing" };
+      return {
+        ...named,
+        status: "evaluated",
+        program: { id: "cs", name: { he: "מדעי המחשב", en: "Computer Science" } },
+        progress: {
+          requirements: tree(track),
+          status: { completed: "partial", projected: ticked ? "satisfied" : "partial" },
+          totalCredits: { completed: 5, projected: 11 },
+          warnings: [{ kind: "course-unknown", courseNumber: "10-001" }],
+        },
+        pins,
+        candidates: [
+          { courseNumber: "89-110", requirementIds: ["intro", "electives"] },
+          { courseNumber: "89-320", requirementIds: ["electives"] },
+          { courseNumber: "10-001", requirementIds: [] },
+        ],
+      };
+    }),
     stoppedEarly,
     solverWarnings: [],
-    programWarnings: [],
+    programWarnings,
     pinWarnings: [],
     version: `v${version}`,
     warnings: stateWarnings,
@@ -104,7 +133,9 @@ function progressBody(): unknown {
 
 beforeEach(() => {
   sent = [];
-  programs = ["cs-2027"];
+  programs = [{ requirementsFile: "cs-2027" }];
+  cohort = null;
+  programWarnings = [];
   pins = [];
   ticked = false;
   version = 1;
@@ -145,6 +176,14 @@ beforeEach(() => {
             tracks: [{ id: "ai", name: { he: "בינה מלאכותית", en: "AI" } }],
             warnings: [],
           },
+          {
+            name: "math-2027",
+            status: "read",
+            program: { id: "math", name: { he: "מתמטיקה", en: "Mathematics" } },
+            cohorts: [],
+            tracks: [],
+            warnings: [],
+          },
           { name: "notes", status: "not-requirements", warnings: [{ kind: "file-unreadable" }] },
         ],
       });
@@ -156,9 +195,15 @@ beforeEach(() => {
       return json({ reason, warnings: [] }, 409);
     }
     if (pathname === "/api/programs" && method === "PUT") {
-      programs = (body?.programs as Array<{ requirementsFile: string }>).map((p) => p.requirementsFile);
+      programs = body?.programs as typeof programs;
+      programWarnings = [];
       version += 1;
-      return json({ cohort: null, programs: body?.programs, programWarnings: [], version: `v${version}`, warnings: [] });
+      return json({ cohort, programs, programWarnings, version: `v${version}`, warnings: [] });
+    }
+    if (pathname === "/api/cohort" && method === "PUT") {
+      cohort = body?.cohort as typeof cohort;
+      version += 1;
+      return json({ cohort, programs, programWarnings, version: `v${version}`, warnings: [] });
     }
     if (pathname === "/api/progress/pins") {
       const pin = { courseNumber: body?.courseNumber as string, requirementId: body?.requirementId as string };
@@ -329,7 +374,7 @@ it("says when no Program is chosen, and lets the student choose one", async () =
     return found;
   });
   // a file that is not a Requirements File is not offered as a Program
-  expect([...file.options].map((option) => option.value)).toEqual(["", "cs-2027"]);
+  expect([...file.options].map((option) => option.value)).toEqual(["", "cs-2027", "math-2027"]);
   file.value = "cs-2027";
   file.dispatchEvent(new Event("change", { bubbles: true }));
   const track = await vi.waitFor(() => {
@@ -350,7 +395,7 @@ it("says when no Program is chosen, and lets the student choose one", async () =
 });
 
 it("shows both Programs of a double major", async () => {
-  programs = ["cs-2027", "math-2027"];
+  programs = [{ requirementsFile: "cs-2027" }, { requirementsFile: "math-2027" }];
   const mounted = await mount();
   await served(mounted);
 
@@ -516,4 +561,196 @@ it("offers a Requirements File dropped into the folder while the chooser is open
   await vi.waitFor(() => {
     if (mounted.querySelector('select[data-choose="file"]') === null) throw new Error("the new file was not offered");
   });
+});
+
+/* #331: the student's Programs and Cohort, changed from the screen. */
+
+function choose(select: HTMLSelectElement, value: string): void {
+  select.value = value;
+  select.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+const found = <T extends Element>(mounted: HTMLElement, selector: string): Promise<T> =>
+  vi.waitFor(() => {
+    const element = mounted.querySelector<T>(selector);
+    if (element === null) throw new Error(`nothing matches ${selector}`);
+    return element;
+  });
+
+/** Waits for the screen to show a read made after the save it just sent, the revision moved on. */
+async function readAfter(pathname: string): Promise<void> {
+  await vi.waitFor(() => {
+    const saved = sent.findLastIndex((request) => request.pathname === pathname);
+    const read = sent.findLastIndex((request) => request.pathname === "/api/progress");
+    if (saved < 0 || read < saved) throw new Error(`Progress was not read after ${pathname}`);
+  });
+}
+
+it("changes a Program's Track, sending the whole list to the Programs route", async () => {
+  const mounted = await mount();
+  await served(mounted);
+  const track = await found<HTMLSelectElement>(mounted, 'select[data-program-track="0"]');
+  expect([...track.options].map((option) => option.value)).toEqual(["", "ai"]);
+
+  choose(track, "ai");
+
+  await readAfter("/api/programs");
+  expect(lastSent("/api/programs")).toEqual({
+    method: "PUT",
+    pathname: "/api/programs",
+    body: { programs: [{ requirementsFile: "cs-2027", track: "ai" }], basedOn: "v1" },
+  });
+  await vi.waitFor(() => {
+    if (mounted.querySelector<HTMLSelectElement>('select[data-program-track="0"]')?.value !== "ai") {
+      throw new Error("the new Track was not drawn");
+    }
+  });
+});
+
+it("changes a Program's file, and the Track of the old file goes with it", async () => {
+  programs = [{ requirementsFile: "cs-2027", track: "ai" }];
+  const mounted = await mount();
+  await served(mounted);
+  const file = await found<HTMLSelectElement>(mounted, 'select[data-program-file="0"]');
+  expect(file.value).toBe("cs-2027");
+  // only Requirements Files this build could read are offered
+  expect([...file.options].map((option) => option.value)).toEqual(["cs-2027", "math-2027"]);
+
+  choose(file, "math-2027");
+
+  await readAfter("/api/programs");
+  expect(lastSent("/api/programs")?.body).toEqual({
+    programs: [{ requirementsFile: "math-2027" }],
+    basedOn: "v1",
+  });
+});
+
+it("adds a double major's second Program, and removes it", async () => {
+  const mounted = await mount();
+  await served(mounted);
+
+  choose(await found<HTMLSelectElement>(mounted, "select[data-program-add]"), "math-2027");
+  (await found<HTMLButtonElement>(mounted, "button[data-program-add-submit]")).click();
+
+  await readAfter("/api/programs");
+  expect(lastSent("/api/programs")?.body).toEqual({
+    programs: [{ requirementsFile: "cs-2027" }, { requirementsFile: "math-2027" }],
+    basedOn: "v1",
+  });
+  const removeSecond = await found<HTMLButtonElement>(mounted, 'button[data-program-remove="1"]');
+  // a double major is two Programs: there is no third to add
+  expect(mounted.querySelector("select[data-program-add]")).toBeNull();
+
+  await vi.waitFor(() => {
+    if (removeSecond.disabled) throw new Error("still sending");
+  });
+  removeSecond.click();
+
+  await vi.waitFor(() => {
+    if ((lastSent("/api/programs")?.body as { basedOn?: string }).basedOn !== "v2") throw new Error("not removed");
+  });
+  expect(lastSent("/api/programs")?.body).toEqual({ programs: [{ requirementsFile: "cs-2027" }], basedOn: "v2" });
+  await vi.waitFor(() => {
+    if (mounted.querySelector('[data-program-row="1"]') !== null) throw new Error("the second row stayed");
+  });
+});
+
+it("sets the Cohort, says it, and clears it", async () => {
+  const mounted = await mount();
+  await served(mounted);
+  expect((await found(mounted, "[data-cohort-said]")).textContent).toBe(t("en", "progressCohortNone"));
+  expect(mounted.querySelector("button[data-cohort-clear]")).toBeNull();
+
+  await userEvent.fill(await found<HTMLInputElement>(mounted, "input[data-cohort-year]"), "2026");
+  choose(await found<HTMLSelectElement>(mounted, "select[data-cohort-semester]"), "spring");
+  (await found<HTMLButtonElement>(mounted, "button[data-cohort-set]")).click();
+
+  await readAfter("/api/cohort");
+  expect(lastSent("/api/cohort")).toEqual({
+    method: "PUT",
+    pathname: "/api/cohort",
+    body: { cohort: { academicYear: 2026, semester: "spring" }, basedOn: "v1" },
+  });
+  await vi.waitFor(() => {
+    const said = mounted.querySelector("[data-cohort-said]")?.textContent;
+    if (said !== t("en", "progressCohortSaid", { year: 2026, semester: t("en", "semesterSpring") })) {
+      throw new Error(`the Cohort said ${said}`);
+    }
+  });
+
+  const clear = await found<HTMLButtonElement>(mounted, "button[data-cohort-clear]");
+  await vi.waitFor(() => {
+    if (clear.disabled) throw new Error("still sending");
+  });
+  clear.click();
+
+  await vi.waitFor(() => {
+    if (lastSent("/api/cohort")?.body === undefined || (lastSent("/api/cohort")!.body as { cohort: unknown }).cohort !== null) {
+      throw new Error("not cleared");
+    }
+  });
+  expect(lastSent("/api/cohort")?.body).toEqual({ cohort: null, basedOn: "v2" });
+});
+
+it("draws a missing file's Warning on its row, which offers another file and the remove", async () => {
+  programs = [{ requirementsFile: "gone-2026" }];
+  programWarnings = [{ kind: "program-file-missing", index: 0, requirementsFile: "gone-2026" }];
+  const mounted = await mount();
+
+  const row = await found<HTMLElement>(mounted, '[data-program-row="0"]');
+  await vi.waitFor(() => {
+    if (!(row.textContent ?? "").includes(t("en", "progressWarnFileMissing", { file: "gone-2026" }))) {
+      throw new Error("the Warning is not on the row");
+    }
+  });
+  // the file held is still what the select says, and the row's own controls are what fix it
+  const file = row.querySelector<HTMLSelectElement>('select[data-program-file="0"]')!;
+  expect(file.value).toBe("gone-2026");
+  expect(file.selectedOptions[0]?.textContent).toBe(t("en", "progressFileNotOffered", { file: "gone-2026" }));
+  expect(row.querySelector('button[data-program-remove="0"]')).not.toBeNull();
+  // and the Warning is said once, there, not again in the list above
+  expect(mounted.querySelector("[data-progress-warnings]")?.textContent ?? "").not.toContain("gone-2026");
+
+  choose(file, "cs-2027");
+
+  await readAfter("/api/programs");
+  expect(lastSent("/api/programs")?.body).toEqual({ programs: [{ requirementsFile: "cs-2027" }], basedOn: "v1" });
+});
+
+it("draws an unknown Track's Warning on its row, which offers the Tracks the file has", async () => {
+  programs = [{ requirementsFile: "cs-2027", track: "robotics" }];
+  programWarnings = [{ kind: "program-track-unknown", index: 0, requirementsFile: "cs-2027", track: "robotics" }];
+  const mounted = await mount();
+  await served(mounted);
+
+  const row = await found<HTMLElement>(mounted, '[data-program-row="0"]');
+  expect(row.querySelector('[data-program-warnings="0"]')?.textContent).toContain(
+    t("en", "progressWarnTrackUnknown", { file: "cs-2027", track: "robotics" }),
+  );
+  const track = row.querySelector<HTMLSelectElement>('select[data-program-track="0"]')!;
+  expect(track.value).toBe("robotics");
+  expect([...track.options].map((option) => option.value)).toEqual(["", "robotics", "ai"]);
+
+  choose(track, "ai");
+
+  await readAfter("/api/programs");
+  expect(lastSent("/api/programs")?.body).toEqual({
+    programs: [{ requirementsFile: "cs-2027", track: "ai" }],
+    basedOn: "v1",
+  });
+});
+
+it("says the Programs and the Cohort in Hebrew, right to left", async () => {
+  cohort = { academicYear: 2026, semester: "fall" };
+  const mounted = await mount("he");
+  await served(mounted);
+
+  expect(mounted.querySelector("[data-programs]")?.textContent).toContain(t("he", "progressProgramsHeading"));
+  expect(mounted.querySelector("[data-cohort-said]")?.textContent).toBe(
+    t("he", "progressCohortSaid", { year: 2026, semester: t("he", "semesterFall") }),
+  );
+  const file = mounted.querySelector<HTMLElement>('select[data-program-file="0"]')!;
+  const remove = mounted.querySelector<HTMLElement>('button[data-program-remove="0"]')!;
+  // the row starts at the right: the file's select, then the remove to its left
+  expect(file.getBoundingClientRect().left).toBeGreaterThan(remove.getBoundingClientRect().left);
 });

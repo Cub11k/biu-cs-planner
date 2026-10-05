@@ -382,13 +382,19 @@ const savedPinSchema = z.object({
 
 /**
  * Every Progress answer, read or write, in one shape: the evaluated Programs and the revision they
- * were read from, or the named 409 a refusal has always been.
+ * were read from, or the named 409 a refusal has always been. `cohort` is `null` when there is
+ * none, as `programsAnswer` gives it, so the page reads one field that is always there.
  */
 function progressAnswer(c: Context, result: ProgressResult) {
   if (result.kind === "refused") {
     return c.json({ reason: result.reason, warnings: result.warnings }, 409);
   }
-  return c.json({ ...result.view, version: result.version, warnings: result.warnings });
+  return c.json({
+    ...result.view,
+    cohort: result.view.cohort ?? null,
+    version: result.version,
+    warnings: result.warnings,
+  });
 }
 
 /**
