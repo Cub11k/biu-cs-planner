@@ -207,8 +207,8 @@ const errnoOf = (error: unknown): string | undefined => {
 /**
  * A file that is there and whose contents cannot be read: `EACCES` behind a mode bit,
  * `EIO` on failing hardware, a lock a sync client holds mid-download — or something in a file's
- * place that is not a regular file at all, a directory or a FIFO (#250), refused before a read. **The third answer #109 was filed for**, and neither of the other
- * two:
+ * place that is not a regular file at all, a directory or a FIFO (#250), refused before a read.
+ * **The third answer #109 was filed for**, and neither of the other two:
  *
  *   - **Not absence.** Reported as absent, an unreadable State File has no revision, so a save
  *     based on there being no file *matches*, the external-edit guard passes, and the atomic
