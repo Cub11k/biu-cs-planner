@@ -1,4 +1,5 @@
 import type { CallCycle, Cycle } from "./cycles.ts";
+import { FOLLOWER_HOME, byFile, explainFollower, type Follower } from "./followers.ts";
 import { explain, summarise, type ForbiddenEdge } from "./layering.ts";
 import { MARKER, commitMarker } from "./outdated.ts";
 import type { Finding, PassOutcome } from "./review.ts";
@@ -28,6 +29,8 @@ export type Graphs = {
   callCycles: CallCycle[];
   /** Imports pointing the way the layering rule does not allow. */
   forbidden: ForbiddenEdge[];
+  /** Functions outside `FOLLOWER_HOME` that follow a re-export chain (`./followers.ts`). */
+  followers: Follower[];
   /** The directories the graphs were derived from, so "acyclic" says what it covered. */
   scope: readonly string[];
 };
@@ -123,7 +126,7 @@ function pass(name: string, subtitle: string, outcome: PassOutcome, out: string[
  * not judged this commit. A reader must never take "no cycles" for "reviewed and clean".
  */
 export function renderGraphs({ headSha, graphs, judgement }: GraphsComment): string {
-  const { moduleCycles, callCycles, forbidden, scope } = graphs;
+  const { moduleCycles, callCycles, forbidden, followers, scope } = graphs;
   const out: string[] = [GRAPHS_MARKER, ""];
 
   out.push(`## Graph check of \`${short(headSha)}\``);
@@ -173,6 +176,25 @@ export function renderGraphs({ headSha, graphs, judgement }: GraphsComment): str
     );
     out.push("");
     for (const edge of forbidden) out.push(`- ${explain(edge)}`);
+  }
+  out.push("");
+
+  // Read from the whole tree rather than from `scope`, which is why its sentence does not
+  // borrow the scope's: `collect` cannot see `tools/`, and the walk lives there.
+  if (!followers.length) {
+    out.push(
+      `**Re-export walk:** one, in \`${FOLLOWER_HOME}\`, and none anywhere else in the tree.`,
+    );
+  } else {
+    const files = byFile(followers);
+    out.push(
+      `**Re-export walk: ${files.length} file${files.length === 1 ? "" : "s"} outside ` +
+        `\`${FOLLOWER_HOME}\` follow${files.length === 1 ? "s" : ""} a re-export chain.** ` +
+        "Read from the whole tree, `tools/` included, not only the directories above. " +
+        "`tools/pr-review/followers.test.ts` fails `npm test` on the same finding.",
+    );
+    out.push("");
+    for (const file of files) out.push(`- ${explainFollower(file)}`);
   }
   out.push("");
 

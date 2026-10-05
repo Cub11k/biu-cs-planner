@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   FOLLOWER_HOME,
+  byFile,
   explainFollower,
   readSources,
   reExportFollowers,
@@ -169,15 +170,45 @@ describe("a second module that follows a re-export chain", () => {
   });
 
   it("says, in the finding, why there is only one of them", () => {
-    const [stray] = strayFollowers(sources({ "server/src/barrels.ts": LOOPING }));
+    const [file] = byFile(strayFollowers(sources({ "server/src/barrels.ts": LOOPING })));
 
-    expect(stray).toBeDefined();
-    expect(explainFollower(stray!)).toContain("server/src/barrels.ts");
-    expect(explainFollower(stray!)).toContain("trace");
-    expect(explainFollower(stray!)).toContain(FOLLOWER_HOME);
+    expect(file).toBeDefined();
+    const said = explainFollower(file!);
+    expect(said).toContain("`server/src/barrels.ts` follows a re-export chain in `trace`.");
+    expect(said).toContain(FOLLOWER_HOME);
     // The constraint itself, which is the part a reader needs and cannot derive: #124 moved
     // the walk out of `calls.ts` because that file already imports `surface.ts`.
-    expect(explainFollower(stray!)).toContain("cycle");
+    expect(said).toContain("cycle");
+    // One name is one walk, and the sentence does not hedge about it.
+    expect(said).not.toContain("perhaps");
+  });
+
+  it("says one walk named twice as one finding, not as two walks", () => {
+    // The over-reporting the rule chose (`reExportFollowers`): a walk nested inside a named
+    // function is reported under that function as well, so one walk arrives as two names.
+    const nested = lines(
+      "export function outer(origins) {",
+      LOOPING.replace("export const", "const"),
+      "  return trace;",
+      "}",
+    );
+    const files = byFile(strayFollowers(sources({ "app/src/nested.ts": nested })));
+
+    expect(files).toEqual([{ path: "app/src/nested.ts", names: ["outer", "trace"] }]);
+    const said = explainFollower(files[0]!);
+    expect(said).toContain("in `outer`, `trace` — perhaps one walk named more than once");
+    expect(said.match(/follows a re-export chain/g)).toHaveLength(1);
+  });
+
+  it("keeps files apart, in the order they were found", () => {
+    const files = byFile(
+      strayFollowers(sources({ "app/src/b.ts": LOOPING, "app/src/a.ts": RECURSIVE })),
+    );
+
+    expect(files).toEqual([
+      { path: "app/src/b.ts", names: ["trace"] },
+      { path: "app/src/a.ts", names: ["whereDeclared"] },
+    ]);
   });
 });
 

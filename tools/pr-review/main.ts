@@ -1,7 +1,8 @@
 import { resolve } from "node:path";
-import { SOURCE_DIRS, collect } from "../pr-report/collect.ts";
-import { callCycles, moduleCycles } from "./cycles.ts";
-import { explain, forbiddenEdges } from "./layering.ts";
+import { collect } from "../pr-report/collect.ts";
+import { readSources } from "./followers.ts";
+import { graphsOf } from "./graphs.ts";
+import { explain } from "./layering.ts";
 import { fetchDiff, fetchPullRequest, fetchStandardsDocs, upsertComment } from "./github.ts";
 import {
   GRAPHS_MARKER,
@@ -50,15 +51,9 @@ if (pr.isFork) {
 }
 
 // The graphs are derived from the checkout: no key, no network, no cost. A cycle in them,
-// or an import pointing the wrong way through the layers, is a finding whether or not
-// anybody ever asks for a judgement.
-const derived = collect(ROOT);
-const graphs = {
-  moduleCycles: moduleCycles(derived.modules),
-  callCycles: callCycles(derived.edges),
-  forbidden: forbiddenEdges(derived.modules, derived.tests),
-  scope: SOURCE_DIRS,
-};
+// an import pointing the wrong way through the layers, or a second re-export walk, is a
+// finding whether or not anybody ever asks for a judgement.
+const graphs = graphsOf(collect(ROOT), readSources(ROOT));
 
 let standards: PassOutcome | undefined;
 let spec: PassOutcome | undefined;
