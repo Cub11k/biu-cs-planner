@@ -15,7 +15,10 @@ import { WorkspaceRefusedError, type Workspace } from "@biu-cs-planner/app";
  *     use case in `app` then catches and turns into a reason — its reason code, the errno, and its
  *     `cause` chain, which is where the adapter keeps the filesystem's own error. Not the external-
  *     edit guard's `StateFileChangedError`: it is a refusal too, but it has no errno and no cause,
- *     and the page already says everything about it there is to say. **The absolute Workspace
+ *     and the page already says everything about it there is to say. Nor the two refusals `app`
+ *     makes without the port throwing: a revision a read hands back in no format the port has, and
+ *     one a save hands back (`save-revision-unreadable`), both in `app/src/edit.ts`. Nothing was
+ *     thrown for this wrapper to see, and neither has a cause to print. **The absolute Workspace
  *     path may appear**, because the log is opt-in and goes to the student's own terminal.
  *   - **What may never appear, in any mode: the launch token.** No refusal is about the token file,
  *     which lives outside the Workspace, so none should carry it — and every line is scrubbed of it
