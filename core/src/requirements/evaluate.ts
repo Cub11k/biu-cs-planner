@@ -46,7 +46,7 @@ export interface LensEvaluation {
   status: RequirementStatus;
   /** Courses counting toward this Requirement, or anywhere below it, sorted. */
   courses: string[];
-  /** `credits`: credits counted toward it, against the minimum it needs. */
+  /** `credits` and `total`: credits counted toward it, against the minimum it needs. */
   credits?: { counted: number; needed: number };
   /** `allOf` and `nOf`: children met, against how many are needed. Limits are not counted. */
   met?: { count: number; needed: number };
@@ -161,6 +161,7 @@ function lensEvaluation(
   const evaluation: LensEvaluation = { status: outcome.status, courses: outcome.courses };
   switch (requirement?.kind) {
     case "credits":
+    case "total":
       evaluation.credits = { counted: outcome.counted, needed: requirement.min };
       break;
     case "allOf":
@@ -243,7 +244,7 @@ export function evaluateProgress(input: ProgressInput): Progress {
   for (const lens of ["completed", "projected"] as const) {
     const counted = countedIn(standing, lens);
     const placements = placementsOf(program, assignment[lens], new Set(counted), warn);
-    outcomes[lens] = score(program, placements, ticked);
+    outcomes[lens] = score(program, placements, ticked, counted);
     totalCredits[lens] = counted.reduce((sum, course) => sum + (program.credits(course) ?? 0), 0);
   }
 

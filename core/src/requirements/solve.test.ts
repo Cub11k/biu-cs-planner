@@ -134,6 +134,80 @@ it("counts a shareable Course at one Requirement alone where a cap makes sharing
   });
 });
 
+describe("a total (#328, ruled B)", () => {
+  // The same grand total written two ways: as a credits Requirement, which competes for Courses,
+  // and as a total, which counts everything.
+  const grandTotal = (kind: "credits" | "total") =>
+    program({
+      courses: [
+        { number: "89-110", credits: 5 },
+        { number: "89-111", credits: 4 },
+      ],
+      pools: [{ id: "all", kind: "prefix", prefix: "89-" }],
+      requirements: [
+        { id: "intro", kind: "course", course: "89-110" },
+        { id: "electives", kind: "credits", min: 4, pool: "all" },
+        kind === "total"
+          ? { id: "overall", kind: "total", min: 9 }
+          : { id: "overall", kind: "credits", min: 9, pool: "all" },
+      ],
+    });
+  const attempts = [attempt("89-110"), attempt("89-111")];
+
+  it("is met beside the siblings that count its Courses, where a credits total cannot be", () => {
+    const asCredits = solveAndEvaluate(grandTotal("credits"), attempts).progress;
+    const { solution, progress } = solveAndEvaluate(grandTotal("total"), attempts);
+
+    expect(statusOf(asCredits, "overall")).not.toBe("satisfied");
+    expect(asCredits.status.completed).not.toBe("satisfied");
+    expect(statusOf(progress, "intro")).toBe("satisfied");
+    expect(statusOf(progress, "electives")).toBe("satisfied");
+    expect(statusOf(progress, "overall")).toBe("satisfied");
+    expect(progress.status.completed).toBe("satisfied");
+    // The total takes no placement: the Assignment names only the Requirements that take Courses.
+    expect(solution.assignments[0]!.completed).toEqual([
+      { courseNumber: "89-110", requirementIds: ["intro"] },
+      { courseNumber: "89-111", requirementIds: ["electives"] },
+    ]);
+  });
+
+  it("drops a Pin to a total with a Warning, since a total takes no Course", () => {
+    const { solution } = solveAndEvaluate(grandTotal("total"), attempts, [pin("89-111", "overall")]);
+
+    expect(solution.warnings).toEqual([
+      { kind: "pin-not-accepted", courseNumber: "89-111", requirementId: "overall" },
+    ]);
+  });
+
+  it("lets a total decide its parent nOf in the search", () => {
+    const file = program({
+      courses: [
+        { number: "89-110", credits: 5 },
+        { number: "89-111", credits: 4 },
+      ],
+      pools: [{ id: "all", kind: "prefix", prefix: "89-" }],
+      requirements: [
+        { id: "electives", kind: "credits", min: 9, pool: "all" },
+        {
+          id: "either",
+          kind: "nOf",
+          n: 1,
+          of: [
+            { id: "intro", kind: "course", course: "89-110" },
+            { id: "enough", kind: "total", min: 9 },
+          ],
+        },
+      ],
+    });
+    const { progress } = solveAndEvaluate(file, attempts);
+
+    // Both Courses are spent on electives; the nOf is met through the total, not through intro.
+    expect(statusOf(progress, "electives")).toBe("satisfied");
+    expect(statusOf(progress, "intro")).toBe("missing");
+    expect(statusOf(progress, "either")).toBe("satisfied");
+  });
+});
+
 describe("Pins", () => {
   it("keeps a pinned Course where it is pinned, even where the solver would not put it", () => {
     const { solution, progress } = solveAndEvaluate(electives, bothCourses, [

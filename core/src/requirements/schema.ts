@@ -172,6 +172,14 @@ const nOfHead = z.object({
  * - `exclusive`: of `courses`, only one counts anywhere below its parent. A limit like `cap`.
  * - `manual`: what the vocabulary cannot express, carried as the department's text, satisfied
  *   only by the student's tick.
+ * - `total`: at least `min` credits from every Course the student counts, or from the Courses of
+ *   `pool` when one is named, such as "120 credits overall". Totals count everything
+ *   (`docs/design.md`, "Assignment"): a `total` takes no Course of its own, so it never competes
+ *   with its siblings for one, needs no double-counting permission, and is neither reduced by a
+ *   `cap` nor by an `exclusive`. A Course counts toward it once, whatever else it counts toward,
+ *   and it cannot be Pinned to. Ruled on #328, as option B: a grand total written as a `credits`
+ *   Requirement instead competes for Courses like any other `credits` leaf, and reads as unmet
+ *   wherever its Courses are already counted elsewhere.
  */
 const leafRequirementSchemas = [
   z.object({ ...requirementHead, kind: z.literal("course"), course: courseNumberSchema }),
@@ -188,6 +196,12 @@ const leafRequirementSchemas = [
     courses: z.array(courseNumberSchema).min(2),
   }),
   z.object({ ...requirementHead, kind: z.literal("manual"), text: textSchema }),
+  z.object({
+    ...requirementHead,
+    kind: z.literal("total"),
+    min: z.number().min(0),
+    pool: idSchema.optional(),
+  }),
 ] as const;
 
 /** One Requirement node, with any children left unread: what `file.ts` parses first. */

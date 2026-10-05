@@ -314,7 +314,10 @@ export interface NodeOutcome {
   status: RequirementStatus;
   /** Courses counting anywhere in the node's subtree, sorted. */
   courses: string[];
-  /** `credits`: the credits counted. `cap`: the credits of its Pool counted below its parent. */
+  /**
+   * `credits` and `total`: the credits counted. `cap`: the credits of its Pool counted below its
+   * parent.
+   */
   counted: number;
   /** `cap` only: the credits of its Pool its limit kept from counting. */
   cut: number;
@@ -340,7 +343,10 @@ function isLimit(requirement: Requirement | undefined): boolean {
  * 2. Each `credits` leaf, in preorder, counts its courses' credits in course-number order. A
  *    course in the Pool of a `cap` whose parent holds the leaf counts only as much as every such
  *    cap has left, so a Course can count in part.
- * 3. Statuses are settled from the leaves up.
+ * 3. Each `total` counts the credits of every course in `counted`, or of those in its Pool, each
+ *    once and in full: it takes no placement, so neither the Assignment nor a cap nor an
+ *    exclusive changes it (#328).
+ * 4. Statuses are settled from the leaves up.
  *
  * `relaxed` skips step 1, and in step 2 lets each leaf count capped credits up to the sum of the
  * maxima over it, as if no other leaf had used any. More placements then never mean fewer
@@ -351,6 +357,7 @@ export function score(
   program: CompiledProgram,
   placements: Placements,
   ticked: ReadonlySet<string>,
+  counted: readonly string[],
   relaxed = false,
 ): NodeOutcome[] {
   const { nodes } = program;
@@ -438,6 +445,16 @@ export function score(
     }
   }
 
+  for (const node of nodes) {
+    const requirement = node.requirement;
+    if (requirement?.kind !== "total") continue;
+    const outcome = outcomes[node.index]!;
+    outcome.courses = counted.filter(
+      (course) => requirement.pool === undefined || program.poolHas(requirement.pool, course),
+    );
+    outcome.counted = outcome.courses.reduce((sum, course) => sum + (program.credits(course) ?? 0), 0);
+  }
+
   for (let index = nodes.length - 1; index >= 0; index--) {
     const node = nodes[index]!;
     const requirement = node.requirement;
@@ -454,7 +471,7 @@ export function score(
       for (const child of node.children) for (const c of outcomes[child]!.courses) courses.add(c);
     } else if (requirement.kind === "course") {
       outcome.status = courses.size > 0 ? "satisfied" : "missing";
-    } else if (requirement.kind === "credits") {
+    } else if (requirement.kind === "credits" || requirement.kind === "total") {
       outcome.status =
         outcome.counted >= requirement.min
           ? "satisfied"

@@ -357,8 +357,9 @@ function checkReferences(file: RequirementsFile, reading: Reading): void {
   for (const tree of [file.requirements, ...file.tracks.map((track) => track.requirements)]) {
     for (const node of walk(tree)) {
       requirementIds.add(node.id);
-      if ((node.kind === "credits" || node.kind === "cap") && !pools.has(node.pool)) {
-        warnings.push({ kind: "unknown-pool", at: where(node), pool: node.pool });
+      const pool = node.kind === "credits" || node.kind === "cap" || node.kind === "total" ? node.pool : undefined;
+      if (pool !== undefined && !pools.has(pool)) {
+        warnings.push({ kind: "unknown-pool", at: where(node), pool });
       }
     }
   }

@@ -541,6 +541,98 @@ describe("exclusive", () => {
   });
 });
 
+describe("total (#328, ruled B)", () => {
+  const file = program({
+    courses: COURSES,
+    pools: [
+      { id: "all", kind: "prefix", prefix: "89-" },
+      { id: "seminars", kind: "prefix", prefix: "89-5" },
+    ],
+    requirements: [
+      { id: "intro", kind: "course", course: "89-110" },
+      {
+        id: "block",
+        kind: "allOf",
+        of: [
+          { id: "electives", kind: "credits", min: 4, pool: "all" },
+          { id: "seminar-cap", kind: "cap", max: 2, pool: "seminars" },
+          { id: "seminar-total", kind: "total", min: 4, pool: "seminars" },
+        ],
+      },
+      { id: "overall", kind: "total", min: 13 },
+    ],
+  });
+
+  it("counts every counted Course, including those its siblings already count, with no permission", () => {
+    const attempts = [attempt("89-110", "passed"), attempt("89-111", "passed"), attempt("89-501", "passed"), attempt("89-502", "passed")];
+
+    const progress = evaluate(file, attempts);
+
+    expect(node(progress, "intro").completed.status).toBe("satisfied");
+    expect(node(progress, "electives").completed.status).toBe("satisfied");
+    expect(node(progress, "overall").completed).toEqual({
+      status: "satisfied",
+      courses: ["89-110", "89-111", "89-501", "89-502"],
+      credits: { counted: 13, needed: 13 },
+    });
+    expect(progress.status.completed).toBe("satisfied");
+  });
+
+  it("is neither reduced by a cap over it nor limited to what the Assignment places", () => {
+    const attempts = [attempt("89-501", "passed"), attempt("89-502", "passed"), attempt("89-503", "passed")];
+
+    const progress = evaluate(file, attempts);
+
+    expect(node(progress, "seminar-cap").completed.capped).toEqual({ counted: 2, max: 2, cut: 4 });
+    expect(node(progress, "seminar-total").completed.credits).toEqual({ counted: 6, needed: 4 });
+    expect(node(progress, "seminar-total").completed.status).toBe("satisfied");
+  });
+
+  it("holds to its Pool when it names one", () => {
+    const progress = evaluate(file, [attempt("89-110", "passed"), attempt("89-501", "passed")]);
+
+    expect(node(progress, "seminar-total").completed).toEqual({
+      status: "partial",
+      courses: ["89-501"],
+      credits: { counted: 2, needed: 4 },
+    });
+  });
+
+  it("is missing with nothing counted, and adds planned Courses in the projected lens only", () => {
+    const progress = evaluate(file, [attempt("89-501", "planned"), attempt("89-502", "failed")]);
+
+    expect(node(progress, "seminar-total").completed.status).toBe("missing");
+    expect(node(progress, "seminar-total").projected.credits).toEqual({ counted: 2, needed: 4 });
+  });
+
+  it("counts a Course once, under its Equivalence, however many Attempts it has", () => {
+    const renumbered = program({
+      courses: COURSES,
+      equivalences: [{ from: "89-109", to: "89-110" }],
+      requirements: [{ id: "overall", kind: "total", min: 5 }],
+    });
+    const attempts = [attempt("89-109", "passed", { academicYear: 2026 }), attempt("89-110", "passed")];
+
+    expect(node(evaluate(renumbered, attempts), "overall").completed.credits).toEqual({ counted: 5, needed: 5 });
+  });
+
+  it("takes no Course from the Assignment: a placement on it is reported and changes nothing", () => {
+    const attempts = [attempt("89-111", "passed")];
+    const progress = evaluateProgress({
+      file,
+      attempts,
+      assignment: { completed: [{ courseNumber: "89-111", requirementIds: ["overall"] }], projected: [] },
+    });
+
+    expect(progress.warnings).toContainEqual({
+      kind: "assignment-not-accepted",
+      courseNumber: "89-111",
+      requirementId: "overall",
+    });
+    expect(node(progress, "overall").completed.credits).toEqual({ counted: 4, needed: 13 });
+  });
+});
+
 describe("manual", () => {
   const file = program({
     requirements: [{ id: "english", kind: "manual", text: { he: "אנגלית", en: "English" } }],
