@@ -47,6 +47,20 @@ const english = {
   /** The two labels `app/src/picks.ts` attaches to an edit, as the name of the thing done. */
   editPickGroup: "picking a group",
   editRemovePick: "removing a pick",
+  /** The labels `app/src/variants.ts` attaches to the Variant edits (#281). */
+  editCreateVariant: "creating a variant",
+  editDuplicateVariant: "duplicating a variant",
+  editRenameVariant: "renaming a variant",
+  editDeleteVariant: "deleting a variant",
+  editSetPrimaryVariant: "making a variant primary",
+  /** The labels `app/src/tray.ts` attaches to the Tray edits (#283). */
+  editAddToTray: "adding a course to the tray",
+  editRemoveFromTray: "removing a course from the tray",
+  /** The labels `app/src/blockedTimes.ts` attaches to the Blocked Time edits (#282). */
+  editAddBlockedTime: "adding a blocked time",
+  editReplaceBlockedTime: "changing a blocked time",
+  editRemoveBlockedTime: "removing a blocked time",
+  editCopyBlockedTimes: "copying blocked times",
   /**
    * A label this build has no name for. The API types `label` as a `string`, so a server
    * newer than this page can send one — and "an edit" is true of every label there will
@@ -354,6 +368,10 @@ const english = {
   legendPencil: "option",
   legendInk: "picked",
   legendClash: "clash",
+  /** Hatching: a Blocked Time, or an option that would Clash if picked (#282). */
+  legendHatched: "time taken",
+  /** A Pick over a Blocked Time, named by the Blocked Time's own label. */
+  clashWithBlocked: "{group} clashes with “{label}”.",
 
   pickedLabel: "Picked:",
   picksNone: "Nothing picked yet.",
@@ -391,6 +409,65 @@ const english = {
    * already says which. Naming one here made it wrong in the other two.
    */
   picksHeldLost: "Your click was not saved.",
+
+  /**
+   * The Variant tabs above the week (#281). A Variant's own name is the student's text and is
+   * never translated; these are the words around it.
+   */
+  variantTabs: "Variants",
+  variantPrimaryMark: "primary",
+  variantNew: "New variant",
+  variantDuplicate: "Duplicate",
+  variantRename: "Rename",
+  variantMakePrimary: "Make primary",
+  variantDelete: "Delete",
+  variantNameNew: "Name of the new variant",
+  variantNameRename: "New name",
+  /** What an empty name will become: the server picks the first free letter. */
+  variantNamePlaceholder: "Leave empty for the next letter",
+  variantSave: "Save",
+  variantCancel: "Cancel",
+  /** Warnings and never refusals: the edit went through, and the tabs show it. */
+  variantNameNotUnique: "Two variants are named “{name}”. Rename one so each tab says which it is.",
+  variantPrimaryNotUnique:
+    "This timetable does not have exactly one primary variant. Mark the one you register with.",
+
+  /**
+   * The Tray (#283): the Courses waiting to be scheduled in the Variant shown. "To schedule" is
+   * the prototype's word for it, and says what the column is for rather than naming a container.
+   */
+  trayHeading: "To schedule",
+  trayEmpty: "Nothing to schedule yet. Add a course from the catalog below.",
+  /** An empty chip: the Lesson Type is still missing a Group. */
+  trayChipMissing: "—",
+  trayIncomplete: "incomplete",
+  /** A Course this Semester's catalog does not have, so what it needs is not known. */
+  trayChipsUnknown: "Not in this semester's catalog, so what it needs is not known.",
+  trayRemove: "Remove",
+  trayRemoveCourse: "Remove {course} and its picks from this variant",
+  trayAdd: "Add",
+  trayAddCourse: "Add {course} to the courses to schedule",
+
+  /**
+   * Blocked Times (#282): weekly time the student keeps free. A range typed past midnight is
+   * stored as two rows, which the hint says so the list showing two is no surprise.
+   */
+  blockedHeading: "Blocked times",
+  blockedNone: "No blocked times. Add work, a commute, anything to keep free.",
+  blockedUnlabelled: "(no label)",
+  blockedDoesNotAdvance: "keeps no time free",
+  blockedEdit: "Edit",
+  blockedRemove: "Remove",
+  blockedAdd: "Add blocked time",
+  blockedCopy: "Copy all to",
+  blockedCopyTarget: "Semester to copy the blocked times to",
+  blockedDay: "Day",
+  blockedStart: "From",
+  blockedEnd: "Until",
+  blockedLabel: "Label",
+  blockedWrapHint: "Until earlier than from runs past midnight, and is kept as two blocked times.",
+  blockedSave: "Save",
+  blockedCancel: "Cancel",
 
   noFixedTime: "No fixed time",
   groupsCount: "{count} groups",
@@ -445,6 +522,17 @@ const hebrew: Record<StringKey, string> = {
   redoneEdit: "הפעולה בוצעה מחדש: {edit}.",
   editPickGroup: "בחירת קבוצה",
   editRemovePick: "הסרת בחירה",
+  editCreateVariant: "יצירת חלופה",
+  editDuplicateVariant: "שכפול חלופה",
+  editRenameVariant: "שינוי שם של חלופה",
+  editDeleteVariant: "מחיקת חלופה",
+  editSetPrimaryVariant: "קביעת חלופה ראשית",
+  editAddToTray: "הוספת קורס לרשימת השיבוץ",
+  editRemoveFromTray: "הסרת קורס מרשימת השיבוץ",
+  editAddBlockedTime: "הוספת זמן חסום",
+  editReplaceBlockedTime: "שינוי זמן חסום",
+  editRemoveBlockedTime: "הסרת זמן חסום",
+  editCopyBlockedTimes: "העתקת זמנים חסומים",
   editUnknown: "עריכה",
 
   historyNothingToUndo: "אין עוד מה לבטל.",
@@ -542,6 +630,8 @@ const hebrew: Record<StringKey, string> = {
   legendPencil: "אפשרות",
   legendInk: "נבחרה",
   legendClash: "התנגשות",
+  legendHatched: "זמן תפוס",
+  clashWithBlocked: "{group} מתנגשת עם „{label}”.",
 
   pickedLabel: "נבחרו:",
   picksNone: "עדיין לא נבחרה אף קבוצה.",
@@ -558,6 +648,48 @@ const hebrew: Record<StringKey, string> = {
     "היישום לא הצליח ליצור גיבוי של העבודה השמורה שלכם לפני שינויה, ולכן הלחיצה לא נשמרה.",
   picksHeld: "הבחירות השמורות עדיין נטענות. הלחיצה שלכם ממתינה להן.",
   picksHeldLost: "הלחיצה שלכם לא נשמרה.",
+
+  variantTabs: "חלופות",
+  variantPrimaryMark: "ראשית",
+  variantNew: "חלופה חדשה",
+  variantDuplicate: "שכפול",
+  variantRename: "שינוי שם",
+  variantMakePrimary: "קביעה כראשית",
+  variantDelete: "מחיקה",
+  variantNameNew: "שם החלופה החדשה",
+  variantNameRename: "שם חדש",
+  variantNamePlaceholder: "השאירו ריק לאות הבאה",
+  variantSave: "שמירה",
+  variantCancel: "ביטול",
+  variantNameNotUnique: "שתי חלופות נקראות „{name}”. שנו את שמה של אחת מהן כדי שכל לשונית תאמר מהי.",
+  variantPrimaryNotUnique: "למערכת השעות הזו אין בדיוק חלופה ראשית אחת. סמנו את זו שאיתה תירשמו.",
+
+  trayHeading: "לשיבוץ",
+  trayEmpty: "עדיין אין מה לשבץ. הוסיפו קורס מהקטלוג שלמטה.",
+  trayChipMissing: "—",
+  trayIncomplete: "חסר",
+  trayChipsUnknown: "הקורס אינו בקטלוג של הסמסטר הזה, ולכן לא ידוע מה הוא דורש.",
+  trayRemove: "הסרה",
+  trayRemoveCourse: "הסרת {course} והבחירות שלו מהחלופה הזו",
+  trayAdd: "הוספה",
+  trayAddCourse: "הוספת {course} לקורסים לשיבוץ",
+
+  blockedHeading: "זמנים חסומים",
+  blockedNone: "אין זמנים חסומים. הוסיפו עבודה, נסיעה, כל מה שצריך להשאיר פנוי.",
+  blockedUnlabelled: "(ללא תווית)",
+  blockedDoesNotAdvance: "אינו שומר זמן פנוי",
+  blockedEdit: "עריכה",
+  blockedRemove: "הסרה",
+  blockedAdd: "הוספת זמן חסום",
+  blockedCopy: "העתקת הכול אל",
+  blockedCopyTarget: "הסמסטר שאליו יועתקו הזמנים החסומים",
+  blockedDay: "יום",
+  blockedStart: "משעה",
+  blockedEnd: "עד שעה",
+  blockedLabel: "תווית",
+  blockedWrapHint: "שעת סיום מוקדמת משעת ההתחלה עוברת את חצות, ונשמרת כשני זמנים חסומים.",
+  blockedSave: "שמירה",
+  blockedCancel: "ביטול",
 
   noFixedTime: "ללא שעה קבועה",
   groupsCount: "{count} קבוצות",

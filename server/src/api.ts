@@ -8,22 +8,35 @@ import {
   importCrawl,
   listBackups,
   listOfferings,
+  addBlockedTimeTo,
+  addCourseToTray,
+  addVariant,
+  copyBlockedTimesTo,
+  duplicateVariantAs,
+  makeVariantPrimary,
   pickGroup,
   readExams,
   readSettings,
   readTimetable,
+  removeBlockedTimeAt,
+  removeCourseFromTray,
   removeGroupPick,
+  removeVariant,
+  renameVariantAs,
+  replaceBlockedTimeAt,
   restoreBackup,
   setSettings,
   workspaceStatus,
   type QueryWarning,
   type TimetableRef,
+  type TimetableResult,
   type Workspace,
   type WorkspaceChanges,
 } from "@biu-cs-planner/app";
 import { editHistories } from "./history.ts";
 import type { HistoryMove } from "./history.ts";
 import {
+  blockedTimeSchema,
   CURRENT_CATALOG_SCHEMA_VERSION,
   groupPickSchema,
   rawCrawlSchema,
@@ -120,11 +133,111 @@ const pickSlotSchema = z.object({ courseNumber: z.string(), lessonType: z.string
  */
 const basedOnSchema = z.string().optional();
 
-/** A Pick, and the revision the page that sends it was based on. */
-const savedPickSchema = z.object({ ...groupPickSchema.shape, basedOn: basedOnSchema });
+/**
+ * A Variant's name: the student's own text, which is what tells two Variants apart (CONTEXT.md).
+ *
+ * Bounded as a shape and nothing more — a name is some text, and a tab with no text is not a name
+ * anyone can click — the way `pickedMeetingSchema`'s pattern says which strings a time is. A name
+ * **another Variant already has is not refused here**: that is a domain check, and every domain
+ * check is a Warning the edit goes through with (`variantWarnings` in `core/src/state/variants.ts`).
+ */
+const variantNameSchema = z.string().min(1).max(200).regex(/\S/); // a literal pattern (ADR-0007): a name has something in it
 
-/** The slot to clear, and the revision the page that sends it was based on. */
-const savedSlotSchema = z.object({ ...pickSlotSchema.shape, basedOn: basedOnSchema });
+/**
+ * Which Variant an edit inside one is about. Absent means the primary, which is what a client
+ * that has never heard of Variants has always been editing.
+ */
+const variantSchema = variantNameSchema.optional();
+
+/** A Pick, the Variant it goes into, and the revision the page that sends it was based on. */
+const savedPickSchema = z.object({
+  ...groupPickSchema.shape,
+  variant: variantSchema,
+  basedOn: basedOnSchema,
+});
+
+/** The slot to clear, in which Variant, and the revision the page that sends it was based on. */
+const savedSlotSchema = z.object({
+  ...pickSlotSchema.shape,
+  variant: variantSchema,
+  basedOn: basedOnSchema,
+});
+
+/** A new Variant: its name, which a student may leave to the first free letter. */
+const newVariantSchema = z.object({ name: variantNameSchema.optional(), basedOn: basedOnSchema });
+
+/** A copy of the Variant named — the primary when none is — under a name that may be left out. */
+const duplicatedVariantSchema = z.object({
+  variant: variantSchema,
+  name: variantNameSchema.optional(),
+  basedOn: basedOnSchema,
+});
+
+/** A Variant and the name it is to have. */
+const renamedVariantSchema = z.object({
+  variant: variantNameSchema,
+  name: variantNameSchema,
+  basedOn: basedOnSchema,
+});
+
+/** The Variant to delete or to make primary: always named, because both act on one tab. */
+const namedVariantSchema = z.object({ variant: variantNameSchema, basedOn: basedOnSchema });
+
+/**
+ * A Course to add to a Variant's Tray or take out of it, by course number — never by Catalog
+ * entry, as the State File references every Course (#283).
+ */
+const trayCourseSchema = z.object({
+  variant: variantSchema,
+  courseNumber: z.string().min(1),
+  basedOn: basedOnSchema,
+});
+
+/**
+ * A Blocked Time as a student types it (#282): a Day, a start, an end and a label. The shapes
+ * come from `core`'s own `blockedTimeSchema`, so a time this route accepts is one the State File
+ * can hold; the Semester is left out because it is the Timetable's, named by the path. An end
+ * before the start is accepted — it is a range that wraps past midnight, and `core` splits it —
+ * and so is an end equal to the start, which is kept and comes back as a Warning.
+ *
+ * `variant` decides only which Variant the answer shows: Blocked Times belong to the Semester.
+ */
+const blockedRangeShape = {
+  day: blockedTimeSchema.shape.day,
+  start: blockedTimeSchema.shape.start,
+  end: blockedTimeSchema.shape.end,
+  label: blockedTimeSchema.shape.label.max(200),
+};
+
+const newBlockedTimeSchema = z.object({
+  ...blockedRangeShape,
+  variant: variantSchema,
+  basedOn: basedOnSchema,
+});
+
+/** A position in the Timetable's list of Blocked Times, which is how one is addressed. */
+const blockedIndexSchema = z.number().int().min(0);
+
+const replacedBlockedTimeSchema = z.object({
+  ...blockedRangeShape,
+  index: blockedIndexSchema,
+  variant: variantSchema,
+  basedOn: basedOnSchema,
+});
+
+const removedBlockedTimeSchema = z.object({
+  index: blockedIndexSchema,
+  variant: variantSchema,
+  basedOn: basedOnSchema,
+});
+
+/** Where a Semester's Blocked Times are copied to: another Semester, of any Academic Year. */
+const copiedBlockedTimesSchema = z.object({
+  toYear: z.number().int().min(1900).max(2200),
+  toSemester: semesterSchema,
+  variant: variantSchema,
+  basedOn: basedOnSchema,
+});
 
 /**
  * A change to the student's preferences: the fields being set, and the revision the page that
@@ -230,6 +343,31 @@ function timetableRef(
   if (!semester.success) return { ok: false, error: "bad-semester" };
 
   return { ok: true, at: { academicYear: year.data, semester: semester.data } };
+}
+
+/**
+ * Which Variant a read is about, off the query: `?variant=` names one, and its absence means the
+ * primary (`app/src/picks.ts`, `variantShownIn`).
+ */
+function variantQuery(
+  c: Context,
+): { ok: true; variant: string | undefined } | { ok: false; error: "bad-variant" } {
+  const variant = variantSchema.safeParse(c.req.query("variant"));
+  return variant.success ? { ok: true, variant: variant.data } : { ok: false, error: "bad-variant" };
+}
+
+/**
+ * Every Timetable answer, read or write, in one shape: the view and the revision it is, or the
+ * named 409 a refusal has always been. One function, so a Variant route cannot answer in a
+ * shape the Pick routes do not — the page reads them all with one reader (`web/src/timetable/picks.ts`).
+ */
+function timetableAnswer(c: Context, result: TimetableResult) {
+  if (result.kind === "refused") {
+    // `state-file-changed` among the reasons: a 409, because the request is well formed and
+    // conflicts with the state of the file (#90)
+    return c.json({ reason: result.reason, warnings: result.warnings }, 409);
+  }
+  return c.json({ ...result.view, version: result.version, warnings: result.warnings });
 }
 
 export function createApi({ workspace, token, changes }: ApiDependencies) {
@@ -432,14 +570,17 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
      *
      * Domain operations, never file paths: a year, a Semester and a course number name
      * everything here, and which State File holds them is the app's business and the
-     * Workspace adapter's (ADR-0002). The Variant is the current State File's default one
-     * until there is a screen for naming Variants.
+     * Workspace adapter's (ADR-0002). `?variant=` names the Variant, and without it the answer
+     * is about the primary one (#281); every Variant of the Timetable comes back as `variants`,
+     * for the tabs.
      */
     .get("/api/timetable/:year/:semester", async (c) => {
       const ref = timetableRef(c);
       if (!ref.ok) return c.json({ error: ref.error }, 400);
+      const variant = variantQuery(c);
+      if (!variant.ok) return c.json({ error: variant.error }, 400);
 
-      const result = await readTimetable(workspace, ref.at);
+      const result = await readTimetable(workspace, { ...ref.at, variant: variant.variant });
       if (result.kind === "refused") {
         return c.json({ reason: result.reason, warnings: result.warnings }, 409);
       }
@@ -485,8 +626,11 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
     .get("/api/timetable/:year/:semester/exams", async (c) => {
       const ref = timetableRef(c);
       if (!ref.ok) return c.json({ error: ref.error }, 400);
+      // the same `?variant=` the week takes, so the rail can follow the tab the week shows
+      const variant = variantQuery(c);
+      if (!variant.ok) return c.json({ error: variant.error }, 400);
 
-      const result = await readExams(workspace, ref.at);
+      const result = await readExams(workspace, { ...ref.at, variant: variant.variant });
       if (result.kind === "refused") {
         return c.json({ reason: result.reason, warnings: result.warnings }, 409);
       }
@@ -520,8 +664,11 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
       const body = await bodyAs(c, savedPickSchema, "not-a-pick");
       if (!body.ok) return c.json({ error: body.error }, 400);
 
-      const { basedOn, ...pick } = body.value;
-      const result = await pickGroup(workspace, ref.at, pick, { basedOn, history: into });
+      const { basedOn, variant, ...pick } = body.value;
+      const result = await pickGroup(workspace, { ...ref.at, variant }, pick, {
+        basedOn,
+        history: into,
+      });
       if (result.kind === "refused") {
         // `state-file-changed` among the reasons, and a 409 is what it always was: the
         // student's request is well formed and conflicts with the state of the file, which
@@ -540,13 +687,213 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
       const body = await bodyAs(c, savedSlotSchema, "not-a-pick-slot");
       if (!body.ok) return c.json({ error: body.error }, 400);
 
-      const { basedOn, ...slot } = body.value;
-      const result = await removeGroupPick(workspace, ref.at, slot, { basedOn, history: into });
+      const { basedOn, variant, ...slot } = body.value;
+      const result = await removeGroupPick(workspace, { ...ref.at, variant }, slot, {
+        basedOn,
+        history: into,
+      });
       if (result.kind === "refused") {
         return c.json({ reason: result.reason, warnings: result.warnings }, 409);
       }
 
       return c.json({ ...result.view, version: result.version, warnings: result.warnings });
+    })
+
+    /**
+     * The Variant tabs (#281): create, duplicate, rename, delete and make primary.
+     *
+     * Domain operations on the Timetable of one Semester, and a Variant is named by its name — the
+     * student's own text, in the body rather than the path, so no name ever has to survive being a
+     * URL segment. No route takes a file path (ADR-0002).
+     *
+     * Each is a save exactly as a Pick is: it carries the revision the page was based on, is
+     * refused `state-file-changed` when the file moved since, answers with the new revision, and
+     * is one undo step because `into` hears it (ADR-0013). Each answers with the Timetable about
+     * the Variant the student should look at next — the one just made, renamed or made primary,
+     * and the primary after a delete. A name another Variant has is written, and the collision
+     * comes back in `variantWarnings`.
+     */
+    .post("/api/timetable/:year/:semester/variants", capped, async (c) => {
+      const ref = timetableRef(c);
+      if (!ref.ok) return c.json({ error: ref.error }, 400);
+      const body = await bodyAs(c, newVariantSchema, "not-a-variant");
+      if (!body.ok) return c.json({ error: body.error }, 400);
+
+      const { basedOn, name } = body.value;
+      return timetableAnswer(
+        c,
+        await addVariant(workspace, ref.at, name === undefined ? {} : { name }, {
+          basedOn,
+          history: into,
+        }),
+      );
+    })
+
+    .post("/api/timetable/:year/:semester/variants/duplicate", capped, async (c) => {
+      const ref = timetableRef(c);
+      if (!ref.ok) return c.json({ error: ref.error }, 400);
+      const body = await bodyAs(c, duplicatedVariantSchema, "not-a-variant");
+      if (!body.ok) return c.json({ error: body.error }, 400);
+
+      const { basedOn, variant, name } = body.value;
+      return timetableAnswer(
+        c,
+        await duplicateVariantAs(
+          workspace,
+          { ...ref.at, variant },
+          name === undefined ? {} : { name },
+          { basedOn, history: into },
+        ),
+      );
+    })
+
+    .post("/api/timetable/:year/:semester/variants/rename", capped, async (c) => {
+      const ref = timetableRef(c);
+      if (!ref.ok) return c.json({ error: ref.error }, 400);
+      const body = await bodyAs(c, renamedVariantSchema, "not-a-variant");
+      if (!body.ok) return c.json({ error: body.error }, 400);
+
+      const { basedOn, variant, name } = body.value;
+      return timetableAnswer(
+        c,
+        await renameVariantAs(workspace, { ...ref.at, variant }, name, { basedOn, history: into }),
+      );
+    })
+
+    .post("/api/timetable/:year/:semester/variants/primary", capped, async (c) => {
+      const ref = timetableRef(c);
+      if (!ref.ok) return c.json({ error: ref.error }, 400);
+      const body = await bodyAs(c, namedVariantSchema, "not-a-variant");
+      if (!body.ok) return c.json({ error: body.error }, 400);
+
+      const { basedOn, variant } = body.value;
+      return timetableAnswer(
+        c,
+        await makeVariantPrimary(workspace, { ...ref.at, variant }, { basedOn, history: into }),
+      );
+    })
+
+    /**
+     * The Tray (#283): add a Course to the Tray of the Variant named — the primary when none is —
+     * and take one out. Taking one out takes its Picks in that Variant with it, in the same save,
+     * so it is one undo step. Every Timetable answer carries the Tray as derived, chips and all.
+     */
+    .post("/api/timetable/:year/:semester/tray", capped, async (c) => {
+      const ref = timetableRef(c);
+      if (!ref.ok) return c.json({ error: ref.error }, 400);
+      const body = await bodyAs(c, trayCourseSchema, "not-a-tray-course");
+      if (!body.ok) return c.json({ error: body.error }, 400);
+
+      const { basedOn, variant, courseNumber } = body.value;
+      return timetableAnswer(
+        c,
+        await addCourseToTray(workspace, { ...ref.at, variant }, courseNumber, {
+          basedOn,
+          history: into,
+        }),
+      );
+    })
+
+    .delete("/api/timetable/:year/:semester/tray", capped, async (c) => {
+      const ref = timetableRef(c);
+      if (!ref.ok) return c.json({ error: ref.error }, 400);
+      const body = await bodyAs(c, trayCourseSchema, "not-a-tray-course");
+      if (!body.ok) return c.json({ error: body.error }, 400);
+
+      const { basedOn, variant, courseNumber } = body.value;
+      return timetableAnswer(
+        c,
+        await removeCourseFromTray(workspace, { ...ref.at, variant }, courseNumber, {
+          basedOn,
+          history: into,
+        }),
+      );
+    })
+
+    /**
+     * Blocked Times (#282): add, replace, remove, and copy to another Semester. Domain
+     * operations on the Timetable of one Semester; a Blocked Time is addressed by its position
+     * in the list the Timetable answer carries, which is safe because the save is refused when
+     * the file moved since that answer (#90). Each is one undo step, and each answers with the
+     * Timetable — Blocked Times, the Clashes with them, and any Warning — about the Variant named.
+     */
+    .post("/api/timetable/:year/:semester/blocked-times", capped, async (c) => {
+      const ref = timetableRef(c);
+      if (!ref.ok) return c.json({ error: ref.error }, 400);
+      const body = await bodyAs(c, newBlockedTimeSchema, "not-a-blocked-time");
+      if (!body.ok) return c.json({ error: body.error }, 400);
+
+      const { basedOn, variant, ...range } = body.value;
+      return timetableAnswer(
+        c,
+        await addBlockedTimeTo(workspace, { ...ref.at, variant }, range, {
+          basedOn,
+          history: into,
+        }),
+      );
+    })
+
+    .put("/api/timetable/:year/:semester/blocked-times", capped, async (c) => {
+      const ref = timetableRef(c);
+      if (!ref.ok) return c.json({ error: ref.error }, 400);
+      const body = await bodyAs(c, replacedBlockedTimeSchema, "not-a-blocked-time");
+      if (!body.ok) return c.json({ error: body.error }, 400);
+
+      const { basedOn, variant, index, ...range } = body.value;
+      return timetableAnswer(
+        c,
+        await replaceBlockedTimeAt(workspace, { ...ref.at, variant }, index, range, {
+          basedOn,
+          history: into,
+        }),
+      );
+    })
+
+    .delete("/api/timetable/:year/:semester/blocked-times", capped, async (c) => {
+      const ref = timetableRef(c);
+      if (!ref.ok) return c.json({ error: ref.error }, 400);
+      const body = await bodyAs(c, removedBlockedTimeSchema, "not-a-blocked-time");
+      if (!body.ok) return c.json({ error: body.error }, 400);
+
+      const { basedOn, variant, index } = body.value;
+      return timetableAnswer(
+        c,
+        await removeBlockedTimeAt(workspace, { ...ref.at, variant }, index, {
+          basedOn,
+          history: into,
+        }),
+      );
+    })
+
+    .post("/api/timetable/:year/:semester/blocked-times/copy", capped, async (c) => {
+      const ref = timetableRef(c);
+      if (!ref.ok) return c.json({ error: ref.error }, 400);
+      const body = await bodyAs(c, copiedBlockedTimesSchema, "not-a-blocked-time-copy");
+      if (!body.ok) return c.json({ error: body.error }, 400);
+
+      const { basedOn, variant, toYear, toSemester } = body.value;
+      return timetableAnswer(
+        c,
+        await copyBlockedTimesTo(
+          workspace,
+          { ...ref.at, variant },
+          { academicYear: toYear, semester: toSemester },
+          { basedOn, history: into },
+        ),
+      );
+    })
+
+    .delete("/api/timetable/:year/:semester/variants", capped, async (c) => {
+      const ref = timetableRef(c);
+      if (!ref.ok) return c.json({ error: ref.error }, 400);
+      const body = await bodyAs(c, namedVariantSchema, "not-a-variant");
+      if (!body.ok) return c.json({ error: body.error }, 400);
+
+      const { basedOn, variant } = body.value;
+      return timetableAnswer(
+        c,
+        await removeVariant(workspace, { ...ref.at, variant }, { basedOn, history: into }),
+      );
     })
 
     /**

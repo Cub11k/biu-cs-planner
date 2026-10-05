@@ -4,7 +4,8 @@ import {
   type MeetingClash,
   type PickedGroup,
 } from "../timetable/clashes.ts";
-import type { GroupPick, PickedMeeting, State, Timetable, Variant } from "./schema.ts";
+import type { BlockedTime, GroupPick, PickedMeeting, State, Variant } from "./schema.ts";
+import { timetableAt, variantNamed, withTimetable } from "./timetable.ts";
 
 /**
  * The first edits the app can make: recording a Pick and removing one.
@@ -46,9 +47,6 @@ export type VariantRef = {
  */
 export type PickSlot = { courseNumber: string; lessonType: string };
 
-const isTimetableFor = (timetable: Timetable, at: VariantRef): boolean =>
-  timetable.academicYear === at.academicYear && timetable.semester === at.semester;
-
 const fills = (pick: GroupPick, slot: PickSlot): boolean =>
   pick.courseNumber === slot.courseNumber && pick.lessonType === slot.lessonType;
 
@@ -75,14 +73,9 @@ const isSamePick = (held: GroupPick, pick: GroupPick): boolean =>
   held.groupNumber === pick.groupNumber &&
   sameMeetings(held.meetings, pick.meetings);
 
-/** The Timetable of one Semester, or nothing when the State File holds none for it. */
-function timetableAt(state: State, at: VariantRef): Timetable | undefined {
-  return state.timetables.find((timetable) => isTimetableFor(timetable, at));
-}
-
 /** The named Variant, or nothing when neither it nor its Timetable is there yet. */
 export function variantAt(state: State, at: VariantRef): Variant | undefined {
-  return timetableAt(state, at)?.variants.find((variant) => variant.name === at.variant);
+  return variantNamed(timetableAt(state, at), at.variant);
 }
 
 /**
@@ -92,37 +85,41 @@ export function variantAt(state: State, at: VariantRef): Variant | undefined {
  * Variant is primary only when it is the Timetable's first: exactly one Variant of a
  * Timetable is primary (core/src/state/schema.ts), and an app that made every new one
  * primary would be writing the file that `parseStateFile` warns about.
+ *
+ * Exported for the other edits that live inside a Variant — the Tray's (`./tray.ts`) — so a
+ * Course added to the Tray of a Semester nobody has opened makes its Variant exactly the way a
+ * first Pick does.
  */
-function inVariant(
+export function withVariant(
+  state: State,
+  at: VariantRef,
+  rewrite: (variant: Variant) => Variant,
+): State {
+  return withTimetable(state, at, (timetable) => {
+    const held = variantNamed(timetable, at.variant);
+    const variant: Variant = held ?? {
+      name: at.variant,
+      primary: timetable.variants.length === 0,
+      picks: [],
+      tray: [],
+    };
+
+    const rewritten = rewrite(variant);
+    if (rewritten === variant) return timetable;
+
+    const variants =
+      held === undefined
+        ? [...timetable.variants, rewritten]
+        : timetable.variants.map((existing) => (existing === held ? rewritten : existing));
+    return { ...timetable, variants };
+  });
+}
+
+const inVariant = (
   state: State,
   at: VariantRef,
   rewrite: (picks: GroupPick[]) => GroupPick[],
-): State {
-  const timetable = timetableAt(state, at) ?? {
-    academicYear: at.academicYear,
-    semester: at.semester,
-    variants: [],
-    blockedTimes: [],
-  };
-  const variant = timetable.variants.find((v) => v.name === at.variant) ?? {
-    name: at.variant,
-    primary: timetable.variants.length === 0,
-    picks: [],
-  };
-
-  const rewritten: Variant = { ...variant, picks: rewrite(variant.picks) };
-  const variants = timetable.variants.some((v) => v.name === at.variant)
-    ? timetable.variants.map((v) => (v.name === at.variant ? rewritten : v))
-    : [...timetable.variants, rewritten];
-
-  const next: Timetable = { ...timetable, variants };
-  return {
-    ...state,
-    timetables: state.timetables.some((t) => isTimetableFor(t, at))
-      ? state.timetables.map((t) => (isTimetableFor(t, at) ? next : t))
-      : [...state.timetables, next],
-  };
-}
+): State => withVariant(state, at, (variant) => ({ ...variant, picks: rewrite(variant.picks) }));
 
 /**
  * Records a Pick: one Group chosen for one Lesson Type of an Offering, carrying the
@@ -184,16 +181,48 @@ const asPickedGroup = (pick: GroupPick, semester: Semester): PickedGroup => ({
 });
 
 /**
+ * A Clash as the Timetable reports it. A Clash with a Blocked Time names **the Blocked Time** —
+ * the whole row, label included, and its position in the Timetable's list — and not only the
+ * span the Clashes module compares (#282): "clashes with work" is what a student can act on, and
+ * the position is how the screen points at the row. The Clashes module reads a Blocked Time as a
+ * bare `WeeklySpan` and knows nothing of a label, so this is where the label is put back.
+ */
+export type TimetableClash =
+  | Extract<MeetingClash, { kind: "meeting-meeting" }>
+  | (Omit<Extract<MeetingClash, { kind: "meeting-blocked-time" }>, "blockedTime"> & {
+      blockedTime: BlockedTime;
+      blockedTimeIndex: number;
+    });
+
+/**
  * Every Clash among one Variant's Picks, and between them and that Semester's Blocked
  * Times. A Warning and never a refusal: this is what the app reports after an edit has
  * already gone through.
  */
-export function clashesIn(state: State, at: VariantRef): MeetingClash[] {
+export function clashesIn(state: State, at: VariantRef): TimetableClash[] {
   const variant = variantAt(state, at);
   if (variant === undefined) return [];
 
+  const blockedTimes = timetableAt(state, at)?.blockedTimes ?? [];
   return findMeetingClashes(
     variant.picks.map((pick) => asPickedGroup(pick, at.semester)),
-    timetableAt(state, at)?.blockedTimes ?? [],
-  );
+    blockedTimes,
+  ).map((clash): TimetableClash => {
+    if (clash.kind === "meeting-meeting") return clash;
+    // `findMeetingClashes` hands back the very span it was given, so identity finds the row; a
+    // content match backs it up should that ever stop being true, rather than a -1 reaching a page
+    const byIdentity = blockedTimes.findIndex((row) => row === clash.blockedTime);
+    const blockedTimeIndex =
+      byIdentity !== -1
+        ? byIdentity
+        : blockedTimes.findIndex(
+            (row) =>
+              row.semester === clash.blockedTime.semester &&
+              row.day === clash.blockedTime.day &&
+              row.start === clash.blockedTime.start &&
+              row.end === clash.blockedTime.end,
+          );
+    const row = blockedTimes[blockedTimeIndex] ?? { ...clash.blockedTime, label: "" };
+    return { ...clash, blockedTime: row, blockedTimeIndex };
+  });
 }

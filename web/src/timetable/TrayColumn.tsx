@@ -1,0 +1,103 @@
+import { t, type Language } from "../i18n/strings.ts";
+import { lessonSlot, lessonTypeName } from "./lessonType.ts";
+import type { TrayEntry } from "./picks.ts";
+
+export type TrayColumnProps = {
+  language: Language;
+  /**
+   * The Tray as the server derived it, or `undefined` while the State File has not been read —
+   * which is not an empty Tray, and is not drawn as one.
+   */
+  tray: readonly TrayEntry[] | undefined;
+  /** The Course name to show; its number when nothing can name it. */
+  nameOf: (courseNumber: string) => string;
+  selected: string | undefined;
+  onSelect: (courseNumber: string) => void;
+  /** Taking a Course out, or `undefined` for *not now* — there is no revision to base it on. */
+  onRemove: ((courseNumber: string) => void) | undefined;
+};
+
+/**
+ * The Tray (#283; docs/design.md, "Grid and Picks"): the Courses waiting to be scheduled in the
+ * Variant shown, each with one chip per Lesson Type — filled with the Group number once picked,
+ * empty while missing — and an incomplete mark while any is missing.
+ *
+ * It decides nothing: which Courses are here, why, and what each needs is the server's
+ * derivation (`trayEntries` in `core`), and this draws it. Selecting an entry puts that Course's
+ * Groups on the week as pencil options, which is how the Tray drives picking. Badges are not
+ * drawn here; they belong to the Plan Diffs cluster.
+ */
+export function TrayColumn({
+  language,
+  tray,
+  nameOf,
+  selected,
+  onSelect,
+  onRemove,
+}: TrayColumnProps): React.JSX.Element {
+  return (
+    <section className="flex flex-col gap-1.5" aria-label={t(language, "trayHeading")}>
+      <h2 className="text-sm font-semibold">{t(language, "trayHeading")}</h2>
+      {tray === undefined ? null : tray.length === 0 ? (
+        <p className="text-sm text-pencil">{t(language, "trayEmpty")}</p>
+      ) : (
+        <ul className="flex flex-col gap-1.5">
+          {tray.map((entry) => (
+            <li
+              key={entry.courseNumber}
+              className="tray-entry flex items-start gap-1"
+              data-course={entry.courseNumber}
+              data-complete={entry.complete === null ? "unknown" : String(entry.complete)}
+            >
+              <button
+                type="button"
+                aria-pressed={entry.courseNumber === selected}
+                onClick={() => onSelect(entry.courseNumber)}
+                // `border-s-3`, the start edge, which is the right one in Hebrew
+                className={`min-w-0 flex-1 rounded-sm border bg-paper px-2.5 py-2 text-start text-sm ${
+                  entry.courseNumber === selected ? "border-s-3 border-ink" : "border-rule"
+                }`}
+              >
+                <span className="block font-medium">{nameOf(entry.courseNumber)}</span>
+                <span className="block text-xs text-pencil">{entry.courseNumber}</span>
+                <span className="mt-1 flex flex-wrap items-center gap-1">
+                  {entry.chips.map((chip) => (
+                    <span
+                      key={chip.lessonType}
+                      className={`tray-chip ${chip.groupNumber === undefined ? "is-missing" : "is-filled"}`}
+                      data-lesson-slot={lessonSlot(chip.lessonType)}
+                      data-lesson-type={chip.lessonType}
+                    >
+                      {lessonTypeName(chip.lessonType, language)}{" "}
+                      {chip.groupNumber ?? t(language, "trayChipMissing")}
+                    </span>
+                  ))}
+                  {entry.complete === false && (
+                    <span className="tray-incomplete">{t(language, "trayIncomplete")}</span>
+                  )}
+                  {/* not in this Semester's Catalog: what the Course needs is not known, and
+                      saying so is what keeps it from being quietly forgotten */}
+                  {!entry.known && (
+                    <span className="text-xs text-pencil">{t(language, "trayChipsUnknown")}</span>
+                  )}
+                </span>
+              </button>
+              <button
+                type="button"
+                data-tray-remove={entry.courseNumber}
+                // a Course here only because the Plan puts it in this Semester has nothing the
+                // Timetable may take out: the Attempt is the Plan's (ADR-0008)
+                disabled={onRemove === undefined || entry.origins.every((why) => why === "planned")}
+                aria-label={t(language, "trayRemoveCourse", { course: nameOf(entry.courseNumber) })}
+                onClick={() => onRemove?.(entry.courseNumber)}
+                className="variant-action text-xs"
+              >
+                {t(language, "trayRemove")}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}

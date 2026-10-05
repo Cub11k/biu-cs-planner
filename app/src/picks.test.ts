@@ -78,7 +78,7 @@ it("records a Pick in a State File that does not exist yet", async () => {
   expect(result).toMatchObject({ kind: "served", view: { picks: [LECTURE], clashes: [] } });
   expect(workspace.written()).toEqual([REF]);
   expect((await stored(workspace))?.timetables[0]?.variants).toEqual([
-    { name: "A", primary: true, picks: [LECTURE] },
+    { name: "A", primary: true, picks: [LECTURE], tray: [] },
   ]);
 });
 

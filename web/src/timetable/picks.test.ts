@@ -25,6 +25,8 @@ const VERSION = "a".repeat(64);
 
 const served = {
   variantName: "A",
+  variants: [{ name: "A", primary: true }],
+  variantWarnings: [],
   picks: [LECTURE],
   clashes: [],
   version: VERSION,
@@ -53,10 +55,53 @@ it("asks for one Semester's Picks, by year and Semester and with the launch toke
   expect(result).toEqual({
     kind: "served",
     variantName: "A",
+    variants: [{ name: "A", primary: true }],
+    variantWarnings: [],
+    tray: [],
+    blockedTimes: [],
+    blockedTimeWarnings: [],
     picks: [LECTURE],
     clashes: [],
     // what the page holds so that a save made on this view can say what it was based on
     version: VERSION,
+  });
+  // no Variant named: the server answers about the primary, which a Semester opens on (#281)
+  expect(new URL(sent[0]!.url).search).toBe("");
+});
+
+it("asks for the Variant named, in the query and as the student wrote it", async () => {
+  const { sent, api } = client(() => Response.json(served));
+
+  await fetchTimetable(api, { ...FALL_2027, variant: "ללא ראשון" });
+
+  expect(new URL(sent[0]!.url).searchParams.get("variant")).toBe("ללא ראשון");
+});
+
+it("reads an answer with no Variant tabs in it as a Timetable with none", async () => {
+  // an older server, or a fake written before #281: the week it carries is still the week
+  const { api } = client(() =>
+    Response.json({ variantName: "A", picks: [], clashes: [], warnings: [] }),
+  );
+
+  await expect(fetchTimetable(api, FALL_2027)).resolves.toMatchObject({
+    kind: "served",
+    variants: [],
+    variantWarnings: [],
+  });
+});
+
+it("names the Variant a Pick goes into, and its removal too", async () => {
+  const { sent, api } = client(() => Response.json(served));
+
+  await recordPick(api, { ...FALL_2027, variant: "B" }, LECTURE, VERSION);
+  await removePick(api, { ...FALL_2027, variant: "B" }, { courseNumber: "89-110", lessonType: "הרצאה" }, VERSION);
+
+  await expect(sent[0]!.json()).resolves.toEqual({ ...LECTURE, variant: "B", basedOn: VERSION });
+  await expect(sent[1]!.json()).resolves.toEqual({
+    courseNumber: "89-110",
+    lessonType: "הרצאה",
+    variant: "B",
+    basedOn: VERSION,
   });
 });
 

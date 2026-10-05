@@ -176,7 +176,9 @@ function readVariant(
   const source = raw as Record<string, unknown>;
   const picks = readEach(groupPickSchema, source.picks, `${at}.picks`, warnings);
   checkPicksUnique(picks, at, warnings);
-  return { ...head.data, picks };
+  // A course number the Tray cannot read costs that one entry, as one unreadable Pick does.
+  const tray = readEach(z.string(), source.tray, `${at}.tray`, warnings);
+  return { ...head.data, picks, tray };
 }
 
 /**

@@ -52,7 +52,26 @@ export {
   type TimetableRef,
   type TimetableResult,
   type TimetableView,
+  type VariantTab,
 } from "./picks.ts";
+// The Variant tabs (#281): each a `core` edit plus a label through `editStateFile`.
+export {
+  addVariant,
+  duplicateVariantAs,
+  makeVariantPrimary,
+  removeVariant,
+  renameVariantAs,
+  type VariantNaming,
+} from "./variants.ts";
+// The Tray (#283): adding a Course to a Variant's Tray and removing one, with its Picks.
+export { addCourseToTray, removeCourseFromTray } from "./tray.ts";
+// Blocked Times (#282): add, replace, remove, and copy to another Semester.
+export {
+  addBlockedTimeTo,
+  copyBlockedTimesTo,
+  removeBlockedTimeAt,
+  replaceBlockedTimeAt,
+} from "./blockedTimes.ts";
 export {
   watchWorkspace,
   DEFAULT_SETTLE_MS,

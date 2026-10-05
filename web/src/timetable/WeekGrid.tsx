@@ -2,7 +2,9 @@ import { useState } from "react";
 import { t, type Language, type StringKey } from "../i18n/strings.ts";
 import { isUntimedIn, type Semester } from "./catalog.ts";
 import { lessonSlot, lessonTypeName } from "./lessonType.ts";
+import type { BlockedTime } from "./picks.ts";
 import {
+  blockedTiles,
   daysShown,
   formatClock,
   groupKey,
@@ -11,6 +13,7 @@ import {
   tileBox,
   tileText,
   tilesFor,
+  type BlockedTile,
   type HourRange,
   type Tile,
   type WeekGroup,
@@ -35,6 +38,8 @@ export type WeekGridProps = {
    * decision (#111), and this component only reports it.
    */
   onPick: (group: WeekGroup) => void;
+  /** The Semester's Blocked Times, drawn as hatched time behind the Groups (#282). */
+  blockedTimes?: readonly BlockedTime[];
 };
 
 /**
@@ -43,7 +48,8 @@ export type WeekGridProps = {
  * Three of the states docs/design.md, "Visual language" names are drawn here: **pencil**, a
  * dashed outline for an option nobody has taken; **ink**, a solid border with a thick start
  * edge and a tint of the Lesson Type's colour, for a Pick; and **red pen** for a Pick that
- * Clashes. Hatching — time already taken — waits for Blocked Times.
+ * Clashes. **Hatching** is time already taken: a Blocked Time, drawn behind the Groups with its
+ * label, and a pencil option that would Clash if picked (#282).
  *
  * The component decides nothing: `week.ts` says which Groups the week shows, which days and
  * hours the grid has, where each block goes and which Groups a Clash touches, and this turns
@@ -55,12 +61,15 @@ export function WeekGrid({
   groups,
   clashing,
   onPick,
+  blockedTimes = [],
 }: WeekGridProps): React.JSX.Element {
   const [highlighted, setHighlighted] = useState<string | undefined>(undefined);
 
   const tiles = tilesFor(groups, semester);
-  const days = daysShown(tiles);
-  const range = hourRange(tiles);
+  const blocked = blockedTiles(blockedTimes, semester);
+  // a Blocked Time takes room on the week as a Meeting does: its Day is shown, its hours fit
+  const days = daysShown([...tiles, ...blocked]);
+  const range = hourRange([...tiles, ...blocked]);
   const columnHeight = (range.endHour - range.startHour) * HOUR_PX;
   const untimed = groups.filter((group) => isUntimedIn(group, semester));
 
@@ -95,6 +104,11 @@ export function WeekGrid({
 
         {days.map((day) => (
           <div key={day} className="day-column" style={{ height: columnHeight }}>
+            {blocked
+              .filter((block) => block.day === day)
+              .map((block) => (
+                <BlockedBlock key={block.key} block={block} range={range} language={language} />
+              ))}
             {tiles
               .filter((tile) => tile.day === day)
               .map((tile) => (
@@ -162,11 +176,42 @@ function tileClass(group: WeekGroup, clashes: boolean, highlighted: boolean): st
     "tile",
     group.picked === true ? "is-picked" : undefined,
     group.picked === undefined ? "is-unread" : undefined,
+    group.picked === false && group.wouldClash === true ? "is-hatched" : undefined,
     clashes ? "is-clashing" : undefined,
     highlighted ? "is-highlighted" : undefined,
   ]
     .filter((part) => part !== undefined)
     .join(" ");
+}
+
+/**
+ * One Blocked Time on the week: hatched, full width, behind the Groups — time already taken, so
+ * the Groups that land on it are seen landing on it. Not a control: it is edited in the Blocked
+ * Times editor, and clicking through it reaches nothing.
+ */
+function BlockedBlock({
+  block,
+  range,
+  language,
+}: {
+  block: BlockedTile;
+  range: HourRange;
+  language: Language;
+}): React.JSX.Element {
+  const box = tileBox({ ...block, lane: 0, lanes: 1 }, range, HOUR_PX);
+  return (
+    <div
+      className="blocked-block"
+      data-blocked-index={block.index}
+      style={{ top: box.topPx, height: box.heightPx }}
+    >
+      {/* the editor's and the Clashes strip's word for no label, so the three agree */}
+      <span className="blocked-label">{block.label || t(language, "blockedUnlabelled")}</span>{" "}
+      <bdi dir="ltr" className="blocked-times">
+        {formatClock(block.startMinutes)}–{formatClock(block.endMinutes)}
+      </bdi>
+    </div>
+  );
 }
 
 function GroupTile({

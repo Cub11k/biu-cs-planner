@@ -114,9 +114,25 @@ export const variantHeadSchema = z.object({
   primary: z.boolean().default(false),
 });
 
-/** A named alternative set of Picks for a Semester. */
+/**
+ * A named alternative set of Picks for a Semester, and its Tray.
+ *
+ * **`tray` is the Courses the student added to this Variant directly**, by course number, in the
+ * order they were added (#283). It is not the Tray a student sees: that is derived
+ * (`trayEntries` in `./tray.ts`), adding every Course with a Pick here and every Course with a
+ * planned Attempt in the Semester, so only what cannot be derived is stored.
+ *
+ * **Defaulted, and the schema version did not move for it.** A file written before the Tray
+ * existed has no `tray` on any Variant, and reads as every Variant having an empty one — which is
+ * exactly what that file meant, so it opens unchanged and needs no migration, the test #173 set.
+ * The cost is on the other side: a build older than this one strips the key it does not know, so
+ * opening a newer file there and saving loses the Courses added to a Tray (never a Pick, which
+ * re-derives them). That is a downgrade, which nothing here promises to survive, and is said here
+ * rather than paid for with a version every older build would then refuse to open at all.
+ */
 export const variantSchema = variantHeadSchema.extend({
   picks: z.array(groupPickSchema).default([]),
+  tray: z.array(z.string()).default([]),
 });
 
 /**

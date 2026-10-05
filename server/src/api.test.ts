@@ -1912,6 +1912,8 @@ it("names no path in a refusal when the State File cannot be read, on every rout
     ["POST pick", await post(PICKS, { ...LECTURE, basedOn })],
     ["DELETE pick", await remove(PICKS, { courseNumber: "89-110", lessonType: "הרצאה", basedOn })],
     ["PATCH settings", await patch(SETTINGS, { language: "en", basedOn })],
+    ["POST variant", await post(`${TIMETABLE}/variants`, { name: "B", basedOn })],
+    ["DELETE variant", await remove(`${TIMETABLE}/variants`, { variant: "A", basedOn })],
     ["POST undo", await post(UNDO, { basedOn })],
     ["POST redo", await post(REDO, { basedOn })],
     ["POST restore", await post(RESTORE, { takenAt, basedOn })],
@@ -2203,4 +2205,396 @@ it("names a save refused for want of a backup as that, for a Pick, its removal, 
   }
   // and the file the student is looking at is the one each refused save found
   expect(await readFile(join(root, "me.state.json"), "utf8")).toBe(before);
+});
+
+/**
+ * The Variant tabs over HTTP (#281): each operation end to end on a real temp-dir Workspace, a
+ * stale revision refused, and undo putting the previous Variants back.
+ */
+const VARIANTS = `${TIMETABLE}/variants`;
+
+type TimetableBody = {
+  variantName: string;
+  variants: Array<{ name: string; primary: boolean }>;
+  picks: unknown[];
+  variantWarnings: Array<{ kind: string }>;
+  version?: string;
+};
+
+const tabs = (body: TimetableBody) => body.variants.map((v) => [v.name, v.primary]);
+
+/** A State File holding Variant A (primary, with a Pick) and an empty B. */
+async function twoVariants(): Promise<void> {
+  await post("/api/workspace", {});
+  await post(PICKS, LECTURE);
+  expect((await save(VARIANTS, { name: "B" })).status).toBe(200);
+}
+
+it("creates a Variant, answers about it, and lists every tab with the primary marked", async () => {
+  await twoVariants();
+
+  const created = await save(VARIANTS, { name: "Sunday off" });
+
+  expect(created.status).toBe(200);
+  const body = (await created.json()) as TimetableBody;
+  expect(body).toMatchObject({ variantName: "Sunday off", picks: [], variantWarnings: [] });
+  expect(tabs(body)).toEqual([
+    ["A", true],
+    ["B", false],
+    ["Sunday off", false],
+  ]);
+  // and the revision the next edit is to be based on comes with it
+  expect(body.version).toBe(await currentVersion());
+});
+
+it("reads the primary by default and the Variant named on request", async () => {
+  await twoVariants();
+
+  await expect((await get(TIMETABLE)).json()).resolves.toMatchObject({
+    variantName: "A",
+    picks: [LECTURE],
+  });
+  await expect((await get(`${TIMETABLE}?variant=B`)).json()).resolves.toMatchObject({
+    variantName: "B",
+    picks: [],
+  });
+  await expect((await get(`${EXAMS}?variant=B`)).json()).resolves.toMatchObject({
+    variantName: "B",
+  });
+  // a Hebrew name survives the query string, as a student's own text has to
+  await save(VARIANTS, { name: "ללא ראשון" });
+  await expect(
+    (await get(`${TIMETABLE}?variant=${encodeURIComponent("ללא ראשון")}`)).json(),
+  ).resolves.toMatchObject({ variantName: "ללא ראשון" });
+});
+
+it("picks into the Variant named in the body", async () => {
+  await twoVariants();
+
+  await save(PICKS, { ...CLASHING, variant: "B" });
+
+  await expect((await get(`${TIMETABLE}?variant=B`)).json()).resolves.toMatchObject({
+    picks: [CLASHING],
+  });
+  await expect((await get(TIMETABLE)).json()).resolves.toMatchObject({ picks: [LECTURE] });
+});
+
+it("duplicates, renames, makes primary and deletes, each answering about the right tab", async () => {
+  await twoVariants();
+
+  const duplicated = (await (await save(`${VARIANTS}/duplicate`, { variant: "A" })).json()) as TimetableBody;
+  expect(duplicated).toMatchObject({ variantName: "C", picks: [LECTURE] });
+
+  const renamed = (await (
+    await save(`${VARIANTS}/rename`, { variant: "C", name: "Mornings" })
+  ).json()) as TimetableBody;
+  expect(renamed.variantName).toBe("Mornings");
+
+  const primary = (await (
+    await save(`${VARIANTS}/primary`, { variant: "Mornings" })
+  ).json()) as TimetableBody;
+  expect(tabs(primary)).toEqual([
+    ["A", false],
+    ["Mornings", true],
+    ["B", false],
+  ]);
+
+  const deleted = (await (
+    await unsave(VARIANTS, { variant: "Mornings" })
+  ).json()) as TimetableBody;
+  // the primary went, so the first remaining one is promoted and the answer is about it
+  expect(deleted.variantName).toBe("A");
+  expect(tabs(deleted)).toEqual([
+    ["A", true],
+    ["B", false],
+  ]);
+});
+
+it("renames into a name already used, and carries the Warning rather than refusing", async () => {
+  await twoVariants();
+
+  const renamed = await save(`${VARIANTS}/rename`, { variant: "B", name: "A" });
+
+  expect(renamed.status).toBe(200);
+  await expect(renamed.json()).resolves.toMatchObject({
+    variantWarnings: [{ kind: "variant-name-not-unique", name: "A" }],
+  });
+});
+
+it("refuses a Variant edit based on a revision the file no longer holds", async () => {
+  await twoVariants();
+  const stale = await currentVersion();
+  await save(VARIANTS, { name: "C" });
+
+  const refused = await remove(VARIANTS, { variant: "B", basedOn: stale });
+
+  expect(refused.status).toBe(409);
+  await expect(refused.json()).resolves.toMatchObject({ reason: "state-file-changed" });
+  expect(tabs((await (await get(TIMETABLE)).json()) as TimetableBody)).toEqual([
+    ["A", true],
+    ["B", false],
+    ["C", false],
+  ]);
+});
+
+it("undoes a Variant edit, putting the previous Variants back", async () => {
+  await twoVariants();
+  await save(`${VARIANTS}/primary`, { variant: "B" });
+  await unsave(VARIANTS, { variant: "A" });
+
+  const undone = await step(UNDO);
+
+  await expect(undone.json()).resolves.toMatchObject({ label: "delete-variant" });
+  const back = (await (await get(`${TIMETABLE}?variant=A`)).json()) as TimetableBody;
+  expect(tabs(back)).toEqual([
+    ["A", false],
+    ["B", true],
+  ]);
+  expect(back.picks).toEqual([LECTURE]);
+});
+
+it("names every bad Variant request as a 400", async () => {
+  await twoVariants();
+  const basedOn = await currentVersion();
+
+  const answers: [string, Response][] = [
+    ["empty name", await post(VARIANTS, { name: "", basedOn })],
+    ["blank name", await post(VARIANTS, { name: "   ", basedOn })],
+    ["rename with no name", await post(`${VARIANTS}/rename`, { variant: "A", basedOn })],
+    ["primary with no Variant", await post(`${VARIANTS}/primary`, { basedOn })],
+    ["delete with no Variant", await remove(VARIANTS, { basedOn })],
+    ["duplicate a number", await post(`${VARIANTS}/duplicate`, { variant: 7, basedOn })],
+  ];
+  for (const [where, answer] of answers) {
+    expect(answer.status, where).toBe(400);
+    await expect(answer.json(), where).resolves.toEqual({ error: "not-a-variant" });
+  }
+
+  const read = await get(`${TIMETABLE}?variant=`);
+  expect(read.status).toBe(400);
+  await expect(read.json()).resolves.toEqual({ error: "bad-variant" });
+});
+
+/**
+ * The Tray over HTTP (#283): add and remove on a real temp-dir Workspace, the read carrying the
+ * derived Tray with chips read off the imported Catalog, undo, and a stale revision refused.
+ */
+const TRAY = `${TIMETABLE}/tray`;
+
+type TrayBody = {
+  picks: unknown[];
+  tray: Array<{
+    courseNumber: string;
+    origins: string[];
+    known: boolean;
+    chips: Array<{ lessonType: string; groupNumber?: string }>;
+    complete: boolean | null;
+  }>;
+};
+
+it("adds a Course to the Tray, keeps it across a restart, and reads its chips off the Catalog", async () => {
+  await post("/api/workspace", {});
+  await post("/api/catalog/2027/import", CRAWL);
+
+  const added = await save(TRAY, { courseNumber: "89-110" });
+
+  expect(added.status).toBe(200);
+  const expected = [
+    {
+      courseNumber: "89-110",
+      origins: ["added"],
+      known: true,
+      chips: [{ lessonType: "הרצאה" }],
+      complete: false,
+    },
+  ];
+  await expect(added.json()).resolves.toMatchObject({ tray: expected });
+
+  restart();
+  await expect((await get(TIMETABLE)).json()).resolves.toMatchObject({ tray: expected });
+});
+
+it("fills the chip and marks the Course complete once its one Lesson Type is picked", async () => {
+  await post("/api/workspace", {});
+  await post("/api/catalog/2027/import", CRAWL);
+  await save(TRAY, { courseNumber: "89-110" });
+
+  const picked = (await (await save(PICKS, LECTURE)).json()) as TrayBody;
+
+  expect(picked.tray).toEqual([
+    {
+      courseNumber: "89-110",
+      origins: ["added", "picked"],
+      known: true,
+      chips: [{ lessonType: "הרצאה", groupNumber: "01" }],
+      complete: true,
+    },
+  ]);
+});
+
+it("removes a Course with its Picks, and one undo puts both back", async () => {
+  await post("/api/workspace", {});
+  await save(TRAY, { courseNumber: "89-110" });
+  await save(PICKS, LECTURE);
+
+  const removed = (await (await unsave(TRAY, { courseNumber: "89-110" })).json()) as TrayBody;
+  expect(removed).toMatchObject({ picks: [], tray: [] });
+
+  const undone = await step(UNDO);
+  await expect(undone.json()).resolves.toMatchObject({ label: "remove-from-tray" });
+  await expect((await get(TIMETABLE)).json()).resolves.toMatchObject({
+    picks: [LECTURE],
+    tray: [{ courseNumber: "89-110", origins: ["added", "picked"] }],
+  });
+});
+
+it("lists a Course with its chips unknown when no Catalog is imported", async () => {
+  await post("/api/workspace", {});
+
+  const added = (await (await save(TRAY, { courseNumber: "89-110" })).json()) as TrayBody;
+
+  expect(added.tray).toEqual([
+    { courseNumber: "89-110", origins: ["added"], known: false, chips: [], complete: null },
+  ]);
+});
+
+it("refuses a Tray edit based on a revision the file no longer holds, and a body that is not one", async () => {
+  await post("/api/workspace", {});
+  const stale = await currentVersion();
+  await save(TRAY, { courseNumber: "89-110" });
+
+  const refused = await remove(TRAY, { courseNumber: "89-110", basedOn: stale });
+  expect(refused.status).toBe(409);
+  await expect(refused.json()).resolves.toMatchObject({ reason: "state-file-changed" });
+
+  const malformed = await post(TRAY, { courseNumber: "", basedOn: await currentVersion() });
+  expect(malformed.status).toBe(400);
+  await expect(malformed.json()).resolves.toEqual({ error: "not-a-tray-course" });
+});
+
+it("copies the Tray with the Variant it belongs to", async () => {
+  await post("/api/workspace", {});
+  await save(TRAY, { courseNumber: "89-110" });
+
+  const copy = (await (await save(`${VARIANTS}/duplicate`, {})).json()) as TrayBody & {
+    variantName: string;
+  };
+
+  expect(copy.variantName).toBe("B");
+  expect(copy.tray.map((entry) => entry.courseNumber)).toEqual(["89-110"]);
+});
+
+/**
+ * Blocked Times over HTTP (#282): each operation on a real temp-dir Workspace, the Clash with a
+ * Pick named by its label, a stale revision refused, and undo.
+ */
+const BLOCKED = `${TIMETABLE}/blocked-times`;
+const WORK = { day: "tuesday", start: "13:00", end: "17:00", label: "work" };
+
+const put = (path: string, body: unknown) =>
+  api.request(path, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...bearer },
+    body: JSON.stringify(body),
+  });
+
+type BlockedBody = {
+  blockedTimes: Array<{ semester: string; day: string; start: string; end: string; label: string }>;
+  blockedTimeWarnings: Array<{ kind: string; index: number }>;
+  clashes: Array<{ kind: string; blockedTime?: { label: string } }>;
+};
+
+it("adds a Blocked Time, splitting a night shift, and keeps it across a restart", async () => {
+  await post("/api/workspace", {});
+
+  const added = await save(BLOCKED, { day: "monday", start: "23:00", end: "01:00", label: "shift" });
+
+  expect(added.status).toBe(200);
+  const rows = [
+    { semester: "fall", day: "monday", start: "23:00", end: "00:00", label: "shift" },
+    { semester: "fall", day: "tuesday", start: "00:00", end: "01:00", label: "shift" },
+  ];
+  await expect(added.json()).resolves.toMatchObject({ blockedTimes: rows });
+  restart();
+  await expect((await get(TIMETABLE)).json()).resolves.toMatchObject({ blockedTimes: rows });
+});
+
+it("records a Pick over a Blocked Time and reports the Clash with its label", async () => {
+  await post("/api/workspace", {});
+  await save(BLOCKED, WORK);
+
+  const picked = await save(PICKS, LECTURE);
+
+  expect(picked.status).toBe(200);
+  const body = (await picked.json()) as BlockedBody;
+  expect(body.clashes).toMatchObject([
+    { kind: "meeting-blocked-time", blockedTime: { label: "work" } },
+  ]);
+});
+
+it("accepts a range that does not advance, and says so", async () => {
+  await post("/api/workspace", {});
+
+  const added = (await (await save(BLOCKED, { ...WORK, end: "13:00" })).json()) as BlockedBody;
+
+  expect(added.blockedTimes).toHaveLength(1);
+  expect(added.blockedTimeWarnings).toMatchObject([
+    { kind: "blocked-time-does-not-advance", index: 0 },
+  ]);
+});
+
+it("replaces and removes a Blocked Time by position, and one undo puts it back", async () => {
+  await post("/api/workspace", {});
+  await save(BLOCKED, WORK);
+
+  const replaced = (await (
+    await put(BLOCKED, { ...WORK, label: "job", index: 0, basedOn: await currentVersion() })
+  ).json()) as BlockedBody;
+  expect(replaced.blockedTimes.map((b) => b.label)).toEqual(["job"]);
+
+  const removed = (await (await unsave(BLOCKED, { index: 0 })).json()) as BlockedBody;
+  expect(removed.blockedTimes).toEqual([]);
+
+  await expect((await step(UNDO)).json()).resolves.toMatchObject({ label: "remove-blocked-time" });
+  await expect((await get(TIMETABLE)).json()).resolves.toMatchObject({
+    blockedTimes: [{ label: "job" }],
+  });
+});
+
+it("copies a Semester's Blocked Times to another, which then reads them as its own", async () => {
+  await post("/api/workspace", {});
+  await save(BLOCKED, WORK);
+
+  const copied = await save(`${BLOCKED}/copy`, { toYear: 2027, toSemester: "spring" });
+
+  expect(copied.status).toBe(200);
+  await expect((await get("/api/timetable/2027/spring")).json()).resolves.toMatchObject({
+    blockedTimes: [{ ...WORK, semester: "spring" }],
+  });
+});
+
+it("refuses a stale Blocked Time edit, and names every bad body as a 400", async () => {
+  await post("/api/workspace", {});
+  const stale = await currentVersion();
+  await save(BLOCKED, WORK);
+
+  const refused = await remove(BLOCKED, { index: 0, basedOn: stale });
+  expect(refused.status).toBe(409);
+  await expect(refused.json()).resolves.toMatchObject({ reason: "state-file-changed" });
+
+  const basedOn = await currentVersion();
+  const answers: [string, Response, string][] = [
+    ["24:00", await post(BLOCKED, { ...WORK, end: "24:00", basedOn }), "not-a-blocked-time"],
+    ["saturday", await post(BLOCKED, { ...WORK, day: "saturday", basedOn }), "not-a-blocked-time"],
+    ["negative index", await remove(BLOCKED, { index: -1, basedOn }), "not-a-blocked-time"],
+    [
+      "copy to nowhere",
+      await post(`${BLOCKED}/copy`, { toYear: 2027, toSemester: "winter", basedOn }),
+      "not-a-blocked-time-copy",
+    ],
+  ];
+  for (const [where, answer, error] of answers) {
+    expect(answer.status, where).toBe(400);
+    await expect(answer.json(), where).resolves.toEqual({ error });
+  }
 });

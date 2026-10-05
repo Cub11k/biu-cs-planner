@@ -39,7 +39,7 @@ it("records a Pick, making the Timetable and the Variant that hold it", () => {
       academicYear: 2027,
       semester: "fall",
       blockedTimes: [],
-      variants: [{ name: DEFAULT_VARIANT_NAME, primary: true, picks: [LECTURE] }],
+      variants: [{ name: DEFAULT_VARIANT_NAME, primary: true, picks: [LECTURE], tray: [] }],
     },
   ]);
 });
