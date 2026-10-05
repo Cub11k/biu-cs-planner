@@ -87,6 +87,9 @@ const REFUSAL_STRING = {
   "workspace-refused": "picksUnreadable",
   // The State File read fine and the backup could not be made, so not `picksUnreadable` (#229).
   "backup-refused": "picksBackupRefused",
+  // The save was made and its revision could not be read (#326): not `picksUnreadable`, which
+  // says nothing changed. `settle` keeps the week and re-reads on it.
+  "save-revision-unreadable": "saveUnconfirmed",
 } as const satisfies Record<NonNullable<StateRefusal>, StringKey>;
 
 /**
@@ -227,8 +230,12 @@ export function TimetablePane({
    * so the click may have landed, and the page goes and looks rather than showing a blank week
    * in place of one it can re-read. The re-read would then replace an account held in
    * `timetable`, so the account is held here, and retired as `staleSave` is.
+   *
+   * Held as the sentence to say, because a second case shares everything else: a save refused as
+   * `save-revision-unreadable` was made and its revision could not be read (#326), so it too may
+   * have landed, and the page re-reads rather than replacing the week with a refusal.
    */
-  const [unknownSave, setUnknownSave] = useState(false);
+  const [unknownSave, setUnknownSave] = useState<StringKey | undefined>(undefined);
   const [rereads, setRereads] = useState(0);
   /**
    * The answer a click was sent on, while the re-read its unreadable answer asked for is still in
@@ -359,8 +366,13 @@ export function TimetablePane({
     // `state-file-changed` if it did. Held clicks are spared by the drain's wait below;
     // routing a direct click into `held` instead would change what it means, since a held
     // click asks for a Pick and a click on ink asks for its removal. Left as an open window.
-    if (answer.kind === "unreadable-answer") {
-      setUnknownSave(true);
+    if (
+      answer.kind === "unreadable-answer" ||
+      (answer.kind === "refused" && answer.reason === "save-revision-unreadable")
+    ) {
+      setUnknownSave(
+        answer.kind === "unreadable-answer" ? "picksSaveAnswerUnreadable" : "saveUnconfirmed",
+      );
       // and the undo buttons wait for that re-read, as they do after a step: a press sent
       // on a revision this click may have spent would come back `historyStale`
       setAwaitingFrom(sentOn);
@@ -434,7 +446,7 @@ export function TimetablePane({
   useEffect(() => {
     if (steps === 0) return;
     setStaleSave(false);
-    setUnknownSave(false);
+    setUnknownSave(undefined);
     setHeldLost(false);
   }, [steps]);
 
@@ -459,7 +471,7 @@ export function TimetablePane({
   const retireNotices = (): void => {
     setHeldLost(false);
     setStaleSave(false);
-    setUnknownSave(false);
+    setUnknownSave(undefined);
     onActed();
   };
 
@@ -629,7 +641,9 @@ export function TimetablePane({
       // rest of the queue must not be fired at the revision that refused it — nor at one an
       // unreadable answer may already have spent, which the re-read it triggered will settle.
       if (
-        (answer.kind === "refused" && answer.reason === "state-file-changed") ||
+        (answer.kind === "refused" &&
+          (answer.reason === "state-file-changed" ||
+            answer.reason === "save-revision-unreadable")) ||
         answer.kind === "unreadable-answer"
       ) {
         refusedOn.current = sentOn;
@@ -739,7 +753,7 @@ export function TimetablePane({
               )}
               {heldLost && <span>{t(language, "picksHeldLost")}</span>}
               {staleSave && <span>{t(language, "picksStale")}</span>}
-              {unknownSave && <span>{t(language, "picksSaveAnswerUnreadable")}</span>}
+              {unknownSave !== undefined && <span>{t(language, unknownSave)}</span>}
               {/* the shell's own: the last press of undo or redo, the last preference */}
               {notices}
               {clashes.length > 0 && <span>{clashesSaid(language, clashes.length)}</span>}

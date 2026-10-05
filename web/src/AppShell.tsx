@@ -115,11 +115,12 @@ export type AppShellProps = {
  * contract, so a reason added to `server/src/history.ts` is a compile error here rather than a
  * refusal the student never hears about.
  *
- * Five of the nine are the edit refusals an undo inherits by going through the same save path
- * (ADR-0013), and four of those five get their own sentence rather than the Pick's: `picksStale`
+ * Six of the ten are the edit refusals an undo inherits by going through the same save path
+ * (ADR-0013), and four of those six get their own sentence rather than the Pick's: `picksStale`
  * is an account of a click that was not saved, and a student who pressed Undo did not click a
- * Group. `workspace-not-ready` is the exception — "this folder is not a workspace yet, so nothing
- * can be saved in it" is the whole truth for either.
+ * Group. `workspace-not-ready` and `save-revision-unreadable` are the exceptions — "this folder is
+ * not a workspace yet, so nothing can be saved in it" is the whole truth for either, and so is
+ * "your change may have been saved" (#326).
  */
 const HISTORY_REFUSAL_STRING = {
   "nothing-to-undo": "historyNothingToUndo",
@@ -131,6 +132,8 @@ const HISTORY_REFUSAL_STRING = {
   "workspace-refused": "historyUnreadable",
   "workspace-not-ready": "workspaceNotReady",
   "backup-refused": "historyBackupRefused",
+  // the step was written and its revision could not be read, so it may have moved (#326)
+  "save-revision-unreadable": "saveUnconfirmed",
 } as const satisfies Record<NonNullable<HistoryRefusal>, StringKey>;
 
 /**
@@ -143,6 +146,7 @@ const SETTINGS_REFUSAL_STRING = {
   "state-file-changed": "settingsStale",
   "workspace-refused": "settingsFileRefused",
   "backup-refused": "settingsBackupRefused",
+  "save-revision-unreadable": "saveUnconfirmed",
 } as const satisfies Record<NonNullable<SettingsRefusal>, StringKey>;
 
 /** What the shell says when a read brought no preferences, and which of the three it was. */
@@ -275,8 +279,11 @@ export function AppShell({
         answer.kind === "refused" &&
         (answer.reason === "state-file-changed" || answer.reason === "history-invalidated");
       // An answer this page could not read is **not** the claim that nothing was written (#206):
-      // the page goes and looks rather than relying on what it is holding.
-      const unknown = answer.kind === "unreadable-answer";
+      // the page goes and looks rather than relying on what it is holding. Nor is a step whose
+      // save was made and whose revision could not be read (#326).
+      const unknown =
+        answer.kind === "unreadable-answer" ||
+        (answer.kind === "refused" && answer.reason === "save-revision-unreadable");
       if (answer.kind === "moved" || stale || unknown) {
         setStepRereads((count) => count + 1);
         // a move is a save, so it moved the revision the language switch is holding too

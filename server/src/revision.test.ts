@@ -345,7 +345,11 @@ for (const half of ["read", "save"] as const) {
         // the port at all, would prove nothing about the revision
         expect(answer.status, where).toBe(409);
         const body = await answer.text();
-        expect(JSON.parse(body), where).toMatchObject({ reason: "workspace-refused" });
+        // A lie on the read refuses before anything is written. One on the save comes after the
+        // write, so its reason says the save may have landed rather than that nothing changed (#326).
+        expect(JSON.parse(body), where).toMatchObject({
+          reason: half === "read" ? "workspace-refused" : "save-revision-unreadable",
+        });
         expect(body, where).not.toContain('"version"');
         const spelled = typeof revision === "string" ? revision : JSON.stringify(revision);
         expect(body, where).not.toContain(JSON.stringify(spelled).slice(1, -1));

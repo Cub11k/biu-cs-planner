@@ -102,6 +102,11 @@ let variantsInFile: Array<{ name: string; primary: boolean }> | undefined;
  * which is the case #231 is about.
  */
 let unreadableSave: number | undefined;
+/**
+ * Set to answer the next save `save-revision-unreadable` **after** the fake has accepted it: the
+ * write landed and the revision it brought back could not be read, which is #326's case.
+ */
+let unconfirmedSave: boolean;
 /** How many times the screen told its host that the file's revision may have moved. */
 let edits: number;
 /**
@@ -229,6 +234,7 @@ beforeEach(() => {
   changedUnderneath = false;
   variantsInFile = undefined;
   unreadableSave = undefined;
+  unconfirmedSave = false;
   edits = 0;
   readHeld = undefined;
   saveHeld = undefined;
@@ -320,6 +326,13 @@ beforeEach(() => {
       );
     }
 
+    if (unconfirmedSave && (method === "POST" || method === "DELETE")) {
+      unconfirmedSave = false;
+      return new Response(JSON.stringify({ reason: "save-revision-unreadable", warnings: [] }), {
+        status: 409,
+        headers: { "content-type": "application/json" },
+      });
+    }
     if (unreadableSave !== undefined && (method === "POST" || method === "DELETE")) {
       const status = unreadableSave;
       unreadableSave = undefined;
@@ -641,6 +654,36 @@ it("says whether a click was saved is not known, and goes and looks, when its an
   });
   // the account outlives the re-read: it is about the click, not about the week
   expect(mounted.textContent).toContain(t("en", "picksSaveAnswerUnreadable"));
+});
+
+/**
+ * #326: a save that was made and whose revision the Workspace could not hand back readably. The
+ * fake accepts the Pick and then refuses as the real server does, so the click landed — and the
+ * sentence must not say nothing changed, the week must stay, and the page goes and re-reads it.
+ */
+it("says a save may have landed, keeps the week and re-reads it, when its revision is unreadable", async () => {
+  const mounted = await openWeek();
+  const readsBefore = timetableReads();
+
+  unconfirmedSave = true;
+  tileFor(mounted, "01").click();
+
+  await waitForText(mounted, t("en", "saveUnconfirmed"));
+  // every sentence that says nothing changed, or that the picks could not be read
+  for (const claim of ["picksStale", "picksUnreadable", "picksBackupRefused", "picksHeldLost"] as const) {
+    expect(mounted.textContent, `${claim} claims what this page cannot know`).not.toContain(
+      t("en", claim),
+    );
+  }
+  await vi.waitFor(() => {
+    if (timetableReads() <= readsBefore) throw new Error("the week was never read again");
+    if (edits === 0) throw new Error("the header was never told the revision may have moved");
+    // the click landed, and the re-read is what shows it
+    if (!tileFor(mounted, "01").classList.contains("is-picked")) {
+      throw new Error("the re-read never drew the Pick the file holds");
+    }
+  });
+  expect(mounted.textContent).toContain(t("en", "saveUnconfirmed"));
 });
 
 /**
