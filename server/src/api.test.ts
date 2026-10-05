@@ -2359,6 +2359,7 @@ it("names every bad Variant request as a 400", async () => {
 
   const answers: [string, Response][] = [
     ["empty name", await post(VARIANTS, { name: "", basedOn })],
+    ["blank name", await post(VARIANTS, { name: "   ", basedOn })],
     ["rename with no name", await post(`${VARIANTS}/rename`, { variant: "A", basedOn })],
     ["primary with no Variant", await post(`${VARIANTS}/primary`, { basedOn })],
     ["delete with no Variant", await remove(VARIANTS, { basedOn })],

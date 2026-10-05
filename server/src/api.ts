@@ -141,7 +141,7 @@ const basedOnSchema = z.string().optional();
  * **another Variant already has is not refused here**: that is a domain check, and every domain
  * check is a Warning the edit goes through with (`variantWarnings` in `core/src/state/variants.ts`).
  */
-const variantNameSchema = z.string().min(1).max(200);
+const variantNameSchema = z.string().min(1).max(200).regex(/\S/); // a literal pattern (ADR-0007): a name has something in it
 
 /**
  * Which Variant an edit inside one is about. Absent means the primary, which is what a client
