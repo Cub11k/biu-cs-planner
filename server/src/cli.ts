@@ -56,16 +56,18 @@ Options:
 Commands:
   rotate-token        replace the launch token, for when somebody else has seen it — it
                       is printed in the URL, so a pasted bug report or a screenshot is
-                      enough. Stop the app first: a server that is up read the old token
-                      when it started and goes on accepting it until it exits. After the
-                      restart every bookmark and every open tab stops working, which is
-                      the point of it and not a side effect.
+                      enough. A server already running keeps the old token until it is
+                      restarted: it read the token once when it started and goes on
+                      accepting it until it exits, so stop the app first, or restart it
+                      straight after. From that restart every bookmark and every open tab
+                      stops working, which is the point of it and not a side effect.
 
                       The token is a file in your user config directory, never in your
                       Workspace: $XDG_CONFIG_HOME or ~/.config/biu-cs-planner/token, and
                       %APPDATA%\\biu-cs-planner\\token on Windows, where %APPDATA% comes
                       first and is all but always set. rotate-token prints the exact path;
-                      deleting that file by hand does the same thing.
+                      deleting that file by hand does the same thing, and needs the same
+                      restart.
 
 The server runs in the foreground on port ${DEFAULT_PORT}; if that port is taken it uses
 the next free one and says so. Stop it with Ctrl-C.`;
@@ -229,12 +231,16 @@ function command(name: string, rest: readonly string[]): Invocation {
  * that string is a translation (`web/src/i18n/strings.ts`), so a Hebrew screen would not
  * match an English quotation here, and nothing would fail if it were reworded.
  *
- * **It also says to stop a server that is still running**, and that is not politeness. A
- * running server read the token once at startup and holds it in memory; `bin.ts` builds the
- * guard from that string and never looks at the file again. So the old token keeps working
- * against that process until it exits, and a notice that said the old token was refused
- * "from now on" would be telling a student they were safe while the leak was still open.
- * The rotation is only as good as the restart, and the output has to say so.
+ * **It also says, in so many words, that a server already running keeps the old token
+ * until it is restarted**, and that is not politeness. A running server read the token once
+ * at startup and holds it in memory; `bin.ts` builds the guard from that string and never
+ * looks at the file again — a ruling, recorded with its reasons at the top of `token.ts`
+ * (#128). So the old token keeps working against that process until it exits, and a notice
+ * that said the old token was refused "from now on" would be telling a student they were
+ * safe while the leak was still open. The rotation is only as good as the restart, and the
+ * output has to say so. The sentence leads the consequence rather than trailing it, and the
+ * first-token notice carries it too: a token file deleted by hand while the app runs is the
+ * ordinary way to reach that notice with a server up that holds a token this one replaces.
  *
  * `Omit<Rotation, "token">` rather than `Rotation`, so the omission is in the type and not
  * merely in the destructuring. A caller may still hand over a whole `Rotation` — TypeScript
@@ -249,14 +255,18 @@ export function rotatedNotice({ path, replaced }: Omit<Rotation, "token">): stri
 
   const consequence = replaced
     ? [
-        "Stop the app with Ctrl-C if it is still running: it read the old token at startup",
-        "and goes on accepting it until it exits.",
+        "A server already running keeps the old token until it is restarted: it read the",
+        "token once at startup and goes on accepting it until it exits. Stop it with Ctrl-C.",
         "",
-        "The old token is then refused, and so is everything holding it — every bookmark you",
-        "saved, and every tab still open on the planner, which will show none of your picks",
-        "and send you back here until you open the new address.",
+        "From that restart the old token is refused, and so is everything holding it — every",
+        "bookmark you saved, and every tab still open on the planner, which will show none of",
+        "your picks and send you back here until you open the new address.",
       ].join("\n")
-    : "There was none here before, so nothing that used to work has stopped.";
+    : [
+        "There was none here before, so nothing that used to work has stopped.",
+        "A server already running, whose token file was deleted by hand, still keeps the",
+        "token it started with until it is restarted.",
+      ].join("\n");
 
   return [
     first,

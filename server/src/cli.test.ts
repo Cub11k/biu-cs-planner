@@ -154,8 +154,43 @@ it("does not promise in --help that rotating alone is enough", () => {
   const invocation = parseArguments(["--help"], cwd);
   const text = invocation.kind === "help" ? invocation.text : "";
 
-  expect(text).toContain("Stop the app first");
+  expect(text).toContain("stop the app first");
   expect(text).toContain("until it exits");
+});
+
+/**
+ * The plain sentence #128 ruled both outputs must carry, pinned word for word in each: the
+ * server is not made to reload its token (the reasoning is at the top of `token.ts`), so
+ * this sentence is the whole of what stands between a student and believing a rotation
+ * took effect on a server it never reached. Word for word, because the earlier wording
+ * ("a server that is up read the old token…") was true and still left "stops working"
+ * free to be read as already having happened.
+ */
+const RUNNING_SERVER = "A server already running keeps the old token until it is";
+
+it("says plainly in --help that a running server keeps the old token until restarted", () => {
+  const invocation = parseArguments(["rotate-token", "--help"], cwd);
+  const text = invocation.kind === "help" ? invocation.text : "";
+
+  // the usage text wraps, so the sentence is matched with its line break folded away
+  expect(text.replace(/\s+/g, " ")).toContain(`${RUNNING_SERVER} restarted`);
+});
+
+it("says plainly in the rotation notice that a running server keeps the old token", () => {
+  const notice = rotatedNotice({ path: "/tmp/config/token", replaced: true });
+  const folded = notice.replace(/\s+/g, " ");
+
+  expect(folded).toContain(`${RUNNING_SERVER} restarted`);
+  // and says it before what stops working, so the consequence reads as following it
+  expect(folded.indexOf(RUNNING_SERVER)).toBeLessThan(folded.indexOf("bookmark"));
+});
+
+it("tells a first-token notice about a running server too, for a file deleted by hand", () => {
+  const notice = rotatedNotice({ path: "/tmp/config/token", replaced: false });
+
+  expect(notice.replace(/\s+/g, " ")).toContain(
+    "keeps the token it started with until it is restarted",
+  );
 });
 
 it("warns in the rotation notice that bookmarks and open tabs have stopped working", () => {
