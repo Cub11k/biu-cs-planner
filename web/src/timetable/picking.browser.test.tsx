@@ -107,6 +107,8 @@ let unreadableSave: number | undefined;
  * write landed and the revision it brought back could not be read, which is #326's case.
  */
 let unconfirmedSave: boolean;
+/** Set to answer the next read of the Timetable with a body nobody can read, or a refusal (#218). */
+let nextRead: "unreadable" | "refused" | undefined;
 /** How many times the screen told its host that the file's revision may have moved. */
 let edits: number;
 /**
@@ -235,6 +237,7 @@ beforeEach(() => {
   variantsInFile = undefined;
   unreadableSave = undefined;
   unconfirmedSave = false;
+  nextRead = undefined;
   edits = 0;
   readHeld = undefined;
   saveHeld = undefined;
@@ -260,6 +263,16 @@ beforeEach(() => {
     // only the read is held: a save the screen decides to send still goes through at once,
     // so a test can tell "nothing was sent" from "something was sent and is waiting"
     if (method === "GET" && readHeld !== undefined) await readHeld;
+    if (method === "GET" && nextRead !== undefined) {
+      const kind = nextRead;
+      nextRead = undefined;
+      return kind === "unreadable"
+        ? new Response("<!doctype html>", { status: 200, headers: { "content-type": "text/html" } })
+        : new Response(JSON.stringify({ reason: "state-file-unreadable", warnings: [] }), {
+            status: 409,
+            headers: { "content-type": "application/json" },
+          });
+    }
     if (refuse !== undefined) {
       return new Response(JSON.stringify(refuse), {
         status: 409,
@@ -715,6 +728,64 @@ it("says a click held for a refusal's re-read was not saved when that re-read fa
   await waitForText(mounted, t("en", "picksHeldLost"));
   expect(sent.filter((request) => request.method === "POST").length, traffic()).toBe(postsBefore);
   expect(mounted.textContent).not.toContain(t("en", "picksHeldForReread"));
+});
+
+/**
+ * #218, as the maintainer ruled it: a re-read whose answer nobody can read keeps the week the page
+ * had read, with a sentence saying it is the last read — the page learned nothing from it. A
+ * refused re-read still replaces the week, because from that the page did learn something.
+ */
+it("keeps the week it read, labelled as the last read, when a re-read's answer is unreadable", async () => {
+  const mounted = await openWeek();
+  tileFor(mounted, "01").click();
+  await vi.waitFor(() => {
+    if (!tileFor(mounted, "01").classList.contains("is-picked")) throw new Error("not picked");
+  });
+
+  nextRead = "unreadable";
+  changedUnderneath = true;
+  tileFor(mounted, "03", "Tirgul").click();
+
+  await waitForText(mounted, t("en", "picksReadStale"));
+  // the week is still there, as it was read
+  expect(tileFor(mounted, "01").classList.contains("is-picked"), traffic()).toBe(true);
+  expect(mounted.textContent).toContain(t("en", "picksCountOne"));
+  expect(mounted.textContent).not.toContain(t("en", "picksAnswerUnreadable"));
+});
+
+it("replaces the week when a re-read is refused, and says why", async () => {
+  const mounted = await openWeek();
+  tileFor(mounted, "01").click();
+  await vi.waitFor(() => {
+    if (!tileFor(mounted, "01").classList.contains("is-picked")) throw new Error("not picked");
+  });
+
+  nextRead = "refused";
+  changedUnderneath = true;
+  tileFor(mounted, "03", "Tirgul").click();
+
+  await waitForText(mounted, t("en", "picksUnreadable"));
+  expect(tileFor(mounted, "01").classList.contains("is-picked")).toBe(false);
+  expect(mounted.textContent).not.toContain(t("en", "picksReadStale"));
+});
+
+it("reports a click held for a re-read as not sent when that re-read is unreadable, and never re-sends it", async () => {
+  const mounted = await openWeek();
+
+  changedUnderneath = true;
+  const release = holdTheRead();
+  tileFor(mounted, "01").click();
+  await waitForText(mounted, t("en", "picksStale"));
+  tileFor(mounted, "03", "Tirgul").click();
+  await waitForText(mounted, t("en", "picksHeldForReread"));
+  const postsBefore = sent.filter((request) => request.method === "POST").length;
+
+  nextRead = "unreadable";
+  release();
+
+  await waitForText(mounted, t("en", "picksHeldLost"));
+  await waitForText(mounted, t("en", "picksReadStale"));
+  expect(sent.filter((request) => request.method === "POST").length, traffic()).toBe(postsBefore);
 });
 
 /**

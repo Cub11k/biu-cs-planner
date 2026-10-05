@@ -499,6 +499,12 @@ const english = {
    * on what the re-read brings.
    */
   picksHeldForReread: "Reading the file again. Your change will be sent once it has been read.",
+  /**
+   * A re-read whose answer could not be read, over a week the page had read (#218): the week stays,
+   * as the last one read, and this says so.
+   */
+  picksReadStale:
+    "The file could not be read again just now, so this is the week as it was last read. It may be out of date.",
   /** Beside the Blocked Time form when its save did not land; the reason follows it (#324). */
   blockedNotSaved: "Not saved. What you typed is still here.",
 
@@ -802,6 +808,7 @@ const hebrew: Record<StringKey, string> = {
   saveUnconfirmed: "ייתכן שהשינוי נשמר, אך היישום לא הצליח לאשר זאת. בדקו שהוא מופיע לפני שתבצעו אותו שוב.",
   blockedNotSaved: "לא נשמר. מה שהקלדתם עדיין כאן.",
   picksHeldForReread: "הקובץ נקרא שוב. השינוי שלכם יישלח מיד לאחר מכן.",
+  picksReadStale: "לא ניתן היה לקרוא שוב את הקובץ כרגע, ולכן זה השבוע כפי שנקרא לאחרונה. ייתכן שאינו עדכני.",
 
   variantTabs: "חלופות",
   variantPrimaryMark: "ראשית",

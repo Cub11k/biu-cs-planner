@@ -135,12 +135,27 @@ const isAbsence = (warnings: readonly CatalogWarning[]): boolean =>
  *
  * `load` is the question: memoise it on what it asks for, and a change to it is a change of
  * question rather than news about the folder.
+ *
+ * `keep` decides whether a fresh answer is **not** put on screen, the one on screen being kept
+ * instead (#218). The count that comes back third is how many answers in a row were kept, `0`
+ * once one is taken, so the screen can say what it is showing is the last it read.
  */
 function useReloading<T>(
   load: () => Promise<T>,
   workspaceChanges: number,
-): [{ kind: "loading" } | T, (answer: T) => void] {
-  const [answer, setAnswer] = useState<{ kind: "loading" } | T>({ kind: "loading" });
+  keep: (fresh: T, onScreen: { kind: "loading" } | T) => boolean = () => false,
+): [{ kind: "loading" } | T, (answer: T) => void, number] {
+  const [answer, setAnswerState] = useState<{ kind: "loading" } | T>({ kind: "loading" });
+  const [kept, setKept] = useState(0);
+  /** What is on screen, for `keep` to compare a fresh answer with. */
+  const onScreen = useRef<{ kind: "loading" } | T>({ kind: "loading" });
+  const setAnswer = useCallback((next: { kind: "loading" } | T): void => {
+    onScreen.current = next;
+    setAnswerState(next);
+    setKept(0);
+  }, []);
+  const keepRef = useRef(keep);
+  keepRef.current = keep;
   const shownFor = useRef<typeof load | undefined>(undefined);
   /**
    * Which answer the screen is showing. It has to be counted rather than flagged, because
@@ -152,10 +167,13 @@ function useReloading<T>(
   const shown = useRef(0);
 
   /** An answer from outside the effect — an edit's own — is the newest by definition. */
-  const showAnswer = useCallback((fresh: T): void => {
-    shown.current += 1;
-    setAnswer(fresh);
-  }, []);
+  const showAnswer = useCallback(
+    (fresh: T): void => {
+      shown.current += 1;
+      setAnswer(fresh);
+    },
+    [setAnswer],
+  );
 
   useEffect(() => {
     const mine = (shown.current += 1);
@@ -166,17 +184,34 @@ function useReloading<T>(
     void load().then((fresh) => {
       if (shown.current !== mine) return;
       shownFor.current = load;
-      setAnswer(fresh);
+      if (keepRef.current(fresh, onScreen.current)) setKept((count) => count + 1);
+      else setAnswer(fresh);
     });
 
     return () => {
       // whatever this run asked for is no longer what the screen is waiting on
       shown.current += 1;
     };
-  }, [load, workspaceChanges]);
+  }, [load, workspaceChanges, setAnswer]);
 
-  return [answer, showAnswer];
+  return [answer, showAnswer, kept];
 }
+
+/**
+ * Which re-read of the State File keeps the week on screen rather than replacing it (#218, ruled by
+ * the maintainer on 2026-10-04, consistent with #184's ruling): **an answer nobody could read, over
+ * a week the page had read.** The page learned nothing from it, so what it last read is still its
+ * best account, and it stays with a sentence saying it is the last read (`picksReadStale`).
+ *
+ * **`refused` and `unauthorized` still replace the week**, and that difference is deliberate: from
+ * those the page *did* learn something — the folder is not a Workspace or the file cannot be read,
+ * or the Launch Token is retired — and a week drawn as if neither were so would be data shown as
+ * known that the page now knows it cannot vouch for. `unreachable` replaces it too: a server that
+ * is not there is something learned about everything the page could send. Unread data is never
+ * drawn as known; read data is kept only with an account.
+ */
+const keepReadWeek = (fresh: TimetableResult, onScreen: TimetableState): boolean =>
+  fresh.kind === "unreadable-answer" && onScreen.kind === "served";
 
 /**
  * The Timetable as the app opens it: the screen inside the app shell (`../AppShell.tsx`), which
@@ -363,9 +398,13 @@ export function TimetablePane({
     });
   }, [academicYear, semester]);
 
-  const [catalog]: [CatalogState, unknown] = useReloading(askCatalog, workspaceChanges);
-  const [timetable, setTimetable]: [TimetableState, (answer: TimetableResult) => void] =
-    useReloading(askTimetable, workspaceChanges + rereads + stepRereads);
+  const [catalog]: [CatalogState, unknown, unknown] = useReloading(askCatalog, workspaceChanges);
+  /** How many re-reads in a row came back unreadable over the week on screen, which stays (#218). */
+  const [timetable, setTimetable, readsKept]: [
+    TimetableState,
+    (answer: TimetableResult) => void,
+    number,
+  ] = useReloading(askTimetable, workspaceChanges + rereads + stepRereads, keepReadWeek);
 
   const offerings = catalog.kind === "served" ? catalog.offerings : [];
   /**
@@ -589,9 +628,19 @@ export function TimetablePane({
    * `picksHeldLost` rather than vanishing (#334). So is one made on a Variant no longer shown.
    */
   useEffect(() => {
-    if (rereadingFrom === undefined || timetable === rereadingFrom || timetable.kind === "loading") {
+    if (rereadingFrom === undefined || timetable.kind === "loading") return;
+    // The re-read came back unreadable and the week on screen was kept (#218): no revision came
+    // with it, so the held edits are not sent on the one they were waiting to leave — they are
+    // reported as not sent, never re-sent on a state that may have changed.
+    if (timetable === rereadingFrom && readsKept > 0) {
+      setRereadingFrom(undefined);
+      const dropped = heldEdits.current.splice(0);
+      setHeldEditCount(0);
+      for (const edit of dropped) edit.drop();
+      if (dropped.length > 0) setHeldLost(true);
       return;
     }
+    if (timetable === rereadingFrom) return;
     setRereadingFrom(undefined);
     const waiting = heldEdits.current.splice(0);
     setHeldEditCount(0);
@@ -609,7 +658,7 @@ export function TimetablePane({
         }),
       Promise.resolve(timetable),
     );
-  }, [timetable, rereadingFrom]);
+  }, [timetable, rereadingFrom, readsKept]);
 
   /**
    * A form's edit, answered with whether it landed (#324): the Blocked Time form stays open, with
@@ -906,6 +955,10 @@ export function TimetablePane({
               {heldLost && <span>{t(language, "picksHeldLost")}</span>}
               {staleSave && <span>{t(language, "picksStale")}</span>}
               {unknownSave !== undefined && <span>{t(language, unknownSave)}</span>}
+              {/* the week is the last one read, kept over an answer nobody could read (#218) */}
+              {readsKept > 0 && timetable.kind === "served" && (
+                <span>{t(language, "picksReadStale")}</span>
+              )}
               {/* the shell's own: the last press of undo or redo, the last preference */}
               {notices}
               {clashes.length > 0 && <span>{clashesSaid(language, clashes.length)}</span>}
