@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import {
+  BackupRefusedError,
   BACKUP_KEEP_DAYS,
   BACKUP_KEEP_SAVES,
   backupDay,
@@ -11,6 +12,7 @@ import {
   requireStateFileName,
   WorkspaceRefusedError,
   type BackupRef,
+  type WorkspaceRefusal,
 } from "./workspace.ts";
 
 /**
@@ -421,4 +423,64 @@ it("reads two references to one moment as one snapshot", () => {
   const keptMoments = new Set(held.map((snapshot) => snapshot.takenAt));
   for (const moment of goingMoments) keptMoments.delete(moment);
   expect(keptMoments.size).toBe(BACKUP_KEEP_SAVES);
+});
+
+/**
+ * #249: the refusals this port makes itself, shared by both adapters, each say which one they are
+ * as a reason code and a subject — the only part of a refusal `app` reads. The message is the
+ * adapter's account for a log, and is pinned by the tests above.
+ */
+it("says which refusal each shared one is, as a reason and a subject", () => {
+  const refusalOf = (refuse: () => unknown): WorkspaceRefusal | undefined => {
+    try {
+      refuse();
+    } catch (error) {
+      expect(error).toBeInstanceOf(WorkspaceRefusedError);
+      return (error as WorkspaceRefusedError).refusal;
+    }
+    return undefined;
+  };
+
+  expect(refusalOf(() => requireStateFileName("../bob"))).toEqual({
+    reason: "not-a-name",
+    subject: { kind: "state", name: "../bob" },
+  });
+  const unstamped = { kind: "backup", name: "alice", takenAt: 1.5 } as const;
+  expect(refusalOf(() => requireBackupRef(unstamped))).toEqual({
+    reason: "not-a-moment",
+    subject: unstamped,
+  });
+  const pathAsYear = { kind: "catalog", academicYear: "../alice.state" } as never;
+  expect(refusalOf(() => requireCatalogRef(pathAsYear))).toEqual({
+    reason: "not-a-year",
+    subject: pathAsYear,
+  });
+  expect(refusalOf(() => requireCatalogRef({ kind: "state", name: "alice" }))).toEqual({
+    reason: "not-a-catalog",
+    subject: { kind: "state", name: "alice" },
+  });
+  expect(
+    refusalOf(() =>
+      backupsToPrune(
+        [
+          { kind: "backup", name: "alice", takenAt: 0 },
+          { kind: "backup", name: "bob", takenAt: 0 },
+        ],
+        0,
+      ),
+    ),
+  ).toEqual({ reason: "mixed-snapshots", subject: { kind: "folder", folder: "backups" } });
+
+  expect(new NotAWorkspaceError().refusal).toEqual({
+    reason: "not-a-workspace",
+    subject: { kind: "workspace" },
+  });
+  expect(new NotAWorkspaceError({ folder: "catalogs", because: "is a file" }).refusal).toEqual({
+    reason: "not-a-workspace",
+    subject: { kind: "folder", folder: "catalogs" },
+  });
+
+  // a snapshot's refusal keeps the refusal it wraps, so the page still learns which folder
+  const inner = new NotAWorkspaceError({ folder: "backups", because: "is a file" });
+  expect(new BackupRefusedError(inner).refusal).toBe(inner.refusal);
 });

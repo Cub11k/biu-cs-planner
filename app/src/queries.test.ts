@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 import { memoryWorkspace } from "./workspace.memory.ts";
 import { importCrawl } from "./catalog.ts";
 import { getOffering, listOfferings } from "./queries.ts";
+import { WorkspaceRefusedError, type Workspace } from "./workspace.ts";
 
 const row = (overrides: Record<string, string> = {}) => ({
   code: "89110",
@@ -79,4 +80,62 @@ it("reports a stored Catalog it cannot read as a Warning, not a crash", async ()
 
   expect(result.offerings).toBeUndefined();
   expect(result.warnings).toEqual([{ kind: "file-unreadable" }]);
+});
+
+/**
+ * #249: the adapter's own words never reach the Warning. A deliberately hostile double, whose
+ * refusal message is a path and whose subject names a file it was not asked about, is answered
+ * with `app`'s sentence about the Catalog the query asked for — and only that.
+ */
+it("words a refusal itself, and carries nothing a hostile adapter wrote", async () => {
+  const path = "/home/alice/Workspace/catalogs/2027.json";
+  const hostile: Workspace = {
+    ...memoryWorkspace({ created: true }),
+    read: () =>
+      Promise.reject(
+        new WorkspaceRefusedError(
+          { reason: "unreadable", subject: { kind: "state", name: "whatever-it-likes" } },
+          path,
+          { cause: new Error(path) },
+        ),
+      ),
+  };
+
+  const expected = [
+    {
+      kind: "workspace-refused",
+      reason: "refusing the Catalog for the Academic Year 2027: it is there and cannot be read",
+    },
+  ];
+  const listed = await listOfferings(hostile, { academicYear: 2027, semester: "fall" });
+  expect(listed).toEqual({ warnings: expected });
+  const one = await getOffering(hostile, { academicYear: 2027, courseNumber: "89-110" });
+  expect(one).toEqual({ warnings: expected });
+  expect(JSON.stringify([listed, one])).not.toContain("whatever-it-likes");
+  expect(JSON.stringify([listed, one])).not.toContain(path);
+});
+
+/** A refusal whose `refusal` cannot even be read is still a Warning, and not a crashed request. */
+it("answers a refusal it cannot read anything off as a Warning", async () => {
+  // an accessor where the port declares a field, which only a cast or plain JavaScript can make
+  const unreadable = Object.create(WorkspaceRefusedError.prototype, {
+    refusal: {
+      get() {
+        throw new Error("/home/alice/Workspace/catalogs/2027.json");
+      },
+    },
+  }) as WorkspaceRefusedError;
+  const hostile: Workspace = {
+    ...memoryWorkspace({ created: true }),
+    read: () => Promise.reject(unreadable),
+  };
+
+  expect(await listOfferings(hostile, { academicYear: 2027, semester: "fall" })).toEqual({
+    warnings: [
+      {
+        kind: "workspace-refused",
+        reason: "refusing the Catalog for the Academic Year 2027: the Workspace would not touch it",
+      },
+    ],
+  });
 });

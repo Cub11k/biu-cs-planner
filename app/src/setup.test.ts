@@ -46,6 +46,7 @@ const refusing = (error: unknown): Workspace => ({
 it("answers a refused create rather than throwing it at the route", async () => {
   const workspace = refusing(
     new WorkspaceRefusedError(
+      { reason: "not-created", subject: { kind: "folder", folder: "catalogs" } },
       "refusing to create the Workspace layout: catalogs could not be made (EEXIST)",
     ),
   );

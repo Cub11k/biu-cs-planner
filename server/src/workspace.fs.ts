@@ -19,6 +19,7 @@ import {
   type Workspace,
   type WorkspaceFolder,
   type WorkspaceRef,
+  type WorkspaceRefusalSubject,
   type WorkspaceStatus,
   type WorkspaceWatcher,
 } from "@biu-cs-planner/app";
@@ -142,10 +143,10 @@ const WATCHED_FOLDERS: WorkspaceFolder[] = ["catalogs", "requirements"];
  *
  * **It names the ref or its folder and never the path** (#216). It used to word itself
  * `refusing ./catalogs/2027.json: …` — the Workspace-relative spelling of the target, which is
- * smaller than an absolute path and is still a file path, and which travels out as a Warning
- * over the Catalog query routes. `describeRef` and `describeFolder` say which Catalog, which
- * State File, which snapshot instead, which is what a caller that may not know the Workspace
- * has files in it can act on.
+ * smaller than an absolute path and is still a file path, and which travelled out as a Warning
+ * over the Catalog query routes until #249. It now carries the ref or its folder as the
+ * refusal's subject, and `describe` words its message from that, saying which Catalog, which
+ * State File, which snapshot instead.
  *
  * **Nothing is kept on `cause` here, and nothing is lost by that.** `UnreadableError` and
  * `UnwritableError` carry the filesystem's own error, which is the only place the path it met
@@ -154,8 +155,11 @@ const WATCHED_FOLDERS: WorkspaceFolder[] = ["catalogs", "requirements"];
  * channel for it is #165's question and not this one's.
  */
 class OutsideWorkspaceError extends WorkspaceRefusedError {
-  constructor(what: string) {
-    super(`refusing ${what}: it resolves outside the Workspace`);
+  constructor(about: WorkspaceRefusalSubject) {
+    super(
+      { reason: "outside-workspace", subject: about },
+      `refusing ${describe(about)}: it resolves outside the Workspace`,
+    );
   }
 }
 
@@ -221,11 +225,16 @@ const errnoOf = (error: unknown): string | undefined => {
  * the filesystem met and a response cannot (#165).
  */
 class UnreadableError extends WorkspaceRefusedError {
-  constructor(what: string, error: unknown, because = "it is there and cannot be read") {
+  constructor(about: WorkspaceRefusalSubject, error: unknown, { notAFolder = false } = {}) {
     const code = errnoOf(error);
-    super(`refusing ${what}: ${because}` + (code === undefined ? "" : ` (${code})`), {
-      cause: error,
-    });
+    const because = notAFolder
+      ? "it is there and is not a folder"
+      : "it is there and cannot be read";
+    super(
+      { reason: notAFolder ? "not-a-folder" : "unreadable", subject: about },
+      `refusing ${describe(about)}: ${because}` + (code === undefined ? "" : ` (${code})`),
+      { cause: error },
+    );
   }
 }
 
@@ -239,12 +248,11 @@ class UnreadableError extends WorkspaceRefusedError {
  *
  * A `WorkspaceRefusedError`, so a caller can answer it the way every caller of this port
  * already answers one: a Warning and never a crashed server (docs/design.md, "API and data
- * rules"). **What reaches the student today is the `reason` and not this sentence** — the write
- * callers, `app/src/catalog.ts` and `app/src/edit.ts`, return `workspace-refused` — or
- * `backup-refused`, when it came out of a save's snapshot (#229) — and drop the message, and
- * only the read path in `app/src/queries.ts` carries one. So the errno below is
- * for a log and for the arm that will want it, and saying otherwise here would claim something
- * the app does not do.
+ * rules"). **No caller reads this sentence** (#249): the callers in `app` answer a refusal with
+ * a reason of their own, and the one that serves a sentence — the Catalog read in
+ * `app/src/queries.ts` — words its own from the refusal's reason code and subject. So the errno
+ * below is for a log (#165), and saying otherwise here would claim something the app does not
+ * do.
  *
  * **Every failure and not a list of codes.** An enumeration is what #109 found the hole in:
  * the code nobody thought of is the one that escapes. So the recognising is done on the way in
@@ -253,23 +261,25 @@ class UnreadableError extends WorkspaceRefusedError {
  * left over.
  *
  * **It names the ref and never the path.** The API exposes domain operations and never a file
- * path (CLAUDE.md; docs/design.md, "API and data rules", rule 1), and a refusal's message can
- * travel out as a Warning; a filesystem error's own message carries the absolute path, so the
- * errno is kept and the rest is dropped. The error itself stays on `cause`, where a log can
+ * path (CLAUDE.md; docs/design.md, "API and data rules", rule 1), and a refusal's message
+ * travelled out as a Warning until #249 and goes to a log now, which is no place for a path
+ * either; a filesystem error's own message carries the absolute path, so the errno is kept and
+ * the rest is dropped. The error itself stays on `cause`, where a log can
  * reach it and a response cannot.
  *
  * **That is now the rule for every refusal this module makes and not this one's alone** (#216).
  * `UnreadableError` and `OutsideWorkspaceError` worded themselves with a Workspace-relative path
- * and `requireJsonName` with an absolute one; all three now take `describeRef` or
- * `describeFolder`, so no refusal out of this adapter names a path on any route. The one that
- * reached the wire was `UnreadableError` out of a Catalog read, which `app/src/queries.ts`
- * carries as the `reason` on `workspace-refused`.
+ * and `requireJsonName` with an absolute one; all three now take the refusal's subject and word
+ * it through `describe`. The one that reached the wire was `UnreadableError` out of a Catalog
+ * read, whose message `app/src/queries.ts` carried as the `reason` on `workspace-refused` — which
+ * is why, since #249, it carries `app`'s sentence instead and no wording here can reach a route.
  */
 class UnwritableError extends WorkspaceRefusedError {
-  constructor(what: string, error: unknown) {
+  constructor(about: WorkspaceRefusalSubject, error: unknown) {
     const code = errnoOf(error);
     super(
-      `refusing to write ${what}: it could not be written` +
+      { reason: "unwritable", subject: about },
+      `refusing to write ${describe(about)}: it could not be written` +
         (code === undefined ? "" : ` (${code})`),
       { cause: error },
     );
@@ -277,7 +287,8 @@ class UnwritableError extends WorkspaceRefusedError {
 }
 
 /**
- * What a ref is, in the domain's words, for a refusal a student reads. Not the path: see
+ * What a ref is, in the domain's words, for a refusal's message, which goes to a log (#165); what a
+ * student reads is worded by `app` (`app/src/refusal.ts`, #249). Not the path: see
  * `UnwritableError`.
  */
 const describeRef = (ref: WorkspaceRef | BackupRef): string => {
@@ -298,9 +309,10 @@ const describeRef = (ref: WorkspaceRef | BackupRef): string => {
  * What the *container* of a ref is, in the domain's words: the folder of the Workspace Layout it
  * lives in, or the Workspace root for a State File, which is where those live.
  *
- * `describeRef`'s counterpart, and the other half of what #216 needs: a refusal is about a file,
- * which `describeRef` names, or about the folder that file is listed from or written into, which
- * is this. `DIRECTORY` at the top maps the same folders to their names on disk, and the two are
+ * The other half of what #216 needs: a refusal is about a file, which the ref itself names, or
+ * about the folder that file is listed from or written into, which is `folderSubject`'s answer —
+ * a refusal subject (#249) — and this record is how `describe` words it for a message.
+ * `DIRECTORY` at the top maps the same folders to their names on disk, and the two are
  * deliberately alike in shape: one is what the filesystem is told, the other what a caller who
  * may not know there is a filesystem is told.
  *
@@ -314,9 +326,21 @@ const FOLDER_DESCRIPTION: Record<WorkspaceFolder, string> = {
   backups: "the folder holding the Workspace's snapshots",
 };
 
-const describeFolder = (ref: { kind: WorkspaceRef["kind"] | "backup" }): string => {
+const folderSubject = (ref: { kind: WorkspaceRef["kind"] | "backup" }): WorkspaceRefusalSubject => {
   const folder = folderFor(ref);
-  return folder === undefined ? "the Workspace root" : FOLDER_DESCRIPTION[folder];
+  return folder === undefined ? { kind: "workspace" } : { kind: "folder", folder };
+};
+
+/** A refusal's subject in this adapter's words, for its message: a ref, a folder, or the root. */
+const describe = (about: WorkspaceRefusalSubject): string => {
+  switch (about.kind) {
+    case "folder":
+      return FOLDER_DESCRIPTION[about.folder];
+    case "workspace":
+      return "the Workspace root";
+    default:
+      return describeRef(about);
+  }
 };
 
 /**
@@ -508,13 +532,13 @@ export function fileSystemWorkspace(
 
     const real = await realPathOrAbsent(target);
     if (real !== undefined) {
-      if (!within(real, realRoot)) throw new OutsideWorkspaceError(describeRef(ref));
+      if (!within(real, realRoot)) throw new OutsideWorkspaceError(ref);
       return { path: target };
     }
 
     const parent = await realPathOrAbsent(dirname(target));
     if (parent === undefined) return { missing: true };
-    if (!within(parent, realRoot)) throw new OutsideWorkspaceError(describeFolder(ref));
+    if (!within(parent, realRoot)) throw new OutsideWorkspaceError(folderSubject(ref));
     return { path: target };
   };
 
@@ -527,18 +551,21 @@ export function fileSystemWorkspace(
    * because the revision is taken from them: decoding first would hash a normalised copy of
    * the file rather than the file.
    *
-   * **`what` is the file in the domain's words** — `describeRef`'s answer, passed in by the
-   * caller that has the ref — because this is the refusal that reached the wire: a Catalog read
-   * is the one caller whose message `app/src/queries.ts` carries out as a Warning, and it used
-   * to carry `./catalogs/2027.json` with it (#216).
+   * **`about` is the file the refusal is about** — the ref, passed in by the caller that has it —
+   * and is the refusal's subject (#249). This is the refusal that reached the wire: a Catalog
+   * read's message used to go out as a Warning, carrying `./catalogs/2027.json` (#216), and
+   * `app/src/queries.ts` now words that Warning from the subject instead.
    */
-  const bytesOrAbsent = async (path: string, what: string): Promise<Uint8Array | undefined> => {
+  const bytesOrAbsent = async (
+    path: string,
+    about: WorkspaceRefusalSubject,
+  ): Promise<Uint8Array | undefined> => {
     try {
       return await readFile(path);
     } catch (error) {
       const code = errnoOf(error);
       if (code !== undefined && ABSENT.includes(code)) return undefined;
-      throw new UnreadableError(what, error);
+      throw new UnreadableError(about, error);
     }
   };
 
@@ -576,22 +603,26 @@ export function fileSystemWorkspace(
    * stand on the same ground. The coverage in a pull request report will show the line, and it is
    * this paragraph rather than a missing case.
    *
-   * **The folder is named rather than spelled as a path**, which is `describeFolder`'s answer and
-   * is passed in by the caller (#216). It used to be `path.replace(root, ".")` — `./catalogs`,
-   * and for the Workspace root a single dot, which names nothing, so that one case was already
-   * special-cased here. Every folder is named now and the special case is gone with it: the
-   * degenerate case was the whole of the wording problem in miniature.
+   * **The folder is named rather than spelled as a path**: the caller passes `folderSubject`'s
+   * answer, which is the refusal's subject and is worded by `describe` (#216, #249). It used to
+   * be `path.replace(root, ".")` — `./catalogs`, and for the Workspace root a single dot, which
+   * names nothing, so that one case was already special-cased here. Every folder is named now
+   * and the special case is gone with it: the degenerate case was the whole of the wording
+   * problem in miniature.
    */
-  const entriesOrAbsent = async (path: string, what: string): Promise<string[] | undefined> => {
+  const entriesOrAbsent = async (
+    path: string,
+    about: WorkspaceRefusalSubject,
+  ): Promise<string[] | undefined> => {
     try {
       return await readdir(path);
     } catch (error) {
       const code = errnoOf(error);
       if (code === "ENOENT") return undefined;
       if (code === "ENOTDIR") {
-        throw new UnreadableError(what, error, "it is there and is not a folder");
+        throw new UnreadableError(about, error, { notAFolder: true });
       }
-      throw new UnreadableError(what, error);
+      throw new UnreadableError(about, error);
     }
   };
 
@@ -629,9 +660,9 @@ export function fileSystemWorkspace(
    */
   const onDisk = async (
     path: string,
-    what: string,
+    about: WorkspaceRefusalSubject,
   ): Promise<{ bytes: Uint8Array; version: StateFileVersion } | undefined> => {
-    const bytes = await bytesOrAbsent(path, what);
+    const bytes = await bytesOrAbsent(path, about);
     // The bytes come back with the revision because the save needs both and from one read:
     // the snapshot it writes into `.backups/` is a copy of exactly the bytes this revision
     // was taken from, and a second read could hash one file and copy another (#67).
@@ -656,7 +687,7 @@ export function fileSystemWorkspace(
   const snapshot = async (name: string, bytes: Uint8Array): Promise<void> => {
     await requireLayoutFolder({ kind: "backup" });
     const taken = new Set(
-      await entriesOrAbsent(folderPath({ kind: "backup" }), describeFolder({ kind: "backup" })),
+      await entriesOrAbsent(folderPath({ kind: "backup" }), folderSubject({ kind: "backup" })),
     );
 
     let takenAt = now();
@@ -664,7 +695,7 @@ export function fileSystemWorkspace(
 
     const ref: BackupRef = { kind: "backup", name, takenAt };
     const target = filePath(ref);
-    requireJsonName(target, describeRef(ref));
+    requireJsonName(target, ref);
 
     const check = await contained(target, ref);
     // `requireLayoutFolder` above has already answered for a `.backups` that is the wrong kind
@@ -689,7 +720,7 @@ export function fileSystemWorkspace(
       const entries =
         (await entriesOrAbsent(
           folderPath({ kind: "backup" }),
-          describeFolder({ kind: "backup" }),
+          folderSubject({ kind: "backup" }),
         )) ?? [];
       const held = entries.flatMap((entry) => {
         const ref = backupFromFileName(entry);
@@ -743,7 +774,7 @@ export function fileSystemWorkspace(
       await rm(temporary, { force: true }).catch(() => undefined);
       // and the refusal leaves, never the filesystem's own error: raw, it is caught by nothing
       // and becomes a 500 (#121). `UnwritableError` says why that is the wrong answer.
-      throw new UnwritableError(describeRef(ref), error);
+      throw new UnwritableError(ref, error);
     }
   };
 
@@ -831,6 +862,7 @@ export function fileSystemWorkspace(
           // `requireJsonName` puts what it refused in its own. The filesystem's error stays on
           // `cause`, where a log can reach it and a response cannot.
           throw new WorkspaceRefusedError(
+            { reason: "not-created", subject: { kind: "folder", folder } },
             `refusing to create the Workspace layout: ${folder} could not be made` +
               (code === undefined ? "" : ` (${code})`),
             { cause: error },
@@ -854,7 +886,7 @@ export function fileSystemWorkspace(
       const folder = await usablePath(folderPath({ kind }));
       if (folder === undefined) return [];
 
-      const entries = await entriesOrAbsent(folder, describeFolder({ kind }));
+      const entries = await entriesOrAbsent(folder, folderSubject({ kind }));
       if (entries === undefined) return [];
       if (kind === "state") {
         // A State File shares the root with the Workspace Layout and with whatever else the student
@@ -879,12 +911,12 @@ export function fileSystemWorkspace(
       // the runtime half of the narrowing to a `CatalogRef`, which a cast defeats (#113)
       requireCatalogRef(ref);
       const target = filePath(ref);
-      requireJsonName(target, describeRef(ref));
+      requireJsonName(target, ref);
 
       const check = await contained(target, ref);
       if ("missing" in check) return undefined;
 
-      const bytes = await bytesOrAbsent(check.path, describeRef(ref));
+      const bytes = await bytesOrAbsent(check.path, ref);
       return bytes === undefined ? undefined : contentOf(bytes);
     },
 
@@ -895,7 +927,7 @@ export function fileSystemWorkspace(
       // nobody agreed to. Refusing the ref outright is a stronger check than restoring it.
       requireCatalogRef(ref);
       const target = filePath(ref);
-      requireJsonName(target, describeRef(ref));
+      requireJsonName(target, ref);
 
       const check = await contained(target, ref);
       // A Catalog's folder not being there is what makes the target missing, so that check
@@ -909,12 +941,12 @@ export function fileSystemWorkspace(
 
     async readStateFile(ref: StateFileRef): Promise<StateFileContents | undefined> {
       const target = filePath(ref);
-      requireJsonName(target, describeRef(ref));
+      requireJsonName(target, ref);
 
       const check = await contained(target, ref);
       if ("missing" in check) return undefined;
 
-      const bytes = await bytesOrAbsent(check.path, describeRef(ref));
+      const bytes = await bytesOrAbsent(check.path, ref);
       // The revision comes from the same bytes the content does, in one read: two reads
       // could hash one file and parse another.
       return bytes === undefined
@@ -955,7 +987,7 @@ export function fileSystemWorkspace(
      */
     async saveStateFile(ref: StateFileRef, save: StateFileSave): Promise<StateFileVersion> {
       const target = filePath(ref);
-      requireJsonName(target, describeRef(ref));
+      requireJsonName(target, ref);
 
       const check = await contained(target, ref);
       if ("missing" in check) throw new NotAWorkspaceError();
@@ -970,7 +1002,7 @@ export function fileSystemWorkspace(
       // As late as it can be made short of reordering the snapshot before it, which the doc
       // above weighs: what is between this check and the rename is the snapshot, and nothing
       // else.
-      const replacing = await onDisk(check.path, describeRef(ref));
+      const replacing = await onDisk(check.path, ref);
       if (replacing?.version !== save.basedOn) {
         throw new StateFileChangedError(ref.name, {
           basedOn: save.basedOn,
@@ -1019,7 +1051,7 @@ export function fileSystemWorkspace(
       const folder = await usablePath(folderPath({ kind: "backup" }));
       if (folder === undefined) return [];
 
-      const entries = await entriesOrAbsent(folder, describeFolder({ kind: "backup" }));
+      const entries = await entriesOrAbsent(folder, folderSubject({ kind: "backup" }));
       if (entries === undefined) return [];
 
       return entries
@@ -1040,12 +1072,12 @@ export function fileSystemWorkspace(
      */
     async readBackup(ref: BackupRef): Promise<unknown> {
       const target = filePath(ref);
-      requireJsonName(target, describeRef(ref));
+      requireJsonName(target, ref);
 
       const check = await contained(target, ref);
       if ("missing" in check) return undefined;
 
-      const bytes = await bytesOrAbsent(check.path, describeRef(ref));
+      const bytes = await bytesOrAbsent(check.path, ref);
       return bytes === undefined ? undefined : contentOf(bytes);
     },
 
@@ -1174,14 +1206,18 @@ function folderFor(ref: {
  * rather than today's one. That is the point: the rule should not depend on being
  * remembered.
  *
- * **The path is what is checked and `what` is what is said** (#216). This was the one refusal
- * in the module naming an *absolute* path, which is the largest a leak out of here could be;
- * every caller already has the ref, so it hands `describeRef`'s answer along with the path.
- * Nothing reachable today gets this far, so what the change protects is the future caller the
- * guard exists for — which is exactly the caller that would also be the first to leak a path.
+ * **The path is what is checked and `about` is what the refusal is about** (#216, #249). This
+ * was the one refusal in the module naming an *absolute* path, which is the largest a leak out of
+ * here could be; every caller already has the ref, so it hands that along with the path as the
+ * subject. Nothing reachable today gets this far, so what the change protects is the future
+ * caller the guard exists for — which is exactly the caller that would also be the first to put
+ * a path in a log line.
  */
-function requireJsonName(path: string, what: string): void {
+function requireJsonName(path: string, about: WorkspaceRefusalSubject): void {
   if (!path.endsWith(".json")) {
-    throw new WorkspaceRefusedError(`refusing ${what}: only .json files are read or written`);
+    throw new WorkspaceRefusedError(
+      { reason: "not-json", subject: about },
+      `refusing ${describe(about)}: only .json files are read or written`,
+    );
   }
 }

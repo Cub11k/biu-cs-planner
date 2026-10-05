@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { settingsSchema } from "@biu-cs-planner/core";
+import { BackupRefusedError, WorkspaceRefusedError, type Workspace } from "@biu-cs-planner/app";
 import { createApi, savedSettingsSchema } from "./api.ts";
 import { fileSystemWorkspace } from "./workspace.fs.ts";
 
@@ -1718,11 +1719,11 @@ it("names no path in either answer, and no State File", async () => {
  * assert that a Workspace that is working names no path in what it serves, and neither provokes a
  * refusal — so the answer that was actually carrying one was never looked at. A refusal out of
  * `server/src/workspace.fs.ts` worded itself `refusing ./catalogs/2027.json: …`, the
- * Workspace-relative spelling of the target, and `app/src/queries.ts` puts a refusal's message
- * straight onto the `reason` of a `workspace-refused` Warning. Three routes served it: the two
- * Catalog queries and the exam period's `catalogWarnings`. A Workspace-relative path is smaller
- * than an absolute one and is still a file path, reaching a page that is not allowed to know the
- * Workspace has files in it.
+ * Workspace-relative spelling of the target, and `app/src/queries.ts` put a refusal's message
+ * straight onto the `reason` of a `workspace-refused` Warning (it words its own since #249).
+ * Three routes served it: the two Catalog queries and the exam period's `catalogWarnings`. A
+ * Workspace-relative path is smaller than an absolute one and is still a file path, reaching a
+ * page that is not allowed to know the Workspace has files in it.
  *
  * So these go the other way round: **provoke a refusal on every route that can answer
  * `workspace-refused`, and read the body.** The routes are enumerated from `createApi` rather
@@ -1731,11 +1732,11 @@ it("names no path in either answer, and no State File", async () => {
  * all fourteen are provoked below — four by the Catalog, nine by the State File, and
  * `POST /api/workspace` by a Workspace Layout that cannot be made.
  *
- * `error.message` is the only channel an adapter's prose has out of `app` — measured, with
- * `grep -rn '\.message' app/src server/src core/src web/src`, which finds `queries.ts` and
- * nothing else on any request path. Every other caller collapses the refusal to a reason code, so
- * the routes below the Catalog ones could not leak a path today and are here as the guard for the
- * next one that carries a message out.
+ * `error.message` was the only channel an adapter's prose had out of `app`, through
+ * `queries.ts`; since #249 nothing on a request path reads it — `queries.ts` words its own
+ * sentence from the refusal's reason code and subject, and every other caller only asks whether
+ * it is a refusal — and the hostile-adapter test below proves that over every route
+ * rather than against this adapter's wording. These stay as the guard on the adapter itself.
  */
 const namesNoPath = async (body: string, where: string): Promise<void> => {
   // the absolute path, which is what `requireJsonName` used to word itself with — and the
@@ -1783,14 +1784,15 @@ it("names no path in a refusal when a Catalog cannot be read, on all four routes
   await namesNoPath(listedBody, "GET offerings");
   // **and it still says something true.** The other half of #216: a path removed with nothing
   // put in its place would leave a page unable to tell the student which file to go and look
-  // at. `reason` is the refusal's own sentence (`app/src/queries.ts`), and it names the Catalog
-  // by its Academic Year — a domain operation, which is what the API is allowed to expose.
+  // at. `reason` is `app`'s sentence, worded from the refusal's reason code and subject
+  // (`app/src/refusal.ts`, #249), and it names the Catalog by its Academic Year — a domain
+  // operation, which is what the API is allowed to expose. The errno the adapter put on its own
+  // message (`EISDIR`) does not come with it: that is the adapter's word, and stays in its log.
   expect(JSON.parse(listedBody)).toMatchObject({
     warnings: [
       {
         kind: "workspace-refused",
-        reason:
-          "refusing the Catalog for the Academic Year 2027: it is there and cannot be read (EISDIR)",
+        reason: "refusing the Catalog for the Academic Year 2027: it is there and cannot be read",
       },
     ],
   });
@@ -1917,6 +1919,179 @@ it("names no path in a refusal when the State File cannot be read, on every rout
 
   // and the file the refusals were about is exactly as it was left
   expect(await readdir(join(root, "me.state.json"))).toEqual([]);
+});
+
+/**
+ * #249's proof: **an adapter cannot put a string of its own choosing into any API response.**
+ *
+ * The tests above stage a real folder and read what the one adapter there is says about it, so
+ * what they prove is that adapter's wording (#216). This one replaces the adapter with a
+ * deliberately hostile double, whose every refusal has a path for its message and on its `cause`,
+ * and a subject naming a file nobody asked about — and twice over: once well-typed, and once with
+ * a reason and a subject that are not the port's at all, which is what a cast or an adapter
+ * written against an older port hands over. Every refusal-capable route is then asked, and none of
+ * them may carry any of it.
+ *
+ * The double is a real Workspace until it is told to turn, so the undo stack, the revision and the
+ * snapshot the routes need are made honestly first; a route that refused for want of those would
+ * be a different refusal and would prove nothing about this one. A second pass spares the reads,
+ * so the routes that save are refused on the save itself, as a `BackupRefusedError` around the
+ * hostile refusal — the `backup-refused` arm.
+ */
+it("carries nothing a hostile adapter wrote, on any route", async () => {
+  const leak = `${await realpath(root)}/catalogs/2027.json`;
+  const smuggled = "whatever-the-adapter-wanted-to-say";
+  const refusals: [string, () => WorkspaceRefusedError, string][] = [
+    [
+      "a well-typed refusal",
+      () =>
+        new WorkspaceRefusedError(
+          { reason: "unreadable", subject: { kind: "state", name: smuggled } },
+          leak,
+          { cause: new Error(leak) },
+        ),
+      "it is there and cannot be read",
+    ],
+    [
+      "a refusal of no shape the port has",
+      () =>
+        new WorkspaceRefusedError(
+          { reason: leak, subject: { kind: leak, name: leak } } as never,
+          leak,
+          { cause: new Error(leak) },
+        ),
+      // a reason the port does not have is not repeated, and is said as `app`'s own fallback
+      "the Workspace would not touch it",
+    ],
+  ];
+
+  // **A Proxy over the real adapter rather than an object listing the port's methods.** Every
+  // method but the ones `spared` names answers with the hostile refusal once `refuse` is set, so
+  // the double covers the whole port with none of it listed — a method added to the port later is
+  // hostile here too without anyone remembering to add it. It is a decorator and never a writer:
+  // every save in this test reaches the real adapter through `editStateFile`, as production's do,
+  // which is also why `tools/ci/state-file-writer.ts` has nothing to find here.
+  const real = fileSystemWorkspace(root);
+  let refuse: (() => WorkspaceRefusedError) | undefined;
+  let spared: (property: PropertyKey) => boolean = () => false;
+  const hostile = new Proxy(real, {
+    get(target, property, receiver) {
+      const method: unknown = Reflect.get(target, property, receiver);
+      if (typeof method !== "function" || property === "status" || property === "watch") {
+        return method;
+      }
+      return (...args: unknown[]): unknown =>
+        refuse === undefined || spared(property)
+          ? (method as (...args: unknown[]) => unknown)(...args)
+          : Promise.reject(refuse());
+    },
+  });
+  api = createApi({ workspace: hostile, token: TOKEN, changes: { changeCount: () => 0 } });
+
+  await post("/api/workspace", {});
+  await post("/api/catalog/2027/import", CRAWL);
+  await post(PICKS, LECTURE);
+  await save(PICKS, CLASHING);
+  expect((await step(UNDO)).status).toBe(200);
+  const [takenAt] = await snapshotMoments();
+  const basedOn = await currentVersion();
+  expect(takenAt).toBeDefined();
+
+  /** Every answer refused, and none carrying the leak, the smuggled name, or a path. */
+  const carriesNothing = async (answers: [string, Response][], kind: string): Promise<void> => {
+    for (const [route, answer] of answers) {
+      const where = `${route}, ${kind}`;
+      // refused, every one, so a route that stopped reaching the port fails here rather than
+      // passing by serving something else
+      expect(answer.status, where).toBe(409);
+      const body = await answer.text();
+      expect(body, where).toMatch(/workspace-refused|backup-refused/);
+      expect(body, where).not.toContain(leak);
+      expect(body, where).not.toContain(smuggled);
+      await namesNoPath(body, where);
+    }
+  };
+  const READS = new Set<PropertyKey>([
+    "list",
+    "read",
+    "readStateFile",
+    "listBackups",
+    "readBackup",
+  ]);
+
+  for (const [kind, make, because] of refusals) {
+    // 1. every operation refuses: each route is refused on the first thing it asks the port
+    refuse = make;
+    spared = () => false;
+    await carriesNothing(
+      [
+        ["POST workspace", await post("/api/workspace", {})],
+        ["POST import", await post("/api/catalog/2027/import", CRAWL)],
+        ["GET offerings", await get("/api/catalog/2027/offerings?semester=fall")],
+        ["GET one offering", await get("/api/catalog/2027/offerings/89-110")],
+        ["GET week", await get(TIMETABLE)],
+        ["GET exams", await get(EXAMS)],
+        ["POST pick", await post(PICKS, { ...OTHER_LECTURE, basedOn })],
+        [
+          "DELETE pick",
+          await remove(PICKS, { courseNumber: "89-110", lessonType: "הרצאה", basedOn }),
+        ],
+        ["GET backups", await get(BACKUPS)],
+        ["POST restore", await post(RESTORE, { takenAt, basedOn })],
+        ["POST undo", await post(UNDO, { basedOn })],
+        ["POST redo", await post(REDO, { basedOn })],
+        ["GET settings", await get(SETTINGS)],
+        ["PATCH settings", await patch(SETTINGS, { language: "en", basedOn })],
+      ],
+      kind,
+    );
+
+    // 2. the reads answer and only the writes refuse, so the routes that save get past their
+    //    read and are refused on the save itself — as a snapshot that could not be made, which is
+    //    the `backup-refused` arm and a refusal that carries the hostile one on `cause`
+    refuse = () => new BackupRefusedError(make());
+    spared = (property) => READS.has(property);
+    await carriesNothing(
+      [
+        ["POST workspace", await post("/api/workspace", {})],
+        ["POST import", await post("/api/catalog/2027/import", CRAWL)],
+        ["POST pick", await post(PICKS, { ...OTHER_LECTURE, basedOn })],
+        [
+          "DELETE pick",
+          await remove(PICKS, { courseNumber: "89-110", lessonType: "הרצאה", basedOn }),
+        ],
+        ["POST restore", await post(RESTORE, { takenAt, basedOn })],
+        ["POST undo", await post(UNDO, { basedOn })],
+        // not the language the file holds, which would be no edit and so no save to refuse
+        ["PATCH settings", await patch(SETTINGS, { language: "he", basedOn })],
+      ],
+      `${kind}, on the save`,
+    );
+
+    // 3. only the Catalog read refuses. The exam period reads the State File first, so above it
+    //    refused on that; the Catalog refusal it carries **inside a 200**, under
+    //    `catalogWarnings`, is the one route where that refusal is not the answer's status. The
+    //    sentence there and on the Catalog query is `app`'s, about the Catalog it asked for.
+    refuse = make;
+    spared = (property) => property !== "read";
+    const sentence = {
+      kind: "workspace-refused",
+      reason: `refusing the Catalog for the Academic Year 2027: ${because}`,
+    };
+    const exams = await get(EXAMS);
+    expect(exams.status, kind).toBe(200);
+    const examsBody = await exams.text();
+    expect(JSON.parse(examsBody), kind).toMatchObject({ catalogWarnings: [sentence] });
+    const offerings = await get("/api/catalog/2027/offerings?semester=fall");
+    expect(offerings.status, kind).toBe(409);
+    const offeringsBody = await offerings.text();
+    expect(JSON.parse(offeringsBody), kind).toEqual({ warnings: [sentence] });
+    for (const body of [examsBody, offeringsBody]) {
+      expect(body, kind).not.toContain(leak);
+      expect(body, kind).not.toContain(smuggled);
+      await namesNoPath(body, kind);
+    }
+  }
 });
 
 /**

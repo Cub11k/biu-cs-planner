@@ -86,7 +86,13 @@ it("answers a refusal rather than an empty list when the folder cannot be looked
   // injects an unreadable State File
   const workspace: MemoryWorkspace = {
     ...memoryWorkspace({ created: true }),
-    listBackups: () => Promise.reject(new WorkspaceRefusedError("refusing: it cannot be listed")),
+    listBackups: () =>
+      Promise.reject(
+        new WorkspaceRefusedError(
+          { reason: "unreadable", subject: { kind: "folder", folder: "backups" } },
+          "refusing: it cannot be listed",
+        ),
+      ),
   };
 
   expect(await listBackups(workspace)).toEqual({ kind: "refused", reason: "workspace-refused" });
