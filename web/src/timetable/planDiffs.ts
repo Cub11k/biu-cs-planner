@@ -23,7 +23,7 @@ type ApplyRoute = ApiClient["api"]["timetable"][":year"][":semester"]["plan-diff
  * A Plan Diff that has an "apply to Plan": every kind but `not-offered`, and every `move` but one
  * whose target Semester already holds the Course (#355), which is reported with nothing to apply.
  */
-export type ActionablePlanDiff = Exclude<PlanDiff, { kind: "not-offered" }>;
+export type ActionablePlanDiff = Exclude<PlanDiff, { kind: "not-offered" } | { targetHolds: true }>;
 
 export const isActionable = (diff: PlanDiff): diff is ActionablePlanDiff =>
   diff.kind !== "not-offered" && !(diff.kind === "move" && diff.targetHolds === true);

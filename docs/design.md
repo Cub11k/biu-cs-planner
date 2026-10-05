@@ -135,7 +135,7 @@ The states need to differ in more than one property at once. Border style alone 
 - **Untimed Groups** sit in a "No fixed time" strip under the grid. They count toward credits and Exams and never Clash.
 - **Clashes:** picked blocks that overlap sit side by side with a red border, as a Warning only.
 - **Tray contents:** the Semester's planned Attempts plus Courses added directly. Each Tray entry carries one chip per Lesson Type the Course has, filled with the Group number once picked and empty while missing, so what is still needed is visible without opening the Course.
-- **Tray badges:** "offered in the other Semester", "not in this year's Catalog", "not in Plan", "not scheduled", "planned in the other Semester". Each actionable badge opens its Plan Diff action.
+- **Tray badges:** "offered in the other Semester", "not in this year's Catalog", "not in Plan", "not scheduled", "planned in the other Semester", and "offered in the other Semester, already planned there", which has nothing to apply. Each actionable badge opens its Plan Diff action.
 - **Guidance:** a hint line above the grid tells a first-time student what to do, names what the selected Course still needs, and carries a legend for pencil, ink and red pen.
 
 ### Exams

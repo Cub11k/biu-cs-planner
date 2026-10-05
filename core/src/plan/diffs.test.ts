@@ -399,7 +399,7 @@ const plannedCounts = (state: State): Map<string, number> =>
     .reduce((counts, attempt) => counts.set(attempt.courseNumber, (counts.get(attempt.courseNumber) ?? 0) + 1), new Map());
 
 it("never leaves a Course planned twice in one Academic Year, whichever Plan Diff is applied", () => {
-  // every arrangement of one Course between the Plan's Semesters and the Fall Variant, for a Course
+  // every arrangement of one Course between the Plan's Semesters and a Fall or a summer Variant, for a Course
   // given in Fall only, in Spring only, in both as two Offerings, and Year-long
   const courses = ["89-110", "89-230", "89-220", "89-385"];
   const placements: Attempt["semester"][][] = [[], ["fall"], ["spring"], ["summer"], ["fall", "spring"]];
@@ -408,18 +408,27 @@ it("never leaves a Course planned twice in one Academic Year, whichever Plan Dif
   for (const courseNumber of courses) {
     for (const semesters of placements) {
       for (const held of [false, true]) {
-        for (const context of [TWICE, { offerings: undefined, yearLong: ["89-385"] }]) {
+        for (const [context, at] of [TWICE, { offerings: undefined, yearLong: ["89-385"] }].flatMap(
+          (context) => [[context, FALL], [context, SUMMER]] as const,
+        )) {
           const attempts: Planned[] = [{ courseNumber: "89-999", semester: "spring" }];
           attempts.push(...semesters.map((semester) => ({ courseNumber, semester })));
-          const base = createVariant(withAttempts(empty(), attempts), FALL);
-          const state = held ? addToTray(base, FALL, courseNumber) : base;
+          const base = createVariant(withAttempts(empty(), attempts), at);
+          const state = held ? addToTray(base, at, courseNumber) : base;
           // a Year-long Course is planned once per half, so its unit is the pair
           const limit = (n: string) => (n === "89-385" ? 2 : 1);
           const already = plannedCounts(state);
 
-          for (const diff of planDiffs(state, FALL, context).filter(isActionable)) {
+          for (const diff of planDiffs(state, at, context).filter(isActionable)) {
             const after = applyPlanDiff(state, diff, newId);
             applied += 1;
+            // a Year-long Course planned in a half is planned in both, never split
+            const halves = after.attempts.filter(
+              (a) => a.courseNumber === "89-385" && a.status === "planned" && a.semester !== "summer",
+            );
+            if (courseNumber === "89-385" && halves.length > 0) {
+              expect(new Set(halves.map((a) => a.semester)).size, `${diff.kind} split 89-385`).toBe(2);
+            }
             for (const [course, count] of plannedCounts(after)) {
               expect(count, `${diff.kind} ${courseNumber} from [${semesters.join(",")}]`).toBeLessThanOrEqual(
                 Math.max(limit(course), already.get(course) ?? 0),
@@ -447,4 +456,64 @@ it("digests a list of Plan Diffs so that any change to it, and only a change, ch
     planDiffsDigest(planDiffs(yearLong, FALL, { offerings: [...CATALOG.offerings!.slice(0, 3), offering("89-385", "fall")] })),
   );
   expect(planDiffsDigest([])).toBe(planDiffsDigest([]));
+});
+
+/* Review of #358: a Year-long Course stays one unit when it is moved here. */
+
+const SUMMER = { ...FALL, semester: "summer" } as const;
+
+it("offers nothing to apply in the summer for a Course the Plan holds as a Year-long unit", () => {
+  const state = addToTray(
+    withAttempts(empty(), [{ courseNumber: "89-385" }, { courseNumber: "89-385", semester: "spring" }]),
+    SUMMER,
+    "89-385",
+  );
+  const summerToo: PlanDiffContext = { offerings: [...CATALOG.offerings!, offering("89-385", "summer")] };
+
+  // moving one half here would leave two one-Semester plans of one Course
+  for (const context of [summerToo, { offerings: undefined, yearLong: ["89-385"] }]) {
+    expect(planDiffs(state, SUMMER, context).filter(isActionable)).toEqual([]);
+  }
+});
+
+it("moves a Year-long Course here from the summer with the half it lacks, so it stays one unit", () => {
+  const before = addToTray(withAttempts(empty(), [{ courseNumber: "89-385", semester: "summer" }]), FALL, "89-385");
+  const diffs = planDiffs(before, FALL, CATALOG);
+  ids = 0;
+
+  expect(diffs).toEqual([
+    {
+      kind: "move-here",
+      courseNumber: "89-385",
+      academicYear: 2027,
+      semester: "fall",
+      from: "summer",
+      attemptIds: ["a1"],
+      alsoAdds: ["spring"],
+    },
+  ]);
+  expect(applyPlanDiff(before, diffs[0]!, newId).attempts).toEqual([
+    { id: "a1", courseNumber: "89-385", academicYear: 2027, semester: "fall", status: "planned" },
+    { id: "new-1", courseNumber: "89-385", academicYear: 2027, semester: "spring", status: "planned" },
+  ]);
+});
+
+it("moves a Year-long Course planned in the summer into one half with the other half, so it stays one unit", () => {
+  const before = withAttempts(empty(), [{ courseNumber: "89-385", semester: "summer" }]);
+  const diff = planDiffs(before, SUMMER, CATALOG)[0]!;
+  ids = 0;
+
+  expect(diff).toEqual({
+    kind: "move",
+    courseNumber: "89-385",
+    academicYear: 2027,
+    semester: "summer",
+    to: "fall",
+    attemptIds: ["a1"],
+    alsoAdds: ["spring"],
+  });
+  expect(applyPlanDiff(before, diff, newId).attempts.map((a) => [a.id, a.semester])).toEqual([
+    ["a1", "fall"],
+    ["new-1", "spring"],
+  ]);
 });

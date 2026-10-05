@@ -1358,7 +1358,12 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
      * What marking the Variant named registered with "apply all" would do (#297), for the student
      * to see before accepting: its Plan Diffs, `not-offered` ones among them, and the Courses whose
      * Attempt would become registered. A read: nothing is written. `version` is what the mark has
-     * to be based on.
+     * to be based on, and `digest` what "apply all" has to send back (#355).
+     *
+     * A Variant name the file does not hold is a 404 `variant-not-found`, as the mark's is (#355).
+     * A 404 rather than the 409 `backup-not-found` is, because a stale tab does not get here: a
+     * Variant another writer deleted moved the file, and the mark is refused `state-file-changed`
+     * first. What reaches this names a Variant the file never had.
      */
     .get("/api/timetable/:year/:semester/registration", async (c) => {
       const ref = timetableRef(c);

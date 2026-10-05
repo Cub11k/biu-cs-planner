@@ -14,9 +14,11 @@ import type { Attempt, AttemptId, State } from "../state/schema.ts";
  * - `add`: a Course in the Variant — added to its Tray or picked in it — that the Plan does not
  *   have in the Semester at all, nor planned in another Semester of the year, and that this year's
  *   Catalog, when there is one, gives in it;
- * - `move-here`: a Course in the Variant that the Plan has planned in another Semester of the same
- *   Academic Year (#355). Applying it moves that Attempt here, where an `add` would have left the
- *   Course planned twice;
+ * - `move-here`: a Course in the Variant that the Plan has planned in one other Semester of the
+ *   same Academic Year (#355). Applying it moves that Attempt here, where an `add` would have left
+ *   the Course planned twice, and for a Year-long Course adds the other half it lacks. A Course
+ *   planned in more than one other Semester — a Year-long unit seen from the summer, or a double
+ *   the file already holds — gets no Plan Diff here, since moving one would split or keep it;
  * - `drop`: a planned Attempt of a Course that is not in the Variant;
  * - `move`: a planned Course this year's Catalog offers, but not in this Semester. When the
  *   Semester it would move to already holds the Course it is still reported, with `targetHolds`
@@ -90,15 +92,19 @@ type PlanDiffAt = { courseNumber: string; academicYear: number; semester: Semest
 export type PlanDiff =
   /** The Course is in the Variant and not in the Plan; `semesters` are the Attempts to add. */
   | ({ kind: "add"; semesters: Semester[] } & PlanDiffAt)
-  /** The Course is in the Variant and planned in `from`, another Semester of the year: move it here. */
-  | ({ kind: "move-here"; from: Semester; attemptIds: AttemptId[] } & PlanDiffAt)
+  /**
+   * The Course is in the Variant and planned in `from`, another Semester of the year: move it here.
+   * For a Year-long Course, `alsoAdds` names the other half the Plan lacks, added in the same apply.
+   */
+  | ({ kind: "move-here"; from: Semester; attemptIds: AttemptId[]; alsoAdds?: Semester[] } & PlanDiffAt)
   /** The Plan's planned Attempts of a Course the Variant does not hold, both halves of a Year-long one. */
   | ({ kind: "drop"; attemptIds: AttemptId[] } & PlanDiffAt)
   /**
    * Planned here, offered this year only in `to`. `targetHolds` when `to` already has an Attempt
    * of the Course: then there is nothing to apply, because moving would plan it there twice.
+   * `alsoAdds` is the other half of a Year-long Course moved into one half, added in the same apply.
    */
-  | ({ kind: "move"; to: Semester; attemptIds: AttemptId[]; targetHolds?: true } & PlanDiffAt)
+  | ({ kind: "move"; to: Semester; attemptIds: AttemptId[]; targetHolds?: true; alsoAdds?: Semester[] } & PlanDiffAt)
   /** Planned here, and not in this year's Catalog at all. Nothing to apply. */
   | ({ kind: "not-offered"; attemptIds: AttemptId[] } & PlanDiffAt);
 
@@ -153,9 +159,9 @@ export function planDiffsDigest(diffs: readonly PlanDiff[]): string {
         case "add":
           return [...head, diff.semesters];
         case "move-here":
-          return [...head, diff.from, diff.attemptIds];
+          return [...head, diff.from, diff.attemptIds, diff.alsoAdds ?? []];
         case "move":
-          return [...head, diff.to, diff.attemptIds, diff.targetHolds === true];
+          return [...head, diff.to, diff.attemptIds, diff.targetHolds === true, diff.alsoAdds ?? []];
         case "drop":
         case "not-offered":
           return [...head, diff.attemptIds];
@@ -184,11 +190,12 @@ export function planDiffs(state: State, at: VariantRef, context: PlanDiffContext
         }, new Map<string, Semester[]>());
 
   const yearLongByPattern = new Set((context.yearLong ?? []).map(canonical));
-  const isYearLong = (course: string): boolean => {
-    if (semester === "summer") return false;
+  /** Whether the Course is Year-long as given in `where` — the Variant's Semester unless a `move` asks about its target. */
+  const isYearLong = (course: string, where: Semester = semester): boolean => {
+    if (where === "summer") return false;
     if (context.offerings === undefined) return yearLongByPattern.has(course);
     const here = context.offerings.filter(
-      (offering) => canonical(offering.courseNumber) === course && offering.semesters.includes(semester),
+      (offering) => canonical(offering.courseNumber) === course && offering.semesters.includes(where),
     );
     return here.length > 0 && here.every((offering) => HALVES.every((half) => offering.semesters.includes(half)));
   };
@@ -232,7 +239,18 @@ export function planDiffs(state: State, at: VariantRef, context: PlanDiffContext
       const to = SEMESTERS.find((other) => other !== semester && semesters.includes(other))!;
       // the Semester it would go to has the Course already: moving would plan it there twice
       const targetHolds = inYear.some((attempt) => attempt.semester === to && of(attempt) === course);
-      diffs.push({ kind: "move", ...where, to, attemptIds, ...(targetHolds ? { targetHolds: true as const } : {}) });
+      // moved into one half of a Year-long Course, it brings the other half the Plan lacks
+      const alsoAdds = isYearLong(course, to)
+        ? HALVES.filter((half) => half !== to && !inYear.some((attempt) => attempt.semester === half && of(attempt) === course))
+        : [];
+      diffs.push({
+        kind: "move",
+        ...where,
+        to,
+        attemptIds,
+        ...(targetHolds ? { targetHolds: true as const } : {}),
+        ...(alsoAdds.length > 0 && !targetHolds ? { alsoAdds } : {}),
+      });
       continue;
     }
     if (scheduled.has(course)) continue;
@@ -270,9 +288,23 @@ export function planDiffs(state: State, at: VariantRef, context: PlanDiffContext
         of(attempt) === course,
     );
     if (elsewhere.length > 0) {
+      // Planned in more than one other Semester: a Year-long unit seen from the summer, or a Course
+      // the file already plans twice. Moving one of them would split the unit or keep the double,
+      // so there is nothing to apply here (review of #358).
       const from = elsewhere[0]!.semester;
-      const attemptIds = elsewhere.filter((attempt) => attempt.semester === from).map((attempt) => attempt.id);
-      diffs.push({ kind: "move-here", courseNumber, academicYear, semester, from, attemptIds });
+      if (elsewhere.some((attempt) => attempt.semester !== from)) continue;
+      const attemptIds = elsewhere.map((attempt) => attempt.id);
+      // a Year-long Course moved into one half brings the other half it lacks, so it stays one unit
+      const alsoAdds = yearLong ? HALVES.filter((half) => half !== semester && !held(half)) : [];
+      diffs.push({
+        kind: "move-here",
+        courseNumber,
+        academicYear,
+        semester,
+        from,
+        attemptIds,
+        ...(alsoAdds.length > 0 ? { alsoAdds } : {}),
+      });
       continue;
     }
     const semesters = yearLong ? HALVES.filter((half) => !held(half)) : [semester];
@@ -280,6 +312,24 @@ export function planDiffs(state: State, at: VariantRef, context: PlanDiffContext
   }
 
   return diffs;
+}
+
+/** Moves a Plan Diff's Attempts to `to`, then plans the Year-long half it says the Plan lacks. */
+function moveThenAdd(
+  state: State,
+  diff: { courseNumber: string; academicYear: number; attemptIds: AttemptId[]; alsoAdds?: Semester[] | undefined },
+  to: Semester,
+  newId: () => AttemptId,
+): State {
+  const moved = diff.attemptIds.reduce(
+    (next, id) => moveAttempt(next, id, { academicYear: diff.academicYear, semester: to }),
+    state,
+  );
+  return (diff.alsoAdds ?? []).reduce(
+    (next, semester) =>
+      addAttempt(next, { courseNumber: diff.courseNumber, academicYear: diff.academicYear, semester, status: "planned" }, newId),
+    moved,
+  );
 }
 
 /** The Plan Diff a key names among `diffs`, or `undefined` when there is none like it any more. */
@@ -310,15 +360,9 @@ export function applyPlanDiff(state: State, diff: PlanDiff, newId: () => Attempt
       return diff.attemptIds.reduce(removeAttempt, state);
     case "move":
       if (diff.targetHolds === true) return state;
-      return diff.attemptIds.reduce(
-        (next, id) => moveAttempt(next, id, { academicYear: diff.academicYear, semester: diff.to }),
-        state,
-      );
+      return moveThenAdd(state, diff, diff.to, newId);
     case "move-here":
-      return diff.attemptIds.reduce(
-        (next, id) => moveAttempt(next, id, { academicYear: diff.academicYear, semester: diff.semester }),
-        state,
-      );
+      return moveThenAdd(state, diff, diff.semester, newId);
     case "not-offered":
       return state;
   }

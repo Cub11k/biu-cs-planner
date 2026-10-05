@@ -270,7 +270,7 @@ export function installFakeApi(options: {
         variantPosition: variant === undefined ? undefined : fake.variants.indexOf(variant),
         planDiffs: fake.planDiffs[name] ?? [],
         registers: options.registers?.[name] ?? [],
-        // the fake's digest is the list itself, which is what the server's is too (#355)
+        // the fake's digest is the list as JSON: like the server's, it changes exactly when the list does (#355)
         digest: JSON.stringify(fake.planDiffs[name] ?? []),
         version: `v${fake.version}`,
         warnings: [],
