@@ -1,5 +1,5 @@
 import { variantAt, withVariant, type VariantRef } from "./picks.ts";
-import type { State } from "./schema.ts";
+import type { GroupPick, State } from "./schema.ts";
 
 /**
  * The Tray (#283): the Courses waiting to be scheduled in a Variant (CONTEXT.md).
@@ -44,13 +44,42 @@ export type TrayEntry = {
 };
 
 /**
- * What the derivation needs of an Offering: its course number and its Groups' Lesson Types. A
- * Catalog Offering satisfies it, so this module imports nothing from the Catalog.
+ * What the derivation needs of an Offering: its course number and its Groups' Lesson Types and
+ * numbers. A Catalog Offering satisfies it, so this module imports nothing from the Catalog.
  */
 export type TrayOffering = {
   courseNumber: string;
-  groups: readonly { lessonType: string }[];
+  groups: readonly { lessonType: string; number: string }[];
 };
+
+/**
+ * Which Offering a Tray entry describes, when a Semester lists more than one for the Course — a
+ * Year-long and a Fall-only Offering of one Course both answer to Fall (#335).
+ *
+ * **The rule: the Offering the Variant's Picks of the Course belong to.** That is the first, in
+ * listing order, that has a Group for every one of those Picks — the same Lesson Type and the same
+ * Group number. With no Pick of the Course, or with Picks that no single Offering holds, it is the
+ * first Offering listed, which is also the one whose Groups the week offers when the Course is
+ * chosen, so the chips describe the Groups the student is being offered.
+ *
+ * Not the union of the Offerings' Lesson Types: a Lesson Type only one Offering has would be a chip
+ * the student could never fill by picking within the Offering they are in.
+ */
+function offeringFor(
+  offerings: readonly TrayOffering[] | undefined,
+  courseNumber: string,
+  picks: readonly GroupPick[],
+): TrayOffering | undefined {
+  const candidates = offerings?.filter((candidate) => candidate.courseNumber === courseNumber) ?? [];
+  if (candidates.length <= 1 || picks.length === 0) return candidates[0];
+  const holdsEveryPick = (offering: TrayOffering): boolean =>
+    picks.every((pick) =>
+      offering.groups.some(
+        (group) => group.lessonType === pick.lessonType && group.number === pick.groupNumber,
+      ),
+    );
+  return candidates.find(holdsEveryPick) ?? candidates[0];
+}
 
 /**
  * Adds a Course to a Variant's Tray, making the Timetable and the Variant if they are not there
@@ -94,8 +123,8 @@ export function removeFromTray(state: State, at: VariantRef, courseNumber: strin
  * off the Catalog's Offering when there is one — its chips and whether it is complete.
  *
  * `offerings` is the Catalog of the Semester, or `undefined` when there is none to ask; then
- * every entry is `known: false`. The first Offering for a course number is the one read, as the
- * screen reads the first when it shows a Course's Groups.
+ * every entry is `known: false`. A Course the Semester lists more than one Offering for is read
+ * off the one `offeringFor` chooses: the Offering its Picks belong to, and otherwise the first.
  */
 export function trayEntries(
   state: State,
@@ -123,8 +152,8 @@ export function trayEntries(
   for (const courseNumber of planned) note(courseNumber, "planned");
 
   return [...origins].map(([courseNumber, why]) => {
-    const offering = offerings?.find((candidate) => candidate.courseNumber === courseNumber);
     const mine = picks.filter((pick) => pick.courseNumber === courseNumber);
+    const offering = offeringFor(offerings, courseNumber, mine);
     const needed = [...new Set(offering?.groups.map((group) => group.lessonType) ?? [])];
     const lessonTypes = [
       ...needed,

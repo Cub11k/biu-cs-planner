@@ -309,7 +309,45 @@ export function readTestFile(absPath: string, root: string): TestFile {
     return rows === undefined ? { rows: 1, atLeast: true } : { rows, atLeast: false };
   };
 
+  /**
+   * A test registered inside a loop runs once per pass, which is the shape `server/src/
+   * revision.test.ts` writes — `for (const half of ["read", "save"] as const) it(…)` — and which
+   * this reading used to count as one test while the run collected two (#335).
+   *
+   * A `for…of` over a table `rowsOf` can read multiplies by its rows, exactly as a
+   * `describe.each` does. Any other loop — a `for…of` over something built at runtime, a `for`,
+   * a `for…in`, a `while` — runs a number of times the source does not say, and everything in it
+   * is reported as a floor rather than as one test.
+   */
+  const loopOf = (node: ts.Node): { rows: number; atLeast: boolean } | undefined => {
+    if (ts.isForOfStatement(node)) {
+      const rows = rowsOf(node.expression, source, absPath);
+      return rows === undefined ? { rows: 1, atLeast: true } : { rows, atLeast: false };
+    }
+    if (
+      ts.isForStatement(node) ||
+      ts.isForInStatement(node) ||
+      ts.isWhileStatement(node) ||
+      ts.isDoStatement(node)
+    ) {
+      return { rows: 1, atLeast: true };
+    }
+    return undefined;
+  };
+
   const walk = (node: ts.Node): void => {
+    const loop = loopOf(node);
+    if (loop !== undefined) {
+      const outerRepeat = repeat;
+      const outerAtLeast = repeatAtLeast;
+      repeat = outerRepeat * loop.rows;
+      repeatAtLeast = outerAtLeast || loop.atLeast;
+      node.forEachChild(walk);
+      repeat = outerRepeat;
+      repeatAtLeast = outerAtLeast;
+      return;
+    }
+
     if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
       const spec = node.moduleSpecifier.text;
       if (spec.startsWith(".")) {

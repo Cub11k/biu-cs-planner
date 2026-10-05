@@ -245,6 +245,53 @@ describe("a table the source does not fix", () => {
   });
 });
 
+/**
+ * #335: a test registered inside a loop runs once per pass. `server/src/revision.test.ts` writes
+ * `for (const half of ["read", "save"] as const) it(…)`, which the run collects twice and this
+ * reading used to count once.
+ */
+describe("a test registered inside a loop", () => {
+  it("counts a `for…of` over a literal table once per row", () => {
+    const file = fromSource([
+      'for (const half of ["read", "save"] as const) {',
+      "  it(`serves nothing made up on a ${half}`, () => {});",
+      "}",
+    ]);
+
+    expect(counts(file)).toEqual({ tests: 2, entries: 1, atLeast: 0 });
+  });
+
+  it("counts a `for…of` over a table bound in the file, inside a suite's table too", () => {
+    const file = fromSource([
+      'const HALVES = ["read", "save"];',
+      'describe.each([["a"], ["b"], ["c"]])("in %s", () => {',
+      "  for (const half of HALVES) it(`on ${half}`, () => {});",
+      "});",
+    ]);
+
+    expect(counts(file)).toEqual({ tests: 6, entries: 1, atLeast: 0 });
+  });
+
+  it("says where it stops for a loop whose passes the source does not fix", () => {
+    const file = fromSource([
+      "for (const row of atRuntime()) it(`handles ${row}`, () => {});",
+      "for (let i = 0; i < 3; i++) it(`handles ${i}`, () => {});",
+      'it("is outside every loop", () => {});',
+    ]);
+
+    expect(counts(file)).toEqual({ tests: 3, entries: 3, atLeast: 2 });
+    expect(file.cases[2]?.atLeast).toBe(false);
+  });
+
+  it("counts `server/src/revision.test.ts` as the run collects it", () => {
+    // The file the ticket names, read as it stands: two tests in the run, one per half. If that
+    // file changes shape this number is the one to re-measure against `npm test`.
+    const file = readTestFile(resolve(ROOT, "server/src/revision.test.ts"), ROOT);
+
+    expect(totalTests([file])).toEqual({ tests: 2, atLeast: 0 });
+  });
+});
+
 describe("the totals the report prints", () => {
   it("sums what the entries run, not how many entries there are", () => {
     const files: TestFile[] = [
