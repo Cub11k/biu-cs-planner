@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 import { memoryWorkspace } from "./workspace.memory.ts";
 import {
   BACKUP_KEEP_SAVES,
+  isStateFileRevision,
   NotAWorkspaceError,
   StateFileChangedError,
   WorkspaceRefusedError,
@@ -72,6 +73,45 @@ it("lists nothing, and never refuses, for a Workspace holding nothing of that ki
   workspace.seed({ kind: "state", name: "alice" }, STATE);
   await expect(workspace.list("catalog")).resolves.toEqual([]);
   await expect(workspace.list("state")).resolves.toEqual([{ kind: "state", name: "alice" }]);
+});
+
+/**
+ * The real adapter's test of the same title, to the same answers (#243). `ready` is built by the
+ * port's `statusOf` in both, and `notAFolder` is left out of both while no part is the wrong kind
+ * of thing — which here is always, for the reason `MemoryWorkspace`'s doc gives; the half of the
+ * promise this double cannot reach is pinned in `./workspace.test.ts`.
+ */
+it("reports an ordinary folder as not a Workspace, and creates the Layout when asked", async () => {
+  const workspace = memoryWorkspace();
+
+  expect(await workspace.status()).toEqual({
+    ready: false,
+    missing: ["catalogs", "requirements", "backups"],
+  });
+  expect(await workspace.status()).not.toHaveProperty("notAFolder");
+
+  await workspace.create();
+
+  expect(await workspace.status()).toEqual({ ready: true, missing: [] });
+  expect(await workspace.status()).not.toHaveProperty("notAFolder");
+});
+
+/**
+ * #311: the real adapter's test of the same title. This double's revision was the stored text
+ * itself until then, which `app` now refuses as not a revision at all.
+ */
+it("hands back every revision as a well-formed hash, on a read and on a save", async () => {
+  const workspace = memoryWorkspace({ created: true });
+
+  const wrote = await workspace.saveStateFile(ALICE, firstSave(STATE));
+  const read = await workspace.readStateFile(ALICE);
+  const again = await workspace.saveStateFile(ALICE, { json: { ...STATE }, basedOn: wrote });
+
+  for (const revision of [wrote, read?.version, again]) {
+    expect(isStateFileRevision(revision), String(revision)).toBe(true);
+  }
+  // the save's answer is the revision a read of what it wrote gives
+  expect(read?.version).toBe(wrote);
 });
 
 /** The same refusal the real adapter makes, so a use case cannot pass here and fail there. */

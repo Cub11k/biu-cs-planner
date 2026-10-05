@@ -27,10 +27,15 @@ stored with and without a BOM has two revisions, because a guard that called the
 blind to whichever tool added or removed it.
 
 SHA-256 because `node:crypto` has it on all three runtimes. This is conflict detection and not a
-security boundary, so the choice is about availability rather than strength. `memoryWorkspace`
-in `app/src/workspace.memory.ts` uses the stored text itself as its revision. That is the limit
-case of the same idea (no collisions at all), and it is only possible in a double that never has
-to hand the value to a browser.
+security boundary, so the choice is about availability rather than strength.
+
+**How a revision is spelled is part of the port's contract, and is stated once, on
+`isStateFileRevision` in `app/src/workspace.ts`** (#311). `app` checks every revision the port
+hands it against that format and refuses the read or save whose revision is not in it, because
+the type is a plain `string` and nothing else stops an adapter from handing back the file's
+content, or a path, as a "revision" for the API to serve. `memoryWorkspace` in
+`app/src/workspace.memory.ts` used the stored text itself as its revision until then, the limit
+case of the same idea; it hashes that text now, so both adapters answer in the one format.
 
 ## Considered Options
 
