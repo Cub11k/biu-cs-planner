@@ -107,6 +107,14 @@ The expected answer is the parent and every child. The body is an input; this li
 and the two can disagree — the same distinction "Verify a creation by number, not by a listing" in
 `orchestration.md` draws, one level in.
 
+**CI now asks half of this question too, and the manual step stays.** `closing-refs.yml` runs on
+every pull request (on open, on every body edit and on every push) and, when the list holds a
+parent, comments naming any open child of it that the list does not hold. It never fails a job and
+says nothing on a pull request that closes no parent (#260). It cannot see a parent that GitHub
+never recorded — #223's failure, where the parent itself was missing from the list, leaves it
+silent — so run the command above yourself before reporting; the comment is a second reader, not
+a replacement.
+
 **The spelling being right is not the link being right.** On 2026-10-04 PR #223 carried `Closes
 #205`, `Closes #202`, `Closes #203` and `Closes #204`, each with the keyword on its own line and
 outside any code fence, and none of its six commit messages put a closing keyword before a number.
