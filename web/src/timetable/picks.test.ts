@@ -57,6 +57,7 @@ it("asks for one Semester's Picks, by year and Semester and with the launch toke
     variantName: "A",
     variants: [{ name: "A", primary: true }],
     variantWarnings: [],
+    tray: [],
     picks: [LECTURE],
     clashes: [],
     // what the page holds so that a save made on this view can say what it was based on

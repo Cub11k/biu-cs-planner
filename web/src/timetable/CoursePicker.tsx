@@ -11,17 +11,23 @@ export type CoursePickerProps = {
   picks: readonly GroupPick[];
   selected: string | undefined;
   onSelect: (courseNumber: string) => void;
+  /** The Courses already added to the Tray, whose Add control has nothing left to do. */
+  added?: ReadonlySet<string>;
+  /**
+   * Adding a Course to the Tray of the Variant shown (#283), or `undefined` for *not now* — the
+   * State File has not been read, so there is no revision to base the save on.
+   */
+  onAdd?: ((courseNumber: string) => void) | undefined;
 };
 
 /**
- * Choosing the Course whose Groups the week shows, and seeing what is picked for each.
+ * This year's Catalog for the Semester: searching it, looking at a Course's Groups on the week,
+ * and adding a Course to the Tray.
  *
- * This stands where the Tray will stand. It is deliberately not a Tray: a Tray holds a
- * Semester's planned Attempts plus Courses added directly (CONTEXT.md), and there are no
- * Attempts and no Plan yet — so what a student can choose from today is the Catalog itself.
- * It is replaced, not extended, when the Tray arrives, and the chip per Lesson Type the
- * Tray is to carry (docs/design.md, "Grid and Picks") is what the picked line below stands
- * in for until then.
+ * It sits under the Tray in the same column (#283, Layout E), which absorbed what this used to
+ * stand in for: the Tray is the working set, and this is where a Course joins it. Choosing a
+ * Course here still shows its Groups on the week, so a student can look before adding — and
+ * picking one puts the Course in the Tray anyway, because a Course with a Pick always is.
  */
 export function CoursePicker({
   language,
@@ -29,6 +35,8 @@ export function CoursePicker({
   picks,
   selected,
   onSelect,
+  added = new Set<string>(),
+  onAdd,
 }: CoursePickerProps): React.JSX.Element {
   const [search, setSearch] = useState("");
   const searchId = useId();
@@ -57,14 +65,14 @@ export function CoursePicker({
           {matches.map((offering) => {
             const chosen = picked(picks, offering.courseNumber, language);
             return (
-            <li key={offering.courseNumber}>
+            <li key={offering.courseNumber} className="flex items-start gap-1">
               <button
                 type="button"
                 aria-pressed={offering.courseNumber === selected}
                 onClick={() => onSelect(offering.courseNumber)}
                 // `border-s-3` and not a box shadow: the marked edge has to be the start
                 // edge, which is the right one in Hebrew.
-                className={`w-full rounded-sm border bg-paper px-2.5 py-2 text-start text-sm ${
+                className={`min-w-0 flex-1 rounded-sm border bg-paper px-2.5 py-2 text-start text-sm ${
                   offering.courseNumber === selected ? "border-s-3 border-ink" : "border-rule"
                 }`}
               >
@@ -77,6 +85,17 @@ export function CoursePicker({
                     {t(language, "pickedLabel")} {chosen}
                   </span>
                 )}
+              </button>
+              {/* the word and never the course number, so this row still names its Course once */}
+              <button
+                type="button"
+                data-tray-add={offering.courseNumber}
+                disabled={onAdd === undefined || added.has(offering.courseNumber)}
+                aria-label={t(language, "trayAddCourse", { course: courseName(offering, language) })}
+                onClick={() => onAdd?.(offering.courseNumber)}
+                className="variant-action text-xs"
+              >
+                {t(language, "trayAdd")}
               </button>
             </li>
             );

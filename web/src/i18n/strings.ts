@@ -53,6 +53,9 @@ const english = {
   editRenameVariant: "renaming a variant",
   editDeleteVariant: "deleting a variant",
   editSetPrimaryVariant: "making a variant primary",
+  /** The labels `app/src/tray.ts` attaches to the Tray edits (#283). */
+  editAddToTray: "adding a course to the tray",
+  editRemoveFromTray: "removing a course from the tray",
   /**
    * A label this build has no name for. The API types `label` as a `string`, so a server
    * newer than this page can send one — and "an edit" is true of every label there will
@@ -420,6 +423,22 @@ const english = {
   variantPrimaryNotUnique:
     "This timetable does not have exactly one primary variant. Mark the one you register with.",
 
+  /**
+   * The Tray (#283): the Courses waiting to be scheduled in the Variant shown. "To schedule" is
+   * the prototype's word for it, and says what the column is for rather than naming a container.
+   */
+  trayHeading: "To schedule",
+  trayEmpty: "Nothing to schedule yet. Add a course from the catalog below.",
+  /** An empty chip: the Lesson Type is still missing a Group. */
+  trayChipMissing: "—",
+  trayIncomplete: "incomplete",
+  /** A Course this Semester's catalog does not have, so what it needs is not known. */
+  trayChipsUnknown: "Not in this semester's catalog, so what it needs is not known.",
+  trayRemove: "Remove",
+  trayRemoveCourse: "Remove {course} and its picks from this variant",
+  trayAdd: "Add",
+  trayAddCourse: "Add {course} to the courses to schedule",
+
   noFixedTime: "No fixed time",
   groupsCount: "{count} groups",
   groupsCountOne: "1 group",
@@ -478,6 +497,8 @@ const hebrew: Record<StringKey, string> = {
   editRenameVariant: "שינוי שם של חלופה",
   editDeleteVariant: "מחיקת חלופה",
   editSetPrimaryVariant: "קביעת חלופה ראשית",
+  editAddToTray: "הוספת קורס לרשימת השיבוץ",
+  editRemoveFromTray: "הסרת קורס מרשימת השיבוץ",
   editUnknown: "עריכה",
 
   historyNothingToUndo: "אין עוד מה לבטל.",
@@ -606,6 +627,16 @@ const hebrew: Record<StringKey, string> = {
   variantCancel: "ביטול",
   variantNameNotUnique: "שתי חלופות נקראות „{name}”. שנו את שמה של אחת מהן כדי שכל לשונית תאמר מהי.",
   variantPrimaryNotUnique: "למערכת השעות הזו אין בדיוק חלופה ראשית אחת. סמנו את זו שאיתה תירשמו.",
+
+  trayHeading: "לשיבוץ",
+  trayEmpty: "עדיין אין מה לשבץ. הוסיפו קורס מהקטלוג שלמטה.",
+  trayChipMissing: "—",
+  trayIncomplete: "חסר",
+  trayChipsUnknown: "הקורס אינו בקטלוג של הסמסטר הזה, ולכן לא ידוע מה הוא דורש.",
+  trayRemove: "הסרה",
+  trayRemoveCourse: "הסרת {course} והבחירות שלו מהחלופה הזו",
+  trayAdd: "הוספה",
+  trayAddCourse: "הוספת {course} לקורסים לשיבוץ",
 
   noFixedTime: "ללא שעה קבועה",
   groupsCount: "{count} קבוצות",

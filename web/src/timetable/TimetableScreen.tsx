@@ -38,6 +38,8 @@ import type {
 } from "../settings.ts";
 import { SchemeControl } from "../SchemeControl.tsx";
 import { CoursePicker } from "./CoursePicker.tsx";
+import { addToTray, removeFromTray } from "./tray.ts";
+import { TrayColumn } from "./TrayColumn.tsx";
 import { VariantTabs } from "./VariantTabs.tsx";
 import { WeekGrid } from "./WeekGrid.tsx";
 
@@ -172,6 +174,8 @@ const EDIT_LABEL_STRING = new Map<string, StringKey>([
   ["rename-variant", "editRenameVariant"],
   ["delete-variant", "editDeleteVariant"],
   ["set-primary-variant", "editSetPrimaryVariant"],
+  ["add-to-tray", "editAddToTray"],
+  ["remove-from-tray", "editRemoveFromTray"],
 ]);
 
 /**
@@ -723,6 +727,24 @@ export function TimetableScreen({
         }
       : undefined;
 
+  /** Adding a Course to the Tray, which also shows its Groups: it is there to be scheduled. */
+  const onAddToTray =
+    timetable.kind === "served"
+      ? (courseNumber: string): void => {
+          setSelected(courseNumber);
+          sendEdit((query, basedOn) => addToTray(api, query, courseNumber, basedOn));
+        }
+      : undefined;
+
+  /** Taking a Course out, with its Picks; its Groups leave the week with it. */
+  const onRemoveFromTray =
+    timetable.kind === "served"
+      ? (courseNumber: string): void => {
+          if (selected === courseNumber) setSelected(undefined);
+          sendEdit((query, basedOn) => removeFromTray(api, query, courseNumber, basedOn));
+        }
+      : undefined;
+
   const onPick = (group: WeekGroup): void => {
     retireNotices();
     // the Variant on screen when the click was made, or — before the first answer — the one
@@ -882,39 +904,64 @@ export function TimetableScreen({
       </header>
 
       <div className="grid min-h-0 flex-1 grid-cols-[18rem_minmax(0,1fr)]">
-        <aside className="overflow-auto border-e border-rule bg-desk p-4">
-          {catalog.kind === "loading" ? (
-            <p className="text-sm text-pencil">{t(language, "catalogLoading")}</p>
-          ) : catalog.kind === "unreachable" ? (
-            <p className="text-sm text-pencil">{t(language, "apiUnreachable")}</p>
-          ) : catalog.kind === "unauthorized" ? (
-            <p className="text-sm text-pencil">{unauthorizedSaid(language, tokenHeld)}</p>
-          ) : /*
-               An answer this page could not read. Its own branch and **before** the fall-through,
-               because the fall-through is `CoursePicker` over an empty Catalog — a sidebar that
-               silently shows no Course and says nothing, which is #171's failure exactly.
-             */
-          catalog.kind === "unreadable-answer" ? (
-            <p className="text-sm text-pencil">{t(language, "catalogAnswerUnreadable")}</p>
-          ) : catalog.kind === "refused" ? (
-            <CatalogNotice
-              language={language}
-              academicYear={yearLabel}
-              warnings={catalog.warnings}
-            />
-          ) : (
-            <CoursePicker
-              language={language}
-              offerings={offerings}
-              // an unread file shows no picked line, which is what it showed before #111;
-              // saying "this Course has nothing picked" while the file is unread is the
-              // same class of untruth as `picksNone`, and is its own ticket
-              picks={picks ?? []}
-              selected={selected}
-              onSelect={setSelected}
-            />
-          )}
-        </aside>
+        {/*
+          The left column, Layout E: the Tray above, this Semester's Catalog below (#283). Two
+          parts with two sources — the Tray is the State File's, the Catalog the Catalog's — so
+          each says its own account of an answer it could not get, and neither covers the other's.
+        */}
+        <div className="flex min-h-0 flex-col gap-4 overflow-auto border-e border-rule bg-desk p-4">
+          <TrayColumn
+            language={language}
+            tray={timetable.kind === "served" ? timetable.tray : undefined}
+            nameOf={nameOf}
+            selected={selected}
+            onSelect={setSelected}
+            onRemove={onRemoveFromTray}
+          />
+          <aside className="flex min-h-0 flex-1 flex-col">
+            {catalog.kind === "loading" ? (
+              <p className="text-sm text-pencil">{t(language, "catalogLoading")}</p>
+            ) : catalog.kind === "unreachable" ? (
+              <p className="text-sm text-pencil">{t(language, "apiUnreachable")}</p>
+            ) : catalog.kind === "unauthorized" ? (
+              <p className="text-sm text-pencil">{unauthorizedSaid(language, tokenHeld)}</p>
+            ) : /*
+                 An answer this page could not read. Its own branch and **before** the fall-through,
+                 because the fall-through is `CoursePicker` over an empty Catalog — a sidebar that
+                 silently shows no Course and says nothing, which is #171's failure exactly.
+               */
+            catalog.kind === "unreadable-answer" ? (
+              <p className="text-sm text-pencil">{t(language, "catalogAnswerUnreadable")}</p>
+            ) : catalog.kind === "refused" ? (
+              <CatalogNotice
+                language={language}
+                academicYear={yearLabel}
+                warnings={catalog.warnings}
+              />
+            ) : (
+              <CoursePicker
+                language={language}
+                offerings={offerings}
+                // an unread file shows no picked line, which is what it showed before #111;
+                // saying "this Course has nothing picked" while the file is unread is the
+                // same class of untruth as `picksNone`, and is its own ticket
+                picks={picks ?? []}
+                selected={selected}
+                onSelect={setSelected}
+                added={
+                  new Set(
+                    timetable.kind === "served"
+                      ? timetable.tray
+                          .filter((entry) => entry.origins.includes("added"))
+                          .map((entry) => entry.courseNumber)
+                      : [],
+                  )
+                }
+                onAdd={onAddToTray}
+              />
+            )}
+          </aside>
+        </div>
 
         <section className="flex min-w-0 flex-col">
           <VariantTabs

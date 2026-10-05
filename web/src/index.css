@@ -381,6 +381,43 @@
     cursor: default;
   }
 
+  /**
+   * A Tray chip (#283): one Lesson Type of a Course. **Filled** once picked — solid, with the
+   * Lesson Type's own colour on the start edge, as ink is on the week — and **missing** while not:
+   * dashed and pencil grey, as an option nobody has taken. Two properties apart, as the week's
+   * states are (docs/design.md, "Visual language").
+   */
+  .tray-chip {
+    font-size: 0.6875rem;
+    padding: 0 0.375rem;
+    border-radius: 2px;
+    border: 1px dashed var(--pencil);
+    color: var(--pencil);
+    white-space: nowrap;
+  }
+
+  .tray-chip[data-lesson-slot="lecture"] { --lesson: var(--lesson-lecture); }
+  .tray-chip[data-lesson-slot="tirgul"] { --lesson: var(--lesson-tirgul); }
+  .tray-chip[data-lesson-slot="lab"] { --lesson: var(--lesson-lab); }
+  .tray-chip[data-lesson-slot="other"] { --lesson: var(--lesson-other); }
+
+  .tray-chip.is-filled {
+    border-style: solid;
+    border-color: var(--lesson);
+    border-inline-start-width: 3px;
+    color: var(--ink);
+    background: color-mix(in srgb, var(--lesson) 12%, var(--paper));
+  }
+
+  /** The incomplete mark: red pen's hue, because a Course missing a Lesson Type is a Warning. */
+  .tray-incomplete {
+    font-size: 0.6875rem;
+    padding: 0 0.375rem;
+    border-radius: 2px;
+    border: 1px solid var(--red-pen);
+    color: var(--red-pen);
+  }
+
   /* An Untimed Group sits here and never on the grid. */
   .untimed .tile {
     position: static;

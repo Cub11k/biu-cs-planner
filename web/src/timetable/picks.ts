@@ -38,6 +38,9 @@ export type VariantTab = ServedTimetable["variants"][number];
 /** What is wrong with the Timetable's Variants after the edit: a Warning, never a refusal. */
 export type VariantWarning = ServedTimetable["variantWarnings"][number];
 
+/** One entry of the Tray as the server derived it: a Course, why it is there, and its chips. */
+export type TrayEntry = ServedTimetable["tray"][number];
+
 /** What one Pick occupies: one Lesson Type of one Offering. */
 export type PickSlot = { courseNumber: string; lessonType: string };
 
@@ -67,6 +70,8 @@ export type TimetableResult =
       /** Every Variant of the Timetable, in file order: the tabs (#281). */
       variants: VariantTab[];
       variantWarnings: VariantWarning[];
+      /** The Tray of the Variant shown, derived by the server (#283). */
+      tray: TrayEntry[];
       picks: GroupPick[];
       clashes: Clash[];
       /** What this view is, so an edit made on it can say what it was based on. */
@@ -156,6 +161,7 @@ async function read(
     // what that answer is about, and the week it carries is still the week.
     variants: body.variants ?? [],
     variantWarnings: body.variantWarnings ?? [],
+    tray: body.tray ?? [],
     picks: body.picks,
     clashes: body.clashes,
     version: body.version,
