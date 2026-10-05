@@ -76,7 +76,7 @@ The Academic Year and Semester in which a student started; it selects which Requ
 _Avoid_: class of, shnaton
 
 **Requirements File**:
-The rules of one Program for one Cohort, converted by hand from the department's published PDF or Excel.
+The rules of one Program for one or more Cohorts, converted by hand from the department's published PDF or Excel.
 _Avoid_: yedion, curriculum
 
 **Requirement**:

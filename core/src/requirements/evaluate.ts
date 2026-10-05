@@ -82,11 +82,18 @@ export interface Progress {
   requirements: EvaluatedRequirement[];
   /** The Program as a whole: every top-level Requirement met. */
   status: Lenses<RequirementStatus>;
-  /** Credits of every counted Course, each once, whatever it is assigned to. */
+  /**
+   * Credits of every counted Course, each once, whatever it is assigned to: totals count
+   * everything (`docs/design.md`, "Assignment"), so neither a cap nor an exclusive reduces them.
+   */
   totalCredits: Lenses<number>;
   warnings: ProgressWarning[];
 }
 
+/**
+ * #285 lists the policies as an input of their own. They are read from `file` instead, where
+ * #284 puts them, so there is one place they can come from and no way for the two to disagree.
+ */
 export interface ProgressInput {
   file: RequirementsFile;
   /** The Track's id, when the student has chosen one. */

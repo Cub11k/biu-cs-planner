@@ -17,6 +17,7 @@ import {
   requirementsFileSchema,
   trackHeadSchema,
   type DoubleCounting,
+  type Equivalence,
   type Policies,
   type Prerequisite,
   type Requirement,
@@ -53,6 +54,12 @@ export type RequirementsFileWarning =
   | { kind: "unknown-pool"; at: string; pool: string }
   | { kind: "unknown-course-set"; at: string; set: string }
   | { kind: "unknown-requirement"; at: string; id: string }
+  /**
+   * Equivalences that lead back to where they started. Kept, and every course number in the
+   * loop is read as its smallest member, which is the same answer from wherever the loop is
+   * entered; `course` is that member and `at` the first entry of the loop.
+   */
+  | { kind: "equivalence-loop"; at: string; course: string }
   /** A Course whose credits the file does not give: it counts as zero credits until it does. */
   | { kind: "course-credits-missing"; at: string; course: string };
 
@@ -98,6 +105,11 @@ function fieldOf(error: z.ZodError): string | undefined {
 class Reading {
   readonly warnings: RequirementsFileWarning[] = [];
   private readonly seen = new Map<string, string>();
+  /**
+   * Where each kept entry was read from. The checks that run after reading name an entry by
+   * this, not by its index in the kept lists, which shifts once an earlier entry is left out.
+   */
+  readonly where = new WeakMap<object, string>();
 
   dropped(at: string, error: z.ZodError): void {
     const field = fieldOf(error);
@@ -132,7 +144,9 @@ class Reading {
     const kept: T[] = [];
     raw.forEach((entry, index) => {
       const value = read(entry, `${at}[${index}]`);
-      if (value !== undefined) kept.push(value);
+      if (value === undefined) return;
+      if (typeof value === "object" && value !== null) this.where.set(value, `${at}[${index}]`);
+      kept.push(value);
     });
     return kept;
   }
@@ -218,7 +232,9 @@ class Reading {
     if (source === undefined) return head.data;
 
     const prerequisites = this.prerequisite(source, `${at}.prerequisites`, 1);
-    return prerequisites === undefined ? head.data : { ...head.data, prerequisites };
+    if (prerequisites === undefined) return head.data;
+    this.where.set(prerequisites, `${at}.prerequisites`);
+    return { ...head.data, prerequisites };
   }
 
   track(raw: unknown, at: string): Track | undefined {
@@ -283,27 +299,43 @@ function readDoubleCounting(raw: unknown, reading: Reading): DoubleCounting {
   });
 }
 
-/** Every Requirement with the location it was read from, in file order. */
-function* located(
-  requirements: readonly Requirement[],
-  at: string,
-): Generator<{ node: Requirement; at: string }> {
-  for (const [index, node] of requirements.entries()) {
-    const nodeAt = `${at}[${index}]`;
-    yield { node, at: nodeAt };
-    if (node.kind === "allOf" || node.kind === "nOf") yield* located(node.of, `${nodeAt}.of`);
+/** Every Requirement in a tree, in file order. */
+function* walk(requirements: readonly Requirement[]): Generator<Requirement> {
+  for (const node of requirements) {
+    yield node;
+    if (node.kind === "allOf" || node.kind === "nOf") yield* walk(node.of);
   }
 }
 
-function* locatedPrerequisites(
-  prerequisite: Prerequisite,
-  at: string,
-): Generator<{ node: Prerequisite; at: string }> {
-  yield { node: prerequisite, at };
+function* walkPrerequisites(prerequisite: Prerequisite): Generator<Prerequisite> {
+  yield prerequisite;
   if (prerequisite.kind === "allOf" || prerequisite.kind === "anyOf") {
-    for (const [index, child] of prerequisite.of.entries()) {
-      yield* locatedPrerequisites(child, `${at}.of[${index}]`);
+    for (const child of prerequisite.of) yield* walkPrerequisites(child);
+  }
+}
+
+/**
+ * Equivalences whose chain comes back to where it started, each loop reported once, at its
+ * first entry in the file.
+ */
+function checkEquivalenceLoops(
+  equivalences: readonly Equivalence[],
+  where: (entry: object) => string,
+  warnings: RequirementsFileWarning[],
+): void {
+  const next = new Map(equivalences.map((e) => [e.from, e.to]));
+  const reported = new Set<string>();
+  for (const equivalence of equivalences) {
+    if (reported.has(equivalence.from)) continue;
+    const chain = [equivalence.from];
+    let current = equivalence.to;
+    while (next.has(current) && !chain.includes(current)) {
+      chain.push(current);
+      current = next.get(current)!;
     }
+    if (current !== equivalence.from) continue;
+    for (const member of chain) reported.add(member);
+    warnings.push({ kind: "equivalence-loop", at: where(equivalence), course: [...chain].sort()[0]! });
   }
 }
 
@@ -312,62 +344,56 @@ function* locatedPrerequisites(
  * defined is only known to be dangling once everything has been read. The node is kept either
  * way; an undefined Pool matches no Course, and an undefined Course set holds none.
  *
- * The locations are those the entries were read from. Leaving an earlier entry out does not
- * renumber the ones after it in the Warnings, which is what a maintainer looking for the line
- * in the file needs.
+ * Each Warning names the entry where it was read from, so leaving an earlier entry out does not
+ * shift the location a maintainer is sent to.
  */
-function checkReferences(file: RequirementsFile, warnings: RequirementsFileWarning[]): void {
+function checkReferences(file: RequirementsFile, reading: Reading): void {
+  const warnings = reading.warnings;
+  const where = (entry: object) => reading.where.get(entry) ?? "";
   const pools = new Set(file.pools.map((pool) => pool.id));
   const sets = new Set(file.courseSets.map((set) => set.id));
   const requirementIds = new Set<string>();
 
-  const trees = [
-    { requirements: file.requirements, at: "requirements" },
-    ...file.tracks.map((track, index) => ({
-      requirements: track.requirements,
-      at: `tracks[${index}].requirements`,
-    })),
-  ];
-  for (const tree of trees) {
-    for (const { node, at } of located(tree.requirements, tree.at)) {
+  for (const tree of [file.requirements, ...file.tracks.map((track) => track.requirements)]) {
+    for (const node of walk(tree)) {
       requirementIds.add(node.id);
       if ((node.kind === "credits" || node.kind === "cap") && !pools.has(node.pool)) {
-        warnings.push({ kind: "unknown-pool", at, pool: node.pool });
+        warnings.push({ kind: "unknown-pool", at: where(node), pool: node.pool });
       }
     }
   }
 
-  file.courses.forEach((course, index) => {
-    if (course.prerequisites === undefined) return;
-    for (const { node, at } of locatedPrerequisites(
-      course.prerequisites,
-      `courses[${index}].prerequisites`,
-    )) {
+  for (const course of file.courses) {
+    if (course.prerequisites === undefined) continue;
+    for (const node of walkPrerequisites(course.prerequisites)) {
       if (node.kind === "set" && !sets.has(node.set)) {
-        warnings.push({ kind: "unknown-course-set", at, set: node.set });
+        warnings.push({ kind: "unknown-course-set", at: where(node), set: node.set });
       }
     }
-  });
+  }
 
-  file.doubleCounting.within.forEach((permission, index) => {
-    const at = `doubleCounting.within[${index}]`;
+  for (const permission of file.doubleCounting.within) {
+    const at = where(permission);
     for (const id of permission.requirements) {
       if (!requirementIds.has(id)) warnings.push({ kind: "unknown-requirement", at, id });
     }
     if (permission.pool !== undefined && !pools.has(permission.pool)) {
       warnings.push({ kind: "unknown-pool", at, pool: permission.pool });
     }
-  });
+  }
   const across = file.doubleCounting.acrossPrograms?.pool;
   if (across !== undefined && !pools.has(across)) {
     warnings.push({ kind: "unknown-pool", at: "doubleCounting.acrossPrograms", pool: across });
   }
+
+  checkEquivalenceLoops(file.equivalences, where, warnings);
 }
 
 /**
  * Reads a Requirements File. Untrusted input, possibly written by someone else: it never throws
- * and never executes anything from the file. A file with no readable head comes back as
- * Warnings and nothing else; anything else comes back as a Requirements File plus Warnings
+ * and never executes anything from the file. A file this build cannot open at all (no readable
+ * head, a prototype-shaped key, or a version it does not read) comes back as Warnings and nothing
+ * else; anything else comes back as a Requirements File plus Warnings
  * naming what was left out on the way, because one typo should not cost a student the whole
  * Program.
  */
@@ -416,6 +442,6 @@ export function parseRequirementsFile(input: unknown): RequirementsFileRead {
     deadlines: reading.each(deadlineSchema, raw.deadlines, "deadlines"),
   };
 
-  checkReferences(file, reading.warnings);
+  checkReferences(file, reading);
   return { file, warnings: reading.warnings };
 }

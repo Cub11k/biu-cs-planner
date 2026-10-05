@@ -18,9 +18,10 @@ import type { RequirementsFile } from "./schema.ts";
  * satisfy as many Requirements as it can (`docs/design.md`, "Assignment").
  *
  * **Objective.** The number of satisfied Requirement nodes, the Program itself included, summed
- * over the Programs of a double major. Ties go to the Assignment with more credits counted toward
- * `credits` Requirements, each counted only up to its minimum, so a spare Course goes where it is
- * progress rather than surplus. That refines the ticket's "more credits in partially satisfied
+ * over the Programs of a double major. Among Assignments the search finds satisfying the most,
+ * it prefers more credits counted toward `credits` Requirements, each counted only up to its
+ * minimum, so a spare Course goes where it is progress rather than surplus. That preference is
+ * pursued by single moves (see "Search"), not proved optimal. That refines the ticket's "more credits in partially satisfied
  * `credits` nodes", which is what it amounts to between two Assignments meeting the same
  * Requirements, into a sum that only rewards progress. A tie on both goes to whichever
  * Assignment the search reaches first, and the search runs in a fixed order: Courses by fewest
@@ -32,7 +33,8 @@ import type { RequirementsFile } from "./schema.ts";
  *
  * **Constraints.** A Course counts once among sibling Requirements, so toward one Requirement of
  * a Program, unless the file's permissions let it count toward more; where they do, a Course
- * placed on one Requirement is placed on every other it may share with. Across a double major's
+ * placed on one Requirement is placed on every other it may share with, and also on any fewer of
+ * them where a cap or an exclusive could make sharing cost. Across a double major's
  * Programs it counts in one of them unless both files allow it in both. Pins are hard
  * constraints, and a Pin that cannot be honoured is dropped with a Warning.
  *
@@ -53,7 +55,9 @@ import type { RequirementsFile } from "./schema.ts";
  * finishes well inside the default cap.
  *
  * **Limits.** Each lens may take `maxIterations` steps across both phases, and the whole call may take
- * `maxMillis` by the clock it is given. `core` reads no clock of its own, so without `now` there
+ * `maxMillis` by the clock it is given. #286 points at "the one clock pattern" of ADR-0012, but that
+ * record and `../clock.ts` are about reading `hh:mm` strings, not about telling the time; the
+ * injected `now` follows `app/src/workspace.memory.ts` instead. `core` reads no clock of its own, so without `now` there
  * is no time cap and the iteration cap alone bounds the work. On hitting either the best
  * Assignment so far is returned with `stoppedEarly`.
  */
@@ -104,6 +108,11 @@ interface Choice {
   links: number[];
 }
 
+/** String order by UTF-16 code unit, as `.sort()` uses: the same on every machine and locale. */
+function byCodeUnit(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 /** Compared in order: satisfied nodes, then credits toward `credits` minimums. */
 interface Score {
   satisfied: number;
@@ -133,6 +142,21 @@ function withSharing(program: CompiledProgram, first: number, leaves: number[], 
   return chosen.sort((a, b) => a - b);
 }
 
+/**
+ * The non-empty proper subsets of a set of leaves, largest first. A set of leaves one Course may
+ * share is a set of Requirements a file names in one permission, so it is a handful at most; the
+ * cap of twelve is a guard against a file that names hundreds, beyond which only single leaves
+ * are offered.
+ */
+function subsetsOf(leaves: number[]): number[][] {
+  if (leaves.length > 12) return leaves.map((leaf) => [leaf]);
+  const subsets: number[][] = [];
+  for (let mask = 1; mask < (1 << leaves.length) - 1; mask++) {
+    subsets.push(leaves.filter((_, i) => mask & (1 << i)));
+  }
+  return subsets.sort((a, b) => b.length - a.length);
+}
+
 /** Pins resolved to leaves, by Program and canonical course, with the Warnings they raise. */
 function resolvePins(
   programs: readonly CompiledProgram[],
@@ -142,7 +166,7 @@ function resolvePins(
   const resolved = programs.map(() => new Map<string, number[]>());
   const ordered = [...pins].sort(
     (a, b) =>
-      a.courseNumber.localeCompare(b.courseNumber) || a.requirementId.localeCompare(b.requirementId),
+      byCodeUnit(a.courseNumber, b.courseNumber) || byCodeUnit(a.requirementId, b.requirementId),
   );
   for (const { courseNumber, requirementId } of ordered) {
     let found = false;
@@ -196,7 +220,7 @@ class Search {
         (a, b) =>
           a.choice.options.length - b.choice.options.length ||
           a.choice.program - b.choice.program ||
-          a.choice.course.localeCompare(b.choice.course),
+          byCodeUnit(a.choice.course, b.choice.course),
       )
       .map(({ index }) => index);
 
@@ -311,6 +335,8 @@ class Search {
   }
 
   run(): (number[] | undefined)[] {
+    // Every Course pinned, or none to place: the one Assignment there is cannot stop early.
+    if (this.order.length === 0) return this.best.picked;
     this.polish();
     if (!this.stopped) this.visit(0);
     if (!this.stopped) this.polish();
@@ -421,6 +447,13 @@ function choicesFor(
         const option = withSharing(program, leaf, leaves, course);
         options.set(option.join(","), option);
       }
+      // Placing a Course on more leaves never satisfies fewer Requirements unless a cap or an
+      // exclusive can stop it counting at one of them; then counting it at fewer can be better,
+      // so every smaller set of the same leaves is a choice too, after the full ones.
+      for (const option of [...options.values()]) {
+        if (option.length < 2 || !option.some((leaf) => constrained(program, leaf, course))) continue;
+        for (const subset of subsetsOf(option)) options.set(subset.join(","), subset);
+      }
       choices.push({
         program: p,
         course,
@@ -494,7 +527,7 @@ function placementsOf(program: CompiledProgram, choices: Choice[], picked: (numb
       requirementIds: [...leaves].sort((a, b) => a - b).map((leaf) => program.nodes[leaf]!.requirement!.id),
     });
   });
-  return placements.sort((a, b) => a.courseNumber.localeCompare(b.courseNumber));
+  return placements.sort((a, b) => byCodeUnit(a.courseNumber, b.courseNumber));
 }
 
 /**

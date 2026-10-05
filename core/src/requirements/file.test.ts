@@ -387,6 +387,48 @@ it("reports a reference to a Pool or a Course set that is not defined, and keeps
   });
 });
 
+it("names a dangling reference where it was read, even after an earlier entry was dropped", () => {
+  const file = minimalFile({
+    requirements: [
+      { id: "broken", kind: "credits" },
+      { id: "core", kind: "allOf", of: [{ kind: "manual" }, { id: "c", kind: "cap", max: 4, pool: "x" }] },
+    ],
+    courses: [
+      { credits: 4 },
+      { number: "89-210", credits: 4, prerequisites: { kind: "set", set: "first-year" } },
+    ],
+    doubleCounting: { within: [{ requirements: [] }, { requirements: ["core", "ghost"] }] },
+  });
+
+  const result = parseRequirementsFile(onDisk(file));
+
+  expect(result.warnings).toEqual(
+    expect.arrayContaining([
+      { kind: "unknown-pool", at: "requirements[1].of[1]", pool: "x" },
+      { kind: "unknown-course-set", at: "courses[1].prerequisites", set: "first-year" },
+      { kind: "unknown-requirement", at: "doubleCounting.within[1]", id: "ghost" },
+    ]),
+  );
+});
+
+it("reports Equivalences that loop, once per loop, and keeps them", () => {
+  const file = minimalFile({
+    equivalences: [
+      { from: "89-100", to: "89-101" },
+      { from: "89-110", to: "89-111" },
+      { from: "89-111", to: "89-110" },
+      { from: "89-101", to: "89-102" },
+    ],
+  });
+
+  const result = parseRequirementsFile(onDisk(file));
+
+  expect(result.warnings).toEqual([
+    { kind: "equivalence-loop", at: "equivalences[1]", course: "89-110" },
+  ]);
+  expect(result.file?.equivalences).toHaveLength(4);
+});
+
 it("reports a double-counting permission naming a Requirement that does not exist", () => {
   const file = minimalFile({
     requirements: [{ id: "a", kind: "manual", text: { he: "x" } }],

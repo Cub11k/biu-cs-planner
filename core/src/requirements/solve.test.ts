@@ -97,6 +97,43 @@ it("counts a Course toward both where the file allows double counting", () => {
   expect(statusOf(progress, "ai")).toBe("satisfied");
 });
 
+it("counts a shareable Course at one Requirement alone where a cap makes sharing cost", () => {
+  // Shared, 89-310 spends the cap's 3 credits on "a", which still falls short of its 4, and
+  // leaves "b" nothing; alone on "b" it meets "b", and with 89-120 the nOf is met.
+  const file = program({
+    courses: [
+      { number: "89-120", credits: 1 },
+      { number: "89-310", credits: 4 },
+    ],
+    pools: [
+      { id: "adv", kind: "prefix", prefix: "89-3" },
+      { id: "p3", kind: "range", department: "89", from: 200, to: 399 },
+    ],
+    requirements: [
+      { id: "cap", kind: "cap", max: 3, pool: "p3" },
+      {
+        id: "two",
+        kind: "nOf",
+        n: 2,
+        of: [
+          { id: "a", kind: "credits", min: 4, pool: "adv" },
+          { id: "c", kind: "course", course: "89-120" },
+          { id: "b", kind: "credits", min: 2, pool: "p3" },
+        ],
+      },
+    ],
+    doubleCounting: { within: [{ requirements: ["a", "b"] }] },
+  });
+
+  const { solution, progress } = solveAndEvaluate(file, [attempt("89-120"), attempt("89-310")]);
+
+  expect(progress.status.completed).toBe("satisfied");
+  expect(solution.assignments[0]!.completed).toContainEqual({
+    courseNumber: "89-310",
+    requirementIds: ["b"],
+  });
+});
+
 describe("Pins", () => {
   it("keeps a pinned Course where it is pinned, even where the solver would not put it", () => {
     const { solution, progress } = solveAndEvaluate(electives, bothCourses, [
@@ -382,6 +419,20 @@ describe("a double major", () => {
   });
 });
 
+it("does not stop early when every Course is pinned and nothing is left to search", () => {
+  const solution = solveAssignment({
+    programs: [{ file: electives }],
+    attempts: [attempt("89-310")],
+    pins: [pin("89-310", "ai")],
+    limits: { maxIterations: 0 },
+  });
+
+  expect(solution.stoppedEarly).toBe(false);
+  expect(solution.assignments[0]!.completed).toEqual([
+    { courseNumber: "89-310", requirementIds: ["ai"] },
+  ]);
+});
+
 it("warns about a Track a Program does not have", () => {
   const solution = solveAssignment({ programs: [{ file: electives, track: "ai" }], attempts: [] });
 
@@ -491,7 +542,14 @@ describe("limits", () => {
     const { file, attempts } = wide();
     const input: SolveInput = { programs: [{ file }], attempts };
     const solution = solveAssignment(input);
+    // A time cap of nothing at all would stop at once, if there were a clock to measure it by.
+    const untimed = solveAssignment({
+      programs: [{ file: electives }],
+      attempts: bothCourses,
+      limits: { maxMillis: 0 },
+    });
 
     expect(solution.assignments[0]!.completed).toHaveLength(12);
+    expect(untimed.stoppedEarly).toBe(false);
   });
 });

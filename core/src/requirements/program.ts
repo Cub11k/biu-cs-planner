@@ -79,8 +79,8 @@ function flatten(top: readonly Requirement[]): CompiledNode[] {
 }
 
 /**
- * The course number an Equivalence chain ends at. A chain that loops is a mistake in the file
- * that cannot be told from a Course renumbered twice and back; every member of the loop is then
+ * The course number an Equivalence chain ends at. A chain that loops is a mistake in the file,
+ * which the reader reports as `equivalence-loop`; every member of the loop is then
  * read as its smallest member, which is at least the same answer from wherever the loop is
  * entered.
  */
