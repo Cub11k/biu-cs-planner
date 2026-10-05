@@ -62,12 +62,13 @@ Three kinds of file, each with its own lifecycle, each carrying a `schemaVersion
 Requirements form a tree of these building blocks:
 
 - `course(X)`, `allOf[…]`, `nOf(k, […])`, `credits(min, Pool)`
+- `total(min, Pool?)`: at least this many credits from every Course the student counts, or from a Pool's (#328). It takes no Course of its own, so it never competes with its siblings, needs no double-counting permission, is never reduced by a `cap` or an `exclusive`, counts each Course once, and cannot be Pinned to — the "totals count everything" of [Assignment](#assignment). A grand total written as a `credits` Requirement competes for Courses instead. See `core/src/requirements/schema.ts`.
 - `cap(max, Pool)`: at most this many credits from a Pool count
 - `exclusive[A, B]`: only one of them counts
 - Equivalence declarations for renumbered Courses
 - Prerequisites: `passed(X, minGrade?)`, concurrent taking allowed, a reference to a named set ("all first-year Courses"), or a Manual Requirement carrying the original text
 - Offering Pattern per Course: Fall, Spring or Year-long
-- Policies: passing grade, and whether a minimum grade is checked against the best or the latest passing Attempt
+- Policies: the passing grade, and which passing Attempt's grade counts — the best or the latest — when a Course was passed more than once. **The policy never decides whether a Course is completed**: any passing Attempt completes it, so a pass followed by a failed retake is still a pass under either policy (#327). It chooses the grade a minimum-grade check reads (ADR-0009). See `policiesSchema` in `core/src/requirements/schema.ts`.
 - Non-course requirements (English level, Hebrew expression, Jewish studies): Manual Requirements, or satisfied by exempt or credited Attempts
 - Programs: a base rule set plus a Track. A double major is two Programs evaluated against the same Attempts, with overlap rules.
 
@@ -93,9 +94,10 @@ Anything the vocabulary cannot express becomes a Manual Requirement with its tex
   - Prerequisite order, allowing concurrent taking where the rule says so
   - Semester against the Offering Pattern, skipped when the pattern is unknown
   - Year-long Course split across years
-  - credit load per Semester
+  - credit load per Semester, against the student's credit load limit (a setting, default 24)
   - missing Requirements
   - progression deadlines, when the Requirements File defines them
+- **Each Warning names its target**, so a screen can put it on the right card: an Attempt (by its id) for the Prerequisite, Offering Pattern and Year-long checks, a Semester for credit load and a deadline, and a Program (by its Requirements File) for the missing Requirements, which it lists by id. For planning, a planned or registered Attempt counts as passed by the end of its Semester, and **a Warning that relied on one says which** (`reliesOn`, by Attempt id), so the screen can say "assuming you pass 89-110". See `core/src/plan/checks.ts` and `CONTEXT.md`.
 
 ## Timetable
 
@@ -165,7 +167,7 @@ The states need to differ in more than one property at once. Border style alone 
    - State Files, with a picker when there are several
    - import and "check for data updates"
    - backups and restore
-   - settings: language, Exam spacing
+   - settings: language, Exam spacing, credit load limit (#291, default 24)
 
 ## Architecture
 
