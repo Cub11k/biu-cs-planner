@@ -26,6 +26,7 @@ import {
   planFromSuggestedLayout,
   pinCourseTo,
   readExams,
+  readCourses,
   readPlan,
   readPrograms,
   readProgress,
@@ -1005,6 +1006,13 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
       }
       return c.json({ ...result.view, summary: result.summary, version: result.version, warnings: result.warnings });
     })
+
+    /**
+     * The Courses the Plan screen draws on its cards (#292): each one's name and credits, from the
+     * Requirements Files first and a name they lack from the most recent Catalog (`readCourses`).
+     * A read and never a refusal — what cannot be read is only a Course less known. No path is named.
+     */
+    .get("/api/courses", async (c) => c.json(await readCourses(workspace)))
 
     .get("/api/catalog/:year/offerings", async (c) => {
       const year = yearSchema.safeParse(c.req.param("year"));

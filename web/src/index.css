@@ -37,6 +37,17 @@
   --plan-diff: #8a4b00;
 
   /**
+   * An Attempt's status on a Plan card (#292): six hues that tell history from the future at a
+   * glance. Failed is an orange and not the red pen, which means a Clash and only that.
+   */
+  --status-planned: #4f6782;
+  --status-registered: #1f5fa8;
+  --status-passed: #1d7a3a;
+  --status-failed: #a3460f;
+  --status-exempt: #6b4fa0;
+  --status-credited: #0f6e6e;
+
+  /**
    * The dark palette's values, defined once and used by the two rules below.
    *
    * They are named rather than written into those rules because "an explicit choice
@@ -70,6 +81,13 @@
   --dark-hatch-b: #18212b;
 
   --dark-plan-diff: #e3a25a;
+
+  --dark-status-planned: #9fb1c6;
+  --dark-status-registered: #7fb0ea;
+  --dark-status-passed: #5fc47e;
+  --dark-status-failed: #f0a06a;
+  --dark-status-exempt: #b9a2ea;
+  --dark-status-credited: #4fc0c0;
 
   /**
    * No choice made: the browser is told both schemes are available, so the operating
@@ -108,6 +126,13 @@
     --hatch-b: var(--dark-hatch-b);
 
     --plan-diff: var(--dark-plan-diff);
+
+    --status-planned: var(--dark-status-planned);
+    --status-registered: var(--dark-status-registered);
+    --status-passed: var(--dark-status-passed);
+    --status-failed: var(--dark-status-failed);
+    --status-exempt: var(--dark-status-exempt);
+    --status-credited: var(--dark-status-credited);
   }
 }
 
@@ -138,6 +163,13 @@
 
   --plan-diff: var(--dark-plan-diff);
 
+  --status-planned: var(--dark-status-planned);
+  --status-registered: var(--dark-status-registered);
+  --status-passed: var(--dark-status-passed);
+  --status-failed: var(--dark-status-failed);
+  --status-exempt: var(--dark-status-exempt);
+  --status-credited: var(--dark-status-credited);
+
   color-scheme: dark;
 }
 
@@ -156,6 +188,12 @@
   --color-rule: var(--rule);
   --color-rule-soft: var(--rule-soft);
   --color-hint: var(--hint);
+  --color-status-planned: var(--status-planned);
+  --color-status-registered: var(--status-registered);
+  --color-status-passed: var(--status-passed);
+  --color-status-failed: var(--status-failed);
+  --color-status-exempt: var(--status-exempt);
+  --color-status-credited: var(--status-credited);
 }
 
 @layer base {
