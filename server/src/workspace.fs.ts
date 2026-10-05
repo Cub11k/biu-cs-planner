@@ -269,8 +269,8 @@ class UnreadableError extends WorkspaceRefusedError {
  * first unnamed one in `server/src/api.ts`.
  *
  * A `WorkspaceRefusedError`, so a caller can answer it the way every caller of this port
- * already answers one: a Warning and never a crashed server (docs/design.md, "API and data
- * rules"). **No caller reads this sentence** (#249): the callers in `app` answer a refusal with
+ * already answers one: a named refusal and never a crashed server (docs/design.md, "API and
+ * data rules"). **No caller reads this sentence** (#249): the callers in `app` answer a refusal with
  * a reason of their own, and the one that serves a sentence — the Catalog read in
  * `app/src/queries.ts` — words its own from the refusal's reason code and subject. So the errno
  * below is for a log (#165), and saying otherwise here would claim something the app does not
@@ -582,7 +582,8 @@ export function fileSystemWorkspace(
    * **`about` is the file the refusal is about** — the ref, passed in by the caller that has it —
    * and is the refusal's subject (#249). This is the refusal that reached the wire: a Catalog
    * read's message used to go out as a Warning, carrying `./catalogs/2027.json` (#216), and
-   * `app/src/queries.ts` now words that Warning from the subject instead.
+   * `app/src/queries.ts` now words its refused arm (`CatalogRefused`, #149) from the subject
+   * instead.
    *
    * **Only a regular file is read** (#250). A FIFO with no writer makes `readFile` block for
    * good, and that read is threadpool work nothing can cancel, so it hung the route and kept the

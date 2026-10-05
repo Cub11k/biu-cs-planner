@@ -1811,9 +1811,8 @@ const namesNoPath = async (body: string, where: string): Promise<void> => {
  * All four routes that reach a Catalog file, and the statuses are asserted so that none of them
  * can pass by not refusing at all. The exam period is a **200** on purpose and is the subtlest of
  * the four: a Catalog that cannot be served is not a refusal of the exam rail — it is an exam
- * period nobody has published — so its refusal rides out under `catalogWarnings` inside a
- * successful answer, under `catalogRefused` since #149, which is the one place a reader of the 409
- * arms would not have looked.
+ * period nobody has published — so its refusal rides out under `catalogRefused` (#149) inside a
+ * successful answer, which is the one place a reader of the 409 arms would not have looked.
  */
 it("names no path in a refusal when a Catalog cannot be read, on all four routes", async () => {
   await post("/api/workspace", {});

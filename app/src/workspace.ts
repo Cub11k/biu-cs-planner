@@ -798,10 +798,10 @@ export type Workspace = {
    *
    * **A snapshot that cannot be written refuses the save.** `.backups/` is part of the
    * Workspace Layout and this method already refuses a save when any part of it is missing, so
-   * an unwritable one is a refusal too: a Warning the student can act on. It is raised as
+   * an unwritable one is a refusal too, answered as `backup-refused`. It is raised as
    * `BackupRefusedError`, which every adapter owes the caller (#229), so that it is worded as
-   * the backup's and not as the State File's. The alternative — saving anyway and quietly keeping no backup — is the failure #67
-   * was filed about, and it is invisible until the day it matters. **Pruning is the other way
+   * the backup's and not as the State File's. The alternative — saving anyway and quietly
+   * keeping no backup — is the failure #67 was filed about, and it is invisible until the day it matters. **Pruning is the other way
    * round**: it runs after the save, it only deletes, and a snapshot it could not remove is
    * one too many rather than one too few, so it never costs a student their save.
    *

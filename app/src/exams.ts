@@ -118,8 +118,10 @@ function sourcesFor(courseNumbers: readonly string[], offerings: readonly ExamSo
  * which have no State File to read, the generator among them (`core/src/timetable/exams.ts`).
  *
  * Refused only for the State File, as `readTimetable` is: the Picks and the threshold are in it,
- * so without it there is no question to answer. A Catalog that cannot be served is not a refusal —
- * it is an exam period nobody has published yet, which is a Warning and a partial rail.
+ * so without it there is no question to answer. A Catalog that cannot be served is not a refusal
+ * *of the rail* — it is an exam period nobody has published yet, which is a Warning and a partial
+ * rail — and a Catalog the Workspace would not touch rides as `catalogRefused`, apart from the
+ * Warnings (#149).
  *
  * **One limit this cannot honour, and it is the data model rather than this function.** The
  * Semester filters *Offerings* and cannot filter *sittings*: a Catalog `Exam` is `{ moed, date,
