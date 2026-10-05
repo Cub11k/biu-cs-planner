@@ -578,6 +578,48 @@ it("keeps `applyScheme` and the attribute's name in this module and the entry", 
   expect(stamping.map((file) => relative(web, file))).toEqual([]);
 });
 
+/**
+ * The reader half of the same rule, and the one `watchScheme`'s doc states: among the modules
+ * `web/src` ships, the scheme key is read through `storedScheme` and nowhere else (#246, #269).
+ *
+ * A module that read the store itself would be a second place a stored string becomes a
+ * choice, and it need not be caught any other way: #246's mutation showed a `SchemeControl`
+ * reading `localStorage.getItem` directly failed one test only because the read sat outside a
+ * `try`, and a guarded one passed the whole suite. The blocking stamp in `web/index.html` is
+ * the one shipped reader outside `web/src`, and the tests that read `ENTRY_DOCUMENT` hold it.
+ *
+ * **Narrower than the claim, as the writer scan is, and for the same reason.** It is a scan
+ * for the two ways a module names the key — the exported constant, which an alias or a
+ * namespace import still spells, and the key written out — so it would not see a key
+ * assembled from pieces. Within `scheme.ts` it judges nothing: that `storedScheme` is the one
+ * reader *there* is held by review, since `rememberScheme` writes the key and
+ * `onSchemeChanged` compares an event's key against it in the same file. Naming the key at all
+ * is what is confined, which covers a write outside `scheme.ts` as well as a read.
+ */
+it("keeps the scheme key in this module, so `storedScheme` is the one shipped reader", () => {
+  /** `scheme.ts` defines the key and is the only shipped module in `web/src` that names it. */
+  const ALLOWED = ["scheme.ts"];
+
+  // Literals, searched for as text (ADR-0007). The second is the key itself, pinned to the
+  // constant here so the scan cannot go on looking for a key the module no longer uses.
+  const KEY = "biu-cs-planner.scheme";
+  expect(SCHEME_STORAGE_KEY).toBe(KEY);
+  const SPELLINGS = ["SCHEME_STORAGE_KEY", KEY];
+
+  // Tests are not judged, for the reason the writer scan gives: a test hands the module a
+  // store of its own, and nothing a test reads ships.
+  const web = fileURLToPath(new URL(".", import.meta.url));
+  const reading = walk(web)
+    // Matched on the path relative to `web/src`, so a later `timetable/scheme.ts` is judged.
+    .filter((file) => !/\.test\.tsx?$/.test(file) && !ALLOWED.includes(relative(web, file)))
+    .filter((file) => {
+      const source = withoutComments(readFileSync(file, "utf8"));
+      return SPELLINGS.some((spelling) => source.includes(spelling));
+    });
+
+  expect(reading.map((file) => relative(web, file))).toEqual([]);
+});
+
 it("runs that stamp ahead of the paint it exists to beat", () => {
   const html = readFileSync(ENTRY_DOCUMENT, "utf8");
   const [stamp] = inlineScripts(html);

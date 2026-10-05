@@ -52,7 +52,10 @@ if (pr.isFork) {
 
 // The graphs are derived from the checkout: no key, no network, no cost. A cycle in them,
 // an import pointing the wrong way through the layers, or a second re-export walk, is a
-// finding whether or not anybody ever asks for a judgement.
+// finding whether or not anybody ever asks for a judgement. `collect` hands in `tools/`'s
+// test files and none of its other modules, so a non-test `tools/` module that breaks the
+// layering rule is judged by `npm test` (`layering.test.ts`) and never here; `renderGraphs`
+// says so in the comment rather than leaving a reader to assume otherwise (#274).
 const graphs = graphsOf(collect(ROOT), readSources(ROOT));
 
 let standards: PassOutcome | undefined;

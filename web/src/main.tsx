@@ -21,8 +21,10 @@ claimToken();
 // where a string no palette matches becomes no choice at all. So this normally rewrites the
 // value that is already on the element, and the one case it changes is a store holding
 // something the app never wrote. `SchemeControl` reads the same answer in order to *show* it,
-// and stamps nothing as it mounts, so this line and the watcher below are the whole of how the
-// attribute gets onto the document before a student touches anything (#168).
+// and stamps nothing as it mounts, so among the modules `web/src` ships this line and the
+// watcher below are the whole of how the attribute gets onto the document before a student
+// touches anything (#168). `index.html`'s stamp above is the one writer outside them; the
+// full list is `scheme.ts`'s module header (#246, #267).
 applyScheme(document.documentElement, storedScheme(schemeStore()));
 
 // From here the tab follows the store rather than its memory of it: a choice made in another

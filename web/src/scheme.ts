@@ -240,7 +240,8 @@ export type SchemeChangeTarget = {
  * overlap at all.
  *
  * `newValue` is deliberately ignored and the store is read again instead. That keeps
- * `storedScheme` the only reader of the key among the modules `web/src` ships, and
+ * `storedScheme` the only reader of the key among the modules `web/src` ships — which
+ * `scheme.test.ts` checks, failing if any other shipped module there names the key (#269) — and
  * `asSchemeChoice` the only narrowing anywhere. The one shipped reader outside those modules
  * is the blocking stamp in `web/index.html`, which the module header lists: a script that has
  * to block cannot import either function, so it reads the key itself and narrows nothing,
