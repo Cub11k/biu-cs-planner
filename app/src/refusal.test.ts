@@ -85,6 +85,12 @@ it("never repeats a name, year or moment it has not checked", () => {
     "refusing a State File whose name is not one: a file's name in a Workspace is a name, never a path",
   );
 
+  // and a Requirements File's name the same way (#287)
+  const requirements: WorkspaceRefusalSubject = { kind: "requirements", name: path };
+  expect(wordRefusal({ reason: "not-a-name", subject: requirements }, requirements)).toBe(
+    "refusing a Requirements File whose name is not one: a file's name in a Workspace is a name, never a path",
+  );
+
   const year = { kind: "catalog", academicYear: path } as unknown as CatalogRef;
   expect(wordRefusal({ reason: "not-a-year", subject: year }, year)).toBe(
     "refusing a Catalog whose Academic Year is not one: an Academic Year is a whole number",

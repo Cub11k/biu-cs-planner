@@ -186,3 +186,19 @@ it("serves an unchanged choice with the revision the file still holds, and saves
   ).toMatchObject({ kind: "served", version });
   expect(workspace.written()).toHaveLength(writes);
 });
+
+it("warns about a Program whose file is there and is not a Requirements File", async () => {
+  const workspace = ready();
+  workspace.seed({ kind: "requirements", name: "notes" }, { shopping: [] });
+
+  const set = await choosePrograms(workspace, [{ requirementsFile: "notes" }], {
+    ...ALICE,
+    basedOn: undefined,
+  });
+
+  expect(set).toMatchObject({
+    view: {
+      programWarnings: [{ kind: "program-file-unreadable", index: 0, requirementsFile: "notes" }],
+    },
+  });
+});
