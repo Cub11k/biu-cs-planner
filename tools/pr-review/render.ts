@@ -49,6 +49,8 @@ export type ReviewComment = {
   spec: PassOutcome;
   /** Set when the diff was too large to send whole, so the comment can admit it. */
   diffTruncatedAt?: number;
+  /** Set when the closing references were cut short (`./github.ts`): how many were read. */
+  closesCutAt?: number;
 };
 
 /**
@@ -256,6 +258,15 @@ export function renderReview(input: ReviewComment): string {
 
   pass("Standards", "the guardrails in `CLAUDE.md` and `docs/adr/`", input.standards, out);
   pass("Spec", "what the ticket asked for", input.spec, out);
+
+  if (input.closesCutAt !== undefined) {
+    out.push(
+      `> This pull request closes more issues than the review reads: the Spec pass saw the first ` +
+        `${input.closesCutAt} and none after them, so a criterion of a later one is unjudged ` +
+        "rather than met.",
+    );
+    out.push("");
+  }
 
   if (input.diffTruncatedAt !== undefined) {
     out.push(

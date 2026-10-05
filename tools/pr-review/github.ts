@@ -22,6 +22,11 @@ export type PullRequest = {
   isFork: boolean;
   /** The issues this pull request closes, whose acceptance criteria the Spec pass reads. */
   closes: LinkedIssue[];
+  /**
+   * Set only when GitHub had more closing references than `MAX_PAGES` pages and `closes` stops
+   * short: how many it holds. Absent means `closes` is all of them.
+   */
+  closesCutAt?: number;
 };
 
 async function ok(response: Response, what: string): Promise<Response> {
@@ -38,8 +43,26 @@ const headers = (token: string, accept: string): Record<string, string> => ({
   "user-agent": "biu-cs-planner-pr-review",
 });
 
+/**
+ * Every closing reference, a page at a time.
+ *
+ * It used to ask for `first: 5` and stop, and a composed parent with three children plus one
+ * more issue is already five (`docs/agents/issue-tracker.md`, "How big a ticket is"); a sixth
+ * was dropped without a word, and the Spec pass judged the pull request against part of what it
+ * closes (#306). So it pages until GitHub says there is no next page.
+ *
+ * `MAX_PAGES` is the one cap left, held against a cursor that never ends rather than against any
+ * real pull request — 100 per page is GitHub's ceiling, so the cap is a thousand references. It
+ * is not silent: reaching it sets `closesCutAt`, which the Spec pass is told (`closingSection`
+ * in `./review.ts`) and the review comment prints (`renderReview`). It does not throw, because
+ * this read happens before the graph check posts its comment, and a throw here would take that
+ * comment down with it over a field only the Spec pass reads.
+ */
+const PAGE = 100;
+export const MAX_PAGES = 10;
+
 const QUERY = `
-query($owner: String!, $name: String!, $number: Int!) {
+query($owner: String!, $name: String!, $number: Int!, $after: String) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
       number
@@ -48,24 +71,31 @@ query($owner: String!, $name: String!, $number: Int!) {
       headRefOid
       baseRefOid
       isCrossRepository
-      closingIssuesReferences(first: 5) {
+      closingIssuesReferences(first: ${PAGE}, after: $after) {
         nodes { number title body }
+        pageInfo { hasNextPage endCursor }
       }
     }
   }
 }`;
 
-export async function fetchPullRequest(
+type ClosingPage = {
+  nodes?: LinkedIssue[];
+  pageInfo?: { hasNextPage?: boolean; endCursor?: string | null };
+};
+
+async function readPage(
   repo: string,
   number: number,
   token: string,
-): Promise<PullRequest> {
+  after: string | null,
+): Promise<Record<string, unknown>> {
   const [owner, name] = repo.split("/");
   const response = await ok(
     await fetch(`${API}/graphql`, {
       method: "POST",
       headers: { ...headers(token, "application/json"), "content-type": "application/json" },
-      body: JSON.stringify({ query: QUERY, variables: { owner, name, number } }),
+      body: JSON.stringify({ query: QUERY, variables: { owner, name, number, after } }),
     }),
     "reading the pull request",
   );
@@ -79,8 +109,32 @@ export async function fetchPullRequest(
   }
   const pr = payload.data?.repository?.pullRequest;
   if (!pr) throw new Error(`pull request ${repo}#${number} was not found`);
+  return pr;
+}
 
-  const closing = pr["closingIssuesReferences"] as { nodes?: LinkedIssue[] } | undefined;
+export async function fetchPullRequest(
+  repo: string,
+  number: number,
+  token: string,
+): Promise<PullRequest> {
+  const pr = await readPage(repo, number, token, null);
+  const closes: LinkedIssue[] = [];
+  let page = pr["closingIssuesReferences"] as ClosingPage | undefined;
+  let cut = false;
+
+  for (let read = 1; ; read++) {
+    closes.push(...(page?.nodes ?? []));
+    const next = page?.pageInfo?.hasNextPage ? page.pageInfo.endCursor : undefined;
+    if (!next) break;
+    if (read === MAX_PAGES) {
+      cut = true;
+      break;
+    }
+    page = (await readPage(repo, number, token, next))["closingIssuesReferences"] as
+      | ClosingPage
+      | undefined;
+  }
+
   return {
     number,
     title: String(pr["title"] ?? ""),
@@ -88,11 +142,12 @@ export async function fetchPullRequest(
     headSha: String(pr["headRefOid"] ?? ""),
     baseSha: String(pr["baseRefOid"] ?? ""),
     isFork: pr["isCrossRepository"] === true,
-    closes: (closing?.nodes ?? []).map((issue) => ({
+    closes: closes.map((issue) => ({
       number: issue.number,
       title: issue.title ?? "",
       body: issue.body ?? "",
     })),
+    ...(cut ? { closesCutAt: closes.length } : {}),
   };
 }
 

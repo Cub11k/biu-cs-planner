@@ -89,6 +89,17 @@ describe("the two comments are told apart by their markers", () => {
   });
 });
 
+describe("renderReview's account of what it read", () => {
+  it("says the Spec pass saw only part of what the pull request closes when the list was cut", () => {
+    const body = renderReview(comment({ closesCutAt: 1000 }));
+    expect(body).toContain("the Spec pass saw the first 1000 and none after them");
+  });
+
+  it("says nothing of the kind when every closing reference was read", () => {
+    expect(renderReview(comment())).not.toContain("closes more issues than the review reads");
+  });
+});
+
 describe("renderGraphs", () => {
   it("says the re-export walk is where it belongs when nothing strays", () => {
     const body = renderGraphs(graphsComment());

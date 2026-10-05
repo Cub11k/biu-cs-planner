@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { usable, type Finding } from "./review.ts";
+import type { PullRequest } from "./github.ts";
+import { closingSection, usable, type Finding } from "./review.ts";
 
 const finding = (over: Partial<Finding> = {}): Finding => ({
   file: "core/src/plan.ts",
@@ -38,5 +39,34 @@ describe("usable", () => {
       finding({ file: "c.ts" }),
     ]);
     expect(kept.map((f) => f.file)).toEqual(["a.ts", "c.ts"]);
+  });
+});
+
+describe("closingSection", () => {
+  const pr = (over: Partial<PullRequest> = {}): PullRequest => ({
+    number: 1,
+    title: "t",
+    body: "b",
+    headSha: "h",
+    baseSha: "b",
+    isFork: false,
+    closes: [{ number: 6, title: "the sixth", body: "- [ ] it works" }],
+    ...over,
+  });
+
+  it("hands the Spec pass every issue it was given, and no caveat when nothing was cut", () => {
+    const text = closingSection(pr());
+    expect(text).toContain("the sixth");
+    expect(text).not.toContain("were not read");
+  });
+
+  it("tells the Spec pass the list stops short when it was cut", () => {
+    expect(closingSection(pr({ closesCutAt: 1 }))).toContain(
+      "These are the first 1 of the issues this pull request closes; GitHub lists more",
+    );
+  });
+
+  it("says there are no criteria when nothing is closed", () => {
+    expect(closingSection(pr({ closes: [] }))).toContain("closes no issue");
   });
 });

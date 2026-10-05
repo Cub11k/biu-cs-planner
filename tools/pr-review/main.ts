@@ -133,6 +133,7 @@ if (judgement.kind === "reviewed" && standards && spec) {
       standards,
       spec,
       ...(truncated ? { diffTruncatedAt: DIFF_LIMIT } : {}),
+      ...(pr.closesCutAt !== undefined ? { closesCutAt: pr.closesCutAt } : {}),
     }),
   );
   console.log(`reviewed ${pr.headSha} on ${repo}#${number}`);

@@ -156,20 +156,32 @@ export async function reviewStandards(
   }
 }
 
+/**
+ * What the Spec pass is told the pull request closes. When the list was cut short
+ * (`closesCutAt`, `./github.ts`) it says so here as well as in the comment, so the pass does not
+ * read a criterion's absence as the criterion not existing.
+ */
+export function closingSection(pr: PullRequest): string {
+  const issues = pr.closes.map(issueText).join("\n\n");
+  if (!issues) return "This pull request closes no issue, so there are no acceptance criteria to check.";
+  if (pr.closesCutAt === undefined) return issues;
+  return (
+    `${issues}\n\nThese are the first ${pr.closesCutAt} of the issues this pull request closes; ` +
+    "GitHub lists more, and they were not read. Judge only against the criteria above, and say " +
+    "in the verdict that the rest were not seen."
+  );
+}
+
 export async function reviewSpec(
   client: Anthropic,
   input: ReviewInput,
 ): Promise<PassOutcome> {
-  const issues = input.pr.closes.map(issueText).join("\n\n");
   try {
     const result = await run(
       client,
       SPEC_SYSTEM,
       section("The pull request", `## ${input.pr.title}\n\n${input.pr.body}`) +
-        section(
-          "The issues it closes",
-          issues || "This pull request closes no issue, so there are no acceptance criteria to check.",
-        ) +
+        section("The issues it closes", closingSection(input.pr)) +
         section("The diff", input.diff),
       SpecResult,
     );
