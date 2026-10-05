@@ -6,7 +6,7 @@
  * (vitest.config.ts; docs/design.md, "Development").
  */
 import { meetingsInSemester, type Day, type Meeting, type Offering, type Semester } from "./catalog.ts";
-import type { Clash, GroupPick } from "./picks.ts";
+import type { BlockedTime, Clash, GroupPick } from "./picks.ts";
 
 /** Sunday to Thursday, always. Friday joins them only when something meets on it. */
 export const WEEK_DAYS = [
@@ -95,6 +95,13 @@ export type WeekGroup = {
    * between recording and removing on a guess (#111).
    */
   picked: boolean | undefined;
+  /**
+   * An option that would Clash if picked — with a Blocked Time, or with a Pick of another Lesson
+   * Type or Course — which the week hatches (docs/design.md, "Visual language": hatching is time
+   * already taken). Never set on a Pick, whose Clashes the server reports and red pen draws, and
+   * never while the Picks are unread, when what it would Clash with is not known.
+   */
+  wouldClash?: boolean;
 };
 
 /**
@@ -138,6 +145,13 @@ export function groupKey(group: {
  * exactly over its own ink and halve the width of both.
  */
 export function weekGroups(input: {
+  /**
+   * The Semester's Blocked Times, which an option overlapping one is hatched for. Absent is none,
+   * which is what a page that has not read the State File knows of them.
+   */
+  blockedTimes?: readonly BlockedTime[];
+  /** The Semester the week shows, so a Year-long Group's other Semester is not compared. */
+  semester?: Semester;
   /** The Course whose Groups are on the week as options; none until one is chosen. */
   offering: Offering | undefined;
   /**
@@ -175,7 +189,77 @@ export function weekGroups(input: {
           picked: pickedIfKnown,
         }));
 
-  return [...picked, ...options.filter((group) => !already.has(groupKey(group)))];
+  const shown = options.filter((group) => !already.has(groupKey(group)));
+  if (input.picks === undefined || input.semester === undefined) return [...picked, ...shown];
+
+  const semester = input.semester;
+  const taken = [
+    ...(input.blockedTimes ?? []).filter((blocked) => blocked.semester === semester),
+  ];
+  return [
+    ...picked,
+    ...shown.map((option) => {
+      // a Pick of the option's own slot is what picking it would replace, so it is not a Clash
+      const others = picked.filter(
+        (pick) => pick.courseNumber !== option.courseNumber || pick.lessonType !== option.lessonType,
+      );
+      const busy = [...taken, ...others.flatMap((pick) => meetingsInSemester(pick, semester))];
+      const wouldClash = meetingsInSemester(option, semester).some((meeting) =>
+        busy.some((span) => spansOverlap(meeting, span)),
+      );
+      return { ...option, wouldClash };
+    }),
+  ];
+}
+
+/**
+ * Whether two weekly spans on one Day share a minute, each end read in its own position (#48) and
+ * the range half-open, as `core`'s Clashes module reads them. A span that occupies no time
+ * overlaps nothing.
+ */
+export function spansOverlap(
+  a: { day: Day; start: string; end: string },
+  b: { day: Day; start: string; end: string },
+): boolean {
+  if (a.day !== b.day) return false;
+  const aStart = parseClock(a.start);
+  const aEnd = parseClockAsEnd(a.end);
+  const bStart = parseClock(b.start);
+  const bEnd = parseClockAsEnd(b.end);
+  if (aStart === undefined || aEnd === undefined || bStart === undefined || bEnd === undefined) {
+    return false;
+  }
+  return Math.max(aStart, bStart) < Math.min(aEnd, bEnd);
+}
+
+/** One Blocked Time as the week draws it: hatched time with its label, behind the tiles. */
+export type BlockedTile = {
+  key: string;
+  /** Its position in the Timetable's list, which is how an edit names it. */
+  index: number;
+  day: Day;
+  label: string;
+  startMinutes: number;
+  endMinutes: number;
+};
+
+/**
+ * The Semester's Blocked Times, placed. One that keeps no time free — its end not after its start
+ * — is left off the grid rather than drawn as a sliver somewhere wrong; the server says so in a
+ * Warning, which the editor shows beside the row.
+ */
+export function blockedTiles(blockedTimes: readonly BlockedTime[], semester: Semester): BlockedTile[] {
+  return blockedTimes.flatMap((blocked, index) => {
+    if (blocked.semester !== semester) return [];
+    const startMinutes = parseClock(blocked.start);
+    const endMinutes = parseClockAsEnd(blocked.end);
+    if (startMinutes === undefined || endMinutes === undefined || endMinutes <= startMinutes) {
+      return [];
+    }
+    return [
+      { key: `blocked:${index}`, index, day: blocked.day, label: blocked.label, startMinutes, endMinutes },
+    ];
+  });
 }
 
 /**
@@ -298,10 +382,11 @@ function intoLanes(tiles: Tile[]): Tile[] {
 }
 
 /**
- * Friday appears only when a shown Group meets on Friday, which is most weeks' answer:
- * a CS week that does not run to Friday should not spend a column saying so.
+ * Friday appears only when a shown Group meets on Friday, or a Blocked Time falls on it
+ * (#282), which is most weeks' answer: a CS week that does not run to Friday should not spend
+ * a column saying so — and a student who blocked Friday should see it blocked.
  */
-export function daysShown(tiles: readonly Tile[]): Day[] {
+export function daysShown(tiles: readonly { day: Day }[]): Day[] {
   const days: Day[] = [...WEEK_DAYS];
   if (tiles.some((tile) => tile.day === FRIDAY)) days.push(FRIDAY);
   return days;
@@ -320,7 +405,9 @@ export const MIN_HOURS = 6;
  * downwards in the evening and then upwards in the morning until the week has room to
  * read as one (docs/design.md, "Grid and Picks").
  */
-export function hourRange(tiles: readonly Tile[]): HourRange {
+export function hourRange(
+  tiles: readonly { startMinutes: number; endMinutes: number }[],
+): HourRange {
   if (tiles.length === 0) return DEFAULT_HOUR_RANGE;
 
   let startHour = Math.floor(Math.min(...tiles.map((tile) => tile.startMinutes)) / 60);
@@ -357,7 +444,11 @@ const BLOCK_GAP_PX = 2;
 /** Two decimals: enough to keep a Meeting on its own minute, short enough to read. */
 const round = (value: number): number => Math.round(value * 100) / 100;
 
-export function tileBox(tile: Tile, range: HourRange, hourPx: number): TileBox {
+export function tileBox(
+  tile: Pick<Tile, "startMinutes" | "endMinutes" | "lane" | "lanes">,
+  range: HourRange,
+  hourPx: number,
+): TileBox {
   const fromTop = tile.startMinutes - range.startHour * 60;
   const height = ((tile.endMinutes - tile.startMinutes) * hourPx) / 60;
 

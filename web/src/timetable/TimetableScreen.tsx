@@ -12,6 +12,7 @@ import {
   type StateFileVersion,
   type StateRefusal,
   type TimetableQuery,
+  type Clash,
   type TimetableResult,
   type VariantWarning,
 } from "./picks.ts";
@@ -40,6 +41,14 @@ import { SchemeControl } from "../SchemeControl.tsx";
 import { CoursePicker } from "./CoursePicker.tsx";
 import { addToTray, removeFromTray } from "./tray.ts";
 import { TrayColumn } from "./TrayColumn.tsx";
+import { BlockedTimesEditor } from "./BlockedTimesEditor.tsx";
+import {
+  addBlockedTime,
+  copyBlockedTimes,
+  removeBlockedTime,
+  replaceBlockedTime,
+} from "./blockedTimes.ts";
+import { lessonTypeName } from "./lessonType.ts";
 import { VariantTabs } from "./VariantTabs.tsx";
 import { WeekGrid } from "./WeekGrid.tsx";
 
@@ -176,6 +185,10 @@ const EDIT_LABEL_STRING = new Map<string, StringKey>([
   ["set-primary-variant", "editSetPrimaryVariant"],
   ["add-to-tray", "editAddToTray"],
   ["remove-from-tray", "editRemoveFromTray"],
+  ["add-blocked-time", "editAddBlockedTime"],
+  ["replace-blocked-time", "editReplaceBlockedTime"],
+  ["remove-blocked-time", "editRemoveBlockedTime"],
+  ["copy-blocked-times", "editCopyBlockedTimes"],
 ]);
 
 /**
@@ -745,6 +758,23 @@ export function TimetableScreen({
         }
       : undefined;
 
+  /** The Blocked Time edits (#282): the Semester's, whichever Variant is shown. */
+  const blockedEdits =
+    timetable.kind === "served"
+      ? {
+          add: (range: Parameters<typeof addBlockedTime>[2]) =>
+            sendEdit((query, basedOn) => addBlockedTime(api, query, range, basedOn)),
+          replace: (index: number, range: Parameters<typeof addBlockedTime>[2]) =>
+            sendEdit((query, basedOn) => replaceBlockedTime(api, query, index, range, basedOn)),
+          remove: (index: number) =>
+            sendEdit((query, basedOn) => removeBlockedTime(api, query, index, basedOn)),
+          copyTo: (target: Semester) =>
+            sendEdit((query, basedOn) =>
+              copyBlockedTimes(api, query, { academicYear, semester: target }, basedOn),
+            ),
+        }
+      : undefined;
+
   const onPick = (group: WeekGroup): void => {
     retireNotices();
     // the Variant on screen when the click was made, or — before the first answer — the one
@@ -918,6 +948,13 @@ export function TimetableScreen({
             onSelect={setSelected}
             onRemove={onRemoveFromTray}
           />
+          <BlockedTimesEditor
+            language={language}
+            semester={semester}
+            blockedTimes={timetable.kind === "served" ? timetable.blockedTimes : undefined}
+            warnings={timetable.kind === "served" ? timetable.blockedTimeWarnings : []}
+            edits={blockedEdits}
+          />
           <aside className="flex min-h-0 flex-1 flex-col">
             {catalog.kind === "loading" ? (
               <p className="text-sm text-pencil">{t(language, "catalogLoading")}</p>
@@ -1007,6 +1044,16 @@ export function TimetableScreen({
                 <span key={warning.field ?? "all"}>{settingSaid(language, warning)}</span>
               ))}
               {clashes.length > 0 && <span>{clashesSaid(language, clashes.length)}</span>}
+              {/* the Clashes strip names what a Pick Clashes with when it is a Blocked Time: its
+                  own label is what a student can act on (#282) */}
+              {blockedClashes(clashes).map((said) => (
+                <span key={said.key}>
+                  {t(language, "clashWithBlocked", {
+                    group: `${nameOf(said.courseNumber)} ${lessonTypeName(said.lessonType, language)} ${said.number}`,
+                    label: said.label || t(language, "blockedUnlabelled"),
+                  })}
+                </span>
+              ))}
               {/* a Warning about the Variants and never a refusal: the edit that made it went
                   through, and the tabs above show it */}
               {variantWarnings.map((warning) => (
@@ -1023,6 +1070,8 @@ export function TimetableScreen({
               {/* also `is-picked`: on the week a Clash is always a Pick */}
               <span className="legend-swatch is-picked is-clashing inline-block h-3 w-4 rounded-xs" />
               {t(language, "legendClash")}
+              <span className="legend-swatch is-hatched inline-block h-3 w-4 rounded-xs" />
+              {t(language, "legendHatched")}
             </span>
           </p>
 
@@ -1030,7 +1079,14 @@ export function TimetableScreen({
             <WeekGrid
               language={language}
               semester={semester}
-              groups={weekGroups({ offering: chosen, picks, nameOf })}
+              groups={weekGroups({
+                offering: chosen,
+                picks,
+                nameOf,
+                semester,
+                blockedTimes: timetable.kind === "served" ? timetable.blockedTimes : [],
+              })}
+              blockedTimes={timetable.kind === "served" ? timetable.blockedTimes : []}
               clashing={clashingGroups(clashes)}
               onPick={onPick}
             />
@@ -1204,6 +1260,26 @@ function variantWarningSaid(language: Language, warning: VariantWarning): string
   return warning.kind === "variant-name-not-unique"
     ? t(language, "variantNameNotUnique", { name: warning.name })
     : t(language, "variantPrimaryNotUnique");
+}
+
+/**
+ * The Clashes with a Blocked Time, one per Group and Blocked Time — a Group that meets twice over
+ * one shift is one sentence, not two.
+ */
+function blockedClashes(clashes: readonly Clash[]): Array<{
+  key: string;
+  courseNumber: string;
+  lessonType: string;
+  number: string;
+  label: string;
+}> {
+  const said = new Map<string, { courseNumber: string; lessonType: string; number: string; label: string }>();
+  for (const clash of clashes) {
+    if (clash.kind !== "meeting-blocked-time") continue;
+    const key = `${clash.group.courseNumber}|${clash.group.lessonType}|${clash.group.number}|${clash.blockedTimeIndex}`;
+    if (!said.has(key)) said.set(key, { ...clash.group, label: clash.blockedTime.label });
+  }
+  return [...said].map(([key, value]) => ({ key, ...value }));
 }
 
 /** A Clash is a Warning: it is counted and shown, and it refuses nothing. */

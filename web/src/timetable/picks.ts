@@ -41,6 +41,12 @@ export type VariantWarning = ServedTimetable["variantWarnings"][number];
 /** One entry of the Tray as the server derived it: a Course, why it is there, and its chips. */
 export type TrayEntry = ServedTimetable["tray"][number];
 
+/** One of the Semester's Blocked Times, as stored: a Day, a start, an end and a label (#282). */
+export type BlockedTime = ServedTimetable["blockedTimes"][number];
+
+/** A Blocked Time that keeps no time free, by its position: a Warning, never a refusal. */
+export type BlockedTimeWarning = ServedTimetable["blockedTimeWarnings"][number];
+
 /** What one Pick occupies: one Lesson Type of one Offering. */
 export type PickSlot = { courseNumber: string; lessonType: string };
 
@@ -72,6 +78,9 @@ export type TimetableResult =
       variantWarnings: VariantWarning[];
       /** The Tray of the Variant shown, derived by the server (#283). */
       tray: TrayEntry[];
+      /** The Semester's Blocked Times, the same on every Variant, in the order an edit names them. */
+      blockedTimes: BlockedTime[];
+      blockedTimeWarnings: BlockedTimeWarning[];
       picks: GroupPick[];
       clashes: Clash[];
       /** What this view is, so an edit made on it can say what it was based on. */
@@ -162,6 +171,8 @@ async function read(
     variants: body.variants ?? [],
     variantWarnings: body.variantWarnings ?? [],
     tray: body.tray ?? [],
+    blockedTimes: body.blockedTimes ?? [],
+    blockedTimeWarnings: body.blockedTimeWarnings ?? [],
     picks: body.picks,
     clashes: body.clashes,
     version: body.version,

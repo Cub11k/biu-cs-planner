@@ -56,6 +56,11 @@ const english = {
   /** The labels `app/src/tray.ts` attaches to the Tray edits (#283). */
   editAddToTray: "adding a course to the tray",
   editRemoveFromTray: "removing a course from the tray",
+  /** The labels `app/src/blockedTimes.ts` attaches to the Blocked Time edits (#282). */
+  editAddBlockedTime: "adding a blocked time",
+  editReplaceBlockedTime: "changing a blocked time",
+  editRemoveBlockedTime: "removing a blocked time",
+  editCopyBlockedTimes: "copying blocked times",
   /**
    * A label this build has no name for. The API types `label` as a `string`, so a server
    * newer than this page can send one — and "an edit" is true of every label there will
@@ -363,6 +368,10 @@ const english = {
   legendPencil: "option",
   legendInk: "picked",
   legendClash: "clash",
+  /** Hatching: a Blocked Time, or an option that would Clash if picked (#282). */
+  legendHatched: "time taken",
+  /** A Pick over a Blocked Time, named by the Blocked Time's own label. */
+  clashWithBlocked: "{group} clashes with “{label}”.",
 
   pickedLabel: "Picked:",
   picksNone: "Nothing picked yet.",
@@ -439,6 +448,27 @@ const english = {
   trayAdd: "Add",
   trayAddCourse: "Add {course} to the courses to schedule",
 
+  /**
+   * Blocked Times (#282): weekly time the student keeps free. A range typed past midnight is
+   * stored as two rows, which the hint says so the list showing two is no surprise.
+   */
+  blockedHeading: "Blocked times",
+  blockedNone: "No blocked times. Add work, a commute, anything to keep free.",
+  blockedUnlabelled: "(no label)",
+  blockedDoesNotAdvance: "keeps no time free",
+  blockedEdit: "Edit",
+  blockedRemove: "Remove",
+  blockedAdd: "Add blocked time",
+  blockedCopy: "Copy all to",
+  blockedCopyTarget: "Semester to copy the blocked times to",
+  blockedDay: "Day",
+  blockedStart: "From",
+  blockedEnd: "Until",
+  blockedLabel: "Label",
+  blockedWrapHint: "Until earlier than from runs past midnight, and is kept as two blocked times.",
+  blockedSave: "Save",
+  blockedCancel: "Cancel",
+
   noFixedTime: "No fixed time",
   groupsCount: "{count} groups",
   groupsCountOne: "1 group",
@@ -499,6 +529,10 @@ const hebrew: Record<StringKey, string> = {
   editSetPrimaryVariant: "קביעת חלופה ראשית",
   editAddToTray: "הוספת קורס לרשימת השיבוץ",
   editRemoveFromTray: "הסרת קורס מרשימת השיבוץ",
+  editAddBlockedTime: "הוספת זמן חסום",
+  editReplaceBlockedTime: "שינוי זמן חסום",
+  editRemoveBlockedTime: "הסרת זמן חסום",
+  editCopyBlockedTimes: "העתקת זמנים חסומים",
   editUnknown: "עריכה",
 
   historyNothingToUndo: "אין עוד מה לבטל.",
@@ -596,6 +630,8 @@ const hebrew: Record<StringKey, string> = {
   legendPencil: "אפשרות",
   legendInk: "נבחרה",
   legendClash: "התנגשות",
+  legendHatched: "זמן תפוס",
+  clashWithBlocked: "{group} מתנגשת עם „{label}”.",
 
   pickedLabel: "נבחרו:",
   picksNone: "עדיין לא נבחרה אף קבוצה.",
@@ -637,6 +673,23 @@ const hebrew: Record<StringKey, string> = {
   trayRemoveCourse: "הסרת {course} והבחירות שלו מהחלופה הזו",
   trayAdd: "הוספה",
   trayAddCourse: "הוספת {course} לקורסים לשיבוץ",
+
+  blockedHeading: "זמנים חסומים",
+  blockedNone: "אין זמנים חסומים. הוסיפו עבודה, נסיעה, כל מה שצריך להשאיר פנוי.",
+  blockedUnlabelled: "(ללא תווית)",
+  blockedDoesNotAdvance: "אינו שומר זמן פנוי",
+  blockedEdit: "עריכה",
+  blockedRemove: "הסרה",
+  blockedAdd: "הוספת זמן חסום",
+  blockedCopy: "העתקת הכול אל",
+  blockedCopyTarget: "הסמסטר שאליו יועתקו הזמנים החסומים",
+  blockedDay: "יום",
+  blockedStart: "משעה",
+  blockedEnd: "עד שעה",
+  blockedLabel: "תווית",
+  blockedWrapHint: "שעת סיום מוקדמת משעת ההתחלה עוברת את חצות, ונשמרת כשני זמנים חסומים.",
+  blockedSave: "שמירה",
+  blockedCancel: "ביטול",
 
   noFixedTime: "ללא שעה קבועה",
   groupsCount: "{count} קבוצות",

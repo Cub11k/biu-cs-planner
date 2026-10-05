@@ -155,8 +155,9 @@ export function installFakeApi(options: {
     const clashes = picks.flatMap((pick) =>
       pick.meetings.flatMap((meeting) =>
         fake.blockedTimes
-          .filter((blocked) => overlaps(meeting, blocked))
-          .map((blocked) => ({
+          .map((blocked, blockedTimeIndex) => ({ blocked, blockedTimeIndex }))
+          .filter(({ blocked }) => overlaps(meeting, blocked))
+          .map(({ blocked, blockedTimeIndex }) => ({
             kind: "meeting-blocked-time",
             overlap: { ...meeting },
             group: {
@@ -166,6 +167,7 @@ export function installFakeApi(options: {
             },
             meeting,
             blockedTime: blocked,
+            blockedTimeIndex,
           })),
       ),
     );
