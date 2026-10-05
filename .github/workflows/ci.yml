@@ -121,8 +121,31 @@ jobs:
       - name: Download Chromium
         run: npm run install:browsers
 
+      # The run's output is kept as files as well as printed, so that a failure here can be
+      # read after the job is gone (#219): the log as the reporter wrote it, every test's
+      # result and error as JSON, and the screenshot Vitest takes of a failing test's page.
       - name: Test
-        run: npm run test:browser
+        run: |
+          set -o pipefail
+          npm run test:browser -- --reporter=default --reporter=json \
+            --outputFile.json=browser-test-results.json 2>&1 | tee browser-test-output.txt
+
+      # Only on failure, and kept a week: a flake is evidence only if what it printed and drew
+      # outlives the run, and a re-run that passes overwrites nothing here. `.vitest/` is a
+      # hidden folder, which upload-artifact skips unless told. An upload uses the runner's own
+      # token, not GITHUB_TOKEN, so `permissions:` above stays `contents: read`.
+      - name: Keep the browser run's output
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-test-output
+          path: |
+            browser-test-output.txt
+            browser-test-results.json
+            .vitest/attachments/
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 7
 
   smoke:
     name: ${{ matrix.name }} start-up

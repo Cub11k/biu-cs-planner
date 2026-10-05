@@ -87,8 +87,15 @@ let refuse: { reason: string; warnings: unknown[] } | undefined;
  * back on the next click.
  */
 let version: number;
-/** Set to answer the next save as a file that changed under the page. */
+/**
+ * Set to answer the next save as a file that changed under the page. The other writer's change
+ * is a second Variant, `B`, so the screen's re-read of the file is something a test can see
+ * land: the revision it brings is not drawn anywhere, and a click sent before it lands goes out
+ * on the revision the refusal already spent (#219).
+ */
 let changedUnderneath: boolean;
+/** The Variants the fake's file holds, as the answer lists them; none until another writer adds one. */
+let variantsInFile: Array<{ name: string; primary: boolean }> | undefined;
 /**
  * Set to answer the next save with a body that is not JSON, at this status, **after** the fake
  * has accepted it — so a 200 here is a click that landed and whose answer nobody could read,
@@ -103,6 +110,18 @@ let edits: number;
  * before the State File has been read.
  */
 let readHeld: Promise<void> | undefined;
+
+/**
+ * Every exchange with the fake API, in the order the answers left it: what was asked, the
+ * revision a save was based on, and the answer with the revision the file was at once it was
+ * given. Printed by a failing wait in the external-edit test below (#219), so a failure there
+ * says which request met which revision instead of only that a tile was not inked.
+ */
+let exchanges: string[] = [];
+let startedAt = 0;
+
+/** The exchanges as one block, for an error message. */
+const traffic = (): string => `exchanges with the fake API:\n  ${exchanges.join("\n  ")}`;
 
 /** Holds the next save open, so a test can look at the screen with one in flight. */
 let saveHeld: Promise<void> | undefined;
@@ -208,13 +227,16 @@ beforeEach(() => {
   refuse = undefined;
   version = 0;
   changedUnderneath = false;
+  variantsInFile = undefined;
   unreadableSave = undefined;
   edits = 0;
   readHeld = undefined;
   saveHeld = undefined;
   answerHeldFor = undefined;
   answerHeld = undefined;
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  exchanges = [];
+  startedAt = performance.now();
+  const answer = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url = input instanceof Request ? input.url : String(input);
     const { pathname } = new URL(url, location.href);
     if (!pathname.startsWith("/api/")) return realFetch(input as RequestInfo, init);
@@ -246,6 +268,10 @@ beforeEach(() => {
         changedUnderneath = false;
         // somebody else wrote the file, so the revision the page holds is not the file's
         version += 1;
+        variantsInFile = [
+          { name: "A", primary: true },
+          { name: "B", primary: false },
+        ];
         return new Response(JSON.stringify({ reason: "state-file-changed", warnings: [] }), {
           status: 409,
           headers: { "content-type": "application/json" },
@@ -307,7 +333,32 @@ beforeEach(() => {
         ? [clashBetween("01", "03")]
         : [];
 
-    return json({ variantName: "A", picks, clashes, version: `v${version}`, warnings: [] });
+    return json({
+      variantName: "A",
+      picks,
+      clashes,
+      version: `v${version}`,
+      warnings: [],
+      ...(variantsInFile === undefined ? {} : { variants: variantsInFile }),
+    });
+  };
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const response = await answer(input, init);
+    const url = input instanceof Request ? input.url : String(input);
+    const { pathname } = new URL(url, location.href);
+    if (pathname.startsWith("/api/timetable")) {
+      const method = init?.method ?? "GET";
+      const body = init?.body === undefined ? undefined : JSON.parse(String(init.body));
+      const basedOn = (body as { basedOn?: string } | undefined)?.basedOn;
+      const group = (body as { groupNumber?: string } | undefined)?.groupNumber;
+      exchanges.push(
+        `${(performance.now() - startedAt).toFixed(1)}ms ${method} ${pathname}` +
+          `${group === undefined ? "" : ` group ${group}`}` +
+          `${method === "GET" ? "" : ` basedOn ${String(basedOn)}`}` +
+          ` -> ${response.status}, file at v${version}`,
+      );
+    }
+    return response;
   }) as typeof fetch;
 });
 
@@ -470,6 +521,12 @@ it("draws a Pick that Clashes in red pen, and still keeps it", async () => {
  * click was refused rather than allowed to overwrite whoever else's edit, and the screen says
  * so and shows the file as it now is — it does not blank the week it can still see.
  */
+// #219: this flaked, about once in 150 runs under load. The second click went out before the
+// re-read had landed, on the revision the refusal had already spent, and was refused again —
+// 28ms after the fake had *answered* that re-read, so waiting for the answer is not enough. It
+// now waits for the re-read to be drawn (the other writer's Variant `B`). If it fails again,
+// read the exchanges its error prints and, in CI, the `browser-test-output` artifact (ci.yml)
+// before re-running it.
 it("says a click was not saved when the file changed under the page, and keeps the week", async () => {
   const mounted = await openWeek();
   tileFor(mounted, "01").click();
@@ -485,14 +542,22 @@ it("says a click was not saved when the file changed under the page, and keeps t
 
   await vi.waitFor(() => {
     if (!(mounted.textContent ?? "").includes(t("en", "picksStale"))) {
-      throw new Error("a refused save said nothing to the student");
+      throw new Error(`a refused save said nothing to the student\n${traffic()}`);
     }
   });
   // the Pick that is in the file is still drawn: a refusal costs nothing already there
-  expect(tileFor(mounted, "01").classList.contains("is-picked")).toBe(true);
-  expect(mounted.textContent).toContain(t("en", "picksCountOne"));
-  // and the screen re-read, so what it shows is the file rather than its own memory of it
-  expect(timetableReads()).toBeGreaterThan(readsBefore);
+  expect(tileFor(mounted, "01").classList.contains("is-picked"), traffic()).toBe(true);
+  expect(mounted.textContent, traffic()).toContain(t("en", "picksCountOne"));
+  // and the screen re-read, so what it shows is the file rather than its own memory of it —
+  // the other writer's Variant included. Waited for, not merely sent: until it is drawn the
+  // page still holds the revision this refusal spent, and the click below would be refused on
+  // it again. That window is the page's, not this test's (`settle` in TimetableScreen.tsx).
+  expect(timetableReads(), traffic()).toBeGreaterThan(readsBefore);
+  await vi.waitFor(() => {
+    if (mounted.querySelector('[role="tab"][data-variant="B"]') === null) {
+      throw new Error(`the re-read never showed the file as it now is\n${traffic()}`);
+    }
+  });
 
   // The notice is the account of *that* click, so the next click is what retires it — not a
   // later success, which may be another click's answer entirely (#111).
@@ -500,10 +565,10 @@ it("says a click was not saved when the file changed under the page, and keeps t
 
   await vi.waitFor(() => {
     if (!tileFor(mounted, "03", "Tirgul").classList.contains("is-picked")) {
-      throw new Error("clicking again after a refusal saved nothing");
+      throw new Error(`clicking again after a refusal saved nothing\n${traffic()}`);
     }
   });
-  expect(mounted.textContent).not.toContain(t("en", "picksStale"));
+  expect(mounted.textContent, traffic()).not.toContain(t("en", "picksStale"));
 });
 
 /** The refused answer the screen has to say something honest about. */
