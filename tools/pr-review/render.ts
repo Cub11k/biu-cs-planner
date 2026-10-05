@@ -185,7 +185,7 @@ export function renderGraphs({ headSha, graphs, judgement }: GraphsComment): str
   // borrow the scope's: `collect` cannot see `tools/`, and the walk lives there.
   if (!followers.length) {
     out.push(
-      `**Re-export walk:** one, in \`${FOLLOWER_HOME}\`, and none anywhere else in the tree.`,
+      `**Re-export walk:** none outside \`${FOLLOWER_HOME}\`, read from the whole tree.`,
     );
   } else {
     const files = byFile(followers);

@@ -104,7 +104,7 @@ describe("renderGraphs", () => {
   it("says the re-export walk is where it belongs when nothing strays", () => {
     const body = renderGraphs(graphsComment());
     expect(body).toContain(
-      "**Re-export walk:** one, in `tools/pr-report/surface.ts`, and none anywhere else in the tree.",
+      "**Re-export walk:** none outside `tools/pr-report/surface.ts`, read from the whole tree.",
     );
   });
 
