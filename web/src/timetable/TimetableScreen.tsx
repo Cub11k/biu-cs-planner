@@ -920,12 +920,12 @@ export function TimetablePane({
                */
             catalog.kind === "unreadable-answer" ? (
               <p className="text-sm text-pencil">{t(language, "catalogAnswerUnreadable")}</p>
-            ) : catalog.kind === "refused" || catalog.kind === "workspace-refused" ? (
+            ) : catalog.kind === "not-served" || catalog.kind === "refused" ? (
               <CatalogNotice
                 language={language}
                 academicYear={yearLabel}
-                warnings={catalog.kind === "refused" ? catalog.warnings : []}
-                workspaceRefused={catalog.kind === "workspace-refused"}
+                warnings={catalog.kind === "not-served" ? catalog.warnings : []}
+                workspaceRefused={catalog.kind === "refused"}
               />
             ) : (
               <CoursePicker
