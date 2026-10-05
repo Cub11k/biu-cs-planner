@@ -95,14 +95,14 @@ const withVariants = (
 export function createVariant(state: State, at: VariantRef): State {
   return withVariants(state, at, (variants) => [
     ...variants,
-    { name: at.variant, primary: variants.length === 0, picks: [] },
+    { name: at.variant, primary: variants.length === 0, picks: [], tray: [] },
   ]);
 }
 
 /**
  * Copies a Variant under a new name, right after the one it was copied from. Everything the
- * Variant holds is copied — its Picks, snapshots included — so the copy starts as the same
- * week, and changing one never changes the other. The copy is never primary: the student
+ * Variant holds is copied — its Picks, snapshots included, and its Tray (#283) — so the copy
+ * starts as the same week and the same working set, and changing one never changes the other. The copy is never primary: the student
  * registers with one Variant, and duplicating it is how they try something else.
  */
 export function duplicateVariant(state: State, from: VariantRef, name: string): State {

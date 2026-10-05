@@ -70,8 +70,9 @@ function fullFile() {
                 meetings: [{ semester: "fall", day: "tuesday", start: "15:00", end: "18:00" }],
               },
             ],
+            tray: ["89-230", "89-110"],
           },
-          { name: "late starts", primary: false, picks: [] },
+          { name: "late starts", primary: false, picks: [], tray: [] },
         ],
         blockedTimes: [
           { semester: "fall", day: "sunday", start: "08:00", end: "10:00", label: "commute" },
@@ -590,6 +591,7 @@ it("names Courses by course number and nothing by Catalog entry", () => {
     "start",
     "status",
     "timetables",
+    "tray",
     "value",
     "variants",
   ]);
@@ -603,10 +605,56 @@ it("drops a Variant it cannot read and keeps the Timetable around it", () => {
     ],
   });
 
-  expect(result.state?.timetables[0]?.variants).toEqual([{ name: "ok", primary: false, picks: [] }]);
+  expect(result.state?.timetables[0]?.variants).toEqual([
+    { name: "ok", primary: false, picks: [], tray: [] },
+  ]);
   expect(result.warnings).toEqual([
     { kind: "entry-dropped", at: "timetables[0].variants[0]", field: "name" },
     { kind: "primary-variant-not-unique", at: "timetables[0]", primaries: 0 },
+  ]);
+});
+
+/**
+ * #283's schema change, and the test #173 set for one: a State File written before the Tray
+ * existed opens unchanged, needs no migration, and `CURRENT_STATE_SCHEMA_VERSION` did not move.
+ */
+it("opens a file written before the Tray as every Variant having an empty one, and warns of nothing", () => {
+  const before = {
+    schemaVersion: 1,
+    timetables: [
+      {
+        academicYear: 2027,
+        semester: "fall",
+        variants: [{ name: "A", primary: true, picks: [] }],
+        blockedTimes: [],
+      },
+    ],
+  };
+
+  const result = parseStateFile(before);
+
+  expect(CURRENT_STATE_SCHEMA_VERSION).toBe(1);
+  expect(result.warnings).toEqual([]);
+  expect(result.state?.timetables[0]?.variants).toEqual([
+    { name: "A", primary: true, picks: [], tray: [] },
+  ]);
+});
+
+it("drops one Tray entry it cannot read and keeps the rest of the Tray", () => {
+  const result = parseStateFile({
+    schemaVersion: CURRENT_STATE_SCHEMA_VERSION,
+    timetables: [
+      {
+        academicYear: 2027,
+        semester: "fall",
+        variants: [{ name: "A", primary: true, tray: ["89-110", 89230, "89-214"] }],
+      },
+    ],
+  });
+
+  expect(result.state?.timetables[0]?.variants[0]?.tray).toEqual(["89-110", "89-214"]);
+  expect(result.warnings).toEqual([
+    { kind: "entry-dropped", at: "timetables[0].variants[0].tray[1]" },
   ]);
 });
 

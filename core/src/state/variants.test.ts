@@ -49,7 +49,7 @@ it("creates an empty Variant, making the Timetable that holds it", () => {
     {
       ...FALL_2027,
       blockedTimes: [],
-      variants: [{ name: "Sunday off", primary: true, picks: [] }],
+      variants: [{ name: "Sunday off", primary: true, picks: [], tray: [] }],
     },
   ]);
 });

@@ -79,6 +79,8 @@ export {
   variantWarnings,
 } from "./state/variants.ts";
 export type { VariantWarning } from "./state/variants.ts";
+export { addToTray, removeFromTray, trayEntries } from "./state/tray.ts";
+export type { TrayChip, TrayEntry, TrayOffering, TrayOrigin } from "./state/tray.ts";
 export {
   CURRENT_STATE_SCHEMA_VERSION,
   groupPickSchema,

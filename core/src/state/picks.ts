@@ -101,6 +101,7 @@ export function withVariant(
       name: at.variant,
       primary: timetable.variants.length === 0,
       picks: [],
+      tray: [],
     };
 
     const rewritten = rewrite(variant);
