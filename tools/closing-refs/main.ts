@@ -31,20 +31,32 @@ async function ok(response: Response, what: string): Promise<Response> {
   return response;
 }
 
-/** 100 is GitHub's page ceiling, and more closing references than that is not a pull request. */
+/**
+ * 100 is GitHub's page ceiling, and more closing references than that is not a pull request.
+ *
+ * The body and the two branch names come in the same read, so the body is compared against the
+ * list GitHub held at the same moment rather than one fetched a request later.
+ */
 const QUERY = `
 query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
+    defaultBranchRef { name }
     pullRequest(number: $number) {
+      body
+      baseRefName
       closingIssuesReferences(first: 100) { nodes { number repository { nameWithOwner } } }
     }
   }
 }`;
 
+type Read = { references: number[]; body: string };
+
 function port(repo: string, number: number, token: string, dryRun: boolean): Port {
   const [owner, name] = repo.split("/");
-  return {
-    async closingReferences() {
+  let read: Promise<Read> | undefined;
+
+  const readOnce = (): Promise<Read> =>
+    (read ??= (async (): Promise<Read> => {
       const response = await ok(
         await fetch(`${API}/graphql`, {
           method: "POST",
@@ -57,7 +69,10 @@ function port(repo: string, number: number, token: string, dryRun: boolean): Por
         errors?: { message: string }[];
         data?: {
           repository?: {
+            defaultBranchRef?: { name?: string } | null;
             pullRequest?: {
+              body?: string | null;
+              baseRefName?: string;
               closingIssuesReferences?: {
                 nodes?: { number: number; repository?: { nameWithOwner?: string } }[];
               };
@@ -68,13 +83,32 @@ function port(repo: string, number: number, token: string, dryRun: boolean): Por
       if (payload.errors?.length) {
         throw new Error(`reading the closing references failed: ${payload.errors[0]!.message}`);
       }
-      const pr = payload.data?.repository?.pullRequest;
+      const repository = payload.data?.repository;
+      const pr = repository?.pullRequest;
       if (!pr) throw new Error(`pull request ${repo}#${number} was not found`);
-      // An issue in another repository can be closed too, but its number means nothing
-      // here: looking it up would read this repository's issue of the same number.
-      return (pr.closingIssuesReferences?.nodes ?? [])
-        .filter((node) => node.repository?.nameWithOwner?.toLowerCase() === repo.toLowerCase())
-        .map((node) => node.number);
+      // Into any branch but the default one GitHub links no closing keyword, so a body full of
+      // them is not a list that failed to register (see `Port.body`).
+      const intoDefault =
+        pr.baseRefName !== undefined && pr.baseRefName === repository?.defaultBranchRef?.name;
+      return {
+        // An issue in another repository can be closed too, but its number means nothing
+        // here: looking it up would read this repository's issue of the same number.
+        references: (pr.closingIssuesReferences?.nodes ?? [])
+          .filter((node) => node.repository?.nameWithOwner?.toLowerCase() === repo.toLowerCase())
+          .map((node) => node.number),
+        body: intoDefault ? (pr.body ?? "") : "",
+      };
+    })());
+
+  return {
+    repository: repo,
+
+    async closingReferences() {
+      return (await readOnce()).references;
+    },
+
+    async body() {
+      return (await readOnce()).body;
     },
 
     // A parent holds at most 100 sub-issues, so one page is all of them.

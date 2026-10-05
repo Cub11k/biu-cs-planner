@@ -30,7 +30,13 @@ const clean: PassOutcome = {
 
 const graphsComment = (over: Partial<GraphsComment> = {}): GraphsComment => ({
   headSha: "abcdef1234567890",
-  graphs: { moduleCycles: [], callCycles: [], forbidden: [], scope: ["core/src", "app/src"] },
+  graphs: {
+    moduleCycles: [],
+    callCycles: [],
+    forbidden: [],
+    followers: [],
+    scope: ["core/src", "app/src"],
+  },
   judgement: { kind: "not-requested" },
   ...over,
 });
@@ -83,7 +89,81 @@ describe("the two comments are told apart by their markers", () => {
   });
 });
 
+describe("renderReview's account of what it read", () => {
+  it("says the Spec pass saw only part of what the pull request closes when the list was cut", () => {
+    const body = renderReview(comment({ closesCutAt: 1000 }));
+    expect(body).toContain("the Spec pass saw the first 1000 and none after them");
+  });
+
+  it("says nothing of the kind when every closing reference was read", () => {
+    expect(renderReview(comment())).not.toContain("closes more issues than the review reads");
+  });
+});
+
 describe("renderGraphs", () => {
+  it("says the re-export walk is where it belongs when nothing strays", () => {
+    const body = renderGraphs(graphsComment());
+    expect(body).toContain(
+      "**Re-export walk:** none outside `tools/pr-report/surface.ts`, read from the whole tree.",
+    );
+  });
+
+  it("names a stray re-export walk with its file and function", () => {
+    const body = renderGraphs(
+      graphsComment({
+        graphs: {
+          ...graphsComment().graphs,
+          followers: [{ path: "tools/pr-review/second.ts", name: "trace" }],
+        },
+      }),
+    );
+    expect(body).toContain(
+      "**Re-export walk: 1 file outside `tools/pr-report/surface.ts` follows a re-export chain.**",
+    );
+    expect(body).toContain("- `tools/pr-review/second.ts` follows a re-export chain in `trace`.");
+    // Said, because the scope sentence above it names only the four workspaces.
+    expect(body).toContain("`tools/` included");
+  });
+
+  it("names an outer function beside a nested walk as one finding, not two", () => {
+    // The rule over-reports by design: a walk nested in a named function is reported under
+    // that function as well. Two entries for one file are one bullet that says why.
+    const body = renderGraphs(
+      graphsComment({
+        graphs: {
+          ...graphsComment().graphs,
+          followers: [
+            { path: "app/src/nested.ts", name: "outer" },
+            { path: "app/src/nested.ts", name: "trace" },
+          ],
+        },
+      }),
+    );
+    expect(body).toContain("**Re-export walk: 1 file outside");
+    expect(body).toContain(
+      "- `app/src/nested.ts` follows a re-export chain in `outer`, `trace` — perhaps one walk " +
+        "named more than once",
+    );
+    expect(body.match(/^- `app\/src\/nested\.ts`/gm)).toHaveLength(1);
+  });
+
+  it("counts files rather than names when more than one file strays", () => {
+    const body = renderGraphs(
+      graphsComment({
+        graphs: {
+          ...graphsComment().graphs,
+          followers: [
+            { path: "app/src/a.ts", name: "f" },
+            { path: "web/src/b.ts", name: "g" },
+          ],
+        },
+      }),
+    );
+    expect(body).toContain(
+      "**Re-export walk: 2 files outside `tools/pr-report/surface.ts` follow a re-export chain.**",
+    );
+  });
+
   it("says plainly that nothing judged the change when no review was asked for", () => {
     const body = renderGraphs(graphsComment());
     expect(body).toContain("**Nothing has judged this change.**");
@@ -123,6 +203,7 @@ describe("renderGraphs", () => {
           moduleCycles: [["core/src/a.ts", "app/src/b.ts", "core/src/a.ts"]],
           callCycles: [],
           forbidden: [],
+          followers: [],
           scope: ["core/src", "app/src"],
         },
       }),
@@ -143,6 +224,7 @@ describe("renderGraphs", () => {
             },
           ],
           forbidden: [],
+          followers: [],
           scope: ["core/src"],
         },
       }),
@@ -170,6 +252,7 @@ describe("renderGraphs", () => {
               rule: "`web` knows only the HTTP API contract",
             },
           ],
+          followers: [],
           scope: ["server/src", "web/src"],
         },
       }),
@@ -196,6 +279,7 @@ describe("renderGraphs", () => {
               rule: "`web` knows only the HTTP API contract",
             },
           ],
+          followers: [],
           scope: ["core/src", "web/src"],
         },
       }),

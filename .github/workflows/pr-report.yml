@@ -90,9 +90,11 @@ jobs:
           printf '%s\n\n' "$marker" > comment.md
           cat pr-report.md >> comment.md
 
-          # One comment per PR, edited in place, so the thread is not buried in reruns.
+          # One comment per PR, edited in place, so the thread is not buried in reruns. Matched
+          # by author as well as marker, as findComment in tools/pr-review/github.ts does (#307):
+          # a person quoting the marker must not be the comment this step tries to edit.
           id=$(gh api "repos/$REPO/issues/$NUMBER/comments" --paginate \
-                 --jq "map(select(.body | startswith(\"$marker\"))) | .[0].id // empty")
+                 --jq "map(select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\")))) | .[0].id // empty" | head -n1)
 
           if [ -n "$id" ]; then
             gh api --method PATCH "repos/$REPO/issues/comments/$id" -F body=@comment.md

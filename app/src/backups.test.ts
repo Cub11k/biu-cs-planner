@@ -90,7 +90,7 @@ it("answers a refusal rather than an empty list when the folder cannot be looked
       Promise.reject(
         new WorkspaceRefusedError(
           { reason: "unreadable", subject: { kind: "folder", folder: "backups" } },
-          "refusing: it cannot be listed",
+          "refusing the folder holding the Workspace's snapshots: it is there and cannot be read (EACCES)",
         ),
       ),
   };

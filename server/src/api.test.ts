@@ -106,6 +106,7 @@ it("answers a create that cannot make the layout with a named 409, not a 500", a
   await expect(before.json()).resolves.toEqual({
     ready: false,
     missing: ["requirements", "backups"],
+    notAFolder: ["catalogs"],
   });
 
   const created = await post("/api/workspace", {});
@@ -125,6 +126,7 @@ it("answers a create that cannot make the layout with a named 409, not a 500", a
   await expect(after.json()).resolves.toEqual({
     ready: false,
     missing: ["requirements", "backups"],
+    notAFolder: ["catalogs"],
   });
 });
 
@@ -132,10 +134,12 @@ it("answers a create that cannot make the layout with a named 409, not a 500", a
  * #130, and the api-level half of #121, whose comment on #130 wrote this test out with the
  * numbers measured rather than predicted.
  *
- * A Workspace can be **ready** and still be one a write cannot land in: `usablePath` asks
- * whether each folder of the layout resolves inside the Workspace and not what it is, so a
- * `catalogs` that is a plain file passes and `status` says ready. The write used to meet a raw
- * `ENOTDIR` under that file, which is a 500 — the one answer this API has no arm for. Asserted
+ * A Workspace whose `catalogs` is a plain file used to be **ready** and still be one a write
+ * cannot land in: `usablePath` asks whether each folder of the layout resolves inside the
+ * Workspace and not what it is, so the file passed. The write used to meet a raw `ENOTDIR` under
+ * that file, which is a 500 — the one answer this API has no arm for. Since #243 `status` reports
+ * the file under `notAFolder` and is not ready, so the import stops there, with the same 409 an
+ * import into a folder that is not a Workspace gets. Asserted
  * through the routes rather than at the port, because the claim is about what a page receives,
  * and `server/src/workspace.fs.test.ts`'s sweep deliberately cannot make it: the backstop it
  * added wraps the `ENOTDIR` into a refusal too, so the sweep proves "nothing leaves untyped"
@@ -143,7 +147,7 @@ it("answers a create that cannot make the layout with a named 409, not a 500", a
  *
  * It needs no permission trick either, so it runs everywhere rather than skipping visibly.
  */
-it("answers a Catalog write into a ready Workspace whose catalogs is a file with a 409", async () => {
+it("answers a Catalog write into a Workspace whose catalogs is a file with a 409, and calls it not ready", async () => {
   await mkdir(join(root, "requirements"));
   await mkdir(join(root, ".backups"));
   await writeFile(join(root, "catalogs"), "not a folder");
@@ -151,12 +155,16 @@ it("answers a Catalog write into a ready Workspace whose catalogs is a file with
   // the setup asserted rather than assumed: this is what makes the import below reachable
   const status = await get("/api/workspace");
   expect(status.status).toBe(200);
-  await expect(status.json()).resolves.toEqual({ ready: true, missing: [] });
+  await expect(status.json()).resolves.toEqual({
+    ready: false,
+    missing: [],
+    notAFolder: ["catalogs"],
+  });
 
   const imported = await post("/api/catalog/2027/import", CRAWL);
 
   expect(imported.status).toBe(409);
-  await expect(imported.json()).resolves.toEqual({ reason: "workspace-refused" });
+  await expect(imported.json()).resolves.toEqual({ reason: "workspace-not-ready" });
 
   // and the file it would have written below is exactly as it was: the bytes, not just the
   // status code
@@ -2132,10 +2140,14 @@ it("names no path when the Workspace Layout cannot be created", async () => {
 it("names no path when the snapshots folder is there and cannot be listed", async () => {
   await mkdir(join(root, "catalogs"));
   await mkdir(join(root, "requirements"));
-  // a plain file where `.backups` belongs: `status` calls the Workspace ready, because the probe
-  // asks whether each part resolves inside it and not what it is (#121)
+  // a plain file where `.backups` belongs: `status` says so (#243), and the listing, which does
+  // not ask `status`, refuses it
   await writeFile(join(root, ".backups"), "not a folder");
-  await expect((await get("/api/workspace")).json()).resolves.toEqual({ ready: true, missing: [] });
+  await expect((await get("/api/workspace")).json()).resolves.toEqual({
+    ready: false,
+    missing: [],
+    notAFolder: ["backups"],
+  });
 
   const refused = await get(BACKUPS);
 
@@ -2146,19 +2158,32 @@ it("names no path when the snapshots folder is there and cannot be listed", asyn
 });
 
 /**
- * #229, over HTTP and against a real folder. A `.backups` that is a plain file refuses every
+ * #229, over HTTP and against a real folder. A snapshot that cannot be written refuses every
  * save that has something to back up — and the State File itself reads perfectly well, so the
  * answer has to say it was the backup and not the file. It used to be `workspace-refused`, which
  * the page words as Picks that could not be read. A Pick, its removal, an undo and a preference
  * are four routes onto one save, so all four are asked, and none of them may name a path. A
  * restore is a save too and can be refused the same way; it has no screen yet and is not asked.
+ *
+ * **A directory where the snapshot's temporary goes**, on a clock the test holds so its name is
+ * known. This used to be a `.backups` that is a plain file, which `status` now reports as not
+ * ready (#243), so the save stopped at `workspace-not-ready` before it reached the snapshot. The
+ * directory needs no mode bit, so this runs everywhere, as root too.
  */
 it("names a save refused for want of a backup as that, for a Pick, its removal, an undo and a preference", async () => {
+  const moment = Date.UTC(2026, 9, 7, 12, 0, 0, 0);
+  api = createApi({
+    workspace: fileSystemWorkspace(root, { now: () => moment }),
+    token: TOKEN,
+    changes: { changeCount: () => 0 },
+  });
   await post("/api/workspace", {});
   await post(PICKS, LECTURE);
   await save(PICKS, CLASHING);
-  await rm(join(root, ".backups"), { recursive: true });
-  await writeFile(join(root, ".backups"), "not a folder");
+  // the one snapshot so far took `moment`, so the next is nudged a millisecond past it; the
+  // temporary's name is `temporaryPath`'s in `./workspace.fs.ts`, and if that changes the save
+  // lands and every 409 below fails rather than passing
+  await mkdir(join(root, ".backups", `.tmp-${process.pid}-me.2026-10-07T12-00-00-001Z.state.json`));
   const before = await readFile(join(root, "me.state.json"), "utf8");
 
   const answers = {

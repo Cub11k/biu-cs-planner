@@ -27,13 +27,13 @@ import ts from "typescript";
  * workspaces — so it cannot see `tools/` at all, which is where the walk and every plausible
  * second one live. Reading the tree here is what makes "anywhere else" true.
  *
- * **Where it is enforced, exactly.** `followers.test.ts`'s whole-tree assertion, so a stray
- * follower fails `npm test` — which CI runs — the way `layering.test.ts` does for
- * `forbiddenEdges`. It is *not* in the pull request comment: `main.ts` does not call
- * `strayFollowers`, so unlike the other three this rule is tested and not reported. #203 did
- * not ask for the comment and reporting it means a field on `Graphs` and a paragraph in
- * `./render.ts`; that is its own ticket, and saying so here is cheaper than a reader inferring
- * a comment that does not exist.
+ * **Where it is enforced, and where it is reported.** `followers.test.ts`'s whole-tree
+ * assertion, so a stray follower fails `npm test` — which CI runs — the way `layering.test.ts`
+ * does for `forbiddenEdges`. And like the other three it is reported in the pull request's graph
+ * comment: `./graphs.ts` puts `strayFollowers` on `Graphs` beside them, and `./render.ts` names
+ * each stray one with its file and function. #203 shipped the rule tested and unreported; #237
+ * wired the report, because a red `npm test` beside a comment that discusses three other graphs
+ * and is silent about the one that failed is the situation `main.ts` calls worse than no check.
  */
 
 /** One source file, as this check reads them: a repo-relative path and its text. */
@@ -278,16 +278,45 @@ export function strayFollowers(sources: readonly Source[]): Follower[] {
 }
 
 /**
- * A finding as a sentence, for the message a failing check prints.
+ * The functions one file was reported under, in the order they were found.
  *
- * Today that is `followers.test.ts`'s whole-tree assertion and nothing else: `main.ts` builds
- * its `graphs` from the other three checks and does not call `strayFollowers`, so a stray
- * follower fails `npm test` — which CI runs — and is absent from the pull request comment the
- * other three are reported in. Said here rather than left to be discovered, because this
- * module's header calls the rule mechanical and a reader would reasonably expect the comment.
+ * Grouped by file because the rule over-reports by design (`reExportFollowers`): a walk nested
+ * inside a named function is reported under that function too, so one walk can arrive as two
+ * names in one file. Said per file, that reads as one finding with two candidate names, which is
+ * what it is, rather than as two walks.
  */
-export const explainFollower = (follower: Follower): string =>
-  `\`${follower.path}\` follows a re-export chain in \`${follower.name}\`. This repository ` +
-  `keeps one barrel-follower, \`declaringModule\` in \`${FOLLOWER_HOME}\`, because a second ` +
-  `one imported back into \`tools/pr-report/calls.ts\` would close a cycle in the module ` +
-  `graph this report draws (#124). Call the existing walk, or move it and say so here.`;
+export type StrayFile = { path: string; names: string[] };
+
+export function byFile(followers: readonly Follower[]): StrayFile[] {
+  const files = new Map<string, string[]>();
+  for (const f of followers) {
+    const names = files.get(f.path) ?? [];
+    names.push(f.name);
+    files.set(f.path, names);
+  }
+  return [...files].map(([path, names]) => ({ path, names }));
+}
+
+const code = (text: string): string => `\`${text}\``;
+
+/**
+ * One file's findings as a sentence, which the pull request's graph comment prints for each file
+ * `byFile` returns.
+ *
+ * More than one name says why, so the over-reporting reads as what it is: one walk may be named
+ * once for every named function it is written inside, and the reader is told so rather than left
+ * to hunt for a second walk that may not exist.
+ */
+export function explainFollower({ path, names }: StrayFile): string {
+  const where =
+    names.length === 1
+      ? `in ${code(names[0]!)}`
+      : `in ${names.map(code).join(", ")} — perhaps one walk named more than once, since a walk ` +
+        "written inside another function is reported under that function as well";
+  return (
+    `${code(path)} follows a re-export chain ${where}. This repository keeps one ` +
+    `barrel-follower, \`declaringModule\` in ${code(FOLLOWER_HOME)}, because a second one ` +
+    "imported back into `tools/pr-report/calls.ts` would close a cycle in the module graph " +
+    "this report draws (#124). Call the existing walk, or move it and say so here."
+  );
+}

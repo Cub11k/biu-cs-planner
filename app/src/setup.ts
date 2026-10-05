@@ -7,13 +7,14 @@ import { WorkspaceRefusedError, type Workspace, type WorkspaceStatus } from "./w
  *
  * **No refusal arm, and this is the argument that it needs none** (#141's fourth point).
  * Every filesystem call behind `status` in `server/src/workspace.fs.ts` is already answered
- * rather than raised: `missingFolders` asks `usableFolder` for each part of the layout, that
- * asks `usablePath`, and that reaches the disk only through `realPathOrAbsent`, whose whole
- * body is a `try` returning `undefined` on anything. A part it cannot resolve — for want of a
- * file, a mode bit or a symlink loop alike — is reported *missing*, which is a status and not
- * a failure. `app/src/workspace.memory.ts` filters an array. So the layout probe this shares
- * with `createWorkspace` cannot refuse on the reading side, and the hole #141 was filed for is
- * on the writing side only.
+ * rather than raised: `layoutOf` asks `usableFolder` for each part of the layout, that asks
+ * `usablePath`, and that reaches the disk only through `realPathOrAbsent`, whose whole body is a
+ * `try` returning `undefined` on anything; the one other call, the `stat` that tells a folder
+ * from a file standing in its place (#243), answers its own rejection as *missing* too. A part it
+ * cannot resolve — for want of a file, a mode bit or a symlink loop alike — is reported
+ * *missing*, which is a status and not a failure. `app/src/workspace.memory.ts` filters an array
+ * and hands it to `statusOf`. So the layout probe this shares with `createWorkspace` cannot refuse
+ * on the reading side, and the hole #141 was filed for is on the writing side only.
  *
  * That is an argument about the two adapters there are, not a promise the port makes: `status`
  * in `./workspace.ts` documents no refusal, so it documents no absence of one either. Giving

@@ -340,6 +340,26 @@ function tileFor(
 const isPicked = (mounted: HTMLElement, groupNumber: string, lessonType?: string): boolean =>
   tileFor(mounted, groupNumber, lessonType).classList.contains("is-picked");
 
+/**
+ * The sentences these tests wait for and rule out, named by their keys and never written out
+ * here, so a rewording in the translation files changes what they look for rather than turning a
+ * `not.toContain` into a check that can never fail (#309, after #252 did the same for picking).
+ */
+const UNDID_PICKING = t("en", "undoneEdit", { edit: t("en", "editPickGroup") });
+const REDID_PICKING = t("en", "redoneEdit", { edit: t("en", "editPickGroup") });
+
+/**
+ * The longest stretch of a template with no placeholder in it: the part of a sentence that is the
+ * same whatever is put into it, and for these templates the part that makes the claim — "Undid "
+ * for `undoneEdit`, " is there, but could not be read:" for `catalogUnreadable`. How a fragment is
+ * named by its key when the whole sentence cannot be, because what fills the placeholder is the
+ * thing that could be wrong.
+ */
+const stem = (template: string): string =>
+  template
+    .split(/\{[^}]*\}/)
+    .reduce((longest, piece) => (piece.length > longest.length ? piece : longest), "");
+
 /** Waits for a sentence to reach the screen, and says which one was missing when it does not. */
 async function saying(mounted: HTMLElement, sentence: string): Promise<void> {
   await vi.waitFor(() => {
@@ -412,8 +432,8 @@ it("undoes a Pick: the week stops showing it, and says what was undone", async (
   await vi.waitFor(() => {
     if (isPicked(mounted, "01")) throw new Error("the undo left the Pick on the week");
   });
-  await saying(mounted, "Undid picking a group.");
-  await saying(mounted, "Nothing picked yet.");
+  await saying(mounted, UNDID_PICKING);
+  await saying(mounted, t("en", "picksNone"));
   // the label is a key the UI translates, never words to show
   expect(mounted.textContent).not.toContain("pick-group");
 });
@@ -438,8 +458,8 @@ it("redoes it again: the Pick comes back, and says what was redone", async () =>
   await vi.waitFor(() => {
     if (!isPicked(mounted, "01")) throw new Error("the redo did not put the Pick back");
   });
-  await saying(mounted, "Redid picking a group.");
-  await saying(mounted, "1 group picked");
+  await saying(mounted, REDID_PICKING);
+  await saying(mounted, t("en", "picksCountOne"));
   // and the undo that displaced it is available again, from the server's own answer
   expect(buttonFor(mounted, "undo").disabled).toBe(false);
 });
@@ -457,7 +477,9 @@ it("names the edit in Hebrew too, rather than showing an English sentence", asyn
     mounted,
     t("he", "undoneEdit", { edit: t("he", "editPickGroup") }),
   );
-  expect(mounted.textContent).not.toContain("Undid");
+  // No English account of the undo at all — not the whole sentence, and not its English stem
+  // around a Hebrew name either, which is the half-translated way this could go wrong.
+  expect(mounted.textContent).not.toContain(stem(t("en", "undoneEdit")));
   expect(buttonFor(mounted, "undo").textContent).toBe(t("he", "undo"));
   expect(buttonFor(mounted, "redo").textContent).toBe(t("he", "redo"));
 });
@@ -473,7 +495,7 @@ it("says a label it has no name for is an edit, rather than printing the key", a
 
   buttonFor(mounted, "undo").click();
 
-  await saying(mounted, "Undid an edit.");
+  await saying(mounted, t("en", "undoneEdit", { edit: t("en", "editUnknown") }));
   expect(mounted.textContent).not.toContain("reorder-semesters");
 });
 
@@ -548,7 +570,7 @@ it("offers no second press until the week has caught up with the first", async (
   const [held, release] = hold();
   readHeld = held;
   buttonFor(mounted, "undo").click();
-  await saying(mounted, "Undid picking a group.");
+  await saying(mounted, UNDID_PICKING);
 
   // The answer has landed, so nothing is in flight any more — and the press is still not
   // offered, because what it would be based on is a revision the file has moved past.
@@ -594,8 +616,9 @@ it("tells the student the history was let go, without reusing the wording #111 r
   // #111: the page must not claim to know the file changed *since it read it*, which is the
   // sentence that was shown for a file the page had simply not read. This one says what the
   // server actually compared — and says nothing about a click, because none was made.
-  expect(mounted.textContent).not.toContain("since this page read it");
-  expect(mounted.textContent).not.toContain("your click was not saved");
+  expect(mounted.textContent).not.toContain(t("en", "picksStale"));
+  // and the other sentence that says a click was not saved, which is about a backup (#229)
+  expect(mounted.textContent).not.toContain(t("en", "picksBackupRefused"));
   // the file it was showing is stale by definition, so it re-read: Group 02 is the file now
   await vi.waitFor(() => {
     if (!isPicked(mounted, "02")) throw new Error("the screen never re-read the changed file");
@@ -661,7 +684,21 @@ it("says nothing changed for a refusal the route named no reason for", async () 
   buttonFor(mounted, "undo").click();
 
   await saying(mounted, t("en", "historyNotDone"));
-  expect(mounted.textContent).not.toContain("could not be read");
+  // none of the sentences that say something could not be read: the step was refused for no
+  // reason the route named, and inventing one is what this test is about
+  for (const unread of [
+    "historyUnreadable",
+    "picksUnreadable",
+    "settingsFileUnreadable",
+    "settingsFileRefused",
+    "settingsUnread",
+    "settingsUnreread",
+    "settingsUnreadable",
+    "settingsUnreadableNamed",
+    "catalogUnreadable",
+  ] as const) {
+    expect(mounted.textContent, unread).not.toContain(stem(t("en", unread)));
+  }
   expect(isPicked(mounted, "01")).toBe(true);
 });
 
@@ -782,14 +819,14 @@ it("retires what a press said when the next click is made", async () => {
     if (buttonFor(mounted, "undo").disabled) throw new Error("undo is still disabled");
   });
   buttonFor(mounted, "undo").click();
-  await saying(mounted, "Undid picking a group.");
+  await saying(mounted, UNDID_PICKING);
 
   tileFor(mounted, "02").click();
 
   // The account belongs to the press. A click is a new thing the student did, and the
   // sentence about the press before it would read as an account of this one.
   await vi.waitFor(() => {
-    if ((mounted.textContent ?? "").includes("Undid picking a group.")) {
+    if ((mounted.textContent ?? "").includes(UNDID_PICKING)) {
       throw new Error("the undo's account outlived the click after it");
     }
   });

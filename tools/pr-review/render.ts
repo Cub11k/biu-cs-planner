@@ -1,4 +1,5 @@
 import type { CallCycle, Cycle } from "./cycles.ts";
+import { FOLLOWER_HOME, byFile, explainFollower, type Follower } from "./followers.ts";
 import { explain, summarise, type ForbiddenEdge } from "./layering.ts";
 import { MARKER, commitMarker } from "./outdated.ts";
 import type { Finding, PassOutcome } from "./review.ts";
@@ -28,6 +29,8 @@ export type Graphs = {
   callCycles: CallCycle[];
   /** Imports pointing the way the layering rule does not allow. */
   forbidden: ForbiddenEdge[];
+  /** Functions outside `FOLLOWER_HOME` that follow a re-export chain (`./followers.ts`). */
+  followers: Follower[];
   /** The directories the graphs were derived from, so "acyclic" says what it covered. */
   scope: readonly string[];
 };
@@ -46,6 +49,8 @@ export type ReviewComment = {
   spec: PassOutcome;
   /** Set when the diff was too large to send whole, so the comment can admit it. */
   diffTruncatedAt?: number;
+  /** Set when the closing references were cut short (`./github.ts`): how many were read. */
+  closesCutAt?: number;
 };
 
 /**
@@ -123,7 +128,7 @@ function pass(name: string, subtitle: string, outcome: PassOutcome, out: string[
  * not judged this commit. A reader must never take "no cycles" for "reviewed and clean".
  */
 export function renderGraphs({ headSha, graphs, judgement }: GraphsComment): string {
-  const { moduleCycles, callCycles, forbidden, scope } = graphs;
+  const { moduleCycles, callCycles, forbidden, followers, scope } = graphs;
   const out: string[] = [GRAPHS_MARKER, ""];
 
   out.push(`## Graph check of \`${short(headSha)}\``);
@@ -173,6 +178,25 @@ export function renderGraphs({ headSha, graphs, judgement }: GraphsComment): str
     );
     out.push("");
     for (const edge of forbidden) out.push(`- ${explain(edge)}`);
+  }
+  out.push("");
+
+  // Read from the whole tree rather than from `scope`, which is why its sentence does not
+  // borrow the scope's: `collect` cannot see `tools/`, and the walk lives there.
+  if (!followers.length) {
+    out.push(
+      `**Re-export walk:** none outside \`${FOLLOWER_HOME}\`, read from the whole tree.`,
+    );
+  } else {
+    const files = byFile(followers);
+    out.push(
+      `**Re-export walk: ${files.length} file${files.length === 1 ? "" : "s"} outside ` +
+        `\`${FOLLOWER_HOME}\` follow${files.length === 1 ? "s" : ""} a re-export chain.** ` +
+        "Read from the whole tree, `tools/` included, not only the directories above. " +
+        "`tools/pr-review/followers.test.ts` fails `npm test` on the same finding.",
+    );
+    out.push("");
+    for (const file of files) out.push(`- ${explainFollower(file)}`);
   }
   out.push("");
 
@@ -234,6 +258,15 @@ export function renderReview(input: ReviewComment): string {
 
   pass("Standards", "the guardrails in `CLAUDE.md` and `docs/adr/`", input.standards, out);
   pass("Spec", "what the ticket asked for", input.spec, out);
+
+  if (input.closesCutAt !== undefined) {
+    out.push(
+      `> This pull request closes more issues than the review reads: the Spec pass saw the first ` +
+        `${input.closesCutAt} and none after them, so a criterion of a later one is unjudged ` +
+        "rather than met.",
+    );
+    out.push("");
+  }
 
   if (input.diffTruncatedAt !== undefined) {
     out.push(

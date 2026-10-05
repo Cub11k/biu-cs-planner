@@ -208,11 +208,43 @@ export function isStateFileName(name: string): boolean {
   return !NAME_FORBIDS.test(name);
 }
 
+/**
+ * Whether a folder is a Workspace, and if not, what about its Workspace Layout is wrong.
+ *
+ * **Two ways a part of the Layout is not usable, and they are reported apart** (#243). A part
+ * that is *not there* is `missing`, and `create` makes it. A part that is *there and is not a
+ * folder* — a plain `catalogs` file — is `notAFolder`, and `create` cannot make it, because the
+ * name is taken. One list for both would have told a student their `catalogs` was absent when it
+ * is standing in the folder in front of them, and sent them to accept a Layout that `create` then
+ * refuses on the same file. `ready` is true only when both are empty.
+ *
+ * `notAFolder` is **left out rather than empty** when no part is the wrong kind of thing, so the
+ * answer for every other Workspace is the one it has always been, and a reader that knows only
+ * `missing` still reads `ready` right. `statusOf` is where both adapters build this, so the rule
+ * that joins the two lists into `ready` is written once.
+ */
 export type WorkspaceStatus = {
   ready: boolean;
-  /** The parts of the Workspace Layout that do not exist yet. */
+  /** The parts of the Workspace Layout that are not there yet. */
   missing: WorkspaceFolder[];
+  /** The parts of the Workspace Layout that are there and are not a folder; absent when none. */
+  notAFolder?: WorkspaceFolder[];
 };
+
+/**
+ * A Workspace's status, out of what is wrong with its Layout: the one rule both adapters answer
+ * `status` with (#243). An adapter that cannot hold a part of the wrong kind — the in-memory one
+ * cannot — still says what `ready` means through this, so the promise is pinned in the port's own
+ * test rather than only where a disk can reach it.
+ */
+export function statusOf(layout: {
+  missing: WorkspaceFolder[];
+  notAFolder: WorkspaceFolder[];
+}): WorkspaceStatus {
+  const { missing, notAFolder } = layout;
+  const ready = missing.length === 0 && notAFolder.length === 0;
+  return notAFolder.length === 0 ? { ready, missing } : { ready, missing, notAFolder };
+}
 
 /**
  * The **Workspace Layout**: the folders a Workspace holds, which is what this module and both
@@ -503,6 +535,29 @@ export class BackupRefusedError extends WorkspaceRefusedError {
 export type StateFileContents = { data: unknown; version: StateFileVersion };
 
 /**
+ * **What a State File's revision looks like, stated once, here** (#311): the SHA-256 of the file's
+ * bytes, spelled as **64 lowercase hexadecimal digits** and nothing else — which is what
+ * `createHash("sha256").digest("hex")` produces. ADR-0015 records why it is a hash of the bytes
+ * and points here for the spelling.
+ *
+ * `StateFileVersion` is a plain `string` in `core`, so the type holds no adapter to this, and an
+ * adapter could hand back the file's content or a path as its "revision" and the API would serve
+ * it to the page. So `app` checks every revision it is handed by the port, on a read and on a
+ * save alike (`./edit.ts`), and one that is not in this format is a refusal of that read or save
+ * rather than a value passed on: a revision is the one adapter-produced string that travels to
+ * the page, and #249 already closed the other channel, a refusal's sentence.
+ *
+ * A literal pattern, never built from data (ADR-0007). Anchored at both ends with no `m` flag, so
+ * a trailing newline is not a revision either.
+ */
+const REVISION = /^[0-9a-f]{64}$/;
+
+/** Whether a value an adapter handed back is a revision in the format above. */
+export function isStateFileRevision(value: unknown): value is StateFileVersion {
+  return typeof value === "string" && REVISION.test(value);
+}
+
+/**
  * A save was based on a revision the State File no longer holds: something else wrote it
  * between the read the student is looking at and this save. The overwrite is refused, which
  * is what `docs/design.md`, "External edits" promises.
@@ -572,6 +627,10 @@ export type WorkspaceWatcher = {
 export type WorkspaceChanged = () => void;
 
 export type Workspace = {
+  /**
+   * Whether this folder is a Workspace: built by `statusOf`, so `ready` is false when any part
+   * of the Workspace Layout is missing **or** is there and is not a folder (#243).
+   */
   status(): Promise<WorkspaceStatus>;
   /**
    * Creates the Workspace Layout. Called only after the student accepts.
@@ -583,8 +642,9 @@ export type Workspace = {
    *
    * **`status()` is how to see what a refused create left**: it reports which parts of the
    * Workspace Layout are missing, and accepting the Workspace Layout again makes the rest once
-   * whatever refused it is fixed. (A name the Workspace Layout needs that a plain file holds
-   * counts as there and is refused by name on the next create or write, #121.) That is
+   * whatever refused it is fixed. (A name the Workspace Layout needs that a plain file holds is
+   * not missing: `status` reports it under `notAFolder` and not ready, and a create or a write
+   * refuses it by name, #243.) That is
    * the reason this need not roll back while a State File write must be atomic: a half-made
    * Workspace Layout is empty folders, a state the app can describe and recover from, and a
    * half-written file is neither. A rollback would also have to tell the folders this call made
@@ -611,8 +671,8 @@ export type Workspace = {
    * A folder that is not a folder at all — a plain `catalogs` file — is one of the two ways to
    * reach that refusal, and it is deliberately *not* absence: what was named is there, and it
    * is the wrong kind of thing. The write side refuses the same file by name
-   * (`NotAWorkspaceError`, #121), and an adapter that read it as absence here would report the
-   * Workspace ready and its Catalogs as none.
+   * (`NotAWorkspaceError`, #121) and `status` reports it under `notAFolder` (#243), and an
+   * adapter that read it as absence here would report its Catalogs as none.
    */
   list(kind: WorkspaceRef["kind"]): Promise<WorkspaceRef[]>;
   /**
@@ -643,14 +703,16 @@ export type Workspace = {
    *
    * This is the half of the external-edit guard that `core` cannot reach: the revision has
    * to be produced where the file is, and it travels from here through the use case, the
-   * API and the page, back to `saveStateFile`.
+   * API and the page, back to `saveStateFile`. It is in the format `isStateFileRevision`
+   * states, and `app` refuses the read when it is not (#311).
    */
   readStateFile(ref: StateFileRef): Promise<StateFileContents | undefined>;
   /**
    * Saves a State File, and refuses to overwrite one that is not the revision the save was
    * based on: `StateFileChangedError`, whose doc says why this one refuses rather than
    * warning. Atomic as `write` is, and it hands back the revision it wrote so the next save
-   * from the same page needs no re-read.
+   * from the same page needs no re-read — in the format `isStateFileRevision` states, which
+   * `app` checks before passing it on (#311).
    *
    * **It also writes the snapshot into `.backups/`, out of the bytes it is about to replace**
    * (#67; `docs/design.md`, "Storage"). That is beneath the port on purpose: `app` has no

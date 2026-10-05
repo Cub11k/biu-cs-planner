@@ -19,6 +19,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import "./index.css";
 import { App } from "./App.tsx";
+import { t } from "./i18n/strings.ts";
 import type { Offering } from "./timetable/catalog.ts";
 import { TimetableScreen } from "./timetable/TimetableScreen.tsx";
 
@@ -234,7 +235,7 @@ it("keeps the Catalog on screen while it re-reads after a change", async () => {
     if (asks < 2) throw new Error("the screen has not asked for the Catalog again");
   });
   expect(courseNumbers(mounted)).toEqual([BEFORE.courseNumber]);
-  expect(mounted.textContent).not.toContain("Loading the catalog");
+  expect(mounted.textContent).not.toContain(t("en", "catalogLoading"));
 
   release();
   await vi.waitFor(() => {
@@ -256,7 +257,7 @@ it("says it is loading on the first read, when there is nothing to keep", async 
   root.render(<TimetableScreen language="en" onLanguage={() => {}} today={TODAY} />);
 
   await vi.waitFor(() => {
-    if (!(mounted.textContent ?? "").includes("Loading the catalog")) {
+    if (!(mounted.textContent ?? "").includes(t("en", "catalogLoading"))) {
       throw new Error("the first load said nothing about loading");
     }
   });

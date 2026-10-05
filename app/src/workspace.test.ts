@@ -6,10 +6,12 @@ import {
   backupDay,
   backupsToPrune,
   isStateFileName,
+  isStateFileRevision,
   NotAWorkspaceError,
   requireBackupRef,
   requireCatalogRef,
   requireStateFileName,
+  statusOf,
   WorkspaceRefusedError,
   type BackupRef,
   type WorkspaceRefusal,
@@ -133,7 +135,8 @@ it("refuses a write into a folder that is not a Workspace, as a refusal and not 
 
 /**
  * The second way a layout is not one: a plain file standing where a folder of it belongs, which
- * `status` reports as ready and a write used to meet as a raw `ENOTDIR` (#121). The stem is
+ * `status` used to report as ready (it reports it under `notAFolder` now, #243) and a write used
+ * to meet as a raw `ENOTDIR` (#121). The stem is
  * shared and the tail is the adapter's, because "is there and is not a folder" and "could not
  * be made" are different news about the same folder.
  */
@@ -148,6 +151,62 @@ it("names the part of the Workspace Layout that is what is wrong, when one part 
   expect(refusal.message).toMatch(
     /^refusing to write: the Workspace layout does not exist yet — catalogs is there and is not a folder$/,
   );
+});
+
+/**
+ * #311: the format of a revision, which `app` holds every adapter to. A SHA-256 as lowercase hex
+ * and nothing near it: not the file's content, not a path, not upper case, not one digit short or
+ * long, and not with a trailing newline, which an `m` flag or a missing `$` would let through.
+ */
+it("takes a SHA-256 as lowercase hex for a revision, and nothing else", () => {
+  const hash = "0123456789abcdef".repeat(4);
+  expect(isStateFileRevision(hash)).toBe(true);
+
+  for (const notOne of [
+    '{"schemaVersion":1,"pins":[]}',
+    "/home/student/plans/alice.state.json",
+    hash.toUpperCase(),
+    hash.slice(1),
+    hash + "0",
+    hash + "\n",
+    "\n" + hash,
+    `${hash.slice(0, 32)}\n${hash.slice(32)}`,
+    hash.replace("a", "g"),
+    "",
+    undefined,
+    null,
+    42,
+    { toString: () => hash },
+  ]) {
+    expect(isStateFileRevision(notOne), JSON.stringify(notOne)).toBe(false);
+  }
+});
+
+/**
+ * #243: what `ready` means, pinned at the port rather than only where a disk can reach it. A part
+ * of the Workspace Layout that is there and is not a folder makes a Workspace not ready exactly as
+ * a missing one does, and is reported apart from the missing ones, because `create` makes what is
+ * missing and cannot make a folder whose name a file holds. The in-memory double can never hold
+ * such a part, so this is the only place its half of the promise is asserted.
+ */
+it("is not ready while a part of the Workspace Layout is missing or is there and not a folder", () => {
+  expect(statusOf({ missing: [], notAFolder: [] })).toEqual({ ready: true, missing: [] });
+  expect(statusOf({ missing: ["backups"], notAFolder: [] })).toEqual({
+    ready: false,
+    missing: ["backups"],
+  });
+  expect(statusOf({ missing: [], notAFolder: ["catalogs"] })).toEqual({
+    ready: false,
+    missing: [],
+    notAFolder: ["catalogs"],
+  });
+  expect(statusOf({ missing: ["requirements"], notAFolder: ["catalogs"] })).toEqual({
+    ready: false,
+    missing: ["requirements"],
+    notAFolder: ["catalogs"],
+  });
+  // left out rather than empty, so every other Workspace's answer is the one it always was
+  expect(statusOf({ missing: [], notAFolder: [] })).not.toHaveProperty("notAFolder");
 });
 
 /**

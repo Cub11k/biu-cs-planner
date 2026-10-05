@@ -15,6 +15,7 @@ import { afterEach, beforeEach, expect, it } from "vitest";
 import {
   BACKUP_KEEP_SAVES,
   BackupRefusedError,
+  isStateFileRevision,
   NotAWorkspaceError,
   StateFileChangedError,
   WorkspaceRefusedError,
@@ -73,6 +74,9 @@ it("reports an ordinary folder as not a Workspace, and creates the Layout when a
   await workspace.create();
 
   expect(await workspace.status()).toEqual({ ready: true, missing: [] });
+  // left out, not empty, while no part is the wrong kind of thing (#243): the memory double's
+  // test of the same title asserts the same
+  expect(await workspace.status()).not.toHaveProperty("notAFolder");
   expect((await readdir(root)).sort()).toEqual([".backups", "catalogs", "requirements"]);
 });
 
@@ -641,6 +645,26 @@ const firstSave = (data: unknown) => ({ json: data as Record<string, unknown>, b
 /** The State File as it sits on disk, whoever wrote it. */
 const aliceOnDisk = (): Promise<string> => readFile(join(root, "alice.state.json"), "utf8");
 
+/**
+ * #311: the revision is in the format the port states, on a read and on a save. `app` refuses one
+ * that is not, so an adapter that drifted from it would have every State File refused; the memory
+ * double's test of the same title asserts the same of it.
+ */
+it("hands back every revision as a well-formed hash, on a read and on a save", async () => {
+  const workspace = fileSystemWorkspace(root);
+  await workspace.create();
+
+  const wrote = await workspace.saveStateFile(ALICE, firstSave(STATE));
+  const read = await workspace.readStateFile(ALICE);
+  const again = await workspace.saveStateFile(ALICE, { json: { ...STATE }, basedOn: wrote });
+
+  for (const revision of [wrote, read?.version, again]) {
+    expect(isStateFileRevision(revision), String(revision)).toBe(true);
+  }
+  // the save's answer is the revision a read of what it wrote gives
+  expect(read?.version).toBe(wrote);
+});
+
 it("stores a State File at the Workspace root, under the name it was given", async () => {
   const workspace = fileSystemWorkspace(root);
   await workspace.create();
@@ -939,10 +963,10 @@ it("lists the State Files the Workspace holds, and nothing else at its root", as
  *
  * **This is the trigger that needs no mode bit**, so it runs everywhere rather than being
  * skipped where the test user can read anything. `usablePath` asks whether a path resolves
- * inside the Workspace and not what it *is*, so a `catalogs` that is a plain file is usable,
- * counts towards the Workspace Layout, and makes `status` report the Workspace **ready** (#121) —
- * and the listing then said "no Catalogs" about a Workspace the port had just called ready. That is
- * #109's lie in the one place a student would be looking straight at it.
+ * inside the Workspace and not what it *is*, so a `catalogs` that is a plain file gets as far as
+ * the listing — and the listing then said "no Catalogs" about a folder standing right there
+ * (#121). That is #109's lie in the one place a student would be looking straight at it. `status`
+ * reports the same file under `notAFolder` now (#243), and the listing still refuses it.
  *
  * The refusal says which of the two it met, because the file reads perfectly well as the file
  * it is: "cannot be read" would be untrue of it, and `ENOTDIR` alone is worth less than the
@@ -954,9 +978,12 @@ it("refuses to list Catalogs when catalogs is a plain file, rather than reportin
   await writeFile(join(root, "catalogs"), "not a folder");
   const workspace = fileSystemWorkspace(root);
 
-  // the setup, asserted rather than assumed: a ready Workspace is what makes the old answer a
-  // lie rather than a fair report of one that is not set up
-  expect(await workspace.status()).toEqual({ ready: true, missing: [] });
+  // the setup, asserted rather than assumed: `catalogs` is there, and is the wrong kind of thing
+  expect(await workspace.status()).toEqual({
+    ready: false,
+    missing: [],
+    notAFolder: ["catalogs"],
+  });
 
   const refusal = await workspace.list("catalog").catch((error: unknown) => error);
 
@@ -978,8 +1005,9 @@ it("refuses to list Catalogs when catalogs is a plain file, rather than reportin
  * `ABSENT` says so; for the folder being listed it is the opposite answer, and reusing that list
  * here is the defect this ticket's amendment warned about.
  *
- * **It rests on that reading alone and not on the argument the `catalogs` case makes.** There
- * `status` reports the Workspace ready, which is what makes an empty answer a lie; here every
+ * **It rests on that reading alone and not on the argument the `catalogs` case made.** There
+ * `status` used to report the Workspace ready, which is what made an empty answer a lie (it says
+ * `notAFolder` now, #243); here every
  * folder of the Workspace Layout is missing, so `status` reports **not ready** and the student
  * would be offered the Workspace Layout. Asserted below rather than left to be assumed either way.
  * The refusal is still the right answer — something is at that name and it is the wrong kind of
@@ -996,7 +1024,8 @@ it("refuses to list State Files when the Workspace root is a file rather than a 
   await writeFile(notAFolder, "not a folder");
   const workspace = fileSystemWorkspace(notAFolder);
 
-  // not the ready Workspace the catalogs case turns on: this one has no layout at all
+  // not the Workspace the catalogs case turns on, with only one part wrong: this one has no
+  // layout at all
   expect(await workspace.status()).toEqual({
     ready: false,
     missing: ["catalogs", "requirements", "backups"],
@@ -1252,10 +1281,10 @@ it("refuses a whole-file read of a State File, which would come back with no rev
 /**
  * #121's reachable door, and the one the ticket was really filed for. `usablePath` asks whether
  * a folder of the Workspace Layout resolves inside the Workspace and not what it *is*, so a
- * `catalogs` that is a plain file is usable, counts towards the Workspace Layout, and makes
- * `status` report the Workspace **ready** — and the Catalog write then opened its temporary below
- * that file and met a raw `ENOTDIR`. A ready Workspace producing a raw filesystem error is the
- * unnamed 500 by a different door from the unreachable one the ticket is named after.
+ * `catalogs` that is a plain file is usable — and the Catalog write then opened its temporary below
+ * that file and met a raw `ENOTDIR`, the unnamed 500 by a different door from the unreachable one
+ * the ticket is named after. `status` no longer calls this Workspace ready (#243), so the use
+ * cases stop before writing; the port still refuses a write that did not ask, by name.
  */
 it("refuses a Catalog when catalogs is a file rather than a folder, and says which folder", async () => {
   await mkdir(join(root, "requirements"));
@@ -1263,8 +1292,13 @@ it("refuses a Catalog when catalogs is a file rather than a folder, and says whi
   await writeFile(join(root, "catalogs"), "not a folder");
   const workspace = fileSystemWorkspace(root);
 
-  // the setup, asserted rather than assumed: this is what makes the write below reachable
-  expect(await workspace.status()).toEqual({ ready: true, missing: [] });
+  // the setup, asserted rather than assumed: the one part that is wrong is `catalogs`, and it
+  // is there rather than missing
+  expect(await workspace.status()).toEqual({
+    ready: false,
+    missing: [],
+    notAFolder: ["catalogs"],
+  });
 
   const refusal = await workspace
     .write({ kind: "catalog", academicYear: 2027 }, CATALOG)
@@ -1281,16 +1315,21 @@ it("refuses a Catalog when catalogs is a file rather than a folder, and says whi
 });
 
 /**
- * The same file met from the other side. With one part of the Workspace Layout a file and another
- * genuinely missing, `status` is not ready, the student is offered the Workspace Layout, and
- * accepting it reaches `mkdir` — which is `EEXIST` for a name a plain file holds. Raw, that is the
- * same unnamed 500 one function further along, so it is refused by name too (#121).
+ * The same file met from the other side. With a part of the Workspace Layout a file, `status` is
+ * not ready, and a page that offers the Workspace Layout to every Workspace that is not ready
+ * reaches `mkdir` when the student accepts — which is `EEXIST` for a name a plain file holds. Raw,
+ * that is the same unnamed 500 one function further along, so it is refused by name too (#121).
+ * `status` tells the file from what is missing (#243), which is what lets a page say so instead.
  */
 it("refuses to create the Workspace Layout when a name it needs is held by a file", async () => {
   await writeFile(join(root, "catalogs"), "not a folder");
   const workspace = fileSystemWorkspace(root);
 
-  expect(await workspace.status()).toEqual({ ready: false, missing: ["requirements", "backups"] });
+  expect(await workspace.status()).toEqual({
+    ready: false,
+    missing: ["requirements", "backups"],
+    notAFolder: ["catalogs"],
+  });
 
   await expect(workspace.create()).rejects.toThrow(WorkspaceRefusedError);
   await expect(workspace.create()).rejects.toThrow(/catalogs could not be made \(EEXIST\)/);
@@ -1317,10 +1356,14 @@ it("leaves the parts it made when refused part way, and status says which", asyn
   expect((await readdir(root)).sort()).toEqual(["catalogs", "requirements"]);
   expect(await readdir(join(root, "catalogs"))).toEqual([]);
   expect(await readFile(join(root, "requirements"), "utf8")).toBe("not a folder");
-  // and `status()` describes exactly that: `catalogs` made, `.backups` missing. `requirements` is
-  // not missing, because a name the Workspace Layout needs that is there counts as there — the
-  // `requireLayoutFolder` in the adapter says why — and a write into it is refused by name instead (#121)
-  expect(await workspace.status()).toEqual({ ready: false, missing: ["backups"] });
+  // and `status()` describes exactly that: `catalogs` made, `.backups` missing, and `requirements`
+  // there and not a folder. It is not *missing*, because `create` cannot make a folder whose name
+  // a file holds — `layoutOf` in the adapter says why — and a write into it is refused by name (#243)
+  expect(await workspace.status()).toEqual({
+    ready: false,
+    missing: ["backups"],
+    notAFolder: ["requirements"],
+  });
 
   // once the obstacle is gone, accepting the Workspace Layout again makes the rest
   await rm(join(root, "requirements"));
@@ -1700,10 +1743,10 @@ it("copies the bytes of the file it replaces, a BOM included", async () => {
 });
 
 /**
- * Only on a disk. `missingFolders` asks whether each part of the Workspace Layout resolves
- * inside the Workspace and not what it *is*, so a plain `.backups` file makes `status` report
- * ready — and the snapshot would then meet the filesystem raw, which is the second door #121
- * was filed for met from a third side. Refused by name instead, before a byte is written, and
+ * Only on a disk. `missingFolders`, which is what a save asks, counts only the parts of the
+ * Workspace Layout that are not there, so a plain `.backups` file gets past it — and the snapshot
+ * would then meet the filesystem raw (#121). `status` reports that file as not ready (#243), but a
+ * save does not ask `status`. Refused by name instead, before a byte is written, and
  * **the State File is left exactly as it was**: the snapshot is taken before the rename, so a
  * refusal here costs the save rather than the file.
  */
@@ -1714,7 +1757,12 @@ it("refuses the save, by name, when .backups is there and is not a folder", asyn
 
   await rm(join(root, ".backups"), { recursive: true });
   await writeFile(join(root, ".backups"), "not a folder", "utf8");
-  expect(await workspace.status()).toEqual({ ready: true, missing: [] });
+  // not ready, so the use cases stop before saving (#243); a save that does not ask is the port's
+  expect(await workspace.status()).toEqual({
+    ready: false,
+    missing: [],
+    notAFolder: ["backups"],
+  });
 
   const refusal = await workspace
     .saveStateFile(ALICE, { json: { schemaVersion: 1, pins: [] }, basedOn: first })
@@ -1882,8 +1930,13 @@ it("saves when the pruning cannot even look, on a save that takes no snapshot", 
   await workspace.create();
   await rm(join(root, ".backups"), { recursive: true });
   await writeFile(join(root, ".backups"), "not a folder", "utf8");
-  // `missingFolders` asks whether the path resolves inside the Workspace and not what it is
-  expect(await workspace.status()).toEqual({ ready: true, missing: [] });
+  // `status` says not ready (#243), but a save asks only `missingFolders`, which counts what is
+  // not there; `.backups` is there, and is refused by name only where a snapshot reaches it
+  expect(await workspace.status()).toEqual({
+    ready: false,
+    missing: [],
+    notAFolder: ["backups"],
+  });
 
   // a first save replaces nothing, so no snapshot is attempted and nothing refuses
   const version = await workspace.saveStateFile(ALICE, firstSave(STATE));
@@ -2013,15 +2066,19 @@ it("names no path in any refusal it can make, over every operation of the port",
     }
 
     // 2. a Workspace whose folders are plain files, so a listing meets something that is not one.
-    //    `status` calls it **ready**, which is #121's second door and why these are refusals
-    //    rather than empty answers.
+    //    `status` reports all three under `notAFolder` (#243); the port's own operations do not
+    //    ask it, which is #121's second door and why these are refusals rather than empty answers.
     {
       const path = await folder();
       await writeFile(join(path, "catalogs"), "not a folder");
       await writeFile(join(path, "requirements"), "not a folder");
       await writeFile(join(path, ".backups"), "not a folder");
       const workspace = fileSystemWorkspace(path);
-      expect(await workspace.status()).toEqual({ ready: true, missing: [] });
+      expect(await workspace.status()).toEqual({
+        ready: false,
+        missing: [],
+        notAFolder: ["catalogs", "requirements", "backups"],
+      });
 
       sweep(
         "list Catalogs",
