@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { collect } from "./collect.ts";
@@ -791,6 +792,31 @@ describe("the call graph", () => {
 
     expect(said).toContain("resolved through the calling module's own imports");
     expect(said).toContain("does not leave the module it is written in");
+  });
+
+  it("says that a method call on a value, every port call included, is not in the graph", () => {
+    // The calls this graph cannot see are the Workspace port's, which is the seam a reviewer
+    // looks for first, so an arrow missing there read as "nothing touches the disk" (#167).
+    // Said of a graph with no edges too: it is a fact about what the graph reads, not about
+    // what this one happens to hold.
+    for (const over of [{}, { edges: [] }]) {
+      const said = callFold(render(report(over))).body;
+
+      expect(said).toContain("A method called on a value is not in this graph");
+      expect(said).toContain("every other call through a port");
+      expect(said).toContain("`tools/ci/state-file-writer.test.ts`");
+    }
+  });
+
+  it("points at a check that exists, so the pointer cannot outlive it", () => {
+    // The sentence hands the guarantee the graph cannot give to another file. A rename of that
+    // file would leave the report sending a reviewer to nothing, which reads as the guarantee
+    // still being held. The pattern is a literal (ADR-0007).
+    const said = callFold(render(report())).body;
+    const named = [...said.matchAll(/`(tools\/ci\/[\w.-]+\.test\.ts)`/g)].map((m) => m[1]!);
+
+    expect(named).toEqual(["tools/ci/state-file-writer.test.ts"]);
+    for (const path of named) expect(existsSync(resolve(ROOT, path))).toBe(true);
   });
 });
 

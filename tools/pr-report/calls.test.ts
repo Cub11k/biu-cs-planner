@@ -350,6 +350,36 @@ describe("where a call lands", () => {
   });
 });
 
+describe("a method called on a value, which the graph leaves out by ruling (#167)", () => {
+  it("draws no edge for a port method, even where a function of that name is exported", () => {
+    // The port's shape, and a plain function sharing the method's name in the module the port
+    // is declared in. Drawing a method call by name alone would land `workspace.saveStateFile`
+    // on that function, which is the noise the ruling refused; resolving the receiver would
+    // need its type. The report says neither is drawn, and this is what keeps that true. The
+    // `label` call beside it still resolves, which says the function was read, not skipped.
+    expect(
+      edgesOf({
+        "app/package.json": manifest("app", "./src/index.ts"),
+        "app/src/workspace.ts": lines(
+          `export type Workspace = { saveStateFile(text: string): Promise<void> };`,
+          `export function saveStateFile(text: string): string {`,
+          `  return text;`,
+          `}`,
+          `export function label(of: string): string {`,
+          `  return of;`,
+          `}`,
+        ),
+        "app/src/edit.ts": lines(
+          `import { label, type Workspace } from "./workspace.ts";`,
+          `export async function editStateFile(workspace: Workspace, text: string): Promise<void> {`,
+          `  await workspace.saveStateFile(label(text));`,
+          `}`,
+        ),
+      }),
+    ).toEqual(["app/src/edit.ts#editStateFile -> app/src/workspace.ts#label"]);
+  });
+});
+
 describe("a call this repository owns and cannot place", () => {
   it("draws a node saying so when the module it was imported from does not export it", () => {
     // The barrel stopped re-exporting the name. Dropping the edge would say there is no call
@@ -512,6 +542,14 @@ describe("this repository", () => {
     // that a name someone imports is no longer exported where they import it from, or that a
     // workspace is being imported as a package it cannot be reached by.
     expect(edges.filter((e) => e.to.startsWith(`${UNRESOLVED}#`))).toEqual([]);
+  });
+
+  it("draws no edge for a State File write, which only a method call on the port reaches", () => {
+    // What the report's sentence beside this graph says, measured here rather than trusted:
+    // the one State File writer is in the graph, and the port call it makes is not (#167).
+    // `tools/ci/state-file-writer.test.ts` is what governs that call; this graph cannot.
+    expect(edges.some((e) => e.to === "app/src/edit.ts#editStateFile")).toBe(true);
+    expect(edges.filter((e) => `${e.from} ${e.to}`.includes("saveStateFile"))).toEqual([]);
   });
 
   it("re-exports by name in every module it reads, so no star hides a name from the graph", () => {

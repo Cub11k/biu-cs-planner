@@ -42,6 +42,20 @@ export const SOURCE_DIRS = ["core/src", "app/src", "server/src", "web/src"];
  * the silence is not a measurement but a sentence: `render` names every directory in this list
  * wherever its absence would otherwise read as an absence of tests rather than of measurement.
  *
+ * **So a `tools/` module with no test is not listed as untested: it is not listed at all**, and
+ * that is ruled, not overlooked (#148). Only test files are read out of these directories, so
+ * the report can name the titles that exist and cannot name a module that has none —
+ * `tools/pr-report/main.ts` is one; on 2026-10-05 six `tools/` modules had no test file beside
+ * them, by name. A file list was weighed — name each `tools/` module and whether a test file
+ * imports it, without adding it to either graph — and refused. `tools/` has no runtime users,
+ * so an untested module there costs a reviewer's attention and never a student's data; the
+ * directory is small enough to read; and "a test of this module", without coverage to prove
+ * it, would be a test file's imports standing in for a measurement — one more mechanism in the
+ * report that can itself drift, which is the failure the report exists to prevent. What covers
+ * it is the sentence `render` already prints: a `tools/` file's titles are the whole of what
+ * the report knows about it, so for a `tools/` change the diff is the record and the report is
+ * not a substitute for reading it.
+ *
  * Every entry is a repo-relative directory, matched whole. `render` compares by path segment,
  * so `tools` never matches a `toolsmith/` that is not in the list.
  */
