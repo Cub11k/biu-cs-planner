@@ -2598,3 +2598,264 @@ it("refuses a stale Blocked Time edit, and names every bad body as a 400", async
     await expect(answer.json(), where).resolves.toEqual({ error });
   }
 });
+
+/**
+ * #287: Requirements Files in the Workspace, and the student's Cohort and Programs in the State
+ * File, over a real temporary folder. The Program and its Track are invented; no Requirements File
+ * is committed to this repo (ADR-0006).
+ */
+const CS_REQUIREMENTS = {
+  schemaVersion: 1,
+  program: { id: "cs", name: { he: "מדעי המחשב", en: "Computer Science" } },
+  cohorts: [{ academicYear: 2027, semester: "fall" }],
+  courses: [{ number: "89-110", credits: 5 }],
+  requirements: [{ id: "intro", kind: "course", course: "89-110" }],
+  tracks: [{ id: "ai", name: { he: "בינה מלאכותית", en: "AI" }, requirements: [] }],
+};
+
+const dropRequirements = async (name: string, content: unknown): Promise<void> => {
+  await writeFile(join(root, "requirements", `${name}.json`), JSON.stringify(content), "utf8");
+};
+
+it("lists a valid Requirements File, one with node Warnings, and one that is not one at all", async () => {
+  await post("/api/workspace", {});
+  await dropRequirements("cs-2027", CS_REQUIREMENTS);
+  await dropRequirements("cs-broken", {
+    ...CS_REQUIREMENTS,
+    requirements: [{ id: "broken", kind: "credits" }],
+  });
+  await writeFile(join(root, "requirements", "notes.json"), "not JSON at all", "utf8");
+
+  const listed = await get("/api/requirements");
+
+  expect(listed.status).toBe(200);
+  await expect(listed.json()).resolves.toEqual({
+    files: [
+      {
+        name: "cs-2027",
+        status: "read",
+        program: { id: "cs", name: { he: "מדעי המחשב", en: "Computer Science" } },
+        cohorts: [{ academicYear: 2027, semester: "fall" }],
+        tracks: [{ id: "ai", name: { he: "בינה מלאכותית", en: "AI" } }],
+        warnings: [],
+      },
+      {
+        name: "cs-broken",
+        status: "read",
+        program: { id: "cs", name: { he: "מדעי המחשב", en: "Computer Science" } },
+        cohorts: [{ academicYear: 2027, semester: "fall" }],
+        tracks: [{ id: "ai", name: { he: "בינה מלאכותית", en: "AI" } }],
+        warnings: [{ kind: "entry-dropped", at: "requirements[0]", field: "min" }],
+      },
+      { name: "notes", status: "not-requirements", warnings: [{ kind: "file-unreadable" }] },
+    ],
+  });
+});
+
+it("lists no Requirements Files for a folder that is not a Workspace, rather than failing", async () => {
+  const listed = await get("/api/requirements");
+
+  expect(listed.status).toBe(200);
+  await expect(listed.json()).resolves.toEqual({ files: [] });
+});
+
+it("answers a requirements/ that cannot be listed with a named 409, never an empty list", async () => {
+  await post("/api/workspace", {});
+  await rm(join(root, "requirements"), { recursive: true });
+  await writeFile(join(root, "requirements"), "not a folder");
+
+  const listed = await get("/api/requirements");
+
+  expect(listed.status).toBe(409);
+  await expect(listed.json()).resolves.toEqual({ reason: "workspace-refused" });
+});
+
+it("imports a Requirements File, stores it in requirements/, and lists it", async () => {
+  await post("/api/workspace", {});
+
+  const imported = await post("/api/requirements/import", {
+    name: "cs-2027",
+    file: CS_REQUIREMENTS,
+  });
+
+  expect(imported.status).toBe(200);
+  await expect(imported.json()).resolves.toMatchObject({
+    replaced: false,
+    listed: { name: "cs-2027", status: "read", program: { id: "cs" } },
+  });
+  expect(JSON.parse(await readFile(join(root, "requirements", "cs-2027.json"), "utf8"))).toEqual(
+    CS_REQUIREMENTS,
+  );
+  await expect((await get("/api/requirements")).json()).resolves.toMatchObject({
+    files: [{ name: "cs-2027", status: "read" }],
+  });
+});
+
+it("refuses to import a file that is not a Requirements File, saying why, and stores nothing", async () => {
+  await post("/api/workspace", {});
+
+  const imported = await post("/api/requirements/import", { name: "notes", file: { a: 1 } });
+
+  expect(imported.status).toBe(409);
+  await expect(imported.json()).resolves.toEqual({
+    reason: "not-requirements",
+    warnings: [{ kind: "file-unreadable" }],
+  });
+  expect(await readdir(join(root, "requirements"))).toEqual([]);
+});
+
+it("refuses to import into a folder that is not a Workspace yet", async () => {
+  const imported = await post("/api/requirements/import", {
+    name: "cs-2027",
+    file: CS_REQUIREMENTS,
+  });
+
+  expect(imported.status).toBe(409);
+  await expect(imported.json()).resolves.toEqual({ reason: "workspace-not-ready" });
+  expect(await readdir(root)).toEqual([]);
+});
+
+/**
+ * The name is free text that becomes a file name, so a path in it is refused by the port's own
+ * guard before any path is built — and the State File it pointed at is untouched.
+ */
+it("refuses a hostile Requirements File name at the guard, and writes nothing", async () => {
+  await post("/api/workspace", {});
+  await post(PICKS, LECTURE);
+  const before = await readFile(join(root, "me.state.json"), "utf8");
+
+  for (const name of ["../me.state", "sub/cs", ".hidden", "nul"]) {
+    const imported = await post("/api/requirements/import", { name, file: CS_REQUIREMENTS });
+    expect(imported.status).toBe(409);
+    await expect(imported.json()).resolves.toEqual({ reason: "workspace-refused" });
+  }
+  expect(await readFile(join(root, "me.state.json"), "utf8")).toBe(before);
+  expect(await readdir(join(root, "requirements"))).toEqual([]);
+});
+
+it("names every bad import request as a 400", async () => {
+  await post("/api/workspace", {});
+
+  for (const body of [{}, { name: "" }, { file: CS_REQUIREMENTS }, { name: 7, file: {} }]) {
+    const imported = await post("/api/requirements/import", body);
+    expect(imported.status).toBe(400);
+    await expect(imported.json()).resolves.toEqual({ error: "not-a-requirements-import" });
+  }
+});
+
+it("serves no Cohort and no Programs before any is chosen, and writes no State File", async () => {
+  const read = await get("/api/programs");
+
+  expect(read.status).toBe(200);
+  await expect(read.json()).resolves.toEqual({
+    cohort: null,
+    programs: [],
+    programWarnings: [],
+    warnings: [],
+  });
+  expect(await readdir(root)).toEqual([]);
+});
+
+it("sets and reads the Cohort and the Programs, each one undo step", async () => {
+  await post("/api/workspace", {});
+  await dropRequirements("cs-2027", CS_REQUIREMENTS);
+
+  const programs = await put("/api/programs", {
+    programs: [{ requirementsFile: "cs-2027", track: "ai" }],
+    basedOn: await currentVersion(),
+  });
+  expect(programs.status).toBe(200);
+  await expect(programs.json()).resolves.toMatchObject({
+    cohort: null,
+    programs: [{ requirementsFile: "cs-2027", track: "ai" }],
+    programWarnings: [],
+    version: await currentVersion(),
+  });
+
+  const cohort = await put("/api/cohort", {
+    cohort: { academicYear: 2026, semester: "fall" },
+    basedOn: await currentVersion(),
+  });
+  expect(cohort.status).toBe(200);
+  await expect((await get("/api/programs")).json()).resolves.toMatchObject({
+    cohort: { academicYear: 2026, semester: "fall" },
+    programs: [{ requirementsFile: "cs-2027", track: "ai" }],
+  });
+
+  // one undo takes the Cohort back and leaves the Programs; the next takes the Programs back
+  await expect((await step(UNDO)).json()).resolves.toMatchObject({ label: "set-cohort" });
+  await expect((await get("/api/programs")).json()).resolves.toMatchObject({
+    cohort: null,
+    programs: [{ requirementsFile: "cs-2027", track: "ai" }],
+  });
+  await expect((await step(UNDO)).json()).resolves.toMatchObject({ label: "set-programs" });
+  await expect((await get("/api/programs")).json()).resolves.toMatchObject({ programs: [] });
+});
+
+it("keeps a Program naming a missing file or Track, and warns about each", async () => {
+  await post("/api/workspace", {});
+  await dropRequirements("cs-2027", CS_REQUIREMENTS);
+
+  const set = await put("/api/programs", {
+    programs: [
+      { requirementsFile: "cs-2027", track: "robotics" },
+      { requirementsFile: "math-2027" },
+    ],
+    basedOn: await currentVersion(),
+  });
+
+  expect(set.status).toBe(200);
+  await expect(set.json()).resolves.toMatchObject({
+    programWarnings: [
+      { kind: "program-track-unknown", index: 0, requirementsFile: "cs-2027", track: "robotics" },
+      { kind: "program-file-missing", index: 1, requirementsFile: "math-2027" },
+    ],
+  });
+});
+
+it("refuses a change to the Programs or the Cohort based on a revision the file no longer holds", async () => {
+  await post("/api/workspace", {});
+  await post(PICKS, LECTURE);
+  const stale = await currentVersion();
+  await save(PICKS, OTHER_LECTURE);
+
+  const programs = await put("/api/programs", { programs: [], basedOn: stale });
+  expect(programs.status).toBe(409);
+  await expect(programs.json()).resolves.toMatchObject({ reason: "state-file-changed" });
+
+  const cohort = await put("/api/cohort", { cohort: null, basedOn: stale });
+  expect(cohort.status).toBe(409);
+  await expect(cohort.json()).resolves.toMatchObject({ reason: "state-file-changed" });
+});
+
+it("names every bad Programs or Cohort request as a 400", async () => {
+  await post("/api/workspace", {});
+
+  for (const body of [{}, { programs: [{ track: "ai" }] }, { programs: "cs" }]) {
+    const answered = await put("/api/programs", body);
+    expect(answered.status).toBe(400);
+    await expect(answered.json()).resolves.toEqual({ error: "not-programs" });
+  }
+  for (const body of [{}, { cohort: { academicYear: 2026, semester: "winter" } }]) {
+    const answered = await put("/api/cohort", body);
+    expect(answered.status).toBe(400);
+    await expect(answered.json()).resolves.toEqual({ error: "not-a-cohort" });
+  }
+});
+
+it("names no path in any Requirements File or Programs answer", async () => {
+  await post("/api/workspace", {});
+  await dropRequirements("cs-2027", CS_REQUIREMENTS);
+  await put("/api/programs", {
+    programs: [{ requirementsFile: "cs-2027" }],
+    basedOn: await currentVersion(),
+  });
+
+  const real = await realpath(root);
+  for (const path of ["/api/requirements", "/api/programs"]) {
+    const text = await (await get(path)).text();
+    expect(text).not.toContain(root);
+    expect(text).not.toContain(real);
+    expect(text).not.toContain("requirements/");
+  }
+});

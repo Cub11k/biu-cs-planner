@@ -24,10 +24,10 @@ const SENTENCES: Record<WorkspaceRefusalReason, string> = {
   "not-a-workspace": "the Workspace Layout is not there to write into",
   "not-created": "it could not be made",
   "not-json": "it is not a kind of file a Workspace holds",
-  "not-a-name": "a State File's name is a name, never a path",
+  "not-a-name": "a file's name in a Workspace is a name, never a path",
   "not-a-year": "an Academic Year is a whole number",
   "not-a-moment": "a snapshot's moment is a whole number of milliseconds",
-  "not-a-catalog": "only a Catalog is read or written whole, and this is not one",
+  "not-a-catalog": "only a Catalog or a Requirements File is read or written whole, and this is neither",
   "mixed-snapshots": "snapshots are pruned one State File at a time",
 };
 
@@ -82,7 +82,7 @@ it("never repeats a name, year or moment it has not checked", () => {
   const path = "../../home/alice/.ssh/id_rsa";
   const name: WorkspaceRefusalSubject = { kind: "state", name: path };
   expect(wordRefusal({ reason: "not-a-name", subject: name }, name)).toBe(
-    "refusing a State File whose name is not one: a State File's name is a name, never a path",
+    "refusing a State File whose name is not one: a file's name in a Workspace is a name, never a path",
   );
 
   const year = { kind: "catalog", academicYear: path } as unknown as CatalogRef;

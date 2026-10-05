@@ -331,6 +331,8 @@ it("hands back the State it was given when the preference already says that", ()
     attempts: [],
     timetables: [],
     pins: [],
+    programs: [],
+    manualTicks: [],
     settings: { language: "he" as const, examSpacingDays: 3 },
   };
 
@@ -343,6 +345,8 @@ it("leaves every part of the document but settings the object it already was", (
     attempts: [],
     timetables: [],
     pins: [],
+    programs: [],
+    manualTicks: [],
     settings: { language: "en" as const, examSpacingDays: 3 },
   };
 

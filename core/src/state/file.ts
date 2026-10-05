@@ -7,8 +7,11 @@ import {
   blockedTimeSchema,
   CURRENT_STATE_SCHEMA_VERSION,
   groupPickSchema,
+  manualTickSchema,
   pinSchema,
+  programSchema,
   settingsSchema,
+  studentCohortSchema,
   stateSchema,
   timetableHeadSchema,
   variantHeadSchema,
@@ -16,6 +19,7 @@ import {
   type GroupPick,
   type Settings,
   type State,
+  type StudentCohort,
   type Timetable,
   type Variant,
 } from "./schema.ts";
@@ -36,6 +40,11 @@ export type StateFileWarning =
   | { kind: "entry-dropped"; at: string; field?: string }
   /** Something that should have been a list was not, so it was read as an empty one. */
   | { kind: "list-unreadable"; at: string }
+  /**
+   * The Cohort could not be read, so the file reads as having none and the student can set it
+   * again. `field` names the part that was wrong, absent when the value was not an object at all.
+   */
+  | { kind: "cohort-unreadable"; field?: string }
   /** One setting could not be read and kept its default; absent `field` means all of them. */
   | { kind: "settings-unreadable"; field?: string }
   | { kind: "primary-variant-not-unique"; at: string; primaries: number }
@@ -351,17 +360,36 @@ function checkTimetablesUnique(
   });
 }
 
+/**
+ * The Cohort, or nothing (#287). Optional in the file, so absence is no Warning; a value that is
+ * there and is not a Cohort is reported and read as absent, which costs the student one choice to
+ * make again rather than the file.
+ */
+function readCohort(raw: unknown, warnings: StateFileWarning[]): StudentCohort | undefined {
+  if (raw === undefined) return undefined;
+  const parsed = studentCohortSchema.safeParse(raw);
+  if (parsed.success) return parsed.data;
+  const field = fieldOf(parsed.error);
+  warnings.push(field === undefined ? { kind: "cohort-unreadable" } : { kind: "cohort-unreadable", field });
+  return undefined;
+}
+
 function readState(raw: Record<string, unknown>, warnings: StateFileWarning[]): State {
   const timetables = readList(raw.timetables, "timetables", warnings, (entry, at) =>
     readTimetable(entry, at, warnings),
   );
   checkTimetablesUnique(timetables, warnings);
 
+  const cohort = readCohort(raw.cohort, warnings);
+
   return {
     schemaVersion: CURRENT_STATE_SCHEMA_VERSION,
     attempts: readEach(attemptSchema, raw.attempts, "attempts", warnings),
     timetables,
     pins: readEach(pinSchema, raw.pins, "pins", warnings),
+    ...(cohort === undefined ? {} : { cohort }),
+    programs: readEach(programSchema, raw.programs, "programs", warnings),
+    manualTicks: readEach(manualTickSchema, raw.manualTicks, "manualTicks", warnings),
     settings: readSettings(raw.settings, warnings),
   };
 }

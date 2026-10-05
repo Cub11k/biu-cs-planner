@@ -2202,3 +2202,81 @@ it("names no path in any refusal it can make, over every operation of the port",
     for (const path of made) await rm(path, { recursive: true, force: true });
   }
 });
+
+/**
+ * #287: the Requirements File ref kind against a real folder — listed, read and written whole the
+ * way a Catalog is, named by its file name within `requirements/`, and held to the port's name rule
+ * before any path is built. The memory double's tests of the same titles assert the same answers.
+ */
+const REQUIREMENTS = { schemaVersion: 1, program: { id: "cs", name: { he: "מדעי המחשב" } } };
+
+it("lists, reads and writes Requirements Files apart from the other kinds", async () => {
+  const workspace = fileSystemWorkspace(root);
+  await workspace.create();
+
+  await workspace.write({ kind: "requirements", name: "math-2027" }, REQUIREMENTS);
+  // dropped in by hand, which is the case a classmate's file arrives by
+  await writeFile(join(root, "requirements", "cs-2027.json"), JSON.stringify(REQUIREMENTS), "utf8");
+  await workspace.write({ kind: "catalog", academicYear: 2027 }, CATALOG);
+  // neither a `.json` nor a name the adapter would write: neither is listed
+  await writeFile(join(root, "requirements", "notes.txt"), "ignore me");
+  await writeFile(join(root, "requirements", ".tmp-1-cs-2027.json"), "{}");
+
+  expect(await workspace.list("requirements")).toEqual([
+    { kind: "requirements", name: "cs-2027" },
+    { kind: "requirements", name: "math-2027" },
+  ]);
+  expect(await workspace.list("catalog")).toEqual([{ kind: "catalog", academicYear: 2027 }]);
+  expect(await workspace.read({ kind: "requirements", name: "math-2027" })).toEqual(REQUIREMENTS);
+  expect(await workspace.read({ kind: "requirements", name: "absent" })).toBeUndefined();
+  // where a student would look for it
+  const raw = await readFile(join(root, "requirements", "math-2027.json"), "utf8");
+  expect(JSON.parse(raw)).toEqual(REQUIREMENTS);
+});
+
+it("lists no Requirements Files, and never refuses, for a Workspace holding none", async () => {
+  await expect(fileSystemWorkspace(root).list("requirements")).resolves.toEqual([]);
+  const workspace = fileSystemWorkspace(root);
+  await workspace.create();
+  await expect(workspace.list("requirements")).resolves.toEqual([]);
+});
+
+it("refuses a Requirements File whose name is a path, on a read and on a write", async () => {
+  const workspace = fileSystemWorkspace(root);
+  await workspace.create();
+  await writeFile(join(root, "alice.state.json"), '{"schemaVersion":1}');
+  const hostile = { kind: "requirements", name: "../alice.state" } as const;
+
+  await expect(workspace.write(hostile, REQUIREMENTS)).rejects.toThrow(WorkspaceRefusedError);
+  await expect(workspace.read(hostile)).rejects.toThrow(/a name, never a path/);
+  // the State File the path pointed at is untouched
+  expect(await readFile(join(root, "alice.state.json"), "utf8")).toBe('{"schemaVersion":1}');
+});
+
+it("refuses a Requirements File write before the Workspace Layout exists", async () => {
+  const workspace = fileSystemWorkspace(root);
+
+  await expect(
+    workspace.write({ kind: "requirements", name: "cs-2027" }, REQUIREMENTS),
+  ).rejects.toThrow(NotAWorkspaceError);
+  expect(await readdir(root)).toEqual([]);
+});
+
+it("refuses to list Requirements Files when requirements is a plain file, rather than reporting none", async () => {
+  const workspace = fileSystemWorkspace(root);
+  await workspace.create();
+  await rm(join(root, "requirements"), { recursive: true });
+  await writeFile(join(root, "requirements"), "not a folder");
+
+  await expect(workspace.list("requirements")).rejects.toThrow(WorkspaceRefusedError);
+});
+
+it("sees a Requirements File that appears in requirements/ without the app writing it", async () => {
+  const workspace = fileSystemWorkspace(root);
+  await workspace.create();
+  const watched = await watching();
+
+  await writeFile(join(root, "requirements", "cs-2027.json"), JSON.stringify(REQUIREMENTS), "utf8");
+
+  expect(await within(() => watched.events() > 0)).toBe(true);
+});

@@ -90,22 +90,31 @@ export {
   splitBlockedRange,
 } from "./state/blocked.ts";
 export type { BlockedRange, BlockedTimeWarning } from "./state/blocked.ts";
+export { effectiveFile, programWarnings, setCohort, setPrograms } from "./state/programs.ts";
+export type { ListedRequirementsFile, ProgramWarning } from "./state/programs.ts";
 export {
   blockedTimeSchema,
   CURRENT_STATE_SCHEMA_VERSION,
   groupPickSchema,
+  manualTickSchema,
+  pinSchema,
+  programSchema,
   settingsSchema,
   stateSchema,
+  studentCohortSchema,
 } from "./state/schema.ts";
 export type {
   Attempt,
   BlockedTime,
   Grade,
   GroupPick,
+  ManualTick,
   Pin,
+  Program,
   Settings,
   State,
   Status,
+  StudentCohort,
   Timetable,
   Variant,
 } from "./state/schema.ts";

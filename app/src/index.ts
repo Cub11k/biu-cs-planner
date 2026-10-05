@@ -1,5 +1,24 @@
 export { createWorkspace, workspaceStatus } from "./setup.ts";
 export { importCrawl, type ImportResult } from "./catalog.ts";
+// Requirements Files in the Workspace, and the student's Cohort and Programs (#287).
+export {
+  importRequirementsFile,
+  listRequirementsFiles,
+  loadRequirementsFiles,
+  type ListedRequirements,
+  type LoadedRequirements,
+  type RequirementsImportResult,
+  type RequirementsListing,
+} from "./requirements.ts";
+export {
+  chooseCohort,
+  choosePrograms,
+  readPrograms,
+  type ProgramsOptions,
+  type ProgramsResult,
+  type ProgramsView,
+  type ProgramsWarning,
+} from "./programs.ts";
 export {
   getOffering,
   listOfferings,
@@ -84,21 +103,26 @@ export {
   BACKUP_KEEP_SAVES,
   backupDay,
   backupsToPrune,
+  isRequirementsFileName,
   isStateFileName,
   isStateFileRevision,
   BackupRefusedError,
   NotAWorkspaceError,
   requireBackupRef,
   requireCatalogRef,
+  requireRequirementsFileName,
   requireStateFileName,
+  requireWholeFileRef,
   StateFileChangedError,
   statusOf,
   WORKSPACE_LAYOUT,
   WorkspaceRefusedError,
   type BackupRef,
   type CatalogRef,
+  type RequirementsFileRef,
   type StateFileContents,
   type StateFileRef,
+  type WholeFileRef,
   type Workspace,
   type WorkspaceChanged,
   type WorkspaceFolder,

@@ -139,6 +139,8 @@ it("fills an all-but-empty file in, so a new State File is a version and nothing
     attempts: [],
     timetables: [],
     pins: [],
+    programs: [],
+    manualTicks: [],
     settings: { language: "en", examSpacingDays: 3 },
   });
 });

@@ -4,8 +4,9 @@ import {
   backupsToPrune,
   NotAWorkspaceError,
   requireBackupRef,
-  requireCatalogRef,
+  requireRequirementsFileName,
   requireStateFileName,
+  requireWholeFileRef,
   StateFileChangedError,
   statusOf,
   WORKSPACE_LAYOUT,
@@ -91,6 +92,9 @@ const key = (ref: WorkspaceRef): string => {
     case "state":
       requireStateFileName(ref.name);
       return `state:${ref.name}`;
+    case "requirements":
+      requireRequirementsFileName(ref.name);
+      return `requirements:${ref.name}`;
   }
 };
 
@@ -269,7 +273,7 @@ export function memoryWorkspace(
     async read(ref): Promise<unknown> {
       // The same refusal the real adapter makes, through the same function and so in the same
       // words: a State File is read with its revision or not at all (#113).
-      requireCatalogRef(ref);
+      requireWholeFileRef(ref);
       return files.get(key(ref))?.data;
     },
     async write(ref, data): Promise<void> {
@@ -277,7 +281,7 @@ export function memoryWorkspace(
       // ref being one this port will not write whole is about the target, not about the
       // folder. A double that answered a cast with a conflict, or with a Layout error, would
       // prove the wrong refusal (#113).
-      requireCatalogRef(ref);
+      requireWholeFileRef(ref);
       writeFile(ref, data);
     },
     async readStateFile(ref: StateFileRef): Promise<StateFileContents | undefined> {

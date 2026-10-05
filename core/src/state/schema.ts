@@ -161,13 +161,60 @@ export const timetableSchema = timetableHeadSchema.extend({
 });
 
 /**
- * A student's override fixing an Assignment. `requirementId` names a Requirement inside a
- * Requirements File and is opaque here — resolving it is the Progress engine's job, and a
- * Pin that no longer resolves is a Warning there rather than a broken State File.
+ * Which Requirement a Pin or a ticked Manual Requirement names: a Requirement id, and the
+ * Requirements File it is an id in (#287).
+ *
+ * **The file is named because an id is unique only within one file**, and a double major has
+ * two. Without it a Pin on `core` in one Program was a Pin on `core` in the other as well,
+ * whatever that Requirement was. The name is the one a Programs entry carries — the file name
+ * within `requirements/`, never a path and never its content.
+ *
+ * **Optional, and the schema version did not move for it.** Pins were written before this field
+ * existed, so a Pin without one still opens, and it names the student's **first Program**
+ * (`effectiveFile` in `./programs.ts`): a single major, which is every State File written before
+ * Programs could be chosen, has only that one. Every Pin and tick this build writes names its
+ * file. `CONTEXT.md` records the decision under Pin.
+ *
+ * Opaque here, as the id always was: resolving it is the Progress engine's job, and a Pin that no
+ * longer resolves is a Warning there rather than a broken State File.
  */
+const requirementRefShape = {
+  requirementId: z.string(),
+  requirementsFile: z.string().optional(),
+};
+
+/** A student's override fixing an Assignment: this Course counts toward this Requirement. */
 export const pinSchema = z.object({
   courseNumber: z.string(),
-  requirementId: z.string(),
+  ...requirementRefShape,
+});
+
+/**
+ * A Manual Requirement the student has ticked off (#288), referenced the way a Pin references
+ * its Requirement. Kept as a list of the ticked ones: an unticked Manual Requirement is simply
+ * not here.
+ */
+export const manualTickSchema = z.object(requirementRefShape);
+
+/**
+ * One Program the student is enrolled in (#287): which Requirements File holds its rules, by the
+ * file's name within `requirements/`, and which of its Tracks the student chose, by the Track's
+ * id. A name and an id, never content, so a reissued file is picked up as it is.
+ */
+export const programSchema = z.object({
+  requirementsFile: z.string().min(1),
+  track: z.string().min(1).optional(),
+});
+
+/**
+ * The Academic Year and Semester the student started in (#287). Declared here rather than
+ * borrowed from the Requirements File's own `cohortSchema`, for the reason under
+ * `pickedMeetingSchema`: a Requirements File is versioned by its own counter, and a change there
+ * must never be able to invalidate a State File.
+ */
+export const studentCohortSchema = z.object({
+  academicYear: z.number().int(),
+  semester: semesterSchema,
 });
 
 export const settingsSchema = z.object({
@@ -208,6 +255,15 @@ export const stateSchema = z.object({
   attempts: z.array(attemptSchema).default([]),
   timetables: z.array(timetableSchema).default([]),
   pins: z.array(pinSchema).default([]),
+  /**
+   * The three fields #287 and #288 add, each defaulted (or optional) so that a version-1 file
+   * written before them opens unchanged and needs no migration — the rule `variantSchema`'s `tray`
+   * set. A build older than this one strips them on save, which is a downgrade nothing promises
+   * to survive.
+   */
+  cohort: studentCohortSchema.optional(),
+  programs: z.array(programSchema).default([]),
+  manualTicks: z.array(manualTickSchema).default([]),
   settings: settingsSchema.prefault({}),
 });
 
@@ -220,5 +276,8 @@ export type Variant = z.infer<typeof variantSchema>;
 export type BlockedTime = z.infer<typeof blockedTimeSchema>;
 export type Timetable = z.infer<typeof timetableSchema>;
 export type Pin = z.infer<typeof pinSchema>;
+export type ManualTick = z.infer<typeof manualTickSchema>;
+export type Program = z.infer<typeof programSchema>;
+export type StudentCohort = z.infer<typeof studentCohortSchema>;
 export type Settings = z.infer<typeof settingsSchema>;
 export type State = z.infer<typeof stateSchema>;
