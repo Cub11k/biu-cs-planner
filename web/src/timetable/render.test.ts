@@ -261,6 +261,23 @@ it("offers the import only when the year simply has no Catalog", () => {
   expect(markup).toContain("Import a crawl");
 });
 
+/**
+ * #149: a Workspace that would not touch the Catalog reaches this notice as a refusal, with no
+ * Warnings, and must still read as a file that could not be read — never as a year with no
+ * Catalog, which an empty Warnings list would otherwise mean. Both languages, from the tables.
+ */
+it("says a refused Catalog could not be read, in both languages, and never offers the import", () => {
+  const notice = (language: "en" | "he"): string =>
+    renderToStaticMarkup(
+      createElement(CatalogNotice, { language, academicYear: "2026-27", warnings: [], workspaceRefused: true }),
+    );
+
+  expect(notice("en")).toContain("could not be read");
+  expect(notice("en")).toContain("The workspace would not read the catalog file.");
+  expect(notice("en")).not.toContain("Import a crawl");
+  expect(notice("he")).toContain("סביבת העבודה סירבה לקרוא את קובץ הקטלוג.");
+});
+
 it("counts one Group as one, in both languages", () => {
   const one = offering([group("01", "סמינריון", [["sunday", "10:00", "12:00"]])]);
   const picker = (language: "en" | "he"): string =>

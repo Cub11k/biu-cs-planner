@@ -239,8 +239,8 @@ it("refuses a write before the Workspace Layout exists", async () => {
   await expect(workspace.write({ kind: "catalog", academicYear: 2027 }, CATALOG)).rejects.toThrow(
     NotAWorkspaceError,
   );
-  // the type every caller of this port already catches, so the refusal is a Warning and never
-  // a crashed server (docs/design.md, "API and data rules")
+  // the type every caller of this port already catches, so the refusal is a named answer and
+  // never a crashed server (docs/design.md, "API and data rules")
   await expect(workspace.write({ kind: "catalog", academicYear: 2027 }, CATALOG)).rejects.toThrow(
     WorkspaceRefusedError,
   );

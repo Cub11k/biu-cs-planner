@@ -298,9 +298,11 @@ export const WORKSPACE_LAYOUT: WorkspaceFolder[] = ["catalogs", "requirements", 
  * save based on there being no file overwrite one that was there all along (#109): only
  * nothing at that name may come back as undefined.
  *
- * A refusal is a Warning the student can act on, and never a crashed server
+ * A refusal is an answer the student can act on, and never a crashed server
  * (docs/design.md, "API and data rules"), which is why an adapter raises this rather than
- * letting a filesystem error out of the port.
+ * letting a filesystem error out of the port. **It is not a Warning** (#149): a Warning is a
+ * problem found in something that was read, and a refusal is the case where nothing could be,
+ * so a caller answers it with an arm of its own rather than in a list of Warnings.
  *
  * **What `app` reads off it is `refusal`, and never `message`** (#249). `refusal` is a reason
  * code and a subject, both drawn from closed sets this port defines, and it is required: an

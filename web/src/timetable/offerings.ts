@@ -19,17 +19,25 @@ type Answer = InferResponseType<OfferingsRoute>;
 /** The answer that carries the Offerings; the others carry the Warnings or the guard's refusal. */
 type ServedCatalog = Extract<Answer, { offerings: unknown }>;
 
-/** Why no Catalog was served. The API sends these with every answer that has none. */
+/**
+ * Why no Catalog was served, when one was looked for: none for the year, or a file that is not a
+ * Catalog this build reads. A Workspace that would not touch the file is not one of these (#149).
+ */
 export type CatalogWarning = Extract<Answer, { warnings: unknown }>["warnings"][number];
 
 export type OfferingsResult =
   | { kind: "served"; offerings: Offering[] }
   /**
    * The API would not serve a Catalog and said why: no Catalog for the year, a file it
-   * could not read, a schema version it does not speak, a Workspace that refused it.
+   * could not read, a schema version it does not speak.
    * The Warnings travel with it, because a refusal nobody can act on is not a refusal.
    */
   | { kind: "refused"; warnings: CatalogWarning[] }
+  /**
+   * The Workspace would not touch the Catalog file at all (#149): a refusal, which the API answers
+   * apart from the Warnings above, because there was no Catalog for a Warning to be about.
+   */
+  | { kind: "workspace-refused" }
   /** This page has no launch token, so the server will not talk to it (ADR-0004). */
   | { kind: "unauthorized" }
   /**
@@ -79,6 +87,7 @@ export async function fetchOfferings(
     const refused = await readBody<Answer>(() => answer.json());
     if (!refused.readable) return { kind: "unreadable-answer" };
     const body = refused.body;
+    if ("kind" in body && body.kind === "refused") return { kind: "workspace-refused" };
     return { kind: "refused", warnings: "warnings" in body ? body.warnings : [] };
   }
 

@@ -63,13 +63,14 @@ it("keeps a Catalog that could not be read apart from one that is not there", as
   expect(result).toEqual({ kind: "refused", warnings });
 });
 
-it("keeps a Workspace refusal apart from absence", async () => {
-  const warnings = [{ kind: "workspace-refused", reason: "not a catalog" }];
-  const { api } = client(() => Response.json({ warnings }, { status: 409 }));
+it("keeps a Workspace refusal apart from absence, and from the Warnings", async () => {
+  // #149: the API answers a refusal with its own arm, carrying no Warnings
+  const refused = { kind: "refused", reason: "unreadable", sentence: "refusing the Catalog" };
+  const { api } = client(() => Response.json(refused, { status: 409 }));
 
   const result = await fetchOfferings(api, { academicYear: 2027, semester: "fall" });
 
-  expect(result).toEqual({ kind: "refused", warnings });
+  expect(result).toEqual({ kind: "workspace-refused" });
 });
 
 it("says so when the page has no launch token, rather than blaming the Catalog", async () => {

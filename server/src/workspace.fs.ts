@@ -216,8 +216,8 @@ const errnoOf = (error: unknown): string | undefined => {
  *     not fail in, and a file whose contents cannot be seen is exactly the file it exists for.
  *   - **Not the `readFile` error either.** Letting an `EACCES` out of the port turns a mode bit
  *     into a 500, which is a different bug of the same size. A `WorkspaceRefusedError` is what
- *     every caller of this port already turns into a Warning or a 409: a refusal is a Warning
- *     the student can act on and never a crashed server (docs/design.md, "API and data rules").
+ *     every caller of this port already turns into a named refusal: an answer the student can
+ *     act on and never a crashed server (docs/design.md, "API and data rules").
  *
  * `WorkspaceRefusedError` and deliberately not `StateFileChangedError`: nothing changed, and
  * that error's `basedOn`/`found` pair has nothing true to carry here — `found` would have to

@@ -46,6 +46,7 @@ import {
   type PlanResult,
   type ProgramsResult,
   type ProgressResult,
+  type CatalogRefused,
   type QueryWarning,
   type TimetableRef,
   type TimetableResult,
@@ -118,12 +119,17 @@ const capped = bodyLimit({
 });
 
 /**
- * A Catalog could not be produced. A refusal is a conflict with the state of the
- * Workspace; absence is a plain 404, which would otherwise claim a refused Catalog
- * simply was not there.
+ * A Catalog query's answer when it has no Catalog to serve. A refusal is a conflict with the
+ * state of the Workspace, a 409 carrying its own arm and no Warnings (#149); a Catalog that is
+ * not there or could not be read as one is a plain 404 with the Warnings that say which, which
+ * would otherwise claim a refused Catalog simply was not there.
  */
-const notServed = (warnings: QueryWarning[]): 409 | 404 =>
-  warnings.some((w) => w.kind === "workspace-refused") ? 409 : 404;
+function catalogNotServed(c: Context, result: CatalogRefused | { kind: "read"; warnings: QueryWarning[] }) {
+  if (result.kind === "refused") {
+    return c.json({ kind: result.kind, reason: result.reason, sentence: result.sentence }, 409);
+  }
+  return c.json({ warnings: result.warnings }, 404);
+}
 
 /**
  * `__proto__` and `constructor` are rejected outright rather than stripped, so a body
@@ -995,7 +1001,7 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
         academicYear: year.data,
         semester: semester.data,
       });
-      if (!result.offerings) return c.json({ warnings: result.warnings }, notServed(result.warnings));
+      if (result.kind === "refused" || !result.offerings) return catalogNotServed(c, result);
 
       return c.json({ offerings: result.offerings, warnings: result.warnings });
     })
@@ -1008,7 +1014,7 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
         academicYear: year.data,
         courseNumber: c.req.param("courseNumber"),
       });
-      if (!result.offering) return c.json({ warnings: result.warnings }, notServed(result.warnings));
+      if (result.kind === "refused" || !result.offering) return catalogNotServed(c, result);
 
       return c.json({ offering: result.offering, warnings: result.warnings });
     })
@@ -1072,8 +1078,11 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
      *
      * A refusal is the named 409 the week answers with, and for the same reason: the Picks and
      * the threshold are in the State File, so a State File that cannot be read leaves no question
-     * to answer. A Catalog that cannot be served is **not** a refusal — it is an exam period
-     * nobody has published, which comes back as a Warning and a rail that admits it is partial.
+     * to answer. A Catalog that cannot be served is **not** a refusal of the rail — it is an exam
+     * period nobody has published, which comes back as a Warning and a rail that admits it is
+     * partial. A Catalog the Workspace would not touch is the Catalog query's own refusal arm
+     * (#149), and rides inside the 200 as `catalogRefused`, apart from `catalogWarnings`; it is
+     * `null` whenever the Catalog was read or looked for.
      */
     .get("/api/timetable/:year/:semester/exams", async (c) => {
       const ref = timetableRef(c);
@@ -1102,6 +1111,7 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
         version: result.version,
         warnings: result.warnings,
         catalogWarnings: result.catalogWarnings,
+        catalogRefused: result.catalogRefused,
       });
     })
 
