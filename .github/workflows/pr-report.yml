@@ -79,16 +79,30 @@ jobs:
       - name: Build the report
         run: npm run report
 
+      # The whole report, kept where the comment can point at it (#318). The report covers the
+      # tree rather than the diff and is far over GitHub's 65,536-character limit on a comment,
+      # so the comment carries what fits and links here for the rest. An artifact upload uses the
+      # runner's own token, not GITHUB_TOKEN, so `permissions:` above needs nothing more for it.
+      - name: Keep the full report as an artifact
+        id: artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-report
+          path: pr-report.md
+          retention-days: 14
+
       - name: Post it on the pull request
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           NUMBER: ${{ github.event.number }}
+          ARTIFACT_URL: ${{ steps.artifact.outputs.artifact-url }}
         run: |
           set -euo pipefail
           marker='<!-- pr-report -->'
-          printf '%s\n\n' "$marker" > comment.md
-          cat pr-report.md >> comment.md
+          # The marker, then the report cut to fit under the limit if it has to be, with every
+          # section it leaves out named and pointed at the artifact (tools/pr-report/fit.ts).
+          node tools/pr-report/comment.ts "$marker" "in [the \`pr-report\` artifact]($ARTIFACT_URL)" > comment.md
 
           # One comment per PR, edited in place, so the thread is not buried in reruns. Matched
           # by author as well as marker, as findComment in tools/pr-review/github.ts does (#307):

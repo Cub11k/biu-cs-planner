@@ -91,6 +91,24 @@ describe("closing-refs.yml", () => {
   });
 });
 
+// The report is far over GitHub's limit on one comment, so what is posted is cut to fit and the
+// whole of it is kept as an artifact the comment links to (#318). These are the lines that keep
+// a refused post from being the only outcome again.
+describe("pr-report.yml", () => {
+  const yaml = (): string => read("pr-report.yml");
+
+  it("keeps the full report as an artifact", () => {
+    expect(yaml()).toMatch(
+      /uses: actions\/upload-artifact@v\d+\n\s+with:\n\s+name: pr-report\n\s+path: pr-report\.md\n/,
+    );
+  });
+
+  it("posts the report cut to fit, never the raw file", () => {
+    expect(yaml()).toMatch(/node tools\/pr-report\/comment\.ts "\$marker" .*\$ARTIFACT_URL.* > comment\.md/);
+    expect(yaml()).not.toMatch(/cat pr-report\.md/);
+  });
+});
+
 describe("installCommands", () => {
   it("finds npm ci and npm install, with their line numbers", () => {
     const found = installCommands("w.yml", ["steps:", "  - run: npm ci"].join("\n"));
