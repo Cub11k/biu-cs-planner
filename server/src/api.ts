@@ -401,14 +401,46 @@ const savedPinSchema = z.object({
 });
 
 /**
+ * "What if I switched Track" (#289): the Programs a Progress read evaluates in place of the stored
+ * ones, carried in `?whatIf=` as the JSON of the same list `PUT /api/programs` takes. A read with it
+ * is still a read — `GET`, no `basedOn`, and nothing saved or put on the undo stacks — which is why
+ * it is a query on this route and not a body on a route that writes.
+ *
+ * The text is parsed as JSON and checked like a body (no dangerous key, then the schema), never
+ * evaluated (CLAUDE.md), and what was wrong is named the way `bodyAs` names it. No `whatIf` at all
+ * is no what-if.
+ */
+function whatIfOf(
+  c: Context,
+): { ok: true; value: z.infer<typeof savedProgramsSchema>["programs"] | undefined } | { ok: false; error: string } {
+  const text = c.req.query("whatIf");
+  if (text === undefined) return { ok: true, value: undefined };
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return { ok: false, error: "body-not-json" };
+  }
+  if (hasDangerousKey(value)) return { ok: false, error: "unsafe-keys" };
+  const parsed = savedProgramsSchema.shape.programs.safeParse(value);
+  return parsed.success ? { ok: true, value: parsed.data } : { ok: false, error: "not-programs" };
+}
+
+/**
  * Every Progress answer, read or write, in one shape: the evaluated Programs and the revision they
- * were read from, or the named 409 a refusal has always been.
+ * were read from, or the named 409 a refusal has always been. `cohort` is `null` when there is
+ * none, as `programsAnswer` gives it, so the page reads one field that is always there.
  */
 function progressAnswer(c: Context, result: ProgressResult) {
   if (result.kind === "refused") {
     return c.json({ reason: result.reason, warnings: result.warnings }, 409);
   }
-  return c.json({ ...result.view, version: result.version, warnings: result.warnings });
+  return c.json({
+    ...result.view,
+    cohort: result.view.cohort ?? null,
+    version: result.version,
+    warnings: result.warnings,
+  });
 }
 
 /**
@@ -740,8 +772,18 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
      * Courses counting toward each node, the student's Pins, where each attempted Course could be
      * pinned, whether the solver stopped early, and the Warnings. Recomputed from the State File
      * and the Requirements Files on every request; nothing is cached. No path is named.
+     *
+     * With `?whatIf=`, the same answer for other Programs (#289), evaluated and never saved; see
+     * `whatIfOf`. `version` is still the file's, which is what adopting the what-if is based on.
      */
-    .get("/api/progress", async (c) => progressAnswer(c, await readProgress(workspace)))
+    .get("/api/progress", async (c) => {
+      const whatIf = whatIfOf(c);
+      if (!whatIf.ok) return c.json({ error: whatIf.error }, 400);
+      return progressAnswer(
+        c,
+        await readProgress(workspace, whatIf.value === undefined ? {} : { whatIf: whatIf.value }),
+      );
+    })
 
     /**
      * Pins a Course to a Requirement of one Program, replacing the Pin it had there, and unpins
