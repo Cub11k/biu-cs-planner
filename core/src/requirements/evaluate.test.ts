@@ -145,40 +145,50 @@ describe("Attempt statuses and grades", () => {
   });
 });
 
-describe("the best-or-latest policy", () => {
+describe("the best-or-latest policy never takes a pass away (#327, ruled A)", () => {
   const withPolicy = (gradeAttempt: "best" | "latest") =>
     program({
       courses: COURSES,
       policies: { passingGrade: 60, gradeAttempt },
       requirements: [{ id: "intro", kind: "course", course: "89-110" }],
     });
-  // Passed in Fall, then a Spring retake to improve the grade went below the passing grade.
-  const improvedWorse = [
+  const statusUnder = (gradeAttempt: "best" | "latest", attempts: Attempt[]) =>
+    node(evaluate(withPolicy(gradeAttempt), attempts), "intro").completed.status;
+
+  // Passed in Fall, then failed a Spring retake taken to improve the grade.
+  const passThenFailedRetake = [
     attempt("89-110", "passed", { grade: numeric(70), semester: "fall" }),
-    attempt("89-110", "passed", { grade: numeric(50), semester: "spring" }),
+    attempt("89-110", "failed", { grade: numeric(40), semester: "spring" }),
+  ];
+  // The same, with the retake recorded as passed but graded below the passing grade.
+  const passThenRetakeBelowPassing = [
+    attempt("89-110", "passed", { grade: numeric(70), academicYear: 2027 }),
+    attempt("89-110", "passed", { grade: numeric(50), academicYear: 2028 }),
   ];
 
-  it("best: any passing Attempt completes the Course", () => {
-    const progress = evaluate(withPolicy("best"), improvedWorse);
+  it.each(["best", "latest"] as const)(
+    "%s: a pass followed by a failed retake is still completed, in either listing order",
+    (policy) => {
+      expect(statusUnder(policy, passThenFailedRetake)).toBe("satisfied");
+      expect(statusUnder(policy, [...passThenFailedRetake].reverse())).toBe("satisfied");
+      expect(statusUnder(policy, passThenRetakeBelowPassing)).toBe("satisfied");
+    },
+  );
 
-    expect(node(progress, "intro").completed.status).toBe("satisfied");
-  });
-
-  it("latest: the most recent decided Attempt decides, by year and then Semester", () => {
-    expect(node(evaluate(withPolicy("latest"), improvedWorse), "intro").completed.status).toBe(
-      "missing",
-    );
-    expect(
-      node(evaluate(withPolicy("latest"), [...improvedWorse].reverse()), "intro").completed.status,
-    ).toBe("missing");
-
+  it.each(["best", "latest"] as const)("%s: a fail followed by a passed retake is completed", (policy) => {
     const passedLater = [
       attempt("89-110", "failed", { academicYear: 2027, semester: "summer" }),
       attempt("89-110", "passed", { academicYear: 2028, semester: "fall" }),
     ];
-    expect(node(evaluate(withPolicy("latest"), passedLater), "intro").completed.status).toBe(
-      "satisfied",
-    );
+    expect(statusUnder(policy, passedLater)).toBe("satisfied");
+  });
+
+  it.each(["best", "latest"] as const)("%s: only failed Attempts are not completed", (policy) => {
+    const failedTwice = [
+      attempt("89-110", "failed", { academicYear: 2027 }),
+      attempt("89-110", "failed", { academicYear: 2028 }),
+    ];
+    expect(statusUnder(policy, failedTwice)).toBe("missing");
   });
 
   it("latest: a planned Attempt does not decide, so the decided one before it still counts", () => {
@@ -187,9 +197,7 @@ describe("the best-or-latest policy", () => {
       attempt("89-110", "planned", { academicYear: 2028 }),
     ];
 
-    expect(node(evaluate(withPolicy("latest"), attempts), "intro").completed.status).toBe(
-      "satisfied",
-    );
+    expect(statusUnder("latest", attempts)).toBe("satisfied");
   });
 });
 

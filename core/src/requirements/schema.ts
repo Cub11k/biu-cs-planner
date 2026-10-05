@@ -235,13 +235,11 @@ export const trackSchema = trackHeadSchema.extend({
  * BIU's rules where they are not yet confirmed (`docs/design.md`, "Open facts").
  *
  * - `passingGrade`: a numeric grade below it is not a pass, whatever the status says.
- * - `gradeAttempt`: which Attempt decides whether a retaken Course is passed. `best` asks
- *   whether any Attempt passed, `latest` asks whether the most recent decided one did, so a pass
- *   followed by a failed retake reads as not passed. ADR-0009 frames the policy for
- *   minimum-grade Prerequisites, as "the best or the latest *passing* Attempt"; Progress uses
- *   it here to decide completion, which is wider, and nothing reads it for Prerequisites yet
- *   (#291). Whether those are one policy is open until the real rule is checked. The default is
- *   `best`, the reading that never reports as missing a Course the student did pass.
+ * - `gradeAttempt`: which passing Attempt's grade counts when a Course was passed more than once,
+ *   as ADR-0009 frames it for minimum-grade Prerequisites: `best` or `latest` *passing* Attempt.
+ *   It never decides whether the Course was passed: any passing Attempt completes it, so a pass
+ *   followed by a failed retake is still a pass under either policy (ruled on #327). The default
+ *   is `best`.
  */
 export const policiesSchema = z.object({
   passingGrade: z.number().default(60),

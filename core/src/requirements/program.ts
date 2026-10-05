@@ -1,6 +1,6 @@
 import type { Semester } from "../catalog/schema.ts";
 import type { Attempt } from "../state/schema.ts";
-import type { Pool, Requirement, RequirementsFile } from "./schema.ts";
+import type { Policies, Pool, Requirement, RequirementsFile } from "./schema.ts";
 
 /**
  * The engine the Progress evaluation and the Assignment solver share: one Program's Requirement
@@ -232,15 +232,38 @@ export function constrained(program: CompiledProgram, leaf: number, course: stri
 
 const SEMESTER_ORDER: Record<Semester, number> = { fall: 0, spring: 1, summer: 2 };
 
+/** Where a Semester of an Academic Year falls in time: Fall < Spring < Summer within a year. */
+export function semesterIndex(point: { academicYear: number; semester: Semester }): number {
+  return point.academicYear * 3 + SEMESTER_ORDER[point.semester];
+}
+
 const DECIDED = new Set(["passed", "failed", "exempt", "credited"]);
 const PENDING = new Set(["planned", "registered"]);
 
-function passes(attempt: Attempt, passingGrade: number): boolean {
+/** Whether one Attempt is a pass under the file's passing grade. Planned and registered never are. */
+export function passes(attempt: Attempt, passingGrade: number): boolean {
   if (attempt.status === "exempt" || attempt.status === "credited") return true;
   if (attempt.status !== "passed") return false;
   if (attempt.grade?.kind === "numeric") return attempt.grade.value >= passingGrade;
   if (attempt.grade?.kind === "pass-fail") return attempt.grade.passed;
   return true;
+}
+
+/**
+ * The passing Attempts whose grade counts, out of one Course's Attempts, under the file's
+ * `gradeAttempt` policy (#327, ruled A). `best`: every passing Attempt, since the best of them is
+ * whichever meets a bar if any does. `latest`: the passing Attempts of the most recent Semester
+ * that holds one, by Academic Year and then Semester; two in that Semester are both kept, which
+ * keeps the answer independent of the order the Attempts are listed in.
+ *
+ * Only passing Attempts are ever in the answer, so a failed retake after a pass changes nothing:
+ * the policy chooses *which passing grade* counts, never *whether* the Course was passed.
+ */
+export function countingAttempts(attempts: readonly Attempt[], policies: Policies): Attempt[] {
+  const passing = attempts.filter((a) => DECIDED.has(a.status) && passes(a, policies.passingGrade));
+  if (policies.gradeAttempt === "best" || passing.length === 0) return passing;
+  const latest = Math.max(...passing.map(semesterIndex));
+  return passing.filter((a) => semesterIndex(a) === latest);
 }
 
 /** Where a student stands with one Course, by its canonical course number. */
@@ -254,16 +277,14 @@ export interface Standing {
 /**
  * Each attempted Course, by canonical course number, and whether it counts in each lens.
  *
- * `completed`: the policy decides between retakes. `best` asks whether any decided Attempt
- * passed. `latest` asks whether the most recent one did, by Academic Year and then Semester; two
- * decided Attempts in the same Semester are read as a pass if either passed, which keeps the
- * answer independent of the order the Attempts are listed in. A planned or registered Attempt
- * decides nothing in this lens.
+ * `completed`: some decided Attempt passed, under the file's passing grade. The `gradeAttempt`
+ * policy does not enter into it: `latest` is the latest *passing* Attempt, as ADR-0009 words it,
+ * so a pass followed by a failed retake is still a pass under either policy (#327). A planned or
+ * registered Attempt decides nothing in this lens.
  *
  * `projected`: completed, or a planned or registered Attempt says the plan will complete it.
  */
 export function standings(program: CompiledProgram, attempts: readonly Attempt[]): Map<string, Standing> {
-  const { passingGrade, gradeAttempt } = program.file.policies;
   const byCourse = new Map<string, Attempt[]>();
   for (const attempt of attempts) {
     const course = program.canonical(attempt.courseNumber);
@@ -272,15 +293,7 @@ export function standings(program: CompiledProgram, attempts: readonly Attempt[]
 
   const result = new Map<string, Standing>();
   for (const [course, list] of byCourse) {
-    const decided = list.filter((a) => DECIDED.has(a.status));
-    let completed: boolean;
-    if (gradeAttempt === "best") {
-      completed = decided.some((a) => passes(a, passingGrade));
-    } else {
-      const when = (a: Attempt) => a.academicYear * 3 + SEMESTER_ORDER[a.semester];
-      const latest = Math.max(...decided.map(when));
-      completed = decided.some((a) => when(a) === latest && passes(a, passingGrade));
-    }
+    const completed = countingAttempts(list, program.file.policies).length > 0;
     const origins = [...new Set(list.map((a) => a.courseNumber))].sort();
     result.set(course, {
       completed,
