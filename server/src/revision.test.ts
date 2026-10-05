@@ -258,6 +258,19 @@ const BODIES: Record<string, (staged: Staged, basedOn: string) => unknown> = {
     ...shared(staged, basedOn),
     variant: "B",
   }),
+  // #295: Variant B holds nothing, so the Attempt of 89-110 the ids loop planned is a drop there
+  "POST /api/timetable/:year/:semester/plan-diffs/apply": (staged, basedOn) => ({
+    ...shared(staged, basedOn),
+    variant: "B",
+    kind: "drop",
+  }),
+  // #297: marking B registered moves both flags to it; the unmark takes the shared body's A, which
+  // is not marked, so it saves nothing and only the read half reaches it
+  "POST /api/timetable/:year/:semester/variants/registered": (staged, basedOn) => ({
+    ...shared(staged, basedOn),
+    variant: "B",
+    applyDiffs: true,
+  }),
 };
 
 /** Every route `createApi` registers, once each: the route table, less its middleware. */
@@ -350,7 +363,14 @@ const routesServing = async (): Promise<Learned[]> => {
   // and the ones that write, saving: a shared body that stopped moving one would drop it from
   // the save half without a word
   const saving = routes.filter((route) => route.saves).map((route) => route.key);
-  for (const named of ["PUT /api/programs", "PUT /api/cohort", "POST /api/progress/pins", "POST /api/progress/ticks"]) {
+  for (const named of [
+    "PUT /api/programs",
+    "PUT /api/cohort",
+    "POST /api/progress/pins",
+    "POST /api/progress/ticks",
+    "POST /api/timetable/:year/:semester/plan-diffs/apply",
+    "POST /api/timetable/:year/:semester/variants/registered",
+  ]) {
     expect(saving, `the honest pass should find ${named} saving`).toContain(named);
   }
   return routes;

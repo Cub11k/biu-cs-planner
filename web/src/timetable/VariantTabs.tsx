@@ -30,6 +30,9 @@ export type VariantTabsProps = {
         rename: (name: string) => void;
         remove: () => void;
         makePrimary: () => void;
+        /** Marking the tab shown as the one registered with (#297): the screen asks first. */
+        markRegistered: () => void;
+        unmarkRegistered: () => void;
       }
     | undefined;
 };
@@ -149,6 +152,12 @@ export function VariantTabs({
                     {t(language, "variantPrimaryMark")}
                   </span>
                 )}
+                {/* the Variant the student registered with (#297): a fact about it, as primary is */}
+                {variant.registered === true && (
+                  <span className="variant-registered ms-1.5 text-xs" data-registered-mark="">
+                    {t(language, "variantRegisteredMark")}
+                  </span>
+                )}
               </button>
             );
           })}
@@ -194,6 +203,28 @@ export function VariantTabs({
           >
             {t(language, "variantMakePrimary")}
           </button>
+          {/* one button that says what pressing it would do to the tab shown */}
+          {current?.registered === true ? (
+            <button
+              type="button"
+              data-variant-action="unmark-registered"
+              disabled={edits === undefined}
+              onClick={() => edits?.unmarkRegistered()}
+              className="variant-action"
+            >
+              {t(language, "variantUnmarkRegistered")}
+            </button>
+          ) : (
+            <button
+              type="button"
+              data-variant-action="mark-registered"
+              disabled={edits === undefined || current === undefined}
+              onClick={() => edits?.markRegistered()}
+              className="variant-action"
+            >
+              {t(language, "variantMarkRegistered")}
+            </button>
+          )}
           <button
             type="button"
             data-variant-action="delete"

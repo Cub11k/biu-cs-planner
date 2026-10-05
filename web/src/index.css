@@ -33,6 +33,9 @@
   --hatch-a: #dfe6ed;
   --hatch-b: #f3f6f9;
 
+  /* A Plan Diff (#296): amber, a note in the margin — not red pen, since nothing is wrong yet. */
+  --plan-diff: #8a4b00;
+
   /**
    * An Attempt's status on a Plan card (#292): six hues that tell history from the future at a
    * glance. Failed is an orange and not the red pen, which means a Clash and only that.
@@ -77,6 +80,8 @@
   --dark-hatch-a: #26313d;
   --dark-hatch-b: #18212b;
 
+  --dark-plan-diff: #e3a25a;
+
   --dark-status-planned: #9fb1c6;
   --dark-status-registered: #7fb0ea;
   --dark-status-passed: #5fc47e;
@@ -120,6 +125,8 @@
     --hatch-a: var(--dark-hatch-a);
     --hatch-b: var(--dark-hatch-b);
 
+    --plan-diff: var(--dark-plan-diff);
+
     --status-planned: var(--dark-status-planned);
     --status-registered: var(--dark-status-registered);
     --status-passed: var(--dark-status-passed);
@@ -153,6 +160,8 @@
 
   --hatch-a: var(--dark-hatch-a);
   --hatch-b: var(--dark-hatch-b);
+
+  --plan-diff: var(--dark-plan-diff);
 
   --status-planned: var(--dark-status-planned);
   --status-registered: var(--dark-status-registered);
@@ -467,6 +476,12 @@
     color: var(--pencil);
   }
 
+  /** The registered mark (#297): ink and weight rather than a hue, because it is a fact, not a warning. */
+  .variant-registered {
+    color: var(--ink);
+    font-weight: 600;
+  }
+
   .variant-action {
     border: 1px solid var(--rule);
     border-radius: 2px;
@@ -516,6 +531,34 @@
     border-radius: 2px;
     border: 1px solid var(--red-pen);
     color: var(--red-pen);
+  }
+
+  /**
+   * A Plan Diff badge on a Tray entry, and the apply it offers (#296). Amber and outlined, so it
+   * reads apart from a chip (dashed or solid in the Lesson Type's colour) and from the incomplete
+   * mark (red pen), by colour and by its dotted underline — two properties, as the week's are.
+   */
+  .plan-diff-badge {
+    font-size: 0.6875rem;
+    padding: 0 0.375rem;
+    border-radius: 2px;
+    border: 1px solid var(--plan-diff);
+    color: var(--plan-diff);
+    background: var(--paper);
+    text-decoration: underline dotted;
+    text-underline-offset: 2px;
+  }
+
+  button.plan-diff-badge {
+    cursor: pointer;
+  }
+
+  button.plan-diff-badge[aria-expanded="true"] {
+    background: color-mix(in srgb, var(--plan-diff) 12%, var(--paper));
+  }
+
+  .plan-diff-entry {
+    border-inline-start: 3px solid var(--plan-diff);
   }
 
   /* An Untimed Group sits here and never on the grid. */

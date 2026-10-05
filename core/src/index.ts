@@ -76,7 +76,9 @@ export {
   renameVariant,
   resolveVariant,
   resolveVariantName,
+  clearRegisteredVariant,
   setPrimaryVariant,
+  setRegisteredVariant,
   variantPosition,
   variantWarnings,
 } from "./state/variants.ts";
@@ -191,6 +193,19 @@ export type {
 } from "./requirements/solve.ts";
 export { requirementsAccepting } from "./requirements/candidates.ts";
 export { checkPlan } from "./plan/checks.ts";
+// Plan Diffs between a Variant and the Plan, and "apply to Plan" (#295).
+export { applyPlanDiff, findPlanDiff, isActionable, planDiffs } from "./plan/diffs.ts";
+export type {
+  PlanDiff,
+  PlanDiffContext,
+  PlanDiffEquivalence,
+  PlanDiffKey,
+  PlanDiffKind,
+  PlanDiffOffering,
+} from "./plan/diffs.ts";
+// Marking a Variant registered, with "apply all" (#297).
+export { markRegistered, registrationPreview, unmarkRegistered } from "./plan/registration.ts";
+export type { MarkRegisteredOptions, RegistrationPreview } from "./plan/registration.ts";
 export type {
   PlanCheckInput,
   PlanProgram,

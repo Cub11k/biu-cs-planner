@@ -3,7 +3,8 @@ import type { State, Timetable, Variant } from "./schema.ts";
 import { timetableAt, variantNamed, withTimetable, type TimetableAt } from "./timetable.ts";
 
 /**
- * The Variant edits: create, duplicate, rename, delete and make primary (#281).
+ * The Variant edits: create, duplicate, rename, delete and make primary (#281), and mark and
+ * unmark the registered one (#297).
  *
  * Each is a plain `state -> state` function beside the Pick edits, and `app` hands each to the
  * guarded writer with its own label, so each is one undo step (ADR-0013). None of them refuses
@@ -29,7 +30,9 @@ export type VariantWarning =
   /** Two or more Variants of one Timetable carry this name, so it addresses the first. */
   | { kind: "variant-name-not-unique"; name: string }
   /** A Timetable with Variants should have exactly one primary; this one has `primaries`. */
-  | { kind: "primary-variant-not-unique"; primaries: number };
+  | { kind: "primary-variant-not-unique"; primaries: number }
+  /** At most one Variant of a Timetable is the registered one; this one has `registered` (#297). */
+  | { kind: "registered-variant-not-unique"; registered: number };
 
 const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
@@ -131,15 +134,18 @@ export function createVariant(state: State, at: VariantRef): State {
 /**
  * Copies a Variant under a new name, right after the one it was copied from. Everything the
  * Variant holds is copied — its Picks, snapshots included, and its Tray (#283) — so the copy
- * starts as the same week and the same working set, and changing one never changes the other. The copy is never primary: the student
- * registers with one Variant, and duplicating it is how they try something else.
+ * starts as the same week and the same working set, and changing one never changes the other. The copy is never primary
+ * and never registered (#297): the student registers with one Variant, and duplicating it is how
+ * they try something else.
  */
 export function duplicateVariant(state: State, from: VariantRef, name: string): State {
   return withVariants(state, from, (variants, timetable) => {
     const source = variantNamed(timetable, from.variant, from.position);
     if (source === undefined) return variants;
 
-    const copy: Variant = { ...source, name, primary: false };
+    // never registered either: the student registered with the original, not with this
+    const { registered: _original, ...held } = source;
+    const copy: Variant = { ...held, name, primary: false };
     const index = variants.indexOf(source);
     return [...variants.slice(0, index + 1), copy, ...variants.slice(index + 1)];
   });
@@ -193,8 +199,55 @@ export function setPrimaryVariant(state: State, at: VariantRef): State {
 }
 
 /**
- * What is wrong with one Semester's Variants as they stand: a name two of them share, and a
- * Timetable whose Variants do not have exactly one primary.
+ * Marks one Variant as the one the student registered with (#297), **and makes it the primary**,
+ * clearing both flags on every other Variant of its Timetable in the same edit — so nothing the
+ * student does can leave two registered Variants, and the registered one is always the primary.
+ * Hands the same State back when that is already exactly so.
+ *
+ * Only the flags: offering to bring the Plan along is `markRegistered` (`../plan/registration.ts`), which
+ * calls this and then applies the Plan Diffs in the same edit.
+ */
+export function setRegisteredVariant(state: State, at: VariantRef): State {
+  return withVariants(state, at, (variants, timetable) => {
+    const held = variantNamed(timetable, at.variant, at.position);
+    if (held === undefined) return variants;
+    const settled = (variant: Variant): boolean =>
+      variant === held
+        ? variant.primary && variant.registered === true
+        : !variant.primary && variant.registered === undefined;
+    if (variants.every(settled)) return variants;
+
+    return variants.map((variant) => {
+      if (settled(variant)) return variant;
+      if (variant === held) return { ...variant, primary: true, registered: true };
+      const { registered: _cleared, ...rest } = variant;
+      return { ...rest, primary: false };
+    });
+  });
+}
+
+/**
+ * Takes the registered mark off a Variant, and only that (#297): it stays primary, and nothing a
+ * mark with "apply all" did to the Plan is reversed — undo is how that is reversed (ADR-0013).
+ * Hands the same State back when the Variant carries no mark.
+ */
+export function clearRegisteredVariant(state: State, at: VariantRef): State {
+  return withVariants(state, at, (variants, timetable) => {
+    const held = variantNamed(timetable, at.variant, at.position);
+    if (held === undefined || held.registered === undefined) return variants;
+
+    return variants.map((variant) => {
+      if (variant !== held) return variant;
+      const { registered: _cleared, ...rest } = variant;
+      return rest;
+    });
+  });
+}
+
+/**
+ * What is wrong with one Semester's Variants as they stand: a name two of them share, a
+ * Timetable whose Variants do not have exactly one primary, and one with more than one registered
+ * — which only a hand-edited file can hold, since `setRegisteredVariant` clears the others.
  *
  * Computed from a State rather than read off the file, so it describes the file **after** an
  * edit: an edit's answer carries the Warnings of the file it read, and a collision the edit has
@@ -219,5 +272,8 @@ export function variantWarnings(state: State, at: TimetableAt): VariantWarning[]
   if (variants.length > 0 && primaries !== 1) {
     warnings.push({ kind: "primary-variant-not-unique", primaries });
   }
+
+  const registered = variants.filter((variant) => variant.registered === true).length;
+  if (registered > 1) warnings.push({ kind: "registered-variant-not-unique", registered });
   return warnings;
 }

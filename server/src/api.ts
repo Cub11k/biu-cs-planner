@@ -14,11 +14,13 @@ import {
   addBlockedTimeTo,
   addCourseToTray,
   addVariant,
+  applyPlanDiffTo,
   chooseCohort,
   choosePrograms,
   copyBlockedTimesTo,
   duplicateVariantAs,
   makeVariantPrimary,
+  markVariantRegistered,
   moveAttemptTo,
   pickGroup,
   planFromSuggestedLayout,
@@ -28,6 +30,7 @@ import {
   readPlan,
   readPrograms,
   readProgress,
+  readRegistration,
   readSettings,
   readTimetable,
   removeAttemptFrom,
@@ -40,6 +43,7 @@ import {
   restoreBackup,
   setSettings,
   tickManualRequirement,
+  unmarkVariantRegistered,
   unpinCourseFrom,
   untickManualRequirement,
   updateAttemptOf,
@@ -254,6 +258,32 @@ const trayCourseSchema = z.object({
   variant: variantSchema,
   courseNumber: z.string().min(1),
   position: positionSchema,
+  basedOn: basedOnSchema,
+});
+
+/**
+ * Which Plan Diff to apply to the Plan (#295): its kind and its Course, which name it within the
+ * Variant's Semester, and the Variant it is a divergence of. A `not-offered` Plan Diff has nothing
+ * to apply, so it is not a kind this takes — a body naming one is not the shape of an apply.
+ */
+const appliedPlanDiffSchema = z.object({
+  variant: variantSchema,
+  position: positionSchema,
+  kind: z.enum(["add", "drop", "move"]),
+  courseNumber: z.string().min(1).max(200),
+  basedOn: basedOnSchema,
+});
+
+/**
+ * Marking a Variant as the one the student registered with (#297): which Variant — always named,
+ * as a make-primary is, because it acts on one tab — and whether the student accepted the offer to
+ * apply all its Plan Diffs. Required rather than defaulted, so a client that forgot to ask the
+ * student cannot have the Plan rewritten by leaving it out (ADR-0008).
+ */
+const registeredVariantSchema = z.object({
+  variant: variantNameSchema,
+  position: positionSchema,
+  applyDiffs: z.boolean(),
   basedOn: basedOnSchema,
 });
 
@@ -1294,6 +1324,97 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
           basedOn,
           history: into,
         }),
+      );
+    })
+
+    /**
+     * "Apply to Plan" for one Plan Diff of the Variant named (#295; ADR-0008): one save, one undo
+     * step, and only the Plan's Attempts change — never the Timetable. Answered with the Timetable
+     * afterwards, whose Plan Diffs no longer hold the one applied. A Plan Diff the file as it stands
+     * no longer has is refused `plan-diff-stale` with the revision the file still holds, and
+     * nothing is written; a stale revision is the usual `state-file-changed`.
+     */
+    .post("/api/timetable/:year/:semester/plan-diffs/apply", capped, async (c) => {
+      const ref = timetableRef(c);
+      if (!ref.ok) return c.json({ error: ref.error }, 400);
+      const body = await bodyAs(c, appliedPlanDiffSchema, "not-a-plan-diff");
+      if (!body.ok) return c.json({ error: body.error }, 400);
+
+      const { basedOn, variant, position, kind, courseNumber } = body.value;
+      const result = await applyPlanDiffTo(
+        workspace,
+        { ...ref.at, variant, position },
+        { kind, courseNumber },
+        { basedOn, history: into },
+      );
+      if (result.kind === "plan-diff-stale") {
+        return c.json({ reason: result.kind, version: result.version, warnings: result.warnings }, 409);
+      }
+      return timetableAnswer(c, result);
+    })
+
+    /**
+     * What marking the Variant named registered with "apply all" would do (#297), for the student
+     * to see before accepting: its Plan Diffs, `not-offered` ones among them, and the Courses whose
+     * Attempt would become registered. A read: nothing is written. `version` is what the mark has
+     * to be based on.
+     */
+    .get("/api/timetable/:year/:semester/registration", async (c) => {
+      const ref = timetableRef(c);
+      if (!ref.ok) return c.json({ error: ref.error }, 400);
+      const variant = variantQuery(c);
+      if (!variant.ok) return c.json({ error: variant.error }, 400);
+
+      const result = await readRegistration(workspace, {
+        ...ref.at,
+        variant: variant.variant,
+        position: variant.position,
+      });
+      if (result.kind === "refused") {
+        return c.json({ reason: result.reason, warnings: result.warnings }, 409);
+      }
+      return c.json({
+        variantName: result.variantName,
+        variantPosition: result.variantPosition,
+        planDiffs: result.planDiffs,
+        registers: result.registers,
+        version: result.version,
+        warnings: result.warnings,
+      });
+    })
+
+    /**
+     * Marks a Variant registered and primary (#297), and with `applyDiffs` applies all its Plan
+     * Diffs and registers its Courses' planned Attempts in the same edit: one save, one undo step,
+     * all or nothing. Answered with the Timetable, whose tab now carries the mark.
+     */
+    .post("/api/timetable/:year/:semester/variants/registered", capped, async (c) => {
+      const ref = timetableRef(c);
+      if (!ref.ok) return c.json({ error: ref.error }, 400);
+      const body = await bodyAs(c, registeredVariantSchema, "not-a-registration");
+      if (!body.ok) return c.json({ error: body.error }, 400);
+
+      const { basedOn, variant, position, applyDiffs } = body.value;
+      return timetableAnswer(
+        c,
+        await markVariantRegistered(workspace, { ...ref.at, variant, position }, { applyDiffs }, {
+          basedOn,
+          history: into,
+        }),
+      );
+    })
+
+    /** Takes the registered mark off a Variant, and nothing else: the Plan is left as it is. */
+    .delete("/api/timetable/:year/:semester/variants/registered", capped, async (c) => {
+      const ref = timetableRef(c);
+      if (!ref.ok) return c.json({ error: ref.error }, 400);
+      const body = await bodyAs(c, namedVariantSchema, "not-a-variant");
+      if (!body.ok) return c.json({ error: body.error }, 400);
+
+      const { basedOn, variant, position } = body.value;
+      return timetableAnswer(
+        c,
+        await unmarkVariantRegistered(workspace, { ...ref.at, variant, position }, { basedOn, history: into }),
       );
     })
 

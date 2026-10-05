@@ -140,6 +140,20 @@ export const variantHeadSchema = z.object({
    * `parseStateFile` reports it as a Warning, because a Warning never blocks an edit.
    */
   primary: z.boolean().default(false),
+  /**
+   * That this is the Variant the student registered with (#297). At most one per Timetable: the
+   * edit that sets it clears it on every other Variant, and a file that holds more than one still
+   * opens and is named by `variantWarnings`, because a Warning never blocks an edit.
+   *
+   * **Optional, and written only while it is true**, so a Variant that was never registered reads
+   * and writes exactly as it did before the flag existed and the schema version did not move: an
+   * older build strips the key on save, which loses the mark and nothing else — the downgrade
+   * `variantSchema`'s `tray` already describes.
+   *
+   * **A value that is not a boolean reads as not registered** rather than failing the head parse,
+   * which would drop the whole Variant, its Picks included, for one hand-edited flag.
+   */
+  registered: z.boolean().optional().catch(undefined),
 });
 
 /**

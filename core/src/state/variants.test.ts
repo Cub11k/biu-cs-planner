@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_VARIANT_NAME, recordPick } from "./picks.ts";
+import { parseStateFile } from "./file.ts";
 import { stateSchema, type GroupPick, type State } from "./schema.ts";
 import {
   createVariant,
@@ -9,7 +10,9 @@ import {
   renameVariant,
   resolveVariant,
   resolveVariantName,
+  clearRegisteredVariant,
   setPrimaryVariant,
+  setRegisteredVariant,
   variantPosition,
   variantWarnings,
 } from "./variants.ts";
@@ -360,4 +363,87 @@ describe("two Variants sharing a name", () => {
     expect(variantPosition(state, { ...at("A"), position: 9 })).toBe(0);
     expect(variantPosition(state, at("nothing"))).toBeUndefined();
   });
+});
+
+/** The Variants of the Fall Timetable as `[name, primary, registered]`, in file order (#297). */
+const marks = (state: State) =>
+  state.timetables[0]?.variants.map((variant) => [variant.name, variant.primary, variant.registered]);
+
+it("marks one Variant registered and primary, and clears both flags on the others", () => {
+  const three = createVariant(createVariant(createVariant(empty(), at("A")), at("B")), at("C"));
+
+  const marked = setRegisteredVariant(three, at("B"));
+
+  expect(marks(marked)).toEqual([
+    ["A", false, undefined],
+    ["B", true, true],
+    ["C", false, undefined],
+  ]);
+  // the cleared ones carry no key at all, so a Variant never registered writes as it always did
+  expect(marked.timetables[0]?.variants.filter((v) => "registered" in v).map((v) => v.name)).toEqual(["B"]);
+  expect(setRegisteredVariant(marked, at("B"))).toBe(marked);
+  expect(setRegisteredVariant(marked, at("Z"))).toBe(marked);
+});
+
+it("repairs a hand-edited file holding two registered Variants when one is marked", () => {
+  const two = createVariant(createVariant(empty(), at("A")), at("B"));
+  const broken: State = {
+    ...two,
+    timetables: [
+      { ...two.timetables[0]!, variants: two.timetables[0]!.variants.map((v) => ({ ...v, registered: true })) },
+    ],
+  };
+
+  expect(variantWarnings(broken, FALL_2027)).toEqual([
+    { kind: "registered-variant-not-unique", registered: 2 },
+  ]);
+  const repaired = setRegisteredVariant(broken, at("A"));
+  expect(marks(repaired)).toEqual([
+    ["A", true, true],
+    ["B", false, undefined],
+  ]);
+  expect(variantWarnings(repaired, FALL_2027)).toEqual([]);
+});
+
+it("unmarks the registered Variant and leaves it primary", () => {
+  const marked = setRegisteredVariant(createVariant(createVariant(empty(), at("A")), at("B")), at("B"));
+
+  const cleared = clearRegisteredVariant(marked, at("B"));
+
+  expect(marks(cleared)).toEqual([
+    ["A", false, undefined],
+    ["B", true, undefined],
+  ]);
+  expect(clearRegisteredVariant(cleared, at("B"))).toBe(cleared);
+  expect(clearRegisteredVariant(marked, at("A"))).toBe(marked);
+});
+
+it("never copies the registered mark onto a duplicate", () => {
+  const marked = setRegisteredVariant(createVariant(empty(), at("A")), at("A"));
+
+  expect(marks(duplicateVariant(marked, at("A"), "B"))).toEqual([
+    ["A", true, true],
+    ["B", false, undefined],
+  ]);
+});
+
+it("reads a registered flag that is not a boolean as not registered, and keeps the Variant", () => {
+  const read = parseStateFile({
+    schemaVersion: 1,
+    timetables: [
+      {
+        academicYear: 2027,
+        semester: "fall",
+        variants: [
+          { name: "A", primary: true, registered: "yes", picks: [LECTURE] },
+          { name: "B", primary: false, registered: true },
+        ],
+      },
+    ],
+  });
+
+  expect(read.state?.timetables[0]?.variants.map((v) => [v.name, v.registered, v.picks.length])).toEqual([
+    ["A", undefined, 1],
+    ["B", true, 0],
+  ]);
 });
