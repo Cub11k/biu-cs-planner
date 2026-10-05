@@ -226,3 +226,21 @@ it("refuses both for a Semester whose Timetable has no Variant yet, rather than 
   );
   expect(workspace.written()).toHaveLength(0);
 });
+
+/* #356: no Requirements read for a student with no Program. */
+
+it("lists no Requirements Files for apply all when the State names no Program", async () => {
+  const workspace = await ready();
+  const choice = await acceptAll(workspace, A);
+  const listing = workspace.list.bind(workspace);
+  const listed: string[] = [];
+  workspace.list = (kind) => {
+    listed.push(kind);
+    return listing(kind);
+  };
+
+  const result = await markVariantRegistered(workspace, A, choice, await now(workspace));
+
+  expect(result.kind).toBe("served");
+  expect(listed).not.toContain("requirements");
+});

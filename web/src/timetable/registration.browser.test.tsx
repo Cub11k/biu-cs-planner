@@ -254,3 +254,14 @@ it("refuses apply all when the list changed since the confirmation was read, and
   // and the Timetable is read again, so the list on screen is the one the server has
   await until(() => expect(mounted.querySelectorAll(".plan-diff-badge")).toHaveLength(1));
 });
+
+it("joins the Courses it would register with the separator of the language shown (#356)", async () => {
+  const mounted = await openWeek({ A: [ADD] }, { language: "he" });
+  action(mounted, "mark-registered").click();
+  await until(() => expect(confirmation(mounted)).not.toBeNull());
+
+  const registers = confirmation(mounted)!.querySelector('[data-registration-change="registers"]')!;
+  expect(registers.textContent).toBe(
+    t("he", "registrationRegisters", { courses: ["Intro", "Data Structures"].join(t("he", "registrationSeparator")) }),
+  );
+});

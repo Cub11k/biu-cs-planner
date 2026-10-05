@@ -135,7 +135,7 @@ The states need to differ in more than one property at once. Border style alone 
 - **Untimed Groups** sit in a "No fixed time" strip under the grid. They count toward credits and Exams and never Clash.
 - **Clashes:** picked blocks that overlap sit side by side with a red border, as a Warning only.
 - **Tray contents:** the Semester's planned Attempts plus Courses added directly. Each Tray entry carries one chip per Lesson Type the Course has, filled with the Group number once picked and empty while missing, so what is still needed is visible without opening the Course.
-- **Tray badges:** "offered in the other Semester", "not in this year's Catalog", "not in Plan". Each badge links to its Plan Diff action.
+- **Tray badges:** "offered in the other Semester", "not in this year's Catalog", "not in Plan", "not scheduled", "planned in the other Semester". Each actionable badge opens its Plan Diff action.
 - **Guidance:** a hint line above the grid tells a first-time student what to do, names what the selected Course still needs, and carries a legend for pencil, ink and red pen.
 
 ### Exams
@@ -148,8 +148,8 @@ The states need to differ in more than one property at once. Border style alone 
 
 ### Plan Diff
 
-- A Variant and the Plan never sync automatically. Divergences show as Plan Diffs, each with a one-click "apply to Plan" (move to the other Semester, drop, add).
-- Marking a Variant as registered offers to apply all its Plan Diffs at once.
+- A Variant and the Plan never sync automatically. Divergences show as Plan Diffs, each with a one-click "apply to Plan" (add, move here from another Semester, drop, move to the other Semester). No apply plans a Course twice in one Academic Year (#355).
+- Marking a Variant as registered offers to apply all its Plan Diffs at once, and applies the list the student was shown or nothing.
 
 ### Generator (after the manual grid)
 
@@ -158,7 +158,7 @@ The states need to differ in more than one property at once. Border style alone 
 
 ## Screens
 
-1. **Timetable** (landing): year, Semester and Variant tabs on top; Tray on the left; grid in the middle; side panel with Clashes, Exams and Plan Diffs.
+1. **Timetable** (landing): year, Semester and Variant tabs on top; Tray on the left; grid in the middle; Clashes in a strip above the week; a side panel on the end side that today holds only the Plan Diffs, and only while there are any. The exam-period rail meant for it is not drawn yet (build order step 3).
 2. **Plan:** a column per Semester, grouped by year. Course cards drag between columns, and Warnings show on the cards.
 3. **Progress:** the Requirement tree with satisfied and missing items, Pinning, and "what if I switched Track".
 4. **Courses:** Catalog search (department, Semester, day and time, Lesson Type). A Course page shows Groups, Exams, Prerequisites and the Requirements it can count toward.
@@ -314,6 +314,7 @@ The rejected options (cookies, TLS, sockets) are in [ADR 0004](adr/0004-localhos
    - The engine and the solver exist in `core` (`core/src/requirements/`, PR #319): the Requirements File, Progress evaluation and the Assignment solver. The app reaches them and the Progress screen shows them since PR #330 (`app/src/progress.ts`, `web/src/progress/`).
 5. Plan screen and Plan checks
 6. Plan Diffs
+   - Built: computed and applied in `core/src/plan/diffs.ts` (PR #353, #355), served with every Timetable answer, shown as Tray badges and in the side panel, and "mark registered" with "apply all" (`core/src/plan/registration.ts`).
 7. Generator
 8. Data repo index and "check for data updates"
 9. Hebrew translations

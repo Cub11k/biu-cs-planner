@@ -22,7 +22,7 @@ import {
   type TimetableResult,
 } from "./picks.ts";
 import type { PlanDiffOptions } from "./planDiffs.ts";
-import { loadPlanDiffSources, planDiffContext } from "./planDiffSources.ts";
+import { loadPlanDiffSources, loadPlanDiffSourcesForEdit, planDiffContext } from "./planDiffSources.ts";
 import type { Workspace } from "./workspace.ts";
 
 /**
@@ -138,7 +138,9 @@ export async function markVariantRegistered(
   options: PlanDiffOptions,
 ): Promise<MarkRegisteredResult> {
   // the Catalog and the Requirements Files are read only for the offer the student accepted
-  const sources = choice.applyDiffs ? await loadPlanDiffSources(workspace, at.academicYear) : undefined;
+  const sources = choice.applyDiffs
+    ? await loadPlanDiffSourcesForEdit(workspace, at.stateFile ?? DEFAULT_STATE_FILE, at.academicYear, options.basedOn)
+    : undefined;
   const newId = options.newId ?? uuid;
   let refusal: "plan-diff-stale" | "variant-not-found" | undefined;
   const result = await editTimetable(

@@ -239,3 +239,64 @@ it("applies a move-here by taking the Attempt from the other Semester, one save 
     kind: "plan-diff-stale",
   });
 });
+
+/* #356: one Catalog read per view, and no Requirements read without a Program. */
+
+/** Counts the Workspace's Catalog reads and its listings of `requirements/` from here on. */
+function counting(workspace: MemoryWorkspace) {
+  const counts = { catalog: 0, requirements: 0 };
+  const reading = workspace.read.bind(workspace);
+  workspace.read = (ref) => {
+    if (ref.kind === "catalog") counts.catalog += 1;
+    return reading(ref);
+  };
+  const listing = workspace.list.bind(workspace);
+  workspace.list = (kind) => {
+    if (kind === "requirements") counts.requirements += 1;
+    return listing(kind);
+  };
+  return counts;
+}
+
+it("reads the Catalog once per Timetable view, for the Tray and the Plan Diffs both", async () => {
+  const workspace = ready([planned("a1", "89-110"), planned("a2", "89-230")]);
+  await addCourseToTray(workspace, FALL_2027, "89-210", await now(workspace));
+  const counts = counting(workspace);
+
+  const read = await readTimetable(workspace, FALL_2027);
+
+  // the Tray still knows its chips, and the Plan Diffs still know 89-230 is given in Spring
+  expect(read.kind === "served" && read.view.tray.filter((entry) => entry.known).map((entry) => entry.courseNumber)).toEqual([
+    "89-210",
+    "89-110",
+  ]);
+  expect(diffsOf(read)).toHaveLength(3);
+  expect(counts.catalog).toBe(1);
+
+  // and an edit's answer is one view too: the apply reads the Catalog for itself and the view once
+  const basedOn = await now(workspace);
+  counts.catalog = 0;
+  await applyPlanDiffTo(workspace, FALL_2027, { kind: "add", courseNumber: "89-210" }, basedOn);
+  expect(counts.catalog).toBe(2);
+});
+
+it("lists no Requirements Files on an apply when the State names no Program, and does when it names one", async () => {
+  const workspace = ready([planned("a1", "89-110")]);
+  await addCourseToTray(workspace, FALL_2027, "89-210", await now(workspace));
+  await addCourseToTray(workspace, FALL_2027, "89-110", await now(workspace));
+  const basedOn = await now(workspace);
+  const counts = counting(workspace);
+
+  const result = await applyPlanDiffTo(workspace, FALL_2027, { kind: "add", courseNumber: "89-210" }, basedOn);
+
+  expect(result.kind).toBe("served");
+  expect(counts.requirements).toBe(0);
+
+  const named = ready([planned("a1", "89-110")], { programs: [{ requirementsFile: "cs-2027" }] });
+  await addCourseToTray(named, FALL_2027, "89-210", await now(named));
+  const namedBasedOn = await now(named);
+  const namedCounts = counting(named);
+  await applyPlanDiffTo(named, FALL_2027, { kind: "add", courseNumber: "89-210" }, namedBasedOn);
+  // once for the apply, once for the view of its answer
+  expect(namedCounts.requirements).toBe(2);
+});

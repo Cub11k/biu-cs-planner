@@ -29,8 +29,7 @@ import {
   type EditRefusal,
   type StateEditing,
 } from "./edit.ts";
-import { planDiffsOf } from "./planDiffSources.ts";
-import { listOfferings } from "./queries.ts";
+import { planDiffsOf, yearOfferings } from "./planDiffSources.ts";
 import type { Workspace } from "./workspace.ts";
 
 /**
@@ -191,10 +190,11 @@ export const variantEditedIn = (state: State, at: TimetableRef): VariantRef =>
  * the chips are part of the answer every edit gives: a chip that filled a poll later than the ink
  * beside it would be a Tray disagreeing with the week. A Catalog that cannot be read is not a
  * refusal and carries no Warning here — the Catalog's own routes say what is wrong with it — and
- * every entry is simply `known: false`.
+ * every entry is simply `known: false`. **It is one read for the whole view** (#356): the year's
+ * Catalog, from which the Tray takes this Semester's Offerings and the Plan Diffs every Semester's.
  *
  * **After a save, a Catalog read that fails in any way is that same `known: false`** (#324).
- * `listOfferings` answers a refusal with its own arm and lets anything else propagate, which for a read
+ * `yearOfferings` answers a refusal as no Catalog and lets anything else propagate, which for a read
  * is a 500 that changed nothing. Built after a save, the same throw used to answer 500 for an edit
  * that had landed, and the page told the student it failed. So `afterSave` reads the Catalog as
  * not there when the read throws: the answer carries the new revision and the parts it could read,
@@ -208,20 +208,15 @@ async function view(
 ): Promise<TimetableView> {
   const shown = variantShownIn(state, at);
   const unread = trayEntries(state, shown, undefined);
-  const catalog = async () => {
-    const asked = listOfferings(workspace, { academicYear: at.academicYear, semester: at.semester });
-    const offeringsOf = (answer: Awaited<typeof asked>) =>
-      answer.kind === "read" ? answer.offerings : undefined;
-    if (!afterSave) return offeringsOf(await asked);
-    try {
-      return offeringsOf(await asked);
-    } catch {
-      return undefined;
-    }
-  };
-  const tray = unread.length === 0 ? unread : trayEntries(state, shown, await catalog());
+  // One Catalog read per view (#356), the whole year: the Tray's chips take this Semester's
+  // Offerings from it, and the Plan Diffs every Semester's.
+  const year = unread.length === 0 ? undefined : await yearOfferings(workspace, at.academicYear, afterSave);
+  const tray =
+    unread.length === 0
+      ? unread
+      : trayEntries(state, shown, year?.filter((offering) => offering.semesters.includes(at.semester)));
   // an empty Tray holds nothing planned here and nothing in the Variant, so nothing to diff
-  const planDiffs = unread.length === 0 ? [] : await planDiffsOf(workspace, state, shown, afterSave);
+  const planDiffs = unread.length === 0 ? [] : await planDiffsOf(workspace, state, shown, year, afterSave);
   return {
     variantName: shown.variant,
     variantPosition: shown.position,

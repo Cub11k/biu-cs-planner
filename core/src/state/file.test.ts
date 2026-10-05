@@ -15,6 +15,7 @@ import {
   type Attempt,
   type State,
 } from "./schema.ts";
+import { variantWarnings } from "./variants.ts";
 
 /** What actually reaches disk: JSON, so every type has survived a round trip. */
 function onDisk(state: unknown): unknown {
@@ -451,6 +452,24 @@ it("warns when a Timetable has no one primary Variant, and opens it anyway", () 
   expect(result.warnings).toEqual([
     { kind: "primary-variant-not-unique", at: "timetables[0]", primaries: 2 },
   ]);
+});
+
+it("warns when a hand-edited file marks two Variants of a Timetable registered, and opens it anyway (#356)", () => {
+  const two = fullFile();
+  for (const variant of two.timetables[0]!.variants) Object.assign(variant, { registered: true });
+
+  const result = parseStateFile(onDisk(two));
+
+  expect(result.state?.timetables[0]?.variants.map((variant) => variant.registered)).toEqual([true, true]);
+  expect(result.warnings).toEqual([{ kind: "registered-variant-not-unique", at: "timetables[0]", registered: 2 }]);
+  // raised by the one rule the Timetable screen's account uses too, so the two cannot disagree
+  expect(variantWarnings(result.state!, result.state!.timetables[0]!)).toContainEqual({
+    kind: "registered-variant-not-unique",
+    registered: 2,
+  });
+  // and one registered Variant is no breach
+  two.timetables[0]!.variants.forEach((variant, index) => Object.assign(variant, { registered: index === 0 }));
+  expect(parseStateFile(onDisk(two)).warnings).toEqual([]);
 });
 
 it("warns when no Variant of a Timetable is primary", () => {

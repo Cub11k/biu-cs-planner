@@ -9,13 +9,14 @@ import {
   type StateFileWarning,
 } from "@biu-cs-planner/core";
 import {
+  DEFAULT_STATE_FILE,
   editTimetable,
   variantEditedIn,
   type PickOptions,
   type TimetableRef,
   type TimetableResult,
 } from "./picks.ts";
-import { loadPlanDiffSources, planDiffContext } from "./planDiffSources.ts";
+import { loadPlanDiffSourcesForEdit, planDiffContext } from "./planDiffSources.ts";
 import type { Workspace } from "./workspace.ts";
 
 /**
@@ -68,7 +69,12 @@ export async function applyPlanDiffTo(
   key: PlanDiffKey & { kind: ActionableKind },
   options: PlanDiffOptions,
 ): Promise<ApplyPlanDiffResult> {
-  const sources = await loadPlanDiffSources(workspace, at.academicYear);
+  const sources = await loadPlanDiffSourcesForEdit(
+    workspace,
+    at.stateFile ?? DEFAULT_STATE_FILE,
+    at.academicYear,
+    options.basedOn,
+  );
   const newId = options.newId ?? uuid;
   let stale = false;
 

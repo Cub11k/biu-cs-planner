@@ -702,6 +702,7 @@ const english = {
   /** A `not-offered` Plan Diff: listed so nothing is hidden, and never applied. */
   registrationNotApplied: "{said} Nothing to apply.",
   registrationRegisters: "Set to registered in your plan: {courses}.",
+  registrationSeparator: ", ",
   registrationNothing: "Your plan already says what this variant holds.",
   registrationApplyAll: "Apply all and mark registered",
   registrationOnlyMark: "Only mark registered",
@@ -1134,6 +1135,7 @@ const hebrew: Record<StringKey, string> = {
   registrationApplies: "{said} {apply}.",
   registrationNotApplied: "{said} אין מה להחיל.",
   registrationRegisters: "יסומנו כרשומים בתוכנית שלך: {courses}.",
+  registrationSeparator: ", ",
   registrationNothing: "התוכנית שלך כבר תואמת את מה שבחלופה הזו.",
   registrationApplyAll: "החלת הכול וסימון כרשומה",
   registrationOnlyMark: "סימון כרשומה בלבד",
