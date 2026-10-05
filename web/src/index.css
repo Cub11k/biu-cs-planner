@@ -438,6 +438,12 @@
     color: var(--pencil);
   }
 
+  /** The registered mark (#297): ink and weight rather than a hue, because it is a fact, not a warning. */
+  .variant-registered {
+    color: var(--ink);
+    font-weight: 600;
+  }
+
   .variant-action {
     border: 1px solid var(--rule);
     border-radius: 2px;

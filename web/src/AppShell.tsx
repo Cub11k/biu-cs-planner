@@ -186,6 +186,8 @@ const EDIT_LABEL_STRING = new Map<string, StringKey>([
   ["apply-plan-diff-add", "editApplyPlanDiffAdd"],
   ["apply-plan-diff-drop", "editApplyPlanDiffDrop"],
   ["apply-plan-diff-move", "editApplyPlanDiffMove"],
+  ["mark-variant-registered", "editMarkVariantRegistered"],
+  ["unmark-variant-registered", "editUnmarkVariantRegistered"],
   ["add-blocked-time", "editAddBlockedTime"],
   ["replace-blocked-time", "editReplaceBlockedTime"],
   ["remove-blocked-time", "editRemoveBlockedTime"],

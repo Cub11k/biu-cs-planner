@@ -35,7 +35,14 @@ import { CoursePicker } from "./CoursePicker.tsx";
 import { addToTray, removeFromTray } from "./tray.ts";
 import { TrayColumn } from "./TrayColumn.tsx";
 import { PlanDiffsPanel } from "./PlanDiffsPanel.tsx";
-import { applyPlanDiff, type ActionablePlanDiff } from "./planDiffs.ts";
+import { applyPlanDiff, isActionable, type ActionablePlanDiff } from "./planDiffs.ts";
+import { RegistrationConfirm } from "./RegistrationConfirm.tsx";
+import {
+  fetchRegistration,
+  markRegistered,
+  unmarkRegistered,
+  type RegistrationPreview,
+} from "./registration.ts";
 import { BlockedTimesEditor, type FormAnswer } from "./BlockedTimesEditor.tsx";
 import {
   addBlockedTime,
@@ -299,6 +306,14 @@ export function TimetablePane({
    * or the Catalog moved since the page read it. Retired as `staleSave` is, by the next click.
    */
   const [planDiffStale, setPlanDiffStale] = useState(false);
+  /**
+   * The confirmation marking a Variant registered is asking (#297): which Variant, and what "apply
+   * all" would do as read when it was pressed. Shown only while that Variant is still the one on
+   * screen — a tab switched under it is a different question.
+   */
+  const [registering, setRegistering] = useState<
+    { variant: string; preview: RegistrationPreview } | undefined
+  >(undefined);
   const [rereads, setRereads] = useState(0);
   /**
    * The answer a click was sent on, while the re-read its unreadable answer asked for is still in
@@ -733,6 +748,34 @@ export function TimetablePane({
               (query, basedOn) => setPrimaryVariant(api, query, query.variant ?? "", basedOn),
               followAnswer,
             ),
+          // Marking registered asks first (#297): what "apply all" would change is read and shown,
+          // and nothing is written until the student answers. With nothing to offer — no Plan Diff
+          // to apply and nothing to register — there is no question, and the Variant is marked.
+          markRegistered: () => {
+            const on = timetable;
+            retireNotices();
+            void fetchRegistration(api, {
+              academicYear,
+              semester,
+              variant: on.variantName,
+              position: on.variantPosition,
+            }).then((preview) => {
+              const nothing =
+                preview.kind === "served" &&
+                preview.registers.length === 0 &&
+                !preview.planDiffs.some(isActionable);
+              if (!nothing) {
+                setRegistering({ variant: on.variantName, preview });
+                return;
+              }
+              void sendEdit(
+                (query, basedOn) => markRegistered(api, query, query.variant ?? "", false, basedOn),
+                followAnswer,
+              );
+            });
+          },
+          unmarkRegistered: () =>
+            sendEdit((query, basedOn) => unmarkRegistered(api, query, query.variant ?? "", basedOn)),
           // the answer is about the primary that is left, which is what no choice means
           remove: () =>
             sendEdit(
@@ -780,6 +823,31 @@ export function TimetablePane({
         }
       : undefined;
   const planDiffs = timetable.kind === "served" ? timetable.planDiffs : [];
+
+  /**
+   * The student's answer to the confirmation. "Apply all" is sent on the revision the preview was
+   * read from, so what is applied is what was listed: a file that moved since is refused rather
+   * than applied differently. "Only mark" touches no Plan, so it goes on the revision on screen.
+   */
+  const confirming =
+    registering !== undefined && timetable.kind === "served" && timetable.variantName === registering.variant
+      ? registering
+      : undefined;
+  const answerRegistration = (applyDiffs: boolean): void => {
+    const preview = registering?.preview;
+    setRegistering(undefined);
+    void sendEdit(
+      (query, basedOn) =>
+        markRegistered(
+          api,
+          query,
+          query.variant ?? "",
+          applyDiffs,
+          applyDiffs && preview?.kind === "served" ? preview.version : basedOn,
+        ),
+      followAnswer,
+    );
+  };
 
   /** The Blocked Time edits (#282): the Semester's, whichever Variant is shown. */
   const blockedEdits =
@@ -1001,6 +1069,17 @@ export function TimetablePane({
             panelId={weekPanelId}
             edits={variantEdits}
           />
+          {confirming !== undefined && (
+            <RegistrationConfirm
+              language={language}
+              variant={confirming.variant}
+              preview={confirming.preview}
+              nameOf={nameOf}
+              onApplyAll={() => answerRegistration(true)}
+              onOnlyMark={() => answerRegistration(false)}
+              onCancel={() => setRegistering(undefined)}
+            />
+          )}
           <p className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-rule bg-hint px-4 py-2 text-sm text-ink-soft">
             {chosen === undefined
               ? t(language, "hintChoose")
@@ -1161,9 +1240,15 @@ function picksSaid(language: Language, count: number): string {
 
 /** What a Variant Warning says. The name is the student's own text and is shown as written. */
 function variantWarningSaid(language: Language, warning: VariantWarning): string {
-  return warning.kind === "variant-name-not-unique"
-    ? t(language, "variantNameNotUnique", { name: warning.name })
-    : t(language, "variantPrimaryNotUnique");
+  switch (warning.kind) {
+    case "variant-name-not-unique":
+      return t(language, "variantNameNotUnique", { name: warning.name });
+    case "primary-variant-not-unique":
+      return t(language, "variantPrimaryNotUnique");
+    // only a hand-edited file holds two (#297): marking one clears the others
+    case "registered-variant-not-unique":
+      return t(language, "variantRegisteredNotUnique");
+  }
 }
 
 /**

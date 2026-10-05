@@ -66,6 +66,9 @@ const english = {
   editApplyPlanDiffAdd: "adding a course to the plan",
   editApplyPlanDiffDrop: "dropping a course from the plan",
   editApplyPlanDiffMove: "moving a course in the plan",
+  /** The labels `app/src/registration.ts` attaches to marking a Variant registered (#297). */
+  editMarkVariantRegistered: "marking a variant registered",
+  editUnmarkVariantRegistered: "unmarking a registered variant",
   /** The labels `app/src/blockedTimes.ts` attaches to the Blocked Time edits (#282). */
   editAddBlockedTime: "adding a blocked time",
   editReplaceBlockedTime: "changing a blocked time",
@@ -598,6 +601,28 @@ const english = {
   planDiffStale: "That difference is no longer there: your plan or the catalog changed. What is left is shown.",
 
   /**
+   * Marking the Variant a student registered with (#297), and the one confirmation that offers to
+   * bring the Plan along. Nothing reaches the Plan unless "apply all" is pressed (ADR-0008).
+   */
+  variantRegisteredMark: "registered",
+  variantMarkRegistered: "Mark registered",
+  variantUnmarkRegistered: "Unmark registered",
+  variantRegisteredNotUnique:
+    "More than one variant of this timetable is marked registered. Mark the one you registered with.",
+  registrationHeading: "Mark {name} as the variant you registered with",
+  registrationIntro: "Applying all brings your plan in line with this variant:",
+  /** A Plan Diff "apply all" would apply, and the apply it is: the sentence, then what it does. */
+  registrationApplies: "{said} {apply}.",
+  /** A `not-offered` Plan Diff: listed so nothing is hidden, and never applied. */
+  registrationNotApplied: "{said} Nothing to apply.",
+  registrationRegisters: "Set to registered in your plan: {courses}.",
+  registrationNothing: "Your plan already says what this variant holds.",
+  registrationApplyAll: "Apply all and mark registered",
+  registrationOnlyMark: "Only mark registered",
+  registrationCancel: "Cancel",
+  registrationUnavailable: "What applying all would change could not be read, so only marking is offered.",
+
+  /**
    * Blocked Times (#282): weekly time the student keeps free. A range typed past midnight is
    * stored as two rows, which the hint says so the list showing two is no surprise.
    */
@@ -683,6 +708,8 @@ const hebrew: Record<StringKey, string> = {
   editApplyPlanDiffAdd: "הוספת קורס לתוכנית",
   editApplyPlanDiffDrop: "הסרת קורס מהתוכנית",
   editApplyPlanDiffMove: "העברת קורס בתוכנית",
+  editMarkVariantRegistered: "סימון חלופה כרשומה",
+  editUnmarkVariantRegistered: "ביטול סימון חלופה רשומה",
   editAddBlockedTime: "הוספת זמן חסום",
   editReplaceBlockedTime: "שינוי זמן חסום",
   editRemoveBlockedTime: "הסרת זמן חסום",
@@ -936,6 +963,21 @@ const hebrew: Record<StringKey, string> = {
   planDiffSaidMove: "{course} מתוכנן לסמסטר הזה, אך הקטלוג של השנה מציע אותו ב{semester}.",
   planDiffSaidNotOffered: "{course} מתוכנן לסמסטר הזה, אך אינו בקטלוג של השנה.",
   planDiffStale: "ההבדל הזה כבר אינו קיים: התוכנית או הקטלוג השתנו. מוצג מה שנותר.",
+
+  variantRegisteredMark: "רשומה",
+  variantMarkRegistered: "סימון כרשומה",
+  variantUnmarkRegistered: "ביטול סימון רשומה",
+  variantRegisteredNotUnique: "יותר מחלופה אחת במערכת השעות הזו מסומנת כרשומה. סמנו את זו שאיתה נרשמתם.",
+  registrationHeading: "סימון {name} כחלופה שאיתה נרשמת",
+  registrationIntro: "החלת הכול תתאים את התוכנית שלך לחלופה הזו:",
+  registrationApplies: "{said} {apply}.",
+  registrationNotApplied: "{said} אין מה להחיל.",
+  registrationRegisters: "יסומנו כרשומים בתוכנית שלך: {courses}.",
+  registrationNothing: "התוכנית שלך כבר תואמת את מה שבחלופה הזו.",
+  registrationApplyAll: "החלת הכול וסימון כרשומה",
+  registrationOnlyMark: "סימון כרשומה בלבד",
+  registrationCancel: "ביטול",
+  registrationUnavailable: "לא ניתן היה לקרוא מה תשנה החלת הכול, ולכן מוצע סימון בלבד.",
 
   blockedHeading: "זמנים חסומים",
   blockedNone: "אין זמנים חסומים. הוסיפו עבודה, נסיעה, כל מה שצריך להשאיר פנוי.",
