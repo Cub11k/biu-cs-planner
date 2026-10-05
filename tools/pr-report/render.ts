@@ -716,6 +716,18 @@ export function render(report: Report): string {
           "itself. Library calls are left out, and so is a call that does not leave the " +
           "module it is written in.",
         "",
+        // Said every time, because it is true of every graph this draws and the missing edges
+        // are the ones a reviewer looks for first (#167): a port is reached only as a method on
+        // a value, so "what touches the disk" has no arrow here at all. Drawing those calls by
+        // method name alone was ruled out as noise — the port's methods are called `read`,
+        // `list` and `status` — and resolving them needs the value's type, which a syntax tree
+        // does not carry. `tools/pr-report/calls.ts` records the ruling.
+        "A method called on a value is not in this graph either — `workspace.saveStateFile(…)`, " +
+          "and every other call through a port. Which function it reaches is a question about " +
+          "the value's type, and this graph reads import statements, not types. So no arrow " +
+          "here says what touches the disk: `tools/ci/state-file-writer.test.ts` is what holds " +
+          "every State File write to `editStateFile`.",
+        "",
         ...(unresolved
           ? [
               "A node marked **unresolved** is a call to something this repository owns whose " +

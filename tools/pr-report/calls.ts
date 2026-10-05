@@ -63,6 +63,23 @@ import {
  *   not a hole in a gate. No workspace writes one, and following one would need the recursion
  *   and a loop guard; #93 weighs that, and `calls.test.ts` pins both halves, by fixture and by
  *   canary.
+ * - **A method called on a value is not read, and that is a ruling rather than a gap left
+ *   open (#167).** `workspace.saveStateFile(…)` is a property access on a parameter, so no
+ *   import binding names it and no edge is drawn — and every crossing of the Workspace port is
+ *   written that way, so the graph holds no arrow for what touches the disk. Measured on `dev`
+ *   on 2026-10-05, when the ruling was recorded: 216 call edges, 160 distinct pairs, not one mentioning
+ *   `saveStateFile`. Two ways to draw them were weighed and refused. Recording a call by method
+ *   name alone is noise: the port's methods are called `read`, `list` and `status`, names that
+ *   say nothing about whose method was called. Resolving the receiver through its declared type
+ *   means asking a TypeScript program rather than walking a syntax tree, and would add every
+ *   interface call, not just the port's. What was chosen instead is to **say so**: the report
+ *   prints, beside this graph, that method calls are not in it, and names
+ *   `tools/ci/state-file-writer.test.ts` as what enforces the one property this gap hid — that
+ *   only `editStateFile` writes a State File. That check reads the method's name as text and so
+ *   sees the calls this file cannot; it is why it lives in `tools/ci/` and not as an entry in
+ *   `tools/pr-review/layering.ts`, where it would have had no edge to judge (#143).
+ *   `calls.test.ts` pins the refusal, so a change that starts drawing these calls fails there
+ *   and has to retire the report's sentence with it.
  * - **A local shadow is invisible.** A `const groupKey = …` inside a function body hides an
  *   import for the length of that body, and seeing that needs a type checker rather than a
  *   syntax tree. Two modules exporting one name is the case this repo actually contains; a
