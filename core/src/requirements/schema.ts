@@ -316,7 +316,7 @@ export const requirementsFileSchema = requirementsFileHeadSchema.extend({
   deadlines: z.array(deadlineSchema).default([]),
 });
 
-export type Text = z.infer<typeof textSchema>;
+export type LocalizedText = z.infer<typeof textSchema>;
 export type OfferingPattern = z.infer<typeof offeringPatternSchema>;
 export type Pool = z.infer<typeof poolSchema>;
 export type CourseSet = z.infer<typeof courseSetSchema>;

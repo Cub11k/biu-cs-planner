@@ -64,8 +64,12 @@ _Avoid_: exam period, attempt
 ### Requirements
 
 **Program**:
-A degree track a student is enrolled in, such as CS single major or CS with the AI track; a double major is two Programs.
+A course of study a student is enrolled in, such as CS single major, with a Track when they have chosen one; a double major is two Programs.
 _Avoid_: degree, major
+
+**Track**:
+A named set of extra Requirements a Program offers on top of its base rule set, such as the AI track. A Requirements File declares a Program's Tracks beside its base rule set, and a chosen Track's Requirements are evaluated together with the base ones, as their siblings.
+_Avoid_: specialization, concentration, sub-major
 
 **Cohort**:
 The Academic Year and Semester in which a student started; it selects which Requirements File applies.

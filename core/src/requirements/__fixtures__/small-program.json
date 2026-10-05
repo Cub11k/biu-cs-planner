@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "program": { "id": "cs-small", "name": { "he": "מדעי המחשב (דוגמה)", "en": "Computer Science (example)" } },
+  "cohorts": [{ "academicYear": 2027, "semester": "fall" }],
+  "policies": { "passingGrade": 60, "gradeAttempt": "best" },
+  "pools": [
+    { "id": "cs", "kind": "prefix", "prefix": "89-" },
+    { "id": "advanced", "kind": "range", "department": "89", "from": 300, "to": 699 },
+    { "id": "seminars", "kind": "list", "courses": ["89-601", "89-602"] }
+  ],
+  "courseSets": [{ "id": "first-year", "courses": ["89-110", "89-111"] }],
+  "courses": [
+    { "number": "89-110", "credits": 5, "offeringPattern": "fall" },
+    { "number": "89-111", "credits": 5, "offeringPattern": "spring", "prerequisites": { "kind": "passed", "course": "89-110" } },
+    { "number": "89-210", "credits": 4, "offeringPattern": "fall", "prerequisites": { "kind": "set", "set": "first-year" } },
+    { "number": "89-211", "credits": 4, "offeringPattern": "spring" },
+    { "number": "89-310", "credits": 3 },
+    { "number": "89-320", "credits": 3 },
+    { "number": "89-391", "credits": 3 },
+    { "number": "89-601", "credits": 2 },
+    { "number": "89-602", "credits": 2 }
+  ],
+  "equivalences": [{ "from": "89-109", "to": "89-110" }],
+  "requirements": [
+    {
+      "id": "core",
+      "kind": "allOf",
+      "name": { "he": "לימודי חובה", "en": "Core" },
+      "of": [
+        { "id": "intro", "kind": "course", "course": "89-110" },
+        { "id": "data-structures", "kind": "course", "course": "89-111" },
+        {
+          "id": "theory",
+          "kind": "nOf",
+          "n": 1,
+          "of": [
+            { "id": "algorithms", "kind": "course", "course": "89-210" },
+            { "id": "computability", "kind": "course", "course": "89-211" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "elective-block",
+      "kind": "allOf",
+      "of": [
+        { "id": "advanced-electives", "kind": "credits", "min": 6, "pool": "advanced" },
+        { "id": "seminar-cap", "kind": "cap", "max": 2, "pool": "seminars" }
+      ]
+    },
+    { "id": "general-electives", "kind": "credits", "min": 4, "pool": "cs" },
+    { "id": "english", "kind": "manual", "text": { "he": "פטור באנגלית", "en": "English exemption" } }
+  ],
+  "tracks": [
+    {
+      "id": "ai",
+      "name": { "he": "בינה מלאכותית", "en": "AI" },
+      "requirements": [{ "id": "machine-learning", "kind": "course", "course": "89-391" }]
+    }
+  ],
+  "doubleCounting": { "within": [] },
+  "suggestedLayout": [
+    { "studyYear": 1, "semester": "fall", "courses": ["89-110"] },
+    { "studyYear": 1, "semester": "spring", "courses": ["89-111"] }
+  ],
+  "deadlines": [{ "by": { "studyYear": 1, "semester": "spring" }, "courses": ["89-110", "89-111"] }]
+}

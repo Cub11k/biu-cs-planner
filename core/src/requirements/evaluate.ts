@@ -13,7 +13,7 @@ import {
   type RequirementStatus,
   type Standing,
 } from "./program.ts";
-import type { Requirement, RequirementsFile, Text } from "./schema.ts";
+import type { LocalizedText, Requirement, RequirementsFile } from "./schema.ts";
 
 export type { Lens, Lenses, RequirementStatus } from "./program.ts";
 
@@ -57,9 +57,9 @@ export interface LensEvaluation {
 export interface EvaluatedRequirement {
   id: string;
   kind: Requirement["kind"];
-  name?: Text;
+  name?: LocalizedText;
   /** `manual`: the department's text, and whether the student has ticked it. */
-  text?: Text;
+  text?: LocalizedText;
   ticked?: boolean;
   completed: LensEvaluation;
   projected: LensEvaluation;
