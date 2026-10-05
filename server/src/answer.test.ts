@@ -237,3 +237,27 @@ it("answers a Pin or tick that landed with its revision when requirements/ then 
     expect(await version(), where).toBe(served.version);
   }
 });
+
+/** The Plan's edits read `requirements/` after the save for the Plan checks, and so the same. */
+it("answers a Plan edit that landed with its revision when requirements/ then throws", async () => {
+  const { send, version, fail, recover } = await stageRequirements();
+  const basedOn = await version();
+
+  fail();
+  const answer = await send("POST", "/api/plan/attempts", {
+    courseNumber: "89-110",
+    academicYear: 2027,
+    semester: "fall",
+    status: "planned",
+    basedOn,
+  });
+
+  expect(answer.status).toBe(200);
+  const served = (await answer.json()) as { version: string; attempts: { courseNumber: string }[] };
+  expect(isStateFileRevision(served.version)).toBe(true);
+  expect(served.version).not.toBe(basedOn);
+  expect(served.attempts).toEqual([expect.objectContaining({ courseNumber: "89-110" })]);
+
+  recover();
+  expect(await version()).toBe(served.version);
+});

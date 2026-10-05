@@ -179,8 +179,8 @@ export type EditRefusal =
    * that reason reaches the page as an edit that changed nothing, which here may be false. What
    * is refused is passing the adapter's account of the save on. Every screen words it as a save
    * that may have landed, never as one that was lost, and every screen re-reads the State File on
-   * it: the Timetable, an undo or redo step, and since #344 the Progress screen and the language
-   * switch.
+   * it: the Timetable, the Plan screen, an undo or redo step, and since #344 the Progress screen
+   * and the language switch.
    */
   | "save-revision-unreadable";
 

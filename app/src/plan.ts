@@ -30,6 +30,7 @@ import {
   type StateEditing,
 } from "./edit.ts";
 import { DEFAULT_STATE_FILE } from "./picks.ts";
+import { requirementsFiles } from "./programs.ts";
 import { loadRequirementsFiles } from "./requirements.ts";
 import type { Workspace } from "./workspace.ts";
 
@@ -88,9 +89,10 @@ export type PlanEditOptions = PlanReadOptions & {
 const uuid = (): AttemptId => globalThis.crypto.randomUUID();
 
 /** The chosen Programs whose Requirements File the Workspace holds and could read, in order. */
-async function programsOf(workspace: Workspace, state: State): Promise<PlanProgram[]> {
+async function programsOf(workspace: Workspace, state: State, afterSave: boolean): Promise<PlanProgram[]> {
   if (state.programs.length === 0) return [];
-  const loaded = await loadRequirementsFiles(workspace);
+  // after a landed save a failed read is a listing that would not be made, never a 500 (#344)
+  const loaded = await requirementsFiles(workspace, afterSave);
   if (loaded.kind === "refused") return [];
   return state.programs.flatMap((choice): PlanProgram[] => {
     const file = loaded.files.find((entry) => entry.listed.name === choice.requirementsFile)?.file;
@@ -118,8 +120,8 @@ function pinsFor(state: State, programs: readonly PlanProgram[]): SolvePin[] {
   });
 }
 
-async function planOf(workspace: Workspace, state: State, now: () => number): Promise<PlanView> {
-  const programs = await programsOf(workspace, state);
+async function planOf(workspace: Workspace, state: State, now: () => number, afterSave = false): Promise<PlanView> {
+  const programs = await programsOf(workspace, state, afterSave);
   return {
     attempts: state.attempts,
     attemptWarnings: attemptWarnings(state),
@@ -162,7 +164,7 @@ async function edit(
   }
   return {
     kind: "served",
-    view: await planOf(workspace, outcome.state, options.now ?? Date.now),
+    view: await planOf(workspace, outcome.state, options.now ?? Date.now, true),
     version: outcome.version,
     warnings: outcome.warnings,
   };
@@ -301,7 +303,7 @@ export async function planFromSuggestedLayout(
   if (unavailable !== undefined) return { kind: "unavailable", reason: unavailable, version: outcome.version };
   return {
     kind: "served",
-    view: await planOf(workspace, outcome.state, options.now ?? Date.now),
+    view: await planOf(workspace, outcome.state, options.now ?? Date.now, true),
     version: outcome.version,
     warnings: outcome.warnings,
     summary,
