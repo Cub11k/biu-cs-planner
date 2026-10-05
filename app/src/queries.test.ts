@@ -114,3 +114,28 @@ it("words a refusal itself, and carries nothing a hostile adapter wrote", async 
   expect(JSON.stringify([listed, one])).not.toContain("whatever-it-likes");
   expect(JSON.stringify([listed, one])).not.toContain(path);
 });
+
+/** A refusal whose `refusal` cannot even be read is still a Warning, and not a crashed request. */
+it("answers a refusal it cannot read anything off as a Warning", async () => {
+  // an accessor where the port declares a field, which only a cast or plain JavaScript can make
+  const unreadable = Object.create(WorkspaceRefusedError.prototype, {
+    refusal: {
+      get() {
+        throw new Error("/home/alice/Workspace/catalogs/2027.json");
+      },
+    },
+  }) as WorkspaceRefusedError;
+  const hostile: Workspace = {
+    ...memoryWorkspace({ created: true }),
+    read: () => Promise.reject(unreadable),
+  };
+
+  expect(await listOfferings(hostile, { academicYear: 2027, semester: "fall" })).toEqual({
+    warnings: [
+      {
+        kind: "workspace-refused",
+        reason: "refusing the Catalog for the Academic Year 2027: the Workspace would not touch it",
+      },
+    ],
+  });
+});

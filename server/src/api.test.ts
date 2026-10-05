@@ -1720,10 +1720,10 @@ it("names no path in either answer, and no State File", async () => {
  * refusal — so the answer that was actually carrying one was never looked at. A refusal out of
  * `server/src/workspace.fs.ts` worded itself `refusing ./catalogs/2027.json: …`, the
  * Workspace-relative spelling of the target, and `app/src/queries.ts` put a refusal's message
- * straight onto the `reason` of a `workspace-refused` Warning (it words its own since #249). Three routes served it: the two
- * Catalog queries and the exam period's `catalogWarnings`. A Workspace-relative path is smaller
- * than an absolute one and is still a file path, reaching a page that is not allowed to know the
- * Workspace has files in it.
+ * straight onto the `reason` of a `workspace-refused` Warning (it words its own since #249).
+ * Three routes served it: the two Catalog queries and the exam period's `catalogWarnings`. A
+ * Workspace-relative path is smaller than an absolute one and is still a file path, reaching a
+ * page that is not allowed to know the Workspace has files in it.
  *
  * So these go the other way round: **provoke a refusal on every route that can answer
  * `workspace-refused`, and read the body.** The routes are enumerated from `createApi` rather
@@ -1966,10 +1966,11 @@ it("carries nothing a hostile adapter wrote, on any route", async () => {
   ];
 
   // **A Proxy over the real adapter rather than an object listing the port's methods.** Every
-  // method but the ones `spared` names answers with the hostile refusal once `refuse` is set,
-  // which needs no method named: `tools/ci/state-file-writer.ts` rightly flags a test that names
-  // the State File save, and this double neither calls nor implements one — every save in this
-  // test reaches the real adapter through `editStateFile`, as production's do.
+  // method but the ones `spared` names answers with the hostile refusal once `refuse` is set, so
+  // the double covers the whole port with none of it listed — a method added to the port later is
+  // hostile here too without anyone remembering to add it. It is a decorator and never a writer:
+  // every save in this test reaches the real adapter through `editStateFile`, as production's do,
+  // which is also why `tools/ci/state-file-writer.ts` has nothing to find here.
   const real = fileSystemWorkspace(root);
   let refuse: (() => WorkspaceRefusedError) | undefined;
   let spared: (property: PropertyKey) => boolean = () => false;

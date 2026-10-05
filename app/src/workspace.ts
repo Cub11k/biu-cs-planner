@@ -305,7 +305,10 @@ export type WorkspaceRefusalReason =
  * second channel for exactly what the message no longer is.
  */
 export type WorkspaceRefusalSubject =
-  WorkspaceRef | BackupRef | { kind: "folder"; folder: WorkspaceFolder } | { kind: "workspace" };
+  | WorkspaceRef
+  | BackupRef
+  | { kind: "folder"; folder: WorkspaceFolder }
+  | { kind: "workspace" };
 
 /** A refusal in the port's own words: why, and about what (#249). */
 export type WorkspaceRefusal = {
@@ -533,10 +536,7 @@ export class StateFileChangedError extends Error {
 
   constructor(
     name: string,
-    revisions: {
-      basedOn: StateFileVersion | undefined;
-      found: StateFileVersion | undefined;
-    },
+    revisions: { basedOn: StateFileVersion | undefined; found: StateFileVersion | undefined },
   ) {
     super(
       `refusing to overwrite the State File ${JSON.stringify(name)}: ` +

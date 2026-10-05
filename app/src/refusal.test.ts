@@ -27,7 +27,7 @@ const SENTENCES: Record<WorkspaceRefusalReason, string> = {
   "not-a-name": "a State File's name is a name, never a path",
   "not-a-year": "an Academic Year is a whole number",
   "not-a-moment": "a snapshot's moment is a whole number of milliseconds",
-  "not-a-catalog": "a State File is read and saved only with the revision a guarded save needs",
+  "not-a-catalog": "only a Catalog is read or written whole, and this is not one",
   "mixed-snapshots": "snapshots are pruned one State File at a time",
 };
 
@@ -183,4 +183,49 @@ it("says only its own words whatever shape the refusal arrives in", () => {
       CATALOG_2027,
     ),
   ).toBe("refusing a folder of the Workspace: it is there and cannot be read");
+});
+
+/**
+ * Found by review on PR #280: a subject with getters answered the check with one value and the
+ * sentence with another, so a year read three times said a path on its third read, and a moment
+ * that flipped out of range made `toISOString` throw — a 500 where a Warning belongs. Every field
+ * is read once now, nothing the adapter supplies is said, and a read that throws is the fallback.
+ */
+it("cannot be talked into a value by a refusal whose fields change as they are read", () => {
+  const path = "/home/alice/Workspace/catalogs/2027.json";
+  let reads = 0;
+  const flipping = {
+    get kind() {
+      reads += 1;
+      return reads === 1 ? "catalog" : "backup";
+    },
+    get academicYear() {
+      reads += 1;
+      return reads >= 3 ? path : 2027;
+    },
+    name: "alice",
+    get takenAt() {
+      return 1e20;
+    },
+  };
+  const sentence = wordRefusal({ reason: "unreadable", subject: flipping } as never, CATALOG_2027);
+  expect(sentence).toBe(
+    "refusing the Catalog for the Academic Year 2027: it is there and cannot be read",
+  );
+
+  // a refusal whose every read throws is still a sentence, not a crashed request
+  const throwing = new Proxy(
+    {},
+    {
+      get() {
+        throw new Error(path);
+      },
+    },
+  );
+  expect(wordRefusal(throwing as never, CATALOG_2027)).toBe(
+    "refusing the Catalog for the Academic Year 2027: the Workspace would not touch it",
+  );
+  expect(wordRefusal({ reason: "unreadable", subject: throwing } as never, CATALOG_2027)).toBe(
+    "refusing the Catalog for the Academic Year 2027: it is there and cannot be read",
+  );
 });

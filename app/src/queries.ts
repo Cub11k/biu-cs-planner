@@ -5,7 +5,7 @@ import {
   type Semester,
 } from "@biu-cs-planner/core";
 import { wordRefusal } from "./refusal.ts";
-import { WorkspaceRefusedError, type Workspace } from "./workspace.ts";
+import { WorkspaceRefusedError, type Workspace, type WorkspaceRefusal } from "./workspace.ts";
 
 /**
  * Reading the Catalog. Every read goes through the schema, because a file on disk is
@@ -41,14 +41,8 @@ async function loadCatalog(
     stored = await workspace.read(ref);
   } catch (error) {
     if (error instanceof WorkspaceRefusedError) {
-      return {
-        warnings: [
-          {
-            kind: "workspace-refused",
-            reason: wordRefusal(error.refusal, ref),
-          },
-        ],
-      };
+      const reason = wordRefusal(refusalOf(error), ref);
+      return { warnings: [{ kind: "workspace-refused", reason }] };
     }
     throw error;
   }
@@ -60,6 +54,18 @@ async function loadCatalog(
   if (!parsed.catalog) return { warnings: parsed.warnings };
 
   return { offerings: parsed.catalog.offerings, warnings: [] };
+}
+
+/**
+ * The refusal off the error, or none when reading it throws: a subclass can make `refusal` a
+ * getter, and a refusal is a Warning and never a 500, so `wordRefusal` words none as its fallback.
+ */
+function refusalOf(error: WorkspaceRefusedError): WorkspaceRefusal | undefined {
+  try {
+    return error.refusal;
+  } catch {
+    return undefined;
+  }
 }
 
 /** A Year-long Offering is given in both its Semesters, so it answers to either. */

@@ -143,10 +143,10 @@ const WATCHED_FOLDERS: WorkspaceFolder[] = ["catalogs", "requirements"];
  *
  * **It names the ref or its folder and never the path** (#216). It used to word itself
  * `refusing ./catalogs/2027.json: …` — the Workspace-relative spelling of the target, which is
- * smaller than an absolute path and is still a file path, and which travels out as a Warning
- * over the Catalog query routes. It now carries the ref or its folder as the refusal's subject
- * (#249), and `describe` words its message from that, saying which Catalog, which State File,
- * which snapshot instead.
+ * smaller than an absolute path and is still a file path, and which travelled out as a Warning
+ * over the Catalog query routes until #249. It now carries the ref or its folder as the
+ * refusal's subject, and `describe` words its message from that, saying which Catalog, which
+ * State File, which snapshot instead.
  *
  * **Nothing is kept on `cause` here, and nothing is lost by that.** `UnreadableError` and
  * `UnwritableError` carry the filesystem's own error, which is the only place the path it met
@@ -250,8 +250,9 @@ class UnreadableError extends WorkspaceRefusedError {
  * already answers one: a Warning and never a crashed server (docs/design.md, "API and data
  * rules"). **No caller reads this sentence** (#249): the callers in `app` answer a refusal with
  * a reason of their own, and the one that serves a sentence — the Catalog read in
- * `app/src/queries.ts` — words its own from the refusal's reason code and subject. So the errno below is for a log (#165), and
- * saying otherwise here would claim something the app does not do.
+ * `app/src/queries.ts` — words its own from the refusal's reason code and subject. So the errno
+ * below is for a log (#165), and saying otherwise here would claim something the app does not
+ * do.
  *
  * **Every failure and not a list of codes.** An enumeration is what #109 found the hole in:
  * the code nobody thought of is the one that escapes. So the recognising is done on the way in
@@ -260,9 +261,10 @@ class UnreadableError extends WorkspaceRefusedError {
  * left over.
  *
  * **It names the ref and never the path.** The API exposes domain operations and never a file
- * path (CLAUDE.md; docs/design.md, "API and data rules", rule 1), and a refusal's message can
- * travel out as a Warning; a filesystem error's own message carries the absolute path, so the
- * errno is kept and the rest is dropped. The error itself stays on `cause`, where a log can
+ * path (CLAUDE.md; docs/design.md, "API and data rules", rule 1), and a refusal's message
+ * travelled out as a Warning until #249 and goes to a log now, which is no place for a path
+ * either; a filesystem error's own message carries the absolute path, so the errno is kept and
+ * the rest is dropped. The error itself stays on `cause`, where a log can
  * reach it and a response cannot.
  *
  * **That is now the rule for every refusal this module makes and not this one's alone** (#216).
@@ -285,7 +287,8 @@ class UnwritableError extends WorkspaceRefusedError {
 }
 
 /**
- * What a ref is, in the domain's words, for a refusal a student reads. Not the path: see
+ * What a ref is, in the domain's words, for a refusal's message, which goes to a log (#165); what a
+ * student reads is worded by `app` (`app/src/refusal.ts`, #249). Not the path: see
  * `UnwritableError`.
  */
 const describeRef = (ref: WorkspaceRef | BackupRef): string => {
@@ -308,7 +311,8 @@ const describeRef = (ref: WorkspaceRef | BackupRef): string => {
  *
  * The other half of what #216 needs: a refusal is about a file, which the ref itself names, or
  * about the folder that file is listed from or written into, which is `folderSubject`'s answer —
- * a refusal subject (#249) — and this record is how `describe` words it for a message. `DIRECTORY` at the top maps the same folders to their names on disk, and the two are
+ * a refusal subject (#249) — and this record is how `describe` words it for a message.
+ * `DIRECTORY` at the top maps the same folders to their names on disk, and the two are
  * deliberately alike in shape: one is what the filesystem is told, the other what a caller who
  * may not know there is a filesystem is told.
  *
@@ -600,10 +604,11 @@ export function fileSystemWorkspace(
    * this paragraph rather than a missing case.
    *
    * **The folder is named rather than spelled as a path**: the caller passes `folderSubject`'s
-   * answer, which is the refusal's subject and is worded by `describe` (#216, #249). It used to be `path.replace(root, ".")` — `./catalogs`,
-   * and for the Workspace root a single dot, which names nothing, so that one case was already
-   * special-cased here. Every folder is named now and the special case is gone with it: the
-   * degenerate case was the whole of the wording problem in miniature.
+   * answer, which is the refusal's subject and is worded by `describe` (#216, #249). It used to
+   * be `path.replace(root, ".")` — `./catalogs`, and for the Workspace root a single dot, which
+   * names nothing, so that one case was already special-cased here. Every folder is named now
+   * and the special case is gone with it: the degenerate case was the whole of the wording
+   * problem in miniature.
    */
   const entriesOrAbsent = async (
     path: string,
@@ -810,10 +815,7 @@ export function fileSystemWorkspace(
     // `missingFolders` answers for that, since a root that is a file holds no folder at all.
     if (folder === undefined) return;
     if (await isDirectory(join(root, DIRECTORY[folder]))) return;
-    throw new NotAWorkspaceError({
-      folder,
-      because: "is there and is not a folder",
-    });
+    throw new NotAWorkspaceError({ folder, because: "is there and is not a folder" });
   };
 
   /**
@@ -1204,11 +1206,12 @@ function folderFor(ref: {
  * rather than today's one. That is the point: the rule should not depend on being
  * remembered.
  *
- * **The path is what is checked and `what` is what is said** (#216). This was the one refusal
- * in the module naming an *absolute* path, which is the largest a leak out of here could be;
- * every caller already has the ref, so it hands that along with the path as the subject.
- * Nothing reachable today gets this far, so what the change protects is the future caller the
- * guard exists for — which is exactly the caller that would also be the first to leak a path.
+ * **The path is what is checked and `about` is what the refusal is about** (#216, #249). This
+ * was the one refusal in the module naming an *absolute* path, which is the largest a leak out of
+ * here could be; every caller already has the ref, so it hands that along with the path as the
+ * subject. Nothing reachable today gets this far, so what the change protects is the future
+ * caller the guard exists for — which is exactly the caller that would also be the first to put
+ * a path in a log line.
  */
 function requireJsonName(path: string, about: WorkspaceRefusalSubject): void {
   if (!path.endsWith(".json")) {
