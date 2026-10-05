@@ -11,7 +11,12 @@ import { WorkspaceRefusedError, type CatalogRef, type Workspace } from "./worksp
  * **Requirements Files first**: the chosen Programs' own, in their order, then every other file in
  * the order the Workspace lists them, so a Course's credits are, for a Course a chosen Program's file
  * names, the ones the credit-load check reads (`checkPlan` takes them from the first Program whose
- * file gives them). Equivalences are not applied: a Course is known by the number its file uses. **A name the files do not
+ * file gives them). Equivalences are not applied: a Course is known by the number its file uses.
+ * **A card's credits, not a column's total**: the total is the Plan answer's `semesterCredits`
+ * (#352), which applies Equivalences, reads only the chosen Programs' files and halves a Year-long
+ * Course whose two halves share an Academic Year — so two such cards each print the year's credits
+ * while their columns count half, and a Course only another file names has credits on its card and
+ * counts as unknown in its column. **A name the files do not
  * give comes from the most recent Catalog** the Workspace holds and can read. A Catalog's credits
  * are never taken: they are a sum of weekly hours, not the Course's credits, and the Plan is checked
  * against the Requirements File alone (`docs/design.md`, "Plan").

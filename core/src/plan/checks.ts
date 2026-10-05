@@ -5,6 +5,7 @@ import { solveAssignment, type SolveLimits, type SolvePin } from "../requirement
 import type { AttemptTarget } from "../state/attempts.ts";
 import type { Attempt, AttemptId, StudentCohort } from "../state/schema.ts";
 import { semesterIndex, studyPointAt, type SemesterAt } from "../state/semester-order.ts";
+import { creditsOverCompiled } from "./credits.ts";
 
 /**
  * The Plan checks (#291): a student's Attempts checked against their Programs' Requirements Files,
@@ -335,57 +336,21 @@ function yearLongWarnings(reading: Reading): PlanWarning[] {
 }
 
 /**
- * Credits per Semester, from the first Program whose file gives a Course's credits, over the
- * Attempts that took a seat that Semester (planned, registered, passed, failed — not exempt or
- * credited, which were done elsewhere or waived). A Year-long Course's credits are the year's, so
- * when its Fall and Spring halves are both in one Academic Year each carries half of them; a lone
- * half carries them all, since nothing says where the rest falls. Only a Semester holding a planned
- * or registered Attempt is reported: the others are history, and there is nothing left to plan in
- * them.
+ * A Semester carrying more credits than the limit, by the totals `./credits.ts` computes — the
+ * same totals the Plan screen's columns show (#352), so a column and its Warning agree. Only a
+ * Semester holding a planned or registered Attempt is reported: the others are history, and there
+ * is nothing left to plan in them.
  */
 function creditLoadWarnings(readings: readonly Reading[], attempts: readonly Attempt[], limit: number): PlanWarning[] {
-  const creditsOf = (taken: Attempt): number => {
-    for (const { program } of readings) {
-      const course = program.canonical(taken.courseNumber);
-      const credits = program.credits(course);
-      if (credits === undefined) continue;
-      const yearLong = program.file.courses.some(
-        (c) => program.canonical(c.number) === course && c.offeringPattern === "year-long",
-      );
-      const otherHalf = taken.semester === "fall" ? "spring" : taken.semester === "spring" ? "fall" : undefined;
-      const paired =
-        otherHalf !== undefined &&
-        attempts.some(
-          (a) =>
-            a.academicYear === taken.academicYear &&
-            a.semester === otherHalf &&
-            program.canonical(a.courseNumber) === course,
-        );
-      return yearLong && paired ? credits / 2 : credits;
-    }
-    return 0;
-  };
-
-  const semesters = new Map<number, { at: SemesterAt; credits: number; planning: boolean }>();
-  for (const attempt of attempts) {
-    if (attempt.status === "exempt" || attempt.status === "credited") continue;
-    const index = semesterIndex(attempt);
-    const slot = semesters.get(index) ?? {
-      at: { academicYear: attempt.academicYear, semester: attempt.semester },
-      credits: 0,
-      planning: false,
-    };
-    slot.credits += creditsOf(attempt);
-    slot.planning ||= isPending(attempt);
-    semesters.set(index, slot);
-  }
-
-  return [...semesters.entries()]
-    .sort(([a], [b]) => a - b)
-    .filter(([, slot]) => slot.planning && slot.credits > limit)
-    .map(([, slot]) => ({
+  const planning = new Set(attempts.filter(isPending).map(semesterIndex));
+  return creditsOverCompiled(
+    readings.map((reading) => reading.program),
+    attempts,
+  )
+    .filter((slot) => planning.has(semesterIndex(slot)) && slot.credits > limit)
+    .map((slot) => ({
       kind: "credit-load" as const,
-      target: { kind: "semester" as const, ...slot.at },
+      target: { kind: "semester" as const, academicYear: slot.academicYear, semester: slot.semester },
       credits: slot.credits,
       limit,
     }));

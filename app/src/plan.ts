@@ -7,6 +7,7 @@ import {
   suggestedLayoutOf,
   moveAttempt,
   removeAttempt,
+  semesterCredits,
   updateAttempt,
   type Attempt,
   type AttemptChange,
@@ -17,6 +18,7 @@ import {
   type PlanProgram,
   type PlanWarning,
   type SemesterAt,
+  type SemesterCredits,
   type SolvePin,
   type State,
   type StateFileVersion,
@@ -30,7 +32,7 @@ import {
   type StateEditing,
 } from "./edit.ts";
 import { DEFAULT_STATE_FILE } from "./picks.ts";
-import { requirementsFiles } from "./programs.ts";
+import { requirementsFiles, type ProgramsWarning } from "./programs.ts";
 import { loadRequirementsFiles } from "./requirements.ts";
 import type { Workspace } from "./workspace.ts";
 
@@ -48,8 +50,10 @@ import type { Workspace } from "./workspace.ts";
  * **Every answer carries the Plan checks** (#291): `checkPlan` against the Requirements Files of
  * the student's chosen Programs, recomputed from the State File and `requirements/` on every read
  * and never stored. A Program whose file the Workspace does not hold, or cannot read, is left out
- * of them; the Programs route is where that is said (`./programs.ts`). The missing-Requirements
- * lens runs the solver, so it is given a clock (`now`) for its time cap, as Progress is.
+ * of them; the Programs route is where that is said (`./programs.ts`), and the Plan answer marks only
+ * a `requirements/` that could not be listed at all (#357). The missing-Requirements
+ * lens runs the solver, so it is given a clock (`now`) for its time cap, as Progress is. Beside them,
+ * each Semester's credit total from the same Programs (#352), so no screen adds credits up itself.
  */
 
 export type PlanView = {
@@ -59,6 +63,20 @@ export type PlanView = {
   attemptWarnings: AttemptWarning[];
   /** The Plan checks against the chosen Programs' Requirements Files (`checkPlan`). */
   planWarnings: PlanWarning[];
+  /**
+   * What each Semester adds up to in credits, against the same Programs (`semesterCredits`, #352):
+   * the totals the credit-load check judges, so the screen shows the number its Warning is about.
+   * A Semester holding no counted Attempt is not listed.
+   */
+  semesterCredits: SemesterCredits[];
+  /**
+   * `requirements-unlisted` when the student has a Program and `requirements/` could not be listed
+   * — after a landed save, a read that failed in any way (#344) — so the checks and totals above ran
+   * against no Program, and the page can say so. The marker the Programs and Progress answers carry
+   * (`./programs.ts`), and only it: which single file is missing or unreadable is the Programs
+   * route's to say (#357).
+   */
+  programWarnings: Extract<ProgramsWarning, { kind: "requirements-unlisted" }>[];
 };
 
 export type PlanResult =
@@ -88,13 +106,21 @@ export type PlanEditOptions = PlanReadOptions & {
 
 const uuid = (): AttemptId => globalThis.crypto.randomUUID();
 
-/** The chosen Programs whose Requirements File the Workspace holds and could read, in order. */
-async function programsOf(workspace: Workspace, state: State, afterSave: boolean): Promise<PlanProgram[]> {
-  if (state.programs.length === 0) return [];
+/**
+ * The chosen Programs whose Requirements File the Workspace holds and could read, in order — and
+ * whether `requirements/` could not be listed at all, which leaves every Program out and is said
+ * rather than passed off as a Plan with nothing to check (#357).
+ */
+async function programsOf(
+  workspace: Workspace,
+  state: State,
+  afterSave: boolean,
+): Promise<{ programs: PlanProgram[]; unlisted: boolean }> {
+  if (state.programs.length === 0) return { programs: [], unlisted: false };
   // after a landed save a failed read is a listing that would not be made, never a 500 (#344)
   const loaded = await requirementsFiles(workspace, afterSave);
-  if (loaded.kind === "refused") return [];
-  return state.programs.flatMap((choice): PlanProgram[] => {
+  if (loaded.kind === "refused") return { programs: [], unlisted: true };
+  const programs = state.programs.flatMap((choice): PlanProgram[] => {
     const file = loaded.files.find((entry) => entry.listed.name === choice.requirementsFile)?.file;
     if (file === undefined) return [];
     const ticked = state.manualTicks
@@ -109,6 +135,7 @@ async function programsOf(workspace: Workspace, state: State, afterSave: boolean
       },
     ];
   });
+  return { programs, unlisted: false };
 }
 
 /** The State's Pins as the solver takes them: each in the Program whose file it names. */
@@ -121,7 +148,7 @@ function pinsFor(state: State, programs: readonly PlanProgram[]): SolvePin[] {
 }
 
 async function planOf(workspace: Workspace, state: State, now: () => number, afterSave = false): Promise<PlanView> {
-  const programs = await programsOf(workspace, state, afterSave);
+  const { programs, unlisted } = await programsOf(workspace, state, afterSave);
   return {
     attempts: state.attempts,
     attemptWarnings: attemptWarnings(state),
@@ -133,6 +160,8 @@ async function planOf(workspace: Workspace, state: State, now: () => number, aft
       pins: pinsFor(state, programs),
       limits: { now },
     }),
+    semesterCredits: semesterCredits({ attempts: state.attempts, programs }),
+    programWarnings: unlisted ? [{ kind: "requirements-unlisted" }] : [],
   };
 }
 

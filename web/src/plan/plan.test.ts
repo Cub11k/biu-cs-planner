@@ -1,9 +1,9 @@
 import { expect, it } from "vitest";
 import { createApiClient } from "../api.ts";
-import { creditsOf, gradeOf, planYears, retakeSemester } from "./columns.ts";
+import { columnCredits, gradeOf, planYears, retakeSemester } from "./columns.ts";
 import {
   addAttempt,
-  fetchCohort,
+  fetchChoices,
   fetchCourses,
   fetchPlan,
   moveAttempt,
@@ -24,6 +24,8 @@ const SERVED = {
   attempts: [ATTEMPT],
   attemptWarnings: [],
   planWarnings: [{ kind: "credit-load", target: { kind: "semester", academicYear: 2027, semester: "fall" }, credits: 30, limit: 24 }],
+  semesterCredits: [{ academicYear: 2027, semester: "fall", credits: 30, unknown: 0 }],
+  programWarnings: [{ kind: "requirements-unlisted" }],
   version: "a".repeat(64),
   warnings: [{ kind: "cohort-unreadable" }],
 };
@@ -50,6 +52,8 @@ it("asks for the Plan with the launch token, and reads what is served", async ()
     attempts: [ATTEMPT],
     attemptWarnings: [],
     planWarnings: SERVED.planWarnings,
+    semesterCredits: SERVED.semesterCredits,
+    programWarnings: [{ kind: "requirements-unlisted" }],
     stateWarnings: [{ kind: "cohort-unreadable" }],
     version: "a".repeat(64),
   });
@@ -64,6 +68,7 @@ it("sends each edit to its route, naming the Attempt by its id, with the revisio
   await moveAttempt(api, "a1", { academicYear: 2028, semester: "spring" }, "v4");
   await removeAttempt(api, "a1", "v5");
   await planFromSuggestedLayout(api, "v6");
+  await planFromSuggestedLayout(api, "v7", "math-2027");
 
   expect(sent.map((request) => `${request.method} ${new URL(request.url).pathname}`)).toEqual([
     "POST /api/plan/attempts",
@@ -71,6 +76,7 @@ it("sends each edit to its route, naming the Attempt by its id, with the revisio
     "PATCH /api/plan/attempts/a1",
     "PUT /api/plan/attempts/a1/semester",
     "DELETE /api/plan/attempts/a1",
+    "POST /api/plan/suggested-layout",
     "POST /api/plan/suggested-layout",
   ]);
   expect(await Promise.all(sent.map((request) => request.json()))).toEqual([
@@ -80,6 +86,7 @@ it("sends each edit to its route, naming the Attempt by its id, with the revisio
     { academicYear: 2028, semester: "spring", basedOn: "v4" },
     { basedOn: "v5" },
     { basedOn: "v6" },
+    { requirementsFile: "math-2027", basedOn: "v7" },
   ]);
 });
 
@@ -117,20 +124,28 @@ it("reads New Plan from Suggested Layout's summary, and tells what it needs from
   expect(await planFromSuggestedLayout(stale.api, "v1")).toEqual({ kind: "refused", reason: "state-file-changed" });
 });
 
-it("reads the Cohort off the Programs route, and none when it cannot be had", async () => {
+it("reads the Cohort and the Programs off the Programs route, and nothing when they cannot be had", async () => {
   const chosen = client(() =>
-    Response.json({ cohort: { academicYear: 2027, semester: "spring" }, programs: [], programWarnings: [], warnings: [] }),
+    Response.json({
+      cohort: { academicYear: 2027, semester: "spring" },
+      programs: [{ requirementsFile: "cs-2027", track: "core" }, { requirementsFile: "math-2027" }],
+      programWarnings: [],
+      warnings: [],
+    }),
   );
-  expect(await fetchCohort(chosen.api)).toEqual({ academicYear: 2027, semester: "spring" });
+  expect(await fetchChoices(chosen.api)).toEqual({
+    cohort: { academicYear: 2027, semester: "spring" },
+    programs: ["cs-2027", "math-2027"],
+  });
   expect(new URL(chosen.sent[0]!.url).pathname).toBe("/api/programs");
 
   const none = client(() => Response.json({ cohort: null, programs: [], programWarnings: [], warnings: [] }));
-  expect(await fetchCohort(none.api)).toBeNull();
+  expect(await fetchChoices(none.api)).toEqual({ cohort: null, programs: [] });
 
-  expect(await fetchCohort(client(() => Response.json({ reason: "state-file-unreadable" }, { status: 409 })).api)).toBeUndefined();
-  expect(await fetchCohort(client(() => new Response("nope")).api)).toBeUndefined();
+  expect(await fetchChoices(client(() => Response.json({ reason: "state-file-unreadable" }, { status: 409 })).api)).toBeUndefined();
+  expect(await fetchChoices(client(() => new Response("nope")).api)).toBeUndefined();
   expect(
-    await fetchCohort(
+    await fetchChoices(
       client(() => {
         throw new TypeError("fetch failed");
       }).api,
@@ -196,25 +211,13 @@ it("starts at the first Attempt with no Cohort, and at this year's Fall with nei
   expect(years({ cohort: undefined, attempts: [], thisYear: 2030 })[0]).toBe("2030:fall,spring,summer");
 });
 
-it("adds up a Semester's credits, leaving out exempt and credited Attempts and counting the unknown", () => {
-  const courses = new Map([
-    ["89-110", { courseNumber: "89-110", credits: 6 }],
-    ["89-111", { courseNumber: "89-111", credits: 4 }],
-    ["89-112", { courseNumber: "89-112" }],
-  ]);
-  expect(
-    creditsOf(
-      [
-        { courseNumber: "89-110", status: "planned" },
-        { courseNumber: "89-111", status: "failed" },
-        { courseNumber: "89-110", status: "exempt" },
-        { courseNumber: "89-111", status: "credited" },
-        { courseNumber: "89-112", status: "registered" },
-        { courseNumber: "10-001", status: "passed" },
-      ],
-      courses,
-    ),
-  ).toEqual({ credits: 10, unknown: 2 });
+it("shows the credit total the Plan answer serves for a Semester, and nothing for one it does not list", () => {
+  const totals = [
+    { academicYear: 2027, semester: "fall" as const, credits: 9, unknown: 0 },
+    { academicYear: 2027, semester: "spring" as const, credits: 4, unknown: 1 },
+  ];
+  expect(columnCredits(totals, { academicYear: 2027, semester: "spring" })).toEqual({ credits: 4, unknown: 1 });
+  expect(columnCredits(totals, { academicYear: 2028, semester: "spring" })).toEqual({ credits: 0, unknown: 0 });
 });
 
 it("places a retake in the next Fall or Spring, never a Summer", () => {
