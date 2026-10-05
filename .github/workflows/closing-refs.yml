@@ -39,7 +39,10 @@ jobs:
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
+      # Nothing here needs git credentials, so the write token is not left in .git/config.
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@v4
         with:
@@ -47,7 +50,8 @@ jobs:
 
       # No install: the script uses only `fetch` and node's own type stripping. It already
       # turns every failure into a warning; `continue-on-error` covers the ones it cannot
-      # catch, such as a file that does not parse.
+      # catch, such as a file that does not parse. Checkout and setup-node can still fail on
+      # an outage of their own; that is the runner, not this check.
       - name: Check the closing references
         continue-on-error: true
         env:

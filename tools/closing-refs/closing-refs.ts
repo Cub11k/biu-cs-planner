@@ -99,7 +99,7 @@ export function renderResolved(closes: readonly Closed[]): string {
     numbers.length === 0
       ? "This pull request no longer closes any issue."
       : !closes.some((issue) => issue.children.length > 0)
-        ? `This pull request closes ${issueList(numbers)}, and none of them is a parent.`
+        ? `This pull request closes ${issueList(numbers)}, and ${numbers.length === 1 ? "it is not a parent" : "none of them is a parent"}.`
         : `This pull request closes ${issueList(numbers)}, and every open child of a parent ` +
           "among them is in that list.";
   return [MARKER, "", "### Closing references", "", `Resolved. ${now}`].join("\n");

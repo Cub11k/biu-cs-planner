@@ -79,7 +79,7 @@ describe("closing-refs.yml", () => {
 
   it("runs on every pull request, docs-only ones included", () => {
     expect(yaml()).toMatch(/^on:\n  pull_request:\n    types: \[[^\]]*\bedited\b[^\]]*\]\n/m);
-    expect(yaml()).not.toMatch(/^\s+paths:/m);
+    expect(yaml()).not.toMatch(/^\s+paths(-ignore)?:/m);
   });
 
   it("cannot fail its job, even when the script itself does", () => {

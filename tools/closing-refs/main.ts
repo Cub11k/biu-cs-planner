@@ -36,7 +36,7 @@ const QUERY = `
 query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
-      closingIssuesReferences(first: 100) { nodes { number } }
+      closingIssuesReferences(first: 100) { nodes { number repository { nameWithOwner } } }
     }
   }
 }`;
@@ -57,7 +57,11 @@ function port(repo: string, number: number, token: string, dryRun: boolean): Por
         errors?: { message: string }[];
         data?: {
           repository?: {
-            pullRequest?: { closingIssuesReferences?: { nodes?: { number: number }[] } };
+            pullRequest?: {
+              closingIssuesReferences?: {
+                nodes?: { number: number; repository?: { nameWithOwner?: string } }[];
+              };
+            };
           };
         };
       };
@@ -66,7 +70,11 @@ function port(repo: string, number: number, token: string, dryRun: boolean): Por
       }
       const pr = payload.data?.repository?.pullRequest;
       if (!pr) throw new Error(`pull request ${repo}#${number} was not found`);
-      return (pr.closingIssuesReferences?.nodes ?? []).map((node) => node.number);
+      // An issue in another repository can be closed too, but its number means nothing
+      // here: looking it up would read this repository's issue of the same number.
+      return (pr.closingIssuesReferences?.nodes ?? [])
+        .filter((node) => node.repository?.nameWithOwner?.toLowerCase() === repo.toLowerCase())
+        .map((node) => node.number);
     },
 
     // A parent holds at most 100 sub-issues, so one page is all of them.
@@ -77,8 +85,17 @@ function port(repo: string, number: number, token: string, dryRun: boolean): Por
         }),
         `reading the sub-issues of #${issue}`,
       );
-      const children = (await response.json()) as { number: number; state: string }[];
-      return children.map((child): Child => ({ number: child.number, open: child.state === "open" }));
+      const children = (await response.json()) as {
+        number: number;
+        state: string;
+        repository_url: string;
+      }[];
+      // A sub-issue may live in another repository; matched by number alone it could pass
+      // for, or hide, one of this repository's issues, so only this repository's count.
+      const here = `${API}/repos/${repo}`.toLowerCase();
+      return children
+        .filter((child) => child.repository_url.toLowerCase() === here)
+        .map((child): Child => ({ number: child.number, open: child.state === "open" }));
     },
 
     findComment: () => findComment(repo, number, token, MARKER),

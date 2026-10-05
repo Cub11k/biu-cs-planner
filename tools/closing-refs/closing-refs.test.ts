@@ -110,8 +110,14 @@ describe("renderResolved", () => {
 
   it("says so when the parent left the list instead of its children joining it", () => {
     expect(renderResolved([{ number: 260, children: [] }])).toContain(
-      "closes #260, and none of them is a parent",
+      "closes #260, and it is not a parent",
     );
+    expect(
+      renderResolved([
+        { number: 1, children: [] },
+        { number: 2, children: [] },
+      ]),
+    ).toContain("closes #1 and #2, and none of them is a parent");
     expect(renderResolved([])).toContain("no longer closes any issue");
   });
 });
