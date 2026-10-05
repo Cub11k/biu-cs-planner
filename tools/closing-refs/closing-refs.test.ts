@@ -3,10 +3,13 @@ import {
   MARKER,
   decide,
   issueList,
+  proseOnly,
   renderFindings,
   renderResolved,
   run,
   unclosedChildren,
+  unregistered,
+  writtenClosings,
   type Child,
   type Existing,
   type Port,
@@ -56,6 +59,96 @@ describe("unclosedChildren", () => {
       { parent: 10, missing: [11] },
       { parent: 20, missing: [21, 22] },
     ]);
+  });
+});
+
+const REPO = "Cub11k/biu-cs-planner";
+
+describe("writtenClosings", () => {
+  it("reads a deliberate `Closes` line", () => {
+    expect(writtenClosings("Some prose.\n\nCloses #308\nCloses #313\n", REPO)).toEqual([308, 313]);
+  });
+
+  it("reads every keyword GitHub documents, in any case, with or without a colon", () => {
+    const body = [
+      "close #1",
+      "closes #2",
+      "Closed #3",
+      "fix #4",
+      "FIXES #5",
+      "fixed #6",
+      "resolve #7",
+      "resolves #8",
+      "Resolved: #9",
+    ].join("\n");
+    expect(writtenClosings(body, REPO)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  });
+
+  it("reads a keyword mid-sentence, as GitHub does — #223's `the closed #125`", () => {
+    expect(writtenClosings("a dated amendment on the closed #125, which is why", REPO)).toEqual([
+      125,
+    ]);
+  });
+
+  it("does not read a keyword that is only the end of another word", () => {
+    expect(writtenClosings("enclosed #5, disclosed #6, prefixed #7", REPO)).toEqual([]);
+  });
+
+  it("does not read a number with no keyword before it", () => {
+    expect(writtenClosings("See #236 and PR #276.", REPO)).toEqual([]);
+  });
+
+  it("reads this repository's `owner/name#n` and not another's", () => {
+    const body = "Closes cub11k/BIU-CS-PLANNER#10\nCloses someone/else#11";
+    expect(writtenClosings(body, REPO)).toEqual([10]);
+  });
+
+  it("names a number once, however often it is closed", () => {
+    expect(writtenClosings("Closes #4\nFixes #4", REPO)).toEqual([4]);
+  });
+
+  it("ignores references inside fenced code blocks, of either fence", () => {
+    const body = [
+      "Closes #1",
+      "```",
+      "Closes #2",
+      "```",
+      "~~~md",
+      "Fixes #3",
+      "~~~",
+      "Closes #4",
+    ].join("\n");
+    expect(writtenClosings(body, REPO)).toEqual([1, 4]);
+  });
+
+  it("ignores references inside inline code", () => {
+    const body = "Not `Closes #179, #124`, and not ``fixes #5``. Closes #6";
+    expect(writtenClosings(body, REPO)).toEqual([6]);
+  });
+});
+
+describe("proseOnly", () => {
+  it("runs an unclosed fence to the end of the body", () => {
+    expect(proseOnly("Closes #1\n```\nCloses #2")).toBe("Closes #1\n\n");
+  });
+
+  it("closes a fence only with a run of the same character at least as long", () => {
+    const body = ["````", "```", "Closes #2", "~~~~", "````", "Closes #3"].join("\n");
+    expect(proseOnly(body)).toBe("\n\n\n\n\nCloses #3");
+  });
+
+  it("closes a code span only with a run of exactly the same length", () => {
+    expect(proseOnly("``a ` b`` c")).toBe("  c");
+  });
+
+  it("leaves a lone backtick as written", () => {
+    expect(proseOnly("it's a ` stray")).toBe("it's a ` stray");
+  });
+});
+
+describe("unregistered", () => {
+  it("keeps what the body closes and the list lacks, in the body's order", () => {
+    expect(unregistered([205, 202, 203], [125, 202])).toEqual([205, 203]);
   });
 });
 
@@ -122,6 +215,34 @@ describe("renderResolved", () => {
   });
 });
 
+describe("renderFindings for closing lines GitHub did not record", () => {
+  it("names the issues the body closes and the list lacks, and what the list holds", () => {
+    const body = renderFindings([125], [], [205, 202]);
+
+    expect(body).toContain(
+      "The body puts a closing keyword before #205 and #202, and GitHub's list holds #125, so " +
+        "merging will not close them.",
+    );
+    expect(body).toContain("#223's failure");
+    expect(body).not.toContain("open child");
+  });
+
+  it("says so when the list holds nothing at all", () => {
+    expect(renderFindings([], [], [308])).toContain(
+      "The body puts a closing keyword before #308, and GitHub's list holds no issue at all, so " +
+        "merging will not close it.",
+    );
+  });
+
+  it("carries both findings in one comment", () => {
+    const body = renderFindings([205], [{ parent: 205, missing: [203] }], [203]);
+
+    expect(body).toContain("#203 is an open child of #205");
+    expect(body).toContain("The body puts a closing keyword before #203");
+    expect(body.split(MARKER)).toHaveLength(2);
+  });
+});
+
 describe("decide", () => {
   const missingOne = [{ number: 205, children: [open(203), open(204)] }, { number: 204, children: [] }];
 
@@ -178,11 +299,14 @@ function fakePort(
   references: number[],
   children: Record<number, Child[]>,
   existing?: Existing,
+  body = "",
 ): Port & { writes: string[] } {
   const writes: string[] = [];
   return {
     writes,
+    repository: "Cub11k/biu-cs-planner",
     closingReferences: async () => references,
+    body: async () => body,
     subIssues: async (issue) => children[issue] ?? [],
     findComment: async () => existing,
     postComment: async (body) => {
@@ -219,6 +343,42 @@ describe("run", () => {
 
     expect(port.writes).toHaveLength(1);
     expect(port.writes[0]).toMatch(/^edit:9:/);
+  });
+
+  it("posts a comment naming a `Closes` line GitHub did not register", async () => {
+    // #223: deliberate lines, and a list that held none of them. Nothing listed is no parent,
+    // so before #308 this was silent.
+    const port = fakePort([], {}, undefined, "Body.\n\nCloses #205\nCloses #202\n");
+
+    const decision = await run(port, () => {});
+
+    expect(decision?.kind).toBe("post");
+    expect(port.writes).toHaveLength(1);
+    expect(port.writes[0]).toContain("The body puts a closing keyword before #205 and #202");
+  });
+
+  it("is silent when the body and the list agree", async () => {
+    const port = fakePort([205, 202], {}, undefined, "Closes #205\nCloses #202\n");
+
+    expect(await run(port, () => {})).toEqual({ kind: "silent" });
+    expect(port.writes).toEqual([]);
+  });
+
+  it("is silent about a `Closes` line inside a code fence", async () => {
+    const port = fakePort([], {}, undefined, "Not like this:\n\n```\nCloses #179, #124\n```\n");
+
+    expect(await run(port, () => {})).toEqual({ kind: "silent" });
+  });
+
+  it("resolves its comment once the list holds what the body closes", async () => {
+    const earlier = renderFindings([], [], [205]);
+    const port = fakePort([205], {}, { id: 4, body: earlier }, "Closes #205");
+
+    await run(port, () => {});
+
+    expect(port.writes).toHaveLength(1);
+    expect(port.writes[0]).toMatch(/^edit:4:/);
+    expect(port.writes[0]).toContain("Resolved.");
   });
 
   it("never throws: a failing GitHub call becomes a warning in the log", async () => {

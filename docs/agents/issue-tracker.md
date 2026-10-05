@@ -108,15 +108,20 @@ The expected answer is the parent and every child. The body is an input; this li
 and the two can disagree — the same distinction "Verify a creation by number, not by a listing" in
 `orchestration.md` draws, one level in.
 
-**CI now asks half of this question too, and the manual step stays.** `closing-refs.yml` runs on
-every pull request from a branch of this repository (forks are skipped: their token cannot
-comment), on open, on every body edit and on every push, and, when the list holds a parent,
-comments naming any open child of it that the list does not hold. It never fails a job and says
-nothing on a pull request that closes no parent (#260). It cannot see a parent that GitHub never
-recorded — #223's failure, described below, where the parent itself was missing from the list,
-leaves it silent — and nothing re-runs it when the tracker changes under an open pull request (a
-child attached or reopened later is seen on the next push or body edit) — so run the command above
-yourself before reporting; the comment is a second reader, not a replacement.
+**CI now asks this question too, and the manual step stays.** `closing-refs.yml` runs on every
+pull request from a branch of this repository (forks are skipped: their token cannot comment), on
+open, on every body edit and on every push, and comments on two things: when the list holds a
+parent, any open child of it that the list does not hold (#260); and any issue the body puts a
+closing keyword before, outside code fences and inline code, that the list does not hold — #223's
+failure, described below, which starting from the list alone could not see (#308). It never fails
+a job and says nothing while the body and the list agree and no listed parent has a child left
+out. It skips only fences and inline code, so a keyword in an indented code block or an HTML
+comment is still read, and may be named when GitHub rightly ignored it; the body of a pull request into any branch but `dev` is not read, because GitHub links no closing
+keyword there; and nothing re-runs it when the tracker changes under an open pull request (a child
+attached or reopened later is seen on the next push or body edit). So run the command above
+yourself before reporting; the comment is a second reader, not a replacement. Run over the sixty
+most recent pull requests on 2026-10-05, the body half named exactly one: #223, with the four
+issues its `Closes` block was written for.
 
 **The spelling being right is not the link being right.** On 2026-10-04 PR #223 carried `Closes
 #205`, `Closes #202`, `Closes #203` and `Closes #204`, each with the keyword on its own line and

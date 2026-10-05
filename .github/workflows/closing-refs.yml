@@ -1,12 +1,13 @@
 # Tells a pull request that closes a composed parent about any of that parent's open
-# children it does not close. The manual version of this is in docs/agents/issue-tracker.md,
-# "Verify the links from GitHub, not from the body you wrote"; this runs it on every pull
-# request so the answer is on the thread before a merge (#260). The logic is
-# tools/closing-refs/closing-refs.ts.
+# children it does not close, and about any issue its body writes a closing keyword before
+# that GitHub did not record (#308). The manual version of this is in
+# docs/agents/issue-tracker.md, "Verify the links from GitHub, not from the body you wrote";
+# this runs it on every pull request so the answer is on the thread before a merge (#260).
+# The logic is tools/closing-refs/closing-refs.ts.
 #
 # Advice, never a gate: a pull request may close two of three children on purpose, so a
-# finding is a comment and the job stays green whatever happens. A pull request that closes
-# no parent hears nothing.
+# finding is a comment and the job stays green whatever happens. A pull request whose body and
+# list agree, and that leaves no listed parent's child out, hears nothing.
 #
 # Its own workflow rather than a step in pr-report.yml, for two reasons. pr-report.yml runs
 # only when code changes, and the pull requests most likely to close a parent are often
