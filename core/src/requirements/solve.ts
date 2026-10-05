@@ -209,17 +209,7 @@ class Search {
 
   /** A choice may not put a Course in both Programs unless both allow it. */
   private legal(index: number, option: number[]): boolean {
-    if (option.length === 0) return true;
-    const choice = this.choices[index]!;
-    return choice.links.every((link) => {
-      const other = this.picked[link];
-      if (other === undefined || other.length === 0) return true;
-      const linked = this.choices[link]!;
-      return (
-        acrossAllowed(this.programs[choice.program]!, choice.course) &&
-        acrossAllowed(this.programs[linked.program]!, linked.course)
-      );
-    });
+    return option.length === 0 || this.conflicts(index).length === 0;
   }
 
   /**
@@ -321,7 +311,8 @@ class Search {
   }
 
   run(): (number[] | undefined)[] {
-    this.visit(0);
+    this.polish();
+    if (!this.stopped) this.visit(0);
     if (!this.stopped) this.polish();
     return this.best.picked;
   }
@@ -334,29 +325,28 @@ class Search {
   }
 
   /**
-   * The tie-break, pursued by moving one Course at a time to another of its choices, in search
-   * order, whenever that strictly improves the score, until no single move does. It never
-   * lowers the number of satisfied Requirements the search found, since a move is kept only when
-   * the whole score improves.
+   * Improves the best Assignment so far by moving one Course at a time to another of its
+   * choices, in search order, whenever that strictly improves the score, until no single move
+   * does. A move that would put a Course in both Programs where it may not count in both takes it
+   * out of the other one as part of the same move, since neither half alone could ever improve
+   * the score. Run before the search, it turns the greedy start into an incumbent the search can
+   * prune against; run after it, it pursues the tie-break. A move is kept only when the whole
+   * score improves, so it never costs a satisfied Requirement.
    */
   private polish(): void {
     this.picked.splice(0, this.picked.length, ...this.best.picked);
     let improved = true;
-    while (improved) {
+    while (improved && !this.stopped) {
       improved = false;
       for (const index of this.order) {
         const current = this.picked[index]!;
         for (const option of this.choices[index]!.options) {
           if (option === current) continue;
-          this.picked[index] = undefined;
-          if (!this.legal(index, option)) {
-            this.picked[index] = current;
-            continue;
-          }
-          if (this.spent()) {
-            this.picked[index] = current;
-            return;
-          }
+          const evicted = option.length === 0 ? [] : this.conflicts(index);
+          if (evicted.some((link) => this.choices[link]!.pinned !== undefined)) continue;
+          if (this.spent()) break;
+          const before = evicted.map((link) => this.picked[link]);
+          for (const link of evicted) this.picked[link] = [];
           this.picked[index] = option;
           const reached = this.score(false);
           if (better(reached, this.best.score)) {
@@ -365,9 +355,26 @@ class Search {
             break;
           }
           this.picked[index] = current;
+          evicted.forEach((link, i) => (this.picked[link] = before[i]));
         }
+        if (this.stopped) break;
       }
     }
+    for (const index of this.order) this.picked[index] = undefined;
+  }
+
+  /** The choices in another Program holding this Course where it may not count in both. */
+  private conflicts(index: number): number[] {
+    const choice = this.choices[index]!;
+    return choice.links.filter((link) => {
+      const other = this.picked[link];
+      if (other === undefined || other.length === 0) return false;
+      const linked = this.choices[link]!;
+      return !(
+        acrossAllowed(this.programs[choice.program]!, choice.course) &&
+        acrossAllowed(this.programs[linked.program]!, linked.course)
+      );
+    });
   }
 
   private visit(depth: number): void {
@@ -380,8 +387,12 @@ class Search {
     // Only more satisfied Requirements justify going deeper; the tie-break is `polish`'s.
     if (this.score(true).satisfied <= this.best.score.satisfied) return;
 
+    // The best Assignment's choice first, so the first Assignment reached is the incumbent and
+    // the search spends its steps on what could beat it.
     const index = this.order[depth]!;
-    for (const option of this.choices[index]!.options) {
+    const incumbent = this.best.picked[index];
+    const options = this.choices[index]!.options;
+    for (const option of [...options.filter((o) => o === incumbent), ...options.filter((o) => o !== incumbent)]) {
       if (!this.legal(index, option)) continue;
       this.picked[index] = option;
       this.visit(depth + 1);
