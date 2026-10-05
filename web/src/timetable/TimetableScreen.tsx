@@ -34,6 +34,8 @@ import {
 import { CoursePicker } from "./CoursePicker.tsx";
 import { addToTray, removeFromTray } from "./tray.ts";
 import { TrayColumn } from "./TrayColumn.tsx";
+import { PlanDiffsPanel } from "./PlanDiffsPanel.tsx";
+import { applyPlanDiff, type ActionablePlanDiff } from "./planDiffs.ts";
 import { BlockedTimesEditor, type FormAnswer } from "./BlockedTimesEditor.tsx";
 import {
   addBlockedTime,
@@ -292,6 +294,11 @@ export function TimetablePane({
    * have landed, and the page re-reads rather than replacing the week with a refusal.
    */
   const [unknownSave, setUnknownSave] = useState<StringKey | undefined>(undefined);
+  /**
+   * That an "apply to Plan" was refused because that Plan Diff is no longer there (#296): the Plan
+   * or the Catalog moved since the page read it. Retired as `staleSave` is, by the next click.
+   */
+  const [planDiffStale, setPlanDiffStale] = useState(false);
   const [rereads, setRereads] = useState(0);
   /**
    * The answer a click was sent on, while the re-read its unreadable answer asked for is still in
@@ -570,6 +577,7 @@ export function TimetablePane({
   useEffect(() => {
     if (steps === 0) return;
     setStaleSave(false);
+    setPlanDiffStale(false);
     setUnknownSave(undefined);
     setHeldLost(false);
   }, [steps]);
@@ -605,6 +613,7 @@ export function TimetablePane({
   const retireNotices = (): void => {
     setHeldLost(false);
     setStaleSave(false);
+    setPlanDiffStale(false);
     setUnknownSave(undefined);
     onActed();
   };
@@ -753,6 +762,25 @@ export function TimetablePane({
         }
       : undefined;
 
+  /**
+   * "Apply to Plan" for one Plan Diff (#296; ADR-0008), from a Tray badge or the side panel. One
+   * request and one undo step; the answer is the Timetable afterwards, so the badge and the entry
+   * leave the screen because the server says the Plan Diff is gone, not because the page assumed it.
+   * A Plan Diff the file no longer has is said so, and the Timetable is read again in its place.
+   */
+  const onApplyPlanDiff =
+    timetable.kind === "served"
+      ? (diff: ActionablePlanDiff): void => {
+          void sendEdit(async (query, basedOn) => {
+            const answer = await applyPlanDiff(api, query, diff, basedOn);
+            if (answer.kind !== "plan-diff-stale") return answer;
+            setPlanDiffStale(true);
+            return fetchTimetable(api, query);
+          });
+        }
+      : undefined;
+  const planDiffs = timetable.kind === "served" ? timetable.planDiffs : [];
+
   /** The Blocked Time edits (#282): the Semester's, whichever Variant is shown. */
   const blockedEdits =
     timetable.kind === "served"
@@ -885,7 +913,13 @@ export function TimetablePane({
 
   return (
     <>
-      <div className="grid min-h-0 flex-1 grid-cols-[18rem_minmax(0,1fr)]">
+      {/* the side panel is there only while there are Plan Diffs: a Timetable with no Plan is laid
+          out exactly as it was (ADR-0008) */}
+      <div
+        className={`grid min-h-0 flex-1 ${
+          planDiffs.length === 0 ? "grid-cols-[18rem_minmax(0,1fr)]" : "grid-cols-[18rem_minmax(0,1fr)_16rem]"
+        }`}
+      >
         {/*
           The left column, Layout E: the Tray above, this Semester's Catalog below (#283). Two
           parts with two sources — the Tray is the State File's, the Catalog the Catalog's — so
@@ -899,6 +933,8 @@ export function TimetablePane({
             selected={selected}
             onSelect={setSelected}
             onRemove={onRemoveFromTray}
+            planDiffs={planDiffs}
+            onApplyPlanDiff={onApplyPlanDiff}
           />
           <BlockedTimesEditor
             language={language}
@@ -987,6 +1023,7 @@ export function TimetablePane({
               {heldEditCount > 0 && <span>{t(language, "picksHeldForReread")}</span>}
               {heldLost && <span>{t(language, "picksHeldLost")}</span>}
               {staleSave && <span>{t(language, "picksStale")}</span>}
+              {planDiffStale && <span>{t(language, "planDiffStale")}</span>}
               {unknownSave !== undefined && <span>{t(language, unknownSave)}</span>}
               {/* the week is the last one read, kept over an answer nobody could read (#218) */}
               {readsKept > 0 && timetable.kind === "served" && (
@@ -1051,6 +1088,13 @@ export function TimetablePane({
             />
           </div>
         </section>
+
+        {/* The side panel, Layout E: the Plan Diffs of the Variant shown (#296). */}
+        {planDiffs.length > 0 && (
+          <aside className="flex min-h-0 flex-col gap-4 overflow-auto border-s border-rule bg-desk p-4">
+            <PlanDiffsPanel language={language} planDiffs={planDiffs} nameOf={nameOf} onApply={onApplyPlanDiff} />
+          </aside>
+        )}
       </div>
     </>
   );

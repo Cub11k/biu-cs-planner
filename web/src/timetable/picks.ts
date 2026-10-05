@@ -47,6 +47,13 @@ export type BlockedTime = ServedTimetable["blockedTimes"][number];
 /** A Blocked Time that keeps no time free, by its position: a Warning, never a refusal. */
 export type BlockedTimeWarning = ServedTimetable["blockedTimeWarnings"][number];
 
+/**
+ * Where the Variant shown and the Plan disagree, as the server computed it (#295): `add`, `drop`,
+ * `move` or `not-offered`, the Course, and what applying it would change. `web` never computes one
+ * (CLAUDE.md); it shows these and sends one back by its kind and Course to apply it.
+ */
+export type PlanDiff = ServedTimetable["planDiffs"][number];
+
 /** What one Pick occupies: one Lesson Type of one Offering. */
 export type PickSlot = { courseNumber: string; lessonType: string };
 
@@ -87,6 +94,8 @@ export type TimetableResult =
       /** The Semester's Blocked Times, the same on every Variant, in the order an edit names them. */
       blockedTimes: BlockedTime[];
       blockedTimeWarnings: BlockedTimeWarning[];
+      /** The Plan Diffs of the Variant shown (#295); none without a Plan. */
+      planDiffs: PlanDiff[];
       picks: GroupPick[];
       clashes: Clash[];
       /** What this view is, so an edit made on it can say what it was based on. */
@@ -186,6 +195,8 @@ async function read(
     tray: body.tray ?? [],
     blockedTimes: body.blockedTimes ?? [],
     blockedTimeWarnings: body.blockedTimeWarnings ?? [],
+    // a server older than #295, or a fake written before it, has none to send: no Plan Diffs
+    planDiffs: body.planDiffs ?? [],
     picks: body.picks,
     clashes: body.clashes,
     version: body.version,

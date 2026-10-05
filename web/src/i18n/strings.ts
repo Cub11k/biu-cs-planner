@@ -62,6 +62,10 @@ const english = {
   /** The labels `app/src/tray.ts` attaches to the Tray edits (#283). */
   editAddToTray: "adding a course to the tray",
   editRemoveFromTray: "removing a course from the tray",
+  /** The labels `app/src/planDiffs.ts` attaches to an "apply to Plan", one per kind (#295). */
+  editApplyPlanDiffAdd: "adding a course to the plan",
+  editApplyPlanDiffDrop: "dropping a course from the plan",
+  editApplyPlanDiffMove: "moving a course in the plan",
   /** The labels `app/src/blockedTimes.ts` attaches to the Blocked Time edits (#282). */
   editAddBlockedTime: "adding a blocked time",
   editReplaceBlockedTime: "changing a blocked time",
@@ -572,6 +576,28 @@ const english = {
   trayAddCourse: "Add {course} to the courses to schedule",
 
   /**
+   * Plan Diffs (#296): where the Variant shown and the Plan disagree. A badge on the Tray entry,
+   * which offers its "apply to Plan" when pressed, and the same list in the side panel. The badge
+   * words are `docs/design.md`'s, with the Semester named where the design said "the other".
+   */
+  planDiffBadgeAdd: "not in plan",
+  planDiffBadgeDrop: "not scheduled",
+  planDiffBadgeMove: "offered in {semester}",
+  planDiffBadgeNotOffered: "not in this year's catalog",
+  /** A badge's accessible name: what it says, and which Course it says it of. */
+  planDiffBadgeLabel: "{badge}: {course}",
+  planDiffApplyAdd: "Add to plan",
+  planDiffApplyDrop: "Drop from plan",
+  planDiffApplyMove: "Move to {semester} in plan",
+  planDiffsHeading: "Differences from your plan",
+  planDiffSaidAdd: "{course} is in this variant but not in your plan for this semester.",
+  planDiffSaidDrop: "{course} is planned for this semester but not scheduled in this variant.",
+  planDiffSaidMove: "{course} is planned for this semester, but this year's catalog offers it in {semester}.",
+  planDiffSaidNotOffered: "{course} is planned for this semester, but is not in this year's catalog.",
+  /** An apply refused because that Plan Diff is no longer there; the screen re-reads. */
+  planDiffStale: "That difference is no longer there: your plan or the catalog changed. What is left is shown.",
+
+  /**
    * Blocked Times (#282): weekly time the student keeps free. A range typed past midnight is
    * stored as two rows, which the hint says so the list showing two is no surprise.
    */
@@ -654,6 +680,9 @@ const hebrew: Record<StringKey, string> = {
   editSetPrimaryVariant: "קביעת חלופה ראשית",
   editAddToTray: "הוספת קורס לרשימת השיבוץ",
   editRemoveFromTray: "הסרת קורס מרשימת השיבוץ",
+  editApplyPlanDiffAdd: "הוספת קורס לתוכנית",
+  editApplyPlanDiffDrop: "הסרת קורס מהתוכנית",
+  editApplyPlanDiffMove: "העברת קורס בתוכנית",
   editAddBlockedTime: "הוספת זמן חסום",
   editReplaceBlockedTime: "שינוי זמן חסום",
   editRemoveBlockedTime: "הסרת זמן חסום",
@@ -892,6 +921,21 @@ const hebrew: Record<StringKey, string> = {
   trayRemoveCourse: "הסרת {course} והבחירות שלו מהחלופה הזו",
   trayAdd: "הוספה",
   trayAddCourse: "הוספת {course} לקורסים לשיבוץ",
+
+  planDiffBadgeAdd: "לא בתוכנית",
+  planDiffBadgeDrop: "לא משובץ",
+  planDiffBadgeMove: "ניתן ב{semester}",
+  planDiffBadgeNotOffered: "לא בקטלוג של השנה",
+  planDiffBadgeLabel: "{badge}: {course}",
+  planDiffApplyAdd: "הוספה לתוכנית",
+  planDiffApplyDrop: "הסרה מהתוכנית",
+  planDiffApplyMove: "העברה ל{semester} בתוכנית",
+  planDiffsHeading: "הבדלים מהתוכנית שלך",
+  planDiffSaidAdd: "{course} נמצא בחלופה הזו אך לא בתוכנית שלך לסמסטר הזה.",
+  planDiffSaidDrop: "{course} מתוכנן לסמסטר הזה אך לא משובץ בחלופה הזו.",
+  planDiffSaidMove: "{course} מתוכנן לסמסטר הזה, אך הקטלוג של השנה מציע אותו ב{semester}.",
+  planDiffSaidNotOffered: "{course} מתוכנן לסמסטר הזה, אך אינו בקטלוג של השנה.",
+  planDiffStale: "ההבדל הזה כבר אינו קיים: התוכנית או הקטלוג השתנו. מוצג מה שנותר.",
 
   blockedHeading: "זמנים חסומים",
   blockedNone: "אין זמנים חסומים. הוסיפו עבודה, נסיעה, כל מה שצריך להשאיר פנוי.",
