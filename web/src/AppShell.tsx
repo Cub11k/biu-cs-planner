@@ -193,6 +193,11 @@ const EDIT_LABEL_STRING = new Map<string, StringKey>([
   ["unpin-course", "editUnpinCourse"],
   ["tick-manual", "editTickManual"],
   ["untick-manual", "editUntickManual"],
+  ["add-attempt", "editAddAttempt"],
+  ["update-attempt", "editUpdateAttempt"],
+  ["move-attempt", "editMoveAttempt"],
+  ["remove-attempt", "editRemoveAttempt"],
+  ["plan-from-suggested-layout", "editPlanFromLayout"],
 ]);
 
 export function AppShell({
