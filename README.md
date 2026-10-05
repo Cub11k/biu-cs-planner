@@ -52,9 +52,11 @@ and in any screenshot or pasted bug report that included either. If that has hap
 biu-cs-planner rotate-token
 ```
 
-That writes a new token and prints where it went. **Stop the app with Ctrl-C if it is still
-running** — it read the old token when it started and goes on accepting it until it exits, so
-the rotation only takes effect when you restart.
+That writes a new token and prints where it went. **A server already running keeps the old
+token until it is restarted** — it read the token once when it started and goes on accepting it
+until it exits — so stop the app with Ctrl-C if it is still running: the rotation only takes
+effect when you restart. That is deliberate rather than an oversight; the reasoning is at the
+top of [`server/src/token.ts`](server/src/token.ts).
 
 After that the old token is refused, and so is everything holding it: every bookmark you
 saved, and every tab still open on the planner. A tab that was already loaded notices within a
@@ -77,8 +79,9 @@ Workspace gets synced and committed:
 | macOS | `~/.config/biu-cs-planner/token` |
 | Windows | `%APPDATA%\biu-cs-planner\token` — `%APPDATA%` comes first here and is all but always set; on the rare Windows without it, the first row applies |
 
-Deleting that file does the same thing as the command: the next launch finds no token and
-writes a fresh one. The command is only the way to do it without going near a dotfile.
+Deleting that file does the same thing as the command, restart and all: the next launch finds
+no token and writes a fresh one, and a server already running keeps the old one until then. The
+command is only the way to do it without going near a dotfile.
 
 Rotating is a terminal command and not a button in the page on purpose. A page that had your
 leaked token could otherwise use it to replace itself, and lock you out of your own planner.

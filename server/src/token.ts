@@ -26,6 +26,34 @@ import { join } from "node:path";
  * and that URL is what a student pastes into a bug report or leaves in a screenshot. So
  * `rotateLaunchToken` is the other half of the same decision — the escape hatch that
  * makes a stable secret safe to keep.
+ *
+ * **A running server keeps the token it started with until it is restarted**, and that is
+ * a ruling, not an oversight (#128). `launchToken` is called once at startup — by `bin.ts`,
+ * and by the dev entry `serve.ts` — and the guard is built from the string it returns;
+ * nothing reads this file again for the life of the process. So a rotation, or a token
+ * file deleted by hand, does not reach a server that is already up — the retired token
+ * goes on opening it until it exits, and the revocation is finished by the restart, not
+ * by the command. Two ways to close that window were weighed and turned down:
+ *
+ *   - **Re-reading the file on every request.** The read is cheap for a small local
+ *     file, but it is a filesystem touch on the authentication path, and it adds a failure
+ *     mode there: a token file that is missing or unreadable after startup would have to
+ *     mean something on every request, and "let everyone in" is the one meaning it may
+ *     not have. Today that question is asked once, at startup, where a missing file — or
+ *     one holding something that is not a token — means writing a fresh token, and an
+ *     unreadable one means refusing to launch (`launchToken` and `readTokenFile` below).
+ *   - **Watching the file and re-reading on change.** The Workspace watcher watches the
+ *     Workspace folders and not the config directory (docs/design.md), and a second
+ *     watcher for one file is machinery — with the same unreadable-file question waiting
+ *     behind it.
+ *
+ * What makes the window acceptable is that the server binds loopback only (`cli.ts`,
+ * `--host`), so the leaked token opens nothing from off this machine, and opens the
+ * running server only until a restart the student is told to make. The ruling is paid
+ * for in words instead: `rotate-token`'s output and `--help` both say that a server
+ * already running keeps the old token until it is restarted (`USAGE` and `rotatedNotice`
+ * in `cli.ts`), so nobody is told they are safe while the leak is still open. If password
+ * login ever lets this server bind beyond loopback, the ruling is to be revisited with it.
  */
 const TOKEN_FILE = "token";
 
@@ -122,7 +150,9 @@ export type Rotation = {
 /**
  * Throws away the stored token and writes a new one. The recovery path for a token that
  * has been seen by somebody else: it has no expiry and no revocation list, so replacing
- * the file *is* the revocation (docs/design.md, "Authentication").
+ * the file *is* the revocation (docs/design.md, "Authentication") — once a server already
+ * running has been restarted, because it never reads this file again (the ruling at the
+ * top of this file).
  *
  * Written to a temporary name in the same directory and renamed over the target, the same
  * way `workspace.fs.ts` writes a State File and for a sharper reason. `writeFile` over the
