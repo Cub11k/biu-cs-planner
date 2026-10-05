@@ -102,9 +102,16 @@ async function ask(send: () => Promise<Sent>): Promise<ProgressResult> {
   return read(answer);
 }
 
-/** Progress for the student's chosen Programs, recomputed by the server now. */
-export function fetchProgress(client: ApiClient): Promise<ProgressResult> {
-  return ask(() => client.api.progress.$get());
+/**
+ * Progress for the student's chosen Programs, recomputed by the server now — or, given `whatIf`,
+ * for those Programs in their place (#289): the same read, evaluated and never saved, whose
+ * `version` is still the file's and so what adopting the what-if is based on.
+ */
+export function fetchProgress(client: ApiClient, whatIf?: ProgramChoice[]): Promise<ProgressResult> {
+  if (whatIf === undefined) return ask(() => client.api.progress.$get());
+  // the route reads `whatIf` itself (`server/src/api.ts`, `whatIfOf`), so the contract types no query
+  const request = { query: { whatIf: JSON.stringify(whatIf) } } as unknown as InferRequestType<ReadRoute>;
+  return ask(() => client.api.progress.$get(request));
 }
 
 /** A Course and the Requirement of one Requirements File it is pinned to. */
@@ -217,4 +224,44 @@ export function chooseCohort(
 ): Promise<ProgramsChoice> {
   const request = { json: { cohort, basedOn } } as InferRequestType<CohortRoute>;
   return saved(() => client.api.cohort.$put(request));
+}
+
+/** Which lens a node's status is read in: what is completed, or what the Plan would complete. */
+export type Lens = "completed" | "projected";
+
+/**
+ * What a what-if would change in one Program (#289), by Requirement id: the Requirements that would
+ * become satisfied, the ones that would become missing — satisfied now and not under the what-if,
+ * or a Requirement only the what-if has, such as another Track's, that it would leave to do — and
+ * the ones it would no longer have at all. Each in the order its tree lists them.
+ */
+export type WhatIfChanges = { satisfied: string[]; missing: string[]; dropped: string[] };
+
+/** Every node of a tree by id, in tree order, with its status in one lens. */
+function statuses(nodes: readonly EvaluatedRequirement[], lens: Lens, into = new Map<string, string>()) {
+  for (const node of nodes) {
+    into.set(node.id, node[lens].status);
+    statuses(node.children, lens, into);
+  }
+  return into;
+}
+
+/**
+ * Pairs two evaluations of one Requirements File by Requirement id, never by position: an id is
+ * unique within one file (`CONTEXT.md`, Pin), so it is the same Requirement in both trees, and the
+ * base rule set they share pairs up while each Track's own Requirements are what one side has and
+ * the other lacks. Only meaningful for one file — two files' ids name unrelated Requirements, and
+ * the caller compares nothing across them.
+ */
+export function whatIfChanges(real: EvaluatedProgram, whatIf: EvaluatedProgram, lens: Lens): WhatIfChanges {
+  const now = statuses(real.progress.requirements, lens);
+  const then = statuses(whatIf.progress.requirements, lens);
+  const changes: WhatIfChanges = { satisfied: [], missing: [], dropped: [] };
+  for (const [id, status] of then) {
+    const held = now.get(id);
+    if (status === "satisfied" && held !== undefined && held !== "satisfied") changes.satisfied.push(id);
+    else if (status !== "satisfied" && (held === undefined || held === "satisfied")) changes.missing.push(id);
+  }
+  for (const id of now.keys()) if (!then.has(id)) changes.dropped.push(id);
+  return changes;
 }

@@ -29,6 +29,8 @@ let sent: Array<{ method: string; pathname: string; body: unknown }>;
 let programs: Array<{ requirementsFile: string; track?: string }>;
 let cohort: { academicYear: number; semester: string } | null;
 let programWarnings: unknown[];
+/** Every what-if the screen asked Progress for, as the Programs it carried (#289). */
+let previews: unknown[];
 let pins: Array<{ courseNumber: string; requirementId: string }>;
 let ticked: boolean;
 let version: number;
@@ -125,7 +127,10 @@ function progressBody(of: typeof programs = programs): unknown {
     stoppedEarly,
     solverWarnings: [],
     programWarnings,
-    pinWarnings: [],
+    // the fake's Pins are all in cs-2027, so Programs without it leave each reaching nothing
+    pinWarnings: of.some((program) => program.requirementsFile === "cs-2027")
+      ? []
+      : pins.map((pin) => ({ kind: "pin-file-not-chosen", ...pin, requirementsFile: "cs-2027" })),
     version: `v${version}`,
     warnings: stateWarnings,
   };
@@ -136,6 +141,7 @@ beforeEach(() => {
   programs = [{ requirementsFile: "cs-2027" }];
   cohort = null;
   programWarnings = [];
+  previews = [];
   pins = [];
   ticked = false;
   version = 1;
@@ -148,7 +154,7 @@ beforeEach(() => {
   ROOT.dir = "ltr";
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = input instanceof Request ? input.url : String(input);
-    const { pathname } = new URL(url, location.href);
+    const { pathname, searchParams } = new URL(url, location.href);
     if (!pathname.startsWith("/api/")) return realFetch(input as RequestInfo, init);
     const method = (input instanceof Request ? input.method : init?.method) ?? "GET";
     const text = input instanceof Request ? await input.clone().text() : init?.body;
@@ -160,6 +166,11 @@ beforeEach(() => {
       canUndo = false;
       version += 1;
       return json({ label: "pin-course", at: 1, version: `v${version}`, canUndo: false, canRedo: true, warnings: [] });
+    }
+    if (pathname === "/api/progress" && searchParams.has("whatIf")) {
+      const whatIf = JSON.parse(searchParams.get("whatIf")!) as typeof programs;
+      previews.push(whatIf);
+      return json(progressBody(whatIf));
     }
     if (pathname === "/api/progress") return json(progressBody());
     if (pathname === "/api/requirements" && onlyUnreadableFiles) {
@@ -753,4 +764,163 @@ it("says the Programs and the Cohort in Hebrew, right to left", async () => {
   const remove = mounted.querySelector<HTMLElement>('button[data-program-remove="0"]')!;
   // the row starts at the right: the file's select, then the remove to its left
   expect(file.getBoundingClientRect().left).toBeGreaterThan(remove.getBoundingClientRect().left);
+});
+
+/* #289: "what if I switched Track", evaluated and never saved. */
+
+/** Every request that is not a read: a preview must add none. */
+const writes = () => sent.filter((request) => request.method !== "GET");
+
+async function startWhatIf(mounted: HTMLElement): Promise<HTMLElement> {
+  (await found<HTMLButtonElement>(mounted, 'button[data-what-if="start"]')).click();
+  return found<HTMLElement>(mounted, "section[data-what-if]");
+}
+
+async function previewShown(mounted: HTMLElement): Promise<HTMLElement> {
+  return vi.waitFor(() => {
+    const view = mounted.querySelector<HTMLElement>("[data-what-if-view]");
+    if (view === null || view.querySelector('[role="tree"]') === null) throw new Error("no preview drawn");
+    return view;
+  });
+}
+
+const changed = (view: HTMLElement, which: string): string[] =>
+  [...view.querySelectorAll(`[data-what-if-change="${which}"] [data-requirement-changed]`)].map(
+    (element) => element.getAttribute("data-requirement-changed")!,
+  );
+
+it("previews another Track, marked as a what-if, with what would change, and writes nothing", async () => {
+  const mounted = await mount();
+  await served(mounted);
+  const whatIf = await startWhatIf(mounted);
+  // nothing tried yet is the real choice, so nothing is asked and the real Progress stays
+  expect(mounted.textContent).toContain(t("en", "progressWhatIfSame"));
+  expect(previews).toEqual([]);
+
+  choose(whatIf.querySelector<HTMLSelectElement>('select[data-program-track="0"]')!, "ai");
+
+  const view = await previewShown(mounted);
+  expect(previews).toEqual([[{ requirementsFile: "cs-2027", track: "ai" }]]);
+  expect(view.querySelector("[data-what-if-mark]")?.textContent).toBe(t("en", "progressWhatIfHeading"));
+  expect(changed(view, "satisfied")).toEqual(["electives"]);
+  expect(changed(view, "missing")).toEqual(["ai-core"]);
+  expect(changed(view, "dropped")).toEqual([]);
+  expect(view.textContent).toContain(t("en", "progressWhatIfSatisfied"));
+  expect(view.querySelector('[role="treeitem"][data-requirement="ai-core"]')).not.toBeNull();
+  // nothing in a what-if edits: no Pin control, and the tick is shown and not offered
+  expect(view.querySelector("select[data-pin-course]")).toBeNull();
+  expect(view.querySelector<HTMLInputElement>('input[data-tick="hebrew"]')!.disabled).toBe(true);
+  // the real tree is not on screen beside it, so the two cannot be mistaken for each other
+  expect(mounted.querySelectorAll('[role="tree"]')).toHaveLength(1);
+  expect(writes()).toEqual([]);
+});
+
+it("compares in the lens shown", async () => {
+  const mounted = await mount();
+  await served(mounted);
+  choose((await startWhatIf(mounted)).querySelector<HTMLSelectElement>('select[data-program-track="0"]')!, "ai");
+  await previewShown(mounted);
+
+  mounted.querySelector<HTMLButtonElement>('button[data-lens="projected"]')!.click();
+
+  // with the Plan holding, the electives are met either way: only the AI core is new
+  await vi.waitFor(() => {
+    const view = mounted.querySelector<HTMLElement>("[data-what-if-view]")!;
+    if (changed(view, "satisfied").length !== 0) throw new Error("still compared in the completed lens");
+    expect(changed(view, "missing")).toEqual(["ai-core"]);
+  });
+});
+
+it("adopts the previewed Track with one set-Programs edit, and shows the real Progress again", async () => {
+  const mounted = await mount();
+  await served(mounted);
+  choose((await startWhatIf(mounted)).querySelector<HTMLSelectElement>('select[data-program-track="0"]')!, "ai");
+  await previewShown(mounted);
+
+  (await found<HTMLButtonElement>(mounted, 'button[data-what-if="adopt"]')).click();
+
+  await readAfter("/api/programs");
+  expect(writes()).toEqual([
+    {
+      method: "PUT",
+      pathname: "/api/programs",
+      body: { programs: [{ requirementsFile: "cs-2027", track: "ai" }], basedOn: "v1" },
+    },
+  ]);
+  await vi.waitFor(() => {
+    if (mounted.querySelector("section[data-what-if]") !== null) throw new Error("still in the what-if");
+  });
+  expect(mounted.querySelector("[data-what-if-view]")).toBeNull();
+  expect(mounted.querySelector("[data-what-if-mark]")).toBeNull();
+  expect(mounted.querySelector<HTMLSelectElement>('select[data-program-track="0"]')!.value).toBe("ai");
+  expect(treeItem(mounted, "ai-core")).not.toBeNull();
+});
+
+it("stays in the what-if when adopting it is refused, and says why", async () => {
+  const mounted = await mount();
+  await served(mounted);
+  choose((await startWhatIf(mounted)).querySelector<HTMLSelectElement>('select[data-program-track="0"]')!, "ai");
+  await previewShown(mounted);
+  refuseNextEdit = "state-file-changed";
+
+  (await found<HTMLButtonElement>(mounted, 'button[data-what-if="adopt"]')).click();
+
+  await vi.waitFor(() => {
+    if (!(mounted.querySelector('[role="status"]')?.textContent ?? "").includes(t("en", "progressStale"))) {
+      throw new Error("the refusal was not said");
+    }
+  });
+  expect(mounted.querySelector("section[data-what-if]")).not.toBeNull();
+});
+
+it("leaves the what-if, back to the real Progress, having written nothing", async () => {
+  const mounted = await mount();
+  await served(mounted);
+  choose((await startWhatIf(mounted)).querySelector<HTMLSelectElement>('select[data-program-track="0"]')!, "ai");
+  await previewShown(mounted);
+
+  (await found<HTMLButtonElement>(mounted, 'button[data-what-if="leave"]')).click();
+
+  await vi.waitFor(() => {
+    if (mounted.querySelector("[data-what-if-view]") !== null) throw new Error("the preview stayed");
+  });
+  expect(mounted.querySelector("section[data-what-if]")).toBeNull();
+  expect(mounted.querySelector('[role="treeitem"][data-requirement="ai-core"]')).toBeNull();
+  expect(mounted.querySelector("select[data-pin-course]")).not.toBeNull();
+  expect(writes()).toEqual([]);
+});
+
+it("previews another Program, comparing nothing across files, and shows the Pins it would strand", async () => {
+  pins = [{ courseNumber: "89-110", requirementId: "electives" }];
+  const mounted = await mount();
+  await served(mounted);
+
+  choose((await startWhatIf(mounted)).querySelector<HTMLSelectElement>('select[data-program-file="0"]')!, "math-2027");
+
+  const view = await previewShown(mounted);
+  expect(previews).toEqual([[{ requirementsFile: "math-2027" }]]);
+  expect(view.querySelector('[data-what-if-changes="math-2027"]')?.textContent).toBe(
+    t("en", "progressWhatIfOtherProgram", { file: "math-2027" }),
+  );
+  expect(view.textContent).toContain(
+    t("en", "progressWarnPinFileNotChosen", { course: "89-110", file: "cs-2027" }),
+  );
+  expect(writes()).toEqual([]);
+});
+
+it("marks the what-if in Hebrew, right to left", async () => {
+  const mounted = await mount("he");
+  await served(mounted);
+  const whatIf = await startWhatIf(mounted);
+  expect(whatIf.textContent).toContain(t("he", "progressWhatIfNote"));
+
+  choose(whatIf.querySelector<HTMLSelectElement>('select[data-program-track="0"]')!, "ai");
+
+  const view = await previewShown(mounted);
+  expect(view.querySelector("[data-what-if-mark]")?.textContent).toBe(t("he", "progressWhatIfHeading"));
+  expect(view.textContent).toContain(t("he", "progressWhatIfSatisfied"));
+  const adopt = mounted.querySelector<HTMLElement>('button[data-what-if="adopt"]')!;
+  const leave = mounted.querySelector<HTMLElement>('button[data-what-if="leave"]')!;
+  // adopting comes first, which is the right in Hebrew
+  expect(adopt.getBoundingClientRect().left).toBeGreaterThan(leave.getBoundingClientRect().left);
 });

@@ -3,12 +3,14 @@ import {
   evaluateProgress,
   pinCourse,
   requirementsAccepting,
+  setPrograms,
   solveAssignment,
   tickManual,
   unpinCourse,
   untickManual,
   type LocalizedText,
   type PinRef,
+  type Program,
   type Progress,
   type RequirementRef,
   type RequirementsFile,
@@ -118,6 +120,17 @@ export type ProgressReadOptions = {
   stateFile?: string;
   /** The clock the solver's time cap is measured by. `Date.now` when nothing says otherwise. */
   now?: () => number;
+};
+
+export type ProgressPreviewOptions = ProgressReadOptions & {
+  /**
+   * "What if I switched Track" (#289): Programs to evaluate in place of the stored ones. The read
+   * evaluates the State as choosing them would leave it — `core`'s own `setPrograms`, so a Pin or
+   * tick naming no file keeps the file it meant exactly as adopting would keep it — and writes
+   * nothing: the State is never saved, so the file, its revision and the undo history stay as
+   * they were. `version` is still the revision read, which is what adopting is based on.
+   */
+  whatIf?: readonly Program[];
 };
 
 export type ProgressEditOptions = ProgressReadOptions & {
@@ -230,18 +243,19 @@ async function progressOf(
   };
 }
 
-/** Progress for the State File's chosen Programs, recomputed now. */
+/** Progress for the State File's chosen Programs, or for a what-if's in their place, recomputed now. */
 export async function readProgress(
   workspace: Workspace,
-  options: ProgressReadOptions = {},
+  options: ProgressPreviewOptions = {},
 ): Promise<ProgressResult> {
   const loaded = await readStateFile(workspace, options.stateFile ?? DEFAULT_STATE_FILE);
   if ("refused" in loaded) {
     return { kind: "refused", reason: loaded.refused, warnings: loaded.warnings };
   }
+  const state = options.whatIf === undefined ? loaded.state : setPrograms(loaded.state, options.whatIf);
   return {
     kind: "served",
-    view: await progressOf(workspace, loaded.state, options.now ?? Date.now),
+    view: await progressOf(workspace, state, options.now ?? Date.now),
     version: loaded.version,
     warnings: loaded.warnings,
   };

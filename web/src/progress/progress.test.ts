@@ -9,6 +9,8 @@ import {
   tickManual,
   unpinCourse,
   untickManual,
+  whatIfChanges,
+  type EvaluatedProgram,
 } from "./progress.ts";
 
 /**
@@ -161,4 +163,55 @@ it("sets the Cohort, clears it with null, and reads a refusal and a missing serv
     throw new TypeError("fetch failed");
   });
   expect(await chooseCohort(gone.api, null, "v1")).toEqual({ kind: "unreachable" });
+});
+
+it("asks for a what-if's Progress with the Programs as JSON in the query, and nothing else (#289)", async () => {
+  const { sent, api } = client(() => Response.json(SERVED));
+
+  const result = await fetchProgress(api, [{ requirementsFile: "cs-2027", track: "ai" }]);
+
+  expect(sent[0]!.method).toBe("GET");
+  const url = new URL(sent[0]!.url);
+  expect(url.pathname).toBe("/api/progress");
+  expect(JSON.parse(url.searchParams.get("whatIf")!)).toEqual([{ requirementsFile: "cs-2027", track: "ai" }]);
+  expect(result).toMatchObject({ kind: "served", version: "a".repeat(64) });
+  // and a plain read carries no what-if at all
+  await fetchProgress(api);
+  expect(new URL(sent[1]!.url).search).toBe("");
+});
+
+/** A Program evaluated with these nodes, each `[id, completed, projected, children]`. */
+type Node = [string, string, string, Node[]?];
+function program(nodes: Node[]): EvaluatedProgram {
+  const node = ([id, completed, projected, children = []]: Node): unknown => ({
+    id,
+    kind: "course",
+    completed: { status: completed, courses: [] },
+    projected: { status: projected, courses: [] },
+    children: children.map(node),
+  });
+  return { progress: { requirements: nodes.map(node) } } as unknown as EvaluatedProgram;
+}
+
+it("pairs a what-if's Requirements with the real ones by id, never by position", () => {
+  const real = program([
+    ["intro", "satisfied", "satisfied"],
+    ["electives", "missing", "satisfied"],
+    ["robotics", "partial", "satisfied"],
+  ]);
+  // the same base in another order, the robotics Track swapped for the AI one
+  const whatIf = program([
+    ["electives", "satisfied", "satisfied"],
+    ["ai", "missing", "missing", [["ml", "satisfied", "satisfied"]]],
+    ["intro", "missing", "satisfied"],
+  ]);
+
+  expect(whatIfChanges(real, whatIf, "completed")).toEqual({
+    satisfied: ["electives"],
+    missing: ["ai", "intro"],
+    dropped: ["robotics"],
+  });
+  // a nested Requirement only the what-if has, already met, is neither gained nor lost
+  expect(whatIfChanges(real, whatIf, "projected")).toEqual({ satisfied: [], missing: ["ai"], dropped: ["robotics"] });
+  expect(whatIfChanges(real, real, "completed")).toEqual({ satisfied: [], missing: [], dropped: [] });
 });

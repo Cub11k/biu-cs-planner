@@ -34,6 +34,13 @@ const CS = {
     { id: "electives", kind: "credits", min: 6, pool: "cs" },
     { id: "hebrew", kind: "manual", text: { he: "הבעה עברית", en: "Hebrew expression" } },
   ],
+  tracks: [
+    {
+      id: "ai",
+      name: { he: "בינה מלאכותית", en: "AI" },
+      requirements: [{ id: "ml", kind: "course", course: "89-391" }],
+    },
+  ],
 };
 const MATH = {
   schemaVersion: 1,
@@ -334,5 +341,75 @@ it("warns about a tick naming a file that is none of the student's Programs", as
 
   expect(served(await readProgress(workspace, ALICE)).pinWarnings).toEqual([
     { kind: "tick-file-not-chosen", requirementId: "hebrew", requirementsFile: "math-2027" },
+  ]);
+});
+
+/* #289: "what if I switched Track", evaluated and never saved. */
+
+const has = (program: ProgramProgress | undefined, id: string): boolean => {
+  try {
+    node(program, id);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+it("evaluates a what-if Track in place of the stored one, and writes nothing", async () => {
+  const workspace = await ready([{ requirementsFile: "cs-2027" }]);
+  const before = await workspace.readStateFile(REF);
+
+  const preview = await readProgress(workspace, { ...ALICE, whatIf: [{ requirementsFile: "cs-2027", track: "ai" }] });
+
+  const program = served(preview).programs[0];
+  expect(program).toMatchObject({ requirementsFile: "cs-2027", track: "ai", status: "evaluated" });
+  // the Track's own Requirement is evaluated beside the base ones, still to do
+  expect(node(program, "ml").completed).toMatchObject({ status: "missing" });
+  expect(node(program, "intro").completed).toMatchObject({ status: "satisfied" });
+  // the revision it answers with is the file's as read, which is what adopting is based on
+  expect(preview.kind === "served" && preview.version).toBe(before?.version);
+  expect(await workspace.readStateFile(REF)).toEqual(before);
+  // and the stored choice is untouched: a plain read still has no Track
+  expect(has(served(await readProgress(workspace, ALICE)).programs[0], "ml")).toBe(false);
+});
+
+it("evaluates a what-if Program, another Requirements File, in place of the stored one", async () => {
+  const workspace = await ready([{ requirementsFile: "cs-2027" }]);
+
+  const view = served(await readProgress(workspace, { ...ALICE, whatIf: [{ requirementsFile: "math-2027" }] }));
+
+  expect(view.programs).toHaveLength(1);
+  expect(evaluated(view.programs[0]).program.id).toBe("math");
+});
+
+it("reads a what-if Track a file does not define as the Warning a stored one raises", async () => {
+  const workspace = await ready([{ requirementsFile: "cs-2027" }]);
+
+  const view = served(
+    await readProgress(workspace, { ...ALICE, whatIf: [{ requirementsFile: "cs-2027", track: "robotics" }] }),
+  );
+
+  expect(view.programWarnings).toEqual([
+    { kind: "program-track-unknown", index: 0, requirementsFile: "cs-2027", track: "robotics" },
+  ]);
+});
+
+it("keeps an older Pin with no file meaning the file it meant under a what-if, as adopting would", async () => {
+  const workspace = memoryWorkspace({ created: true });
+  workspace.seed({ kind: "requirements", name: "cs-2027" }, CS);
+  workspace.seed({ kind: "requirements", name: "math-2027" }, MATH);
+  workspace.seed(REF, {
+    schemaVersion: 1,
+    attempts: [attempt("89-110")],
+    programs: [{ requirementsFile: "cs-2027" }],
+    pins: [{ courseNumber: "89-110", requirementId: "intro" }],
+  });
+
+  const view = served(await readProgress(workspace, { ...ALICE, whatIf: [{ requirementsFile: "math-2027" }] }));
+
+  // the Pin was about cs-2027's intro, not math-2027's, so under math alone it reaches nothing
+  expect(evaluated(view.programs[0]).pins).toEqual([]);
+  expect(view.pinWarnings).toEqual([
+    { kind: "pin-file-not-chosen", courseNumber: "89-110", requirementId: "intro", requirementsFile: "cs-2027" },
   ]);
 });
