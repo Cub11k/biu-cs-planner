@@ -189,11 +189,11 @@ it("tells a first-token notice about a running server too, for a file deleted by
   const notice = rotatedNotice({ path: "/tmp/config/token", replaced: false });
 
   expect(notice.replace(/\s+/g, " ")).toContain(
-    "keeps the token it started with until it is restarted",
+    "that server keeps the old token until it is restarted, and from then on",
   );
 });
 
-it("warns in the rotation notice that bookmarks and open tabs have stopped working", () => {
+it("warns in the rotation notice that bookmarks and open tabs stop working at the restart", () => {
   const notice = rotatedNotice({
     path: "/home/student/.config/biu-cs-planner/token",
     replaced: true,

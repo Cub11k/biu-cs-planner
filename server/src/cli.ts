@@ -227,7 +227,7 @@ function command(name: string, rest: readonly string[]): Invocation {
  *     scrollback was shared, would undo the rotation it is reporting.
  *
  * The next launch prints the URL, as it always has. This says where the token is and what
- * has just stopped working. It describes what the page will show rather than quoting it:
+ * stops working at the restart. It describes what the page will show rather than quoting it:
  * that string is a translation (`web/src/i18n/strings.ts`), so a Hebrew screen would not
  * match an English quotation here, and nothing would fail if it were reworded.
  *
@@ -263,9 +263,9 @@ export function rotatedNotice({ path, replaced }: Omit<Rotation, "token">): stri
         "your picks and send you back here until you open the new address.",
       ].join("\n")
     : [
-        "There was none here before, so nothing that used to work has stopped.",
-        "A server already running, whose token file was deleted by hand, still keeps the",
-        "token it started with until it is restarted.",
+        "There was none here before, so on a first run nothing that used to work has stopped.",
+        "If the file was deleted by hand while the app was running, that server keeps the old",
+        "token until it is restarted, and from then on whatever held the old token is refused.",
       ].join("\n");
 
   return [

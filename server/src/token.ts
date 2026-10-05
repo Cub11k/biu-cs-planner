@@ -39,20 +39,21 @@ import { join } from "node:path";
  *     file, but it is a filesystem touch on the authentication path, and it adds a failure
  *     mode there: a token file that is missing or unreadable after startup would have to
  *     mean something on every request, and "let everyone in" is the one meaning it may
- *     not have. Today that question is asked once, at startup, where a missing file means
- *     writing a fresh token and an unreadable one means refusing to launch (`launchToken`
- *     and `readTokenFile` below).
- *   - **Watching the file and re-reading on change.** The Workspace watcher deliberately
- *     watches the Workspace and not the config directory, and a second watcher for one
- *     file is machinery — with the same unreadable-file question waiting behind it.
+ *     not have. Today that question is asked once, at startup, where a missing file — or
+ *     one holding something that is not a token — means writing a fresh token, and an
+ *     unreadable one means refusing to launch (`launchToken` and `readTokenFile` below).
+ *   - **Watching the file and re-reading on change.** The Workspace watcher watches the
+ *     Workspace folders and not the config directory (docs/design.md), and a second
+ *     watcher for one file is machinery — with the same unreadable-file question waiting
+ *     behind it.
  *
  * What makes the window acceptable is that the server binds loopback only (`cli.ts`,
  * `--host`), so the leaked token opens nothing from off this machine, and opens the
- * running server only until a restart the student is told to make. The ruling is paid for in words
- * instead: `rotate-token`'s output and `--help` both say that a server already running
- * keeps the old token until it is restarted (`USAGE` and `rotatedNotice` in `cli.ts`), so
- * nobody is told they are safe while the leak is still open. If password login ever lets
- * this server bind beyond loopback, the ruling is to be revisited with it.
+ * running server only until a restart the student is told to make. The ruling is paid
+ * for in words instead: `rotate-token`'s output and `--help` both say that a server
+ * already running keeps the old token until it is restarted (`USAGE` and `rotatedNotice`
+ * in `cli.ts`), so nobody is told they are safe while the leak is still open. If password
+ * login ever lets this server bind beyond loopback, the ruling is to be revisited with it.
  */
 const TOKEN_FILE = "token";
 
