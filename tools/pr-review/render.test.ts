@@ -10,6 +10,7 @@ import {
   type GraphsComment,
   type ReviewComment,
 } from "./render.ts";
+import type { ForbiddenEdge } from "./layering.ts";
 import type { Finding, PassOutcome } from "./review.ts";
 
 const finding = (over: Partial<Finding> = {}): Finding => ({
@@ -300,8 +301,39 @@ describe("renderGraphs", () => {
     expect(body).toContain(
       "**Layering:** every import is one the rule allows — `core` imports " +
         "none of the others, `app` imports `core`, `server` imports `core` and `app`, " +
-        "`web` imports `server` for types only, written `import type`.",
+        "`web` imports `server` for types only, written `import type`. Outside the four, " +
+        "`tools/` reads the four workspaces as data and drives `web`'s build toolchain, so it " +
+        "may import its own modules and third-party packages but nothing from `core`, `app`, " +
+        "`server` or `web`. This comment judges that only for the relative imports of `tools/`'s " +
+        "test files: every " +
+        "other `tools/` module is judged by `npm test`, through the whole-tree assertion in " +
+        "`tools/pr-review/layering.test.ts`, and not by this comment.",
     );
+  });
+
+  // #274: `collect` hands in `tools/`'s test files and nothing else, so a non-test `tools/`
+  // module that breaks the rule fails `npm test` and is never named here. The comment says so
+  // whatever it found, rather than letting a reader infer coverage it does not have.
+  it("says, found or not, that npm test and not this comment judges tools/'s other modules", () => {
+    const edge: ForbiddenEdge = {
+      from: "web/src/timetable/week.ts",
+      fromWorkspace: "web",
+      imported: "core/src/catalog/schema.ts",
+      toWorkspace: "core",
+      kind: "direction",
+      rule: "`web` knows only the HTTP API contract",
+    };
+    for (const forbidden of [[], [edge]]) {
+      const body = renderGraphs(
+        graphsComment({
+          graphs: { moduleCycles: [], callCycles: [], forbidden, followers: [], scope: ["core/src"] },
+        }),
+      );
+      expect(body).toContain(
+        "A `tools/` module that is not a test is not judged here at all: `npm test` judges it, " +
+          "through the whole-tree assertion in `tools/pr-review/layering.test.ts`, and this comment never names one.",
+      );
+    }
   });
 });
 
