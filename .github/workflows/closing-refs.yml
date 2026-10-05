@@ -12,7 +12,7 @@
 # Its own workflow rather than a step in pr-report.yml, for two reasons. pr-report.yml runs
 # only when code changes, and the pull requests most likely to close a parent are often
 # docs-only. And pr-report.yml installs every dependency and a Chromium on a runner that
-# holds a write token; this installs nothing at all — it needs only node and the two files it
+# holds a write token; this installs nothing at all — it needs only node and the three files it
 # runs — so the token sits on a runner where no dependency's code ever executes.
 name: Closing references
 

@@ -115,9 +115,9 @@ parent, any open child of it that the list does not hold (#260); and any issue t
 closing keyword before, outside code fences and inline code, that the list does not hold — #223's
 failure, described below, which starting from the list alone could not see (#308). It never fails
 a job and says nothing while the body and the list agree and no listed parent has a child left
-out. It skips only fences and inline code, so a keyword in an indented code block or an HTML
-comment is still read, and may be named when GitHub rightly ignored it; the body of a pull request into any branch but `dev` is not read, because GitHub links no closing
-keyword there; and nothing re-runs it when the tracker changes under an open pull request (a child
+out. It skips fences, inline code and HTML comments, so a keyword in an indented code block is
+still read and may be named whether or not GitHub read it; the body of a pull request into any
+branch but `dev` is not read, because GitHub links no closing keyword there; and nothing re-runs it when the tracker changes under an open pull request (a child
 attached or reopened later is seen on the next push or body edit). So run the command above
 yourself before reporting; the comment is a second reader, not a replacement. Run over the sixty
 most recent pull requests on 2026-10-05, the body half named exactly one: #223, with the four
