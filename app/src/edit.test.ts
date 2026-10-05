@@ -366,3 +366,80 @@ it("refuses an edit to a State File the port cannot read, rather than starting a
   // and nothing was written over it
   expect(workspace.written().length).toBe(before);
 });
+
+/**
+ * #311 where it reaches the use cases: a revision the port hands back is held to the port's format
+ * (`isStateFileRevision`), on the read that every route serving a revision goes through and on the
+ * save that hands back the next one. A double that answers honestly but for the revision, which is
+ * the one adapter-produced string that travels to the page: it is the file's content here, which
+ * is exactly what this repository's own memory double used to hand back.
+ */
+const misreporting = (
+  workspace: MemoryWorkspace,
+  which: "read" | "save",
+  revision: unknown,
+): Workspace =>
+  // A Proxy over every method, telling the two answers it rewrites apart by their shape — a State
+  // File read is the one carrying a `version`, a save the one that is a string — so it names no
+  // method of the port and is a decorator, never a writer: the save under test still reaches the
+  // double through `editStateFile` (`server/src/api.test.ts`'s hostile test does the same).
+  new Proxy(workspace, {
+    get(target, property, receiver) {
+      const method: unknown = Reflect.get(target, property, receiver);
+      if (typeof method !== "function") return method;
+      return async (...args: unknown[]): Promise<unknown> => {
+        const answer: unknown = await (method as (...args: unknown[]) => unknown).apply(
+          target,
+          args,
+        );
+        if (which === "read" && typeof answer === "object" && answer !== null) {
+          if ("version" in answer) return { ...answer, version: revision };
+        }
+        if (which === "save" && typeof answer === "string") return revision;
+        return answer;
+      };
+    },
+  });
+
+it("refuses a State File read whose revision is not a well-formed hash, rather than passing it on", async () => {
+  const workspace = ready();
+  await editStateFile(workspace, ALICE, picking(LECTURE), { basedOn: undefined });
+  const content = JSON.stringify((await workspace.readStateFile(REF))?.data);
+  const before = workspace.written().length;
+
+  for (const revision of [content, "/home/student/alice.state.json", 7]) {
+    const hostile = misreporting(workspace, "read", revision);
+    expect(await readStateFile(hostile, ALICE)).toEqual({
+      refused: "workspace-refused",
+      warnings: [],
+    });
+    expect(
+      await editStateFile(hostile, ALICE, picking(LECTURE), { basedOn: revision as string }),
+    ).toEqual({ kind: "refused", reason: "workspace-refused", warnings: [] });
+  }
+  // and nothing was written on the strength of one
+  expect(workspace.written().length).toBe(before);
+});
+
+it("refuses to hand on a revision a save answers with that is not a well-formed hash", async () => {
+  const workspace = ready();
+  await editStateFile(workspace, ALICE, picking(LECTURE), { basedOn: undefined });
+  const basedOn = await versionOf(workspace);
+  const heard: unknown[] = [];
+  const history = {
+    push: (edit: StateEdit) => heard.push(edit),
+    wrote: (save: unknown) => heard.push(save),
+  };
+
+  const outcome = await editStateFile(
+    misreporting(workspace, "save", "the file's content, or a path"),
+    ALICE,
+    picking({ ...LECTURE, groupNumber: "02" }),
+    { basedOn, history },
+  );
+
+  expect(outcome).toEqual({ kind: "refused", reason: "workspace-refused", warnings: [] });
+  expect(JSON.stringify(outcome)).not.toContain("the file's content");
+  // the stack believes nothing the adapter said about this save
+  expect(heard).toEqual([]);
+});

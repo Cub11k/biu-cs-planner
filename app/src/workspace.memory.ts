@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { StateFileSave, StateFileVersion } from "@biu-cs-planner/core";
 import {
   backupsToPrune,
@@ -112,18 +113,29 @@ const backupKey = (ref: BackupRef): string => {
 };
 
 /**
- * The double's stand-in for a revision, and it is the stored text itself.
+ * The double's revision: a SHA-256 of the stored text, in the format `isStateFileRevision`
+ * states. Not the number the real adapter would give the same content — that one hashes the
+ * pretty-printed bytes it wrote — but the same format, which is all the port promises.
  *
- * The real adapter hashes the bytes it read (`server/src/workspace.fs.ts`), and it hashes
- * rather than remembers because the revision has to be small enough for a browser to hold
- * and hand back on the next save. This one has no browser and no bytes, so it can afford
- * the limit case of the same idea: a revision that *is* the content answers "is the file
- * still what I read?" with no collisions at all, which is the property every test here
- * turns on. Nothing may read the string — it is opaque to everything but a comparison, as
- * `StateFileVersion` says — and a double whose revisions were a counter would have hidden
- * the two-tab lost update this guard exists for.
+ * It used to be the stored text itself, the limit case of the same idea with no collisions at
+ * all, and that was fine while nothing checked a revision's format. Since #311 `app` refuses a
+ * revision that is not a well-formed hash, so the content-as-revision double would have had every
+ * read refused — and, worse, it was the one adapter in the repo that put a State File's content
+ * where the wire carries a revision. A hash keeps what every test here turns on: it changes when
+ * the content does, so a double whose revisions were a counter would still have hidden the
+ * two-tab lost update this guard exists for, and this one does not.
+ *
+ * **Synchronous, which is why it is `node:crypto` and not Web Crypto.** The save below
+ * reads the file, compares revisions and writes with no `await` in between, so this double has
+ * no window for a second save to land in — the window the real adapter concedes in its own doc,
+ * and one a double should not open by accident: Web Crypto's digest is a promise, and awaiting
+ * it between the comparison and the write would let two concurrent saves both pass the guard.
+ * This is a test double and never reaches a browser; `web` does not import `app` at all.
  */
-const revisionOf = (data: unknown): StateFileVersion => JSON.stringify(data) ?? "";
+const revisionOf = (data: unknown): StateFileVersion =>
+  createHash("sha256")
+    .update(JSON.stringify(data) ?? "")
+    .digest("hex");
 
 export function memoryWorkspace(
   options: {

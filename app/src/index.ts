@@ -66,6 +66,7 @@ export {
   backupDay,
   backupsToPrune,
   isStateFileName,
+  isStateFileRevision,
   BackupRefusedError,
   NotAWorkspaceError,
   requireBackupRef,

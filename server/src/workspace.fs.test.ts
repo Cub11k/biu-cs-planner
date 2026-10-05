@@ -15,6 +15,7 @@ import { afterEach, beforeEach, expect, it } from "vitest";
 import {
   BACKUP_KEEP_SAVES,
   BackupRefusedError,
+  isStateFileRevision,
   NotAWorkspaceError,
   StateFileChangedError,
   WorkspaceRefusedError,
@@ -643,6 +644,26 @@ const firstSave = (data: unknown) => ({ json: data as Record<string, unknown>, b
 
 /** The State File as it sits on disk, whoever wrote it. */
 const aliceOnDisk = (): Promise<string> => readFile(join(root, "alice.state.json"), "utf8");
+
+/**
+ * #311: the revision is in the format the port states, on a read and on a save. `app` refuses one
+ * that is not, so an adapter that drifted from it would have every State File refused; the memory
+ * double's test of the same title asserts the same of it.
+ */
+it("hands back every revision as a well-formed hash, on a read and on a save", async () => {
+  const workspace = fileSystemWorkspace(root);
+  await workspace.create();
+
+  const wrote = await workspace.saveStateFile(ALICE, firstSave(STATE));
+  const read = await workspace.readStateFile(ALICE);
+  const again = await workspace.saveStateFile(ALICE, { json: { ...STATE }, basedOn: wrote });
+
+  for (const revision of [wrote, read?.version, again]) {
+    expect(isStateFileRevision(revision), String(revision)).toBe(true);
+  }
+  // the save's answer is the revision a read of what it wrote gives
+  expect(read?.version).toBe(wrote);
+});
 
 it("stores a State File at the Workspace root, under the name it was given", async () => {
   const workspace = fileSystemWorkspace(root);

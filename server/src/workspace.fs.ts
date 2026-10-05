@@ -406,8 +406,9 @@ const isDirectory = async (path: string): Promise<boolean> => {
 };
 
 /**
- * Which revision of a State File this is: a SHA-256 of its bytes, as hex. ADR-0015 records the
- * decision and the two alternatives below; this is where it is carried out.
+ * Which revision of a State File this is: a SHA-256 of its bytes, as lowercase hex, which is the
+ * format `isStateFileRevision` in the port states and `app` holds every adapter to (#311).
+ * ADR-0015 records the decision and the two alternatives below; this is where it is carried out.
  *
  * **A content hash, ruled by the maintainer on #90 and not an mtime.** The question the
  * external-edit guard asks is "is the file still what I read?", and only the content answers

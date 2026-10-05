@@ -6,6 +6,7 @@ import {
   backupDay,
   backupsToPrune,
   isStateFileName,
+  isStateFileRevision,
   NotAWorkspaceError,
   requireBackupRef,
   requireCatalogRef,
@@ -149,6 +150,35 @@ it("names the part of the Workspace Layout that is what is wrong, when one part 
   expect(refusal.message).toMatch(
     /^refusing to write: the Workspace layout does not exist yet — catalogs is there and is not a folder$/,
   );
+});
+
+/**
+ * #311: the format of a revision, which `app` holds every adapter to. A SHA-256 as lowercase hex
+ * and nothing near it: not the file's content, not a path, not upper case, not one digit short or
+ * long, and not with a trailing newline, which an `m` flag or a missing `$` would let through.
+ */
+it("takes a SHA-256 as lowercase hex for a revision, and nothing else", () => {
+  const hash = "0123456789abcdef".repeat(4);
+  expect(isStateFileRevision(hash)).toBe(true);
+
+  for (const notOne of [
+    '{"schemaVersion":1,"pins":[]}',
+    "/home/student/plans/alice.state.json",
+    hash.toUpperCase(),
+    hash.slice(1),
+    hash + "0",
+    hash + "\n",
+    "\n" + hash,
+    `${hash.slice(0, 32)}\n${hash.slice(32)}`,
+    hash.replace("a", "g"),
+    "",
+    undefined,
+    null,
+    42,
+    { toString: () => hash },
+  ]) {
+    expect(isStateFileRevision(notOne), JSON.stringify(notOne)).toBe(false);
+  }
 });
 
 /**

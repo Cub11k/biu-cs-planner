@@ -9,6 +9,7 @@ import {
 } from "@biu-cs-planner/core";
 import {
   BackupRefusedError,
+  isStateFileRevision,
   StateFileChangedError,
   WorkspaceRefusedError,
   type Workspace,
@@ -237,6 +238,13 @@ export type StateFileLoad =
  * the port's own refusal and comes back as `workspace-refused`; it used to arrive as
  * `undefined`, indistinguishable from no file at all, and this function then built a new empty
  * State and saved over it (#109).
+ *
+ * **A revision that is not in the port's format is the port's refusal too** (#311). This is where
+ * every revision a page is ever served enters `app` from a read, so it is where the format
+ * `isStateFileRevision` states is held to: an adapter that handed back the file's content, or a
+ * path, as its revision would otherwise have it served to the page and carried back on the next
+ * save. It is checked before the content is parsed, and the content is not handed out without
+ * it, because content with no revision a save can honestly be based on is what #113 refuses.
  */
 export async function readStateFile(
   workspace: Workspace,
@@ -253,11 +261,16 @@ export async function readStateFile(
   }
   if (stored === undefined) return { state: newState(), version: undefined, warnings: [] };
 
+  // Each field read once, so what is checked is what is handed on: an adapter's object may be
+  // anything, a getter answering one value to the check and another to the response included.
+  const { data, version } = stored;
+  if (!isStateFileRevision(version)) return { refused: "workspace-refused", warnings: [] };
+
   // a file is untrusted input whoever wrote it, so every read goes through the schema
-  const parsed = parseStateFile(stored.data);
+  const parsed = parseStateFile(data);
   if (!parsed.state) return { refused: "state-file-unreadable", warnings: parsed.warnings };
 
-  return { state: parsed.state, version: stored.version, warnings: parsed.warnings };
+  return { state: parsed.state, version, warnings: parsed.warnings };
 }
 
 /**
@@ -340,6 +353,16 @@ export async function editStateFile(
       return { kind: "refused", reason: "workspace-refused", warnings: loaded.warnings };
     }
     throw error;
+  }
+
+  // The revision the save hands back is held to the port's format as the one a read hands back
+  // is (#311), and for the same reason: it is served to the page as what the next save is based
+  // on. **The write may well have landed** — what is refused is passing on the adapter's account
+  // of it, and the stack is told nothing, because a revision it cannot trust is no revision to
+  // believe. The page's next read then meets the same adapter and is refused there too, or, if
+  // that one is honest, sees a revision the stack did not write and starts it afresh.
+  if (!isStateFileRevision(version)) {
+    return { kind: "refused", reason: "workspace-refused", warnings: loaded.warnings };
   }
 
   // Both revisions first, and on every save: the revision this edit found is how a stack

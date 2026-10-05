@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 import { memoryWorkspace } from "./workspace.memory.ts";
 import {
   BACKUP_KEEP_SAVES,
+  isStateFileRevision,
   NotAWorkspaceError,
   StateFileChangedError,
   WorkspaceRefusedError,
@@ -93,6 +94,24 @@ it("reports an ordinary folder as not a Workspace, and creates the Layout when a
 
   expect(await workspace.status()).toEqual({ ready: true, missing: [] });
   expect(await workspace.status()).not.toHaveProperty("notAFolder");
+});
+
+/**
+ * #311: the real adapter's test of the same title. This double's revision was the stored text
+ * itself until then, which `app` now refuses as not a revision at all.
+ */
+it("hands back every revision as a well-formed hash, on a read and on a save", async () => {
+  const workspace = memoryWorkspace({ created: true });
+
+  const wrote = await workspace.saveStateFile(ALICE, firstSave(STATE));
+  const read = await workspace.readStateFile(ALICE);
+  const again = await workspace.saveStateFile(ALICE, { json: { ...STATE }, basedOn: wrote });
+
+  for (const revision of [wrote, read?.version, again]) {
+    expect(isStateFileRevision(revision), String(revision)).toBe(true);
+  }
+  // the save's answer is the revision a read of what it wrote gives
+  expect(read?.version).toBe(wrote);
 });
 
 /** The same refusal the real adapter makes, so a use case cannot pass here and fail there. */

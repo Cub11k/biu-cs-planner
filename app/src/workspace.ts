@@ -535,6 +535,29 @@ export class BackupRefusedError extends WorkspaceRefusedError {
 export type StateFileContents = { data: unknown; version: StateFileVersion };
 
 /**
+ * **What a State File's revision looks like, stated once, here** (#311): the SHA-256 of the file's
+ * bytes, spelled as **64 lowercase hexadecimal digits** and nothing else — which is what
+ * `createHash("sha256").digest("hex")` produces. ADR-0015 records why it is a hash of the bytes
+ * and points here for the spelling.
+ *
+ * `StateFileVersion` is a plain `string` in `core`, so the type holds no adapter to this, and an
+ * adapter could hand back the file's content or a path as its "revision" and the API would serve
+ * it to the page. So `app` checks every revision it is handed by the port, on a read and on a
+ * save alike (`./edit.ts`), and one that is not in this format is a refusal of that read or save
+ * rather than a value passed on: a revision is the one adapter-produced string that travels to
+ * the page, and #249 already closed the other channel, a refusal's sentence.
+ *
+ * A literal pattern, never built from data (ADR-0007). Anchored at both ends with no `m` flag, so
+ * a trailing newline is not a revision either.
+ */
+const REVISION = /^[0-9a-f]{64}$/;
+
+/** Whether a value an adapter handed back is a revision in the format above. */
+export function isStateFileRevision(value: unknown): value is StateFileVersion {
+  return typeof value === "string" && REVISION.test(value);
+}
+
+/**
  * A save was based on a revision the State File no longer holds: something else wrote it
  * between the read the student is looking at and this save. The overwrite is refused, which
  * is what `docs/design.md`, "External edits" promises.
@@ -680,14 +703,16 @@ export type Workspace = {
    *
    * This is the half of the external-edit guard that `core` cannot reach: the revision has
    * to be produced where the file is, and it travels from here through the use case, the
-   * API and the page, back to `saveStateFile`.
+   * API and the page, back to `saveStateFile`. It is in the format `isStateFileRevision`
+   * states, and `app` refuses the read when it is not (#311).
    */
   readStateFile(ref: StateFileRef): Promise<StateFileContents | undefined>;
   /**
    * Saves a State File, and refuses to overwrite one that is not the revision the save was
    * based on: `StateFileChangedError`, whose doc says why this one refuses rather than
    * warning. Atomic as `write` is, and it hands back the revision it wrote so the next save
-   * from the same page needs no re-read.
+   * from the same page needs no re-read — in the format `isStateFileRevision` states, which
+   * `app` checks before passing it on (#311).
    *
    * **It also writes the snapshot into `.backups/`, out of the bytes it is about to replace**
    * (#67; `docs/design.md`, "Storage"). That is beneath the port on purpose: `app` has no
