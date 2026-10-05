@@ -14,6 +14,7 @@ import {
   addBlockedTimeTo,
   addCourseToTray,
   addVariant,
+  applyPlanDiffTo,
   chooseCohort,
   choosePrograms,
   copyBlockedTimesTo,
@@ -230,6 +231,19 @@ const trayCourseSchema = z.object({
   variant: variantSchema,
   courseNumber: z.string().min(1),
   position: positionSchema,
+  basedOn: basedOnSchema,
+});
+
+/**
+ * Which Plan Diff to apply to the Plan (#295): its kind and its Course, which name it within the
+ * Variant's Semester, and the Variant it is a divergence of. A `not-offered` Plan Diff has nothing
+ * to apply, so it is not a kind this takes — a body naming one is not the shape of an apply.
+ */
+const appliedPlanDiffSchema = z.object({
+  variant: variantSchema,
+  position: positionSchema,
+  kind: z.enum(["add", "drop", "move"]),
+  courseNumber: z.string().min(1).max(200),
   basedOn: basedOnSchema,
 });
 
@@ -1269,6 +1283,32 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
      * the file moved since that answer (#90). Each is one undo step, and each answers with the
      * Timetable — Blocked Times, the Clashes with them, and any Warning — about the Variant named.
      */
+    /**
+     * "Apply to Plan" for one Plan Diff of the Variant named (#295; ADR-0008): one save, one undo
+     * step, and only the Plan's Attempts change — never the Timetable. Answered with the Timetable
+     * afterwards, whose Plan Diffs no longer hold the one applied. A Plan Diff the file as it stands
+     * no longer has is refused `plan-diff-stale` with the revision the file still holds, and
+     * nothing is written; a stale revision is the usual `state-file-changed`.
+     */
+    .post("/api/timetable/:year/:semester/plan-diffs/apply", capped, async (c) => {
+      const ref = timetableRef(c);
+      if (!ref.ok) return c.json({ error: ref.error }, 400);
+      const body = await bodyAs(c, appliedPlanDiffSchema, "not-a-plan-diff");
+      if (!body.ok) return c.json({ error: body.error }, 400);
+
+      const { basedOn, variant, position, kind, courseNumber } = body.value;
+      const result = await applyPlanDiffTo(
+        workspace,
+        { ...ref.at, variant, position },
+        { kind, courseNumber },
+        { basedOn, history: into },
+      );
+      if (result.kind === "plan-diff-stale") {
+        return c.json({ reason: result.kind, version: result.version, warnings: result.warnings }, 409);
+      }
+      return timetableAnswer(c, result);
+    })
+
     .post("/api/timetable/:year/:semester/blocked-times", capped, async (c) => {
       const ref = timetableRef(c);
       if (!ref.ok) return c.json({ error: ref.error }, 400);

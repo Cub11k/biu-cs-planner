@@ -11,6 +11,7 @@ import {
   type BlockedTime,
   type BlockedTimeWarning,
   type GroupPick,
+  type PlanDiff,
   type TimetableClash,
   type PickSlot,
   type Semester,
@@ -28,6 +29,7 @@ import {
   type EditRefusal,
   type StateEditing,
 } from "./edit.ts";
+import { planDiffsOf } from "./planDiffSources.ts";
 import { listOfferings } from "./queries.ts";
 import type { Workspace } from "./workspace.ts";
 
@@ -112,6 +114,13 @@ export type TimetableView = {
   blockedTimes: BlockedTime[];
   /** A Blocked Time that keeps no time free, by position, as the file stands after the edit. */
   blockedTimeWarnings: BlockedTimeWarning[];
+  /**
+   * Where the Variant shown and the Plan disagree (#295), each resolved only by an explicit
+   * "apply to Plan" (ADR-0008). Recomputed from the State this view was built from, so an edit's
+   * answer — a Pick, an apply — already says which divergences are left. Empty with no planned
+   * Attempt in the Academic Year: a Timetable works with no Plan.
+   */
+  planDiffs: PlanDiff[];
 };
 
 export type TimetableResult =
@@ -205,6 +214,8 @@ async function view(
     }
   };
   const tray = unread.length === 0 ? unread : trayEntries(state, shown, await catalog());
+  // an empty Tray holds nothing planned here and nothing in the Variant, so nothing to diff
+  const planDiffs = unread.length === 0 ? [] : await planDiffsOf(workspace, state, shown, afterSave);
   return {
     variantName: shown.variant,
     variantPosition: shown.position,
@@ -215,6 +226,7 @@ async function view(
     tray,
     blockedTimes: timetableAt(state, at)?.blockedTimes ?? [],
     blockedTimeWarnings: blockedTimeWarnings(state, at),
+    planDiffs,
   };
 }
 
