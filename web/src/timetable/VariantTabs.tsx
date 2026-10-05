@@ -10,6 +10,12 @@ export type VariantTabsProps = {
   shown: string | undefined;
   onShow: (name: string) => void;
   /**
+   * The id of the element the tabs control — the week (#324). Each tab names it in
+   * `aria-controls`, and the panel names the selected tab back with `aria-labelledby`, using the
+   * tab's id from `variantTabId`.
+   */
+  panelId: string;
+  /**
    * The edits, or `undefined` for *not now* — the State File has not been read, or there is no
    * revision to base a save on — in which case every control that would write is disabled rather
    * than a button that sends a save which cannot succeed.
@@ -38,11 +44,15 @@ export type VariantTabsProps = {
  * focus, because showing a Variant asks the server, and arrowing past three tabs should not ask
  * three times.
  */
+/** The id of the tab at this position, for the panel's `aria-labelledby`. */
+export const variantTabId = (panelId: string, index: number): string => `${panelId}-tab-${index}`;
+
 export function VariantTabs({
   language,
   variants,
   shown,
   onShow,
+  panelId,
   edits,
 }: VariantTabsProps): React.JSX.Element {
   /** Which inline form is open: naming a new Variant, or renaming the one shown. */
@@ -103,6 +113,8 @@ export function VariantTabs({
                 }}
                 type="button"
                 role="tab"
+                id={variantTabId(panelId, index)}
+                aria-controls={panelId}
                 aria-selected={selected}
                 tabIndex={index === focusable ? 0 : -1}
                 data-variant={variant.name}

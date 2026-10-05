@@ -27,13 +27,20 @@ export type BlockedTimesEditorProps = {
    */
   edits:
     | {
-        add: (range: BlockedRange) => void;
-        replace: (index: number, range: BlockedRange) => void;
+        /** Each answered with whether the save landed, which is what closes the form (#324). */
+        add: (range: BlockedRange) => Promise<FormAnswer>;
+        replace: (index: number, range: BlockedRange) => Promise<FormAnswer>;
         remove: (index: number) => void;
         copyTo: (semester: Semester) => void;
       }
     | undefined;
 };
+
+/**
+ * What became of a save the form sent: it landed, or it did not and `said` is why — `undefined`
+ * when there is nothing to say beyond what the screen's own notices already say.
+ */
+export type FormAnswer = { landed: true } | { landed: false; said: string | undefined };
 
 const EMPTY: BlockedRange = { day: "sunday", start: "08:00", end: "10:00", label: "" };
 
@@ -59,6 +66,10 @@ export function BlockedTimesEditor({
   const [range, setRange] = useState<BlockedRange>(EMPTY);
   const others = (["fall", "spring", "summer"] as const).filter((other) => other !== semester);
   const [copyTarget, setCopyTarget] = useState<Semester>(others[0]!);
+  /** Why the last save from the form did not land, shown beside it until the next try. */
+  const [notSaved, setNotSaved] = useState<string | undefined>(undefined);
+  /** A save from the form is in flight, so a second press cannot send it twice. */
+  const [saving, setSaving] = useState(false);
   const ids = { day: useId(), start: useId(), end: useId(), label: useId(), copy: useId() };
 
   const open = (which: "new" | number): void => {
@@ -69,13 +80,25 @@ export function BlockedTimesEditor({
         : { day: held.day, start: held.start, end: held.end, label: held.label },
     );
     setEditing(which);
+    setNotSaved(undefined);
   };
 
+  /**
+   * The form closes only once the answer says the save landed (#324). Closing it as the request
+   * left lost what the student typed whenever the save was then refused — a stale revision is the
+   * ordinary way — so it stays open with its input, and says why beside it.
+   */
   const submit = (event: React.FormEvent): void => {
     event.preventDefault();
-    if (editing === "new") edits?.add(range);
-    else if (editing !== undefined) edits?.replace(editing, range);
-    setEditing(undefined);
+    if (edits === undefined || editing === undefined) return;
+    const sent = editing === "new" ? edits.add(range) : edits.replace(editing, range);
+    setSaving(true);
+    setNotSaved(undefined);
+    void sent.then((answer) => {
+      setSaving(false);
+      if (answer.landed) setEditing(undefined);
+      else setNotSaved(answer.said ?? "");
+    });
   };
 
   return (
@@ -217,8 +240,18 @@ export function BlockedTimesEditor({
             className="rounded-sm border border-rule bg-paper px-1 py-0.5"
           />
           <p className="col-span-2 text-pencil">{t(language, "blockedWrapHint")}</p>
+          {notSaved !== undefined && (
+            <p className="col-span-2 tray-incomplete" data-blocked-not-saved="">
+              {t(language, "blockedNotSaved")} {notSaved}
+            </p>
+          )}
           <span className="col-span-2 flex gap-1">
-            <button type="submit" data-blocked-action="save" className="variant-action">
+            <button
+              type="submit"
+              data-blocked-action="save"
+              disabled={saving || edits === undefined}
+              className="variant-action"
+            >
               {t(language, "blockedSave")}
             </button>
             <button type="button" onClick={() => setEditing(undefined)} className="variant-action">

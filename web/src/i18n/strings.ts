@@ -494,6 +494,8 @@ const english = {
    */
   saveUnconfirmed:
     "Your change may have been saved, but the app could not confirm it. Check that it is there before making it again.",
+  /** Beside the Blocked Time form when its save did not land; the reason follows it (#324). */
+  blockedNotSaved: "Not saved. What you typed is still here.",
 
   variantTabs: "Variants",
   variantPrimaryMark: "primary",
@@ -793,6 +795,7 @@ const hebrew: Record<StringKey, string> = {
   picksHeldLost: "הלחיצה שלכם לא נשמרה.",
 
   saveUnconfirmed: "ייתכן שהשינוי נשמר, אך היישום לא הצליח לאשר זאת. בדקו שהוא מופיע לפני שתבצעו אותו שוב.",
+  blockedNotSaved: "לא נשמר. מה שהקלדתם עדיין כאן.",
 
   variantTabs: "חלופות",
   variantPrimaryMark: "ראשית",

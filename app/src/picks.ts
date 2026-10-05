@@ -163,19 +163,32 @@ export const variantEditedIn = (state: State, at: TimetableRef): VariantRef =>
  * beside it would be a Tray disagreeing with the week. A Catalog that cannot be read is not a
  * refusal and carries no Warning here — the Catalog's own routes say what is wrong with it — and
  * every entry is simply `known: false`.
+ *
+ * **After a save, a Catalog read that fails in any way is that same `known: false`** (#324).
+ * `listOfferings` answers a refusal as a Warning and lets anything else propagate, which for a read
+ * is a 500 that changed nothing. Built after a save, the same throw used to answer 500 for an edit
+ * that had landed, and the page told the student it failed. So `afterSave` reads the Catalog as
+ * not there when the read throws: the answer carries the new revision and the parts it could read,
+ * and the Tray says which part it could not.
  */
-async function view(workspace: Workspace, state: State, at: TimetableRef): Promise<TimetableView> {
+async function view(
+  workspace: Workspace,
+  state: State,
+  at: TimetableRef,
+  afterSave = false,
+): Promise<TimetableView> {
   const shown = variantShownIn(state, at);
   const unread = trayEntries(state, shown, undefined);
-  const tray =
-    unread.length === 0
-      ? unread
-      : trayEntries(
-          state,
-          shown,
-          (await listOfferings(workspace, { academicYear: at.academicYear, semester: at.semester }))
-            .offerings,
-        );
+  const catalog = async () => {
+    const asked = listOfferings(workspace, { academicYear: at.academicYear, semester: at.semester });
+    if (!afterSave) return (await asked).offerings;
+    try {
+      return (await asked).offerings;
+    } catch {
+      return undefined;
+    }
+  };
+  const tray = unread.length === 0 ? unread : trayEntries(state, shown, await catalog());
   return {
     variantName: shown.variant,
     variants: (timetableAt(state, at)?.variants ?? []).map((variant) => ({ name: variant.name, primary: variant.primary })),
@@ -235,7 +248,8 @@ export async function editTimetable(
 
   return {
     kind: "served",
-    view: await view(workspace, outcome.state, answerAbout()),
+    // the save has landed, so nothing read from here on may answer as if it had not (#324)
+    view: await view(workspace, outcome.state, answerAbout(), true),
     version: outcome.version,
     warnings: outcome.warnings,
   };

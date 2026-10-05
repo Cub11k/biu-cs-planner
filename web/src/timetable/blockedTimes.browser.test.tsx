@@ -279,3 +279,41 @@ it("names an unlabelled Blocked Time on the week as the editor does", async () =
   await until(() => expect(blocks(mounted)[0]?.textContent).toContain(t("en", "blockedUnlabelled")));
   expect(rows(mounted)[0]).toContain(t("en", "blockedUnlabelled"));
 });
+
+/**
+ * #324: a refused save leaves the form open with what was typed, and says why beside it. The form
+ * used to close as the request left, so a stale revision — the ordinary refusal — lost the input.
+ * The second press goes out on the revision the re-read brought, lands, and closes the form.
+ */
+it("keeps the form open with its input when the save is refused, and closes it once one lands", async () => {
+  const mounted = await openWeek();
+
+  blockedAction(mounted, "new").click();
+  await userEvent.fill(await field(mounted, t("en", "blockedLabel")), "night class");
+  fake.changeUnderneath = true;
+  blockedAction(mounted, "save").click();
+
+  await until(() => {
+    expect(mounted.querySelector("[data-blocked-not-saved]")?.textContent).toContain(
+      t("en", "blockedNotSaved"),
+    );
+  });
+  expect(mounted.querySelector("[data-blocked-not-saved]")?.textContent).toContain(t("en", "picksStale"));
+  expect((await field(mounted, t("en", "blockedLabel"))).value).toBe("night class");
+  expect(rows(mounted)).toHaveLength(0);
+
+  // the re-read the refusal asked for has to land before the next press can be based on it
+  const before = fake.version;
+  await until(() =>
+    expect(
+      fake.sent.filter((request) => request.method === "GET" && request.pathname.endsWith("/fall")).length,
+    ).toBeGreaterThan(1),
+  );
+  await new Promise((settled) => setTimeout(settled, 50));
+  blockedAction(mounted, "save").click();
+
+  await until(() => expect(rows(mounted)).toHaveLength(1));
+  expect(fake.version).toBe(before + 1);
+  expect(rows(mounted)[0]).toContain("night class");
+  expect(mounted.querySelector("form.blocked-form")).toBeNull();
+});

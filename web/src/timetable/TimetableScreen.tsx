@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { api } from "../api.ts";
 import { t, type Language, type StringKey } from "../i18n/strings.ts";
 import { academicYearOf, academicYearSpan, semesterOf } from "./calendar.ts";
@@ -34,7 +34,7 @@ import {
 import { CoursePicker } from "./CoursePicker.tsx";
 import { addToTray, removeFromTray } from "./tray.ts";
 import { TrayColumn } from "./TrayColumn.tsx";
-import { BlockedTimesEditor } from "./BlockedTimesEditor.tsx";
+import { BlockedTimesEditor, type FormAnswer } from "./BlockedTimesEditor.tsx";
 import {
   addBlockedTime,
   copyBlockedTimes,
@@ -42,7 +42,7 @@ import {
   replaceBlockedTime,
 } from "./blockedTimes.ts";
 import { lessonTypeName } from "./lessonType.ts";
-import { VariantTabs } from "./VariantTabs.tsx";
+import { VariantTabs, variantTabId } from "./VariantTabs.tsx";
 import { WeekGrid } from "./WeekGrid.tsx";
 
 const SEMESTER_STRING = {
@@ -285,6 +285,8 @@ export function TimetablePane({
    * Variant the student was looking at when they clicked.
    */
   const variantWanted = useRef<string | undefined>(undefined);
+  /** The week, as the panel the Variant tabs control (#324). */
+  const weekPanelId = useId();
 
   const askCatalog = useCallback(
     () => fetchOfferings(api, { academicYear, semester }),
@@ -324,6 +326,11 @@ export function TimetablePane({
   const clashes = timetable.kind === "served" ? timetable.clashes : [];
   const variantWarnings = timetable.kind === "served" ? timetable.variantWarnings : [];
   const chosen = offerings.find((offering) => offering.courseNumber === selected);
+  /** Which tab is shown, by position, or -1 while there is none. */
+  const shownTab =
+    timetable.kind === "served"
+      ? timetable.variants.findIndex((variant) => variant.name === timetable.variantName)
+      : -1;
 
   /** A picked Course the Catalog no longer names shows its number, which it always has. */
   const nameOf = (courseNumber: string): string => {
@@ -483,13 +490,26 @@ export function TimetablePane({
   const sendEdit = (
     edit: TimetableEdit,
     follow?: (served: Extract<TimetableResult, { kind: "served" }>) => void,
-  ): void => {
-    if (timetable.kind !== "served") return;
+  ): Promise<TimetableResult | undefined> => {
+    if (timetable.kind !== "served") return Promise.resolve(undefined);
     retireNotices();
     const sentOn = timetable;
     const query = { academicYear, semester, variant: timetable.variantName };
-    void edit(query, timetable.version).then((answer) => settle(answer, sentOn, follow));
+    return edit(query, timetable.version).then((answer) => settle(answer, sentOn, follow));
   };
+
+  /**
+   * A form's edit, answered with whether it landed (#324): the Blocked Time form stays open, with
+   * what the student typed, until the answer says the save went through, and says beside itself why
+   * it did not. Anything but a served answer is not "landed" — an answer nobody could read may have
+   * landed, and the form is then the student's to close.
+   */
+  const formEdit = (edit: TimetableEdit): Promise<FormAnswer> =>
+    sendEdit(edit).then((answer) =>
+      answer?.kind === "served"
+        ? { landed: true }
+        : { landed: false, said: answer === undefined ? undefined : notSavedSaid(language, answer, tokenHeld) },
+    );
 
   /** Showing another tab: a re-read of the same question, never a State File edit. */
   const showVariant = (name: string): void => {
@@ -553,13 +573,13 @@ export function TimetablePane({
     timetable.kind === "served"
       ? {
           add: (range: Parameters<typeof addBlockedTime>[2]) =>
-            sendEdit((query, basedOn) => addBlockedTime(api, query, range, basedOn)),
+            formEdit((query, basedOn) => addBlockedTime(api, query, range, basedOn)),
           replace: (index: number, range: Parameters<typeof addBlockedTime>[2]) =>
-            sendEdit((query, basedOn) => replaceBlockedTime(api, query, index, range, basedOn)),
+            formEdit((query, basedOn) => replaceBlockedTime(api, query, index, range, basedOn)),
           remove: (index: number) =>
-            sendEdit((query, basedOn) => removeBlockedTime(api, query, index, basedOn)),
+            void sendEdit((query, basedOn) => removeBlockedTime(api, query, index, basedOn)),
           copyTo: (target: Semester) =>
-            sendEdit((query, basedOn) =>
+            void sendEdit((query, basedOn) =>
               copyBlockedTimes(api, query, { academicYear, semester: target }, basedOn),
             ),
         }
@@ -731,6 +751,7 @@ export function TimetablePane({
             variants={timetable.kind === "served" ? timetable.variants : []}
             shown={timetable.kind === "served" ? timetable.variantName : undefined}
             onShow={showVariant}
+            panelId={weekPanelId}
             edits={variantEdits}
           />
           <p className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-rule bg-hint px-4 py-2 text-sm text-ink-soft">
@@ -788,7 +809,15 @@ export function TimetablePane({
             </span>
           </p>
 
-          <div className="min-h-0 flex-1 overflow-auto">
+          {/* the panel the Variant tabs control, labelled by the tab shown — a tab pattern without
+              one is incomplete (#324); only while there are tabs to control it */}
+          <div
+            className="min-h-0 flex-1 overflow-auto"
+            id={weekPanelId}
+            {...(shownTab === -1
+              ? {}
+              : { role: "tabpanel", "aria-labelledby": variantTabId(weekPanelId, shownTab) })}
+          >
             <WeekGrid
               language={language}
               semester={semester}
@@ -808,6 +837,22 @@ export function TimetablePane({
       </div>
     </>
   );
+}
+
+/** Why a form's edit did not land, said beside the form (#324). */
+function notSavedSaid(language: Language, answer: TimetableResult, tokenHeld: boolean): string | undefined {
+  switch (answer.kind) {
+    case "served":
+      return undefined;
+    case "refused":
+      return t(language, answer.reason === undefined ? "picksUnreadable" : REFUSAL_STRING[answer.reason]);
+    case "unreadable-answer":
+      return t(language, "picksSaveAnswerUnreadable");
+    case "unauthorized":
+      return unauthorizedSaid(language, tokenHeld);
+    case "unreachable":
+      return t(language, "apiUnreachable");
+  }
 }
 
 /**

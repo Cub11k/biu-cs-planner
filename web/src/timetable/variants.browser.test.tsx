@@ -353,3 +353,23 @@ it("draws the tabs right to left in Hebrew, with every word around the names tra
   expect(tab(mounted, "B").textContent).toContain(t("he", "variantPrimaryMark"));
   expect(action(mounted, "create").textContent).toBe(t("he", "variantNew"));
 });
+
+/**
+ * #324: the tab pattern is complete — every tab names the week in `aria-controls`, and the week is
+ * the `tabpanel`, labelled by the tab shown, which follows a switch.
+ */
+it("makes the week the tabpanel the tabs control, labelled by the tab shown", async () => {
+  const mounted = await openWeek();
+  await until(() => expect(selectedTab(mounted)).toBe("B"));
+
+  const panel = mounted.querySelector<HTMLElement>('[role="tabpanel"]');
+  expect(panel).not.toBeNull();
+  expect(panel!.contains(mounted.querySelector(".day-column"))).toBe(true);
+  for (const each of tabs(mounted)) expect(each.getAttribute("aria-controls")).toBe(panel!.id);
+  expect(panel!.getAttribute("aria-labelledby")).toBe(tab(mounted, "B").id);
+
+  tab(mounted, "A").click();
+
+  await until(() => expect(panel!.getAttribute("aria-labelledby")).toBe(tab(mounted, "A").id));
+  expect(tab(mounted, "A").id).not.toBe(tab(mounted, "B").id);
+});
