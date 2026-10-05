@@ -42,6 +42,8 @@ export {
   type PlanResult,
   type PlanView,
 } from "./plan.ts";
+// The Course names and credits the Plan screen's cards draw (#292).
+export { readCourses, type CourseFacts, type CoursesOptions, type CoursesView } from "./courses.ts";
 export {
   chooseCohort,
   choosePrograms,
