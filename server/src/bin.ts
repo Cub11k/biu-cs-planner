@@ -45,7 +45,7 @@ async function main(argv: readonly string[]): Promise<void> {
 
 async function start({ workspace, host, open, debug }: Launch): Promise<void> {
   const token = await launchToken();
-  // `--debug` puts every Workspace refusal on stderr, and is off otherwise (#165, ./debug.ts)
+  // `--debug` puts every Workspace refusal and failure on stderr, and is off otherwise (#165, #357, ./debug.ts)
   const folder = debug
     ? loggingWorkspace(fileSystemWorkspace(workspace), (line) => console.error(line), token)
     : fileSystemWorkspace(workspace);

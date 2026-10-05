@@ -8,6 +8,7 @@ import {
   removeAttemptFrom,
   updateAttemptOf,
 } from "./plan.ts";
+import { WorkspaceRefusedError } from "./workspace.ts";
 import { memoryWorkspace, type MemoryWorkspace } from "./workspace.memory.ts";
 
 /**
@@ -39,7 +40,7 @@ describe("readPlan", () => {
 
     expect(await readPlan(workspace, ALICE)).toEqual({
       kind: "served",
-      view: { attempts: [], attemptWarnings: [], planWarnings: [], semesterCredits: [] },
+      view: { attempts: [], attemptWarnings: [], planWarnings: [], semesterCredits: [], programWarnings: [] },
       version: undefined,
       warnings: [],
     });
@@ -510,5 +511,63 @@ describe("the credit totals in the answer", () => {
     expect(added.kind === "served" && added.view.semesterCredits).toEqual([
       { academicYear: 2027, semester: "fall", credits: 5, unknown: 0 },
     ]);
+  });
+});
+
+/**
+ * #357: the Plan answer marks a `requirements/` that could not be listed, as the Programs and
+ * Progress answers do (#344), rather than serving checks run against no Program as if there were
+ * nothing to say.
+ */
+describe("a requirements folder that could not be listed", () => {
+  const seeded = (): MemoryWorkspace => {
+    const workspace = memoryWorkspace({ created: true });
+    workspace.seed({ kind: "requirements", name: "cs-2027" }, { schemaVersion: 1, program: { id: "cs", name: { he: "cs" } } });
+    workspace.seed(REF, { schemaVersion: 1, programs: [{ requirementsFile: "cs-2027" }] });
+    return workspace;
+  };
+  const refusing = (base: MemoryWorkspace) => ({
+    ...base,
+    list: async () => {
+      throw new WorkspaceRefusedError(
+        { reason: "not-a-folder", subject: { kind: "folder", folder: "requirements" } },
+        "no",
+      );
+    },
+  });
+
+  it("is marked on a read the Workspace refused, and not when the folder is listed", async () => {
+    const workspace = seeded();
+    const listed = await readPlan(workspace, ALICE);
+    const refused = await readPlan(refusing(workspace), ALICE);
+
+    expect(listed.kind === "served" && listed.view.programWarnings).toEqual([]);
+    expect(refused.kind === "served" && refused.view.programWarnings).toEqual([{ kind: "requirements-unlisted" }]);
+  });
+
+  it("is marked on an edit that landed when the listing then throws, with the new revision", async () => {
+    const base = seeded();
+    const basedOn = await versionOf(base);
+    const workspace = {
+      ...base,
+      list: async () => {
+        throw new Error("the disk is failing");
+      },
+    };
+
+    const added = await addAttemptTo(workspace, planned, { ...ALICE, basedOn });
+
+    expect(added).toMatchObject({ kind: "served", view: { programWarnings: [{ kind: "requirements-unlisted" }] } });
+    expect(added.kind === "served" && added.version).toBe(await versionOf(base));
+    expect(added.kind === "served" && added.version).not.toBe(basedOn);
+  });
+
+  it("is not marked with no Program chosen, since nothing was to be listed", async () => {
+    const workspace = memoryWorkspace({ created: true });
+    workspace.seed(REF, { schemaVersion: 1 });
+
+    const read = await readPlan(refusing(workspace), ALICE);
+
+    expect(read.kind === "served" && read.view.programWarnings).toEqual([]);
   });
 });

@@ -1,4 +1,4 @@
-import { WorkspaceRefusedError, type Workspace } from "@biu-cs-planner/app";
+import { StateFileChangedError, WorkspaceRefusedError, type Workspace } from "@biu-cs-planner/app";
 
 /**
  * The `--debug` log: the only log this app keeps (#165, ruled 2026-10-04).
@@ -23,6 +23,14 @@ import { WorkspaceRefusedError, type Workspace } from "@biu-cs-planner/app";
  *   - **What may never appear, in any mode: the launch token.** No refusal is about the token file,
  *     which lives outside the Workspace, so none should carry it — and every line is scrubbed of it
  *     anyway before it is written, so that staying true does not depend on every adapter.
+ *   - **And every other error the port throws** (#357), `StateFileChangedError` still excepted:
+ *     its name and message, the errno and the `cause` chain, scrubbed the same way. Since #324 and #344 a read made after a landed save
+ *     catches *any* failure — a refusal or not — and answers with the new revision and a marker
+ *     instead of a 500, so a disk failing under the Catalog or `requirements/` after an edit was
+ *     silent even under `--debug`, though it is what a student reporting "my edit seemed to fail"
+ *     needs seen. Logged at the port, so it is every such throw rather than only the ones `app`
+ *     then swallows: one that becomes a 500 is logged too, which costs a line and hides nothing.
+ *     An error raised inside `app` without the port throwing is not seen here, as above.
  *   - **The page never sees any of it.** The answer on screen is unchanged; a `cause` is for this
  *     log and never for a response (ADR-0002).
  *
@@ -52,12 +60,8 @@ function said(value: unknown): string {
   }
 }
 
-/**
- * The line for one refusal: the operation, the reason code, the first errno along the chain, and
- * every `cause` below the refusal. The token is scrubbed out last, whatever put it there.
- */
-export function refusalLine(operation: string, error: WorkspaceRefusedError, token: string): string {
-  const reason = field(field(error, "refusal"), "reason");
+/** The first errno along an error's `cause` chain, and every `cause` below the error, in words. */
+function chainOf(error: unknown): { errno: string | undefined; chain: string[] } {
   const chain: string[] = [];
   let errno: string | undefined;
   let at: unknown = error;
@@ -67,18 +71,44 @@ export function refusalLine(operation: string, error: WorkspaceRefusedError, tok
     at = field(at, "cause");
     if (at !== undefined) chain.push(said(at));
   }
-  const line =
-    `biu-cs-planner debug: ${operation} refused (${typeof reason === "string" ? reason : "no reason code"})` +
-    ` errno=${errno ?? "none"}` +
-    (chain.length === 0 ? "" : ` cause: ${chain.join(" <- ")}`);
+  return { errno, chain };
+}
+
+/** A line with its errno and cause chain appended, and the token scrubbed out last, whatever put it there. */
+function finished(head: string, error: unknown, token: string): string {
+  const { errno, chain } = chainOf(error);
+  const line = `${head} errno=${errno ?? "none"}` + (chain.length === 0 ? "" : ` cause: ${chain.join(" <- ")}`);
   return token === "" ? line : line.split(token).join("[launch token]");
 }
 
 /**
- * The Workspace, with every refusal it raises written to `log` on the way out and then rethrown
+ * The line for one refusal: the operation, the reason code, the first errno along the chain, and
+ * every `cause` below the refusal. The token is scrubbed out last, whatever put it there.
+ */
+export function refusalLine(operation: string, error: WorkspaceRefusedError, token: string): string {
+  const reason = field(field(error, "refusal"), "reason");
+  return finished(
+    `biu-cs-planner debug: ${operation} refused (${typeof reason === "string" ? reason : "no reason code"})`,
+    error,
+    token,
+  );
+}
+
+/**
+ * The line for any other error the port threw (#357): the operation, the error itself in words,
+ * then the errno and cause chain as a refusal's line has them. Scrubbed of the token the same way —
+ * a message is the likeliest place for a stray value to turn up.
+ */
+export function failureLine(operation: string, error: unknown, token: string): string {
+  return finished(`biu-cs-planner debug: ${operation} failed (${said(error)})`, error, token);
+}
+
+/**
+ * The Workspace, with every error it raises written to `log` on the way out and then rethrown
  * unchanged, so what every caller catches — and so what the page is answered — is exactly what it
- * would have been without `--debug`. Anything that is not a refusal passes through unlogged: it is
- * not caught by `app`, so it was never silent.
+ * would have been without `--debug`. A refusal gets `refusalLine`, anything else `failureLine`:
+ * since #324 and #344 a read after a landed save catches either kind, so neither was ever sure to
+ * reach the student on its own (#357).
  *
  * **A Proxy over the adapter rather than an object listing the port's methods**, the shape the
  * hostile-adapter test in `./api.test.ts` already uses and for its reason: a method added to the
@@ -98,7 +128,14 @@ export function loggingWorkspace(workspace: Workspace, log: DebugLog, token: str
       const method: unknown = Reflect.get(target, property, receiver);
       if (typeof method !== "function") return method;
       const logged = (error: unknown): never => {
-        if (error instanceof WorkspaceRefusedError) log(refusalLine(String(property), error, token));
+        // the external-edit guard's answer is the page's to say, and was never a failure (above)
+        if (error instanceof StateFileChangedError) throw error;
+        const operation = String(property);
+        log(
+          error instanceof WorkspaceRefusedError
+            ? refusalLine(operation, error, token)
+            : failureLine(operation, error, token),
+        );
         throw error;
       };
       return (...args: unknown[]): unknown => {

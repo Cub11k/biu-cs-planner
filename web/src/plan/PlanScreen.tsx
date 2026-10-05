@@ -425,6 +425,9 @@ export function PlanScreen({
         {served !== undefined && (
           <>
             <ul data-plan-warnings className="mb-3 list-disc space-y-1 ps-5 text-sm text-ink-soft empty:hidden">
+              {served.programWarnings.some((warning) => warning.kind === "requirements-unlisted") ? (
+                <li data-plan-unlisted>{t(language, "planWarnUnlisted")}</li>
+              ) : null}
               {served.stateWarnings
                 .filter((warning: StateWarning) => STATE_WARNING_STRING.has(warning.kind))
                 .map((warning, index) => (

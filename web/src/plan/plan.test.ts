@@ -25,6 +25,7 @@ const SERVED = {
   attemptWarnings: [],
   planWarnings: [{ kind: "credit-load", target: { kind: "semester", academicYear: 2027, semester: "fall" }, credits: 30, limit: 24 }],
   semesterCredits: [{ academicYear: 2027, semester: "fall", credits: 30, unknown: 0 }],
+  programWarnings: [{ kind: "requirements-unlisted" }],
   version: "a".repeat(64),
   warnings: [{ kind: "cohort-unreadable" }],
 };
@@ -52,6 +53,7 @@ it("asks for the Plan with the launch token, and reads what is served", async ()
     attemptWarnings: [],
     planWarnings: SERVED.planWarnings,
     semesterCredits: SERVED.semesterCredits,
+    programWarnings: [{ kind: "requirements-unlisted" }],
     stateWarnings: [{ kind: "cohort-unreadable" }],
     version: "a".repeat(64),
   });

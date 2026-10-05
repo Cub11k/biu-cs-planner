@@ -1308,7 +1308,7 @@ export function CatalogNotice({
           : t(language, "catalogUnreadable", { year: academicYear })}
       </p>
       <ul className="mt-2 list-disc space-y-1 ps-5">
-        {workspaceRefused ? <li>{t(language, "warningWorkspaceRefused")}</li> : null}
+        {workspaceRefused ? <li>{t(language, "catalogRefusedByWorkspace")}</li> : null}
         {warnings.map((warning) => {
           const key = WARNING_STRING.get(warning.kind);
           return key === undefined ? null : <li key={warning.kind}>{t(language, key)}</li>;

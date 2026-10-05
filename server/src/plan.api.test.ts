@@ -2,13 +2,14 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
+import type { Workspace } from "@biu-cs-planner/app";
 import { createApi } from "./api.ts";
 import { fileSystemWorkspace } from "./workspace.fs.ts";
 
 /**
  * The Plan routes over HTTP, against a real temp-dir Workspace: what #352 added — each Semester's
  * credit total in the Plan answer, and New Plan from Suggested Layout for either Program of a double
- * major.
+ * major — and the `requirements-unlisted` marker #357 gave the Plan answer.
  *
  * Its own file beside `./api.test.ts`, which most tickets also write in: the routes are the same
  * contract, and the setup below is the one that file uses.
@@ -125,4 +126,61 @@ it("runs New Plan from Suggested Layout for either Program of a double major, th
   const other = await send("POST", "/api/plan/suggested-layout", { requirementsFile: "bio-2027", basedOn: before });
   expect(other.status).toBe(409);
   await expect(other.json()).resolves.toEqual({ reason: "program-not-chosen", version: before });
+});
+
+/**
+ * #357: after a landed save whose `requirements/` read then fails, the Plan answer carries the new
+ * revision (#344) and marks the folder unlisted, as the Programs and Progress answers do — on an
+ * Attempt edit and on New Plan from Suggested Layout alike. The plain read marks a refused listing
+ * too, and nothing when the folder lists.
+ */
+it("marks requirements/ unlisted on a Plan answer whose read of it failed after the save landed", async () => {
+  const real = fileSystemWorkspace(root);
+  // Armed, requirements/ fails from the moment the guarded writer reads the State File: New Plan
+  // from Suggested Layout reads requirements/ before its edit too, and a failure there is a 500
+  // that changed nothing. Between that read and the save the edit touches nothing that fails here,
+  // so every failure this arms is one after the save has landed.
+  let armed = false;
+  let failing = false;
+  const flaky: Workspace = new Proxy(real, {
+    get(target, property, receiver) {
+      const method: unknown = Reflect.get(target, property, receiver);
+      if (typeof method !== "function") return method;
+      if (property === "readStateFile") {
+        return async (...args: unknown[]): Promise<unknown> => {
+          const read = await (method as (...args: unknown[]) => Promise<unknown>).apply(target, args);
+          if (armed) failing = true;
+          return read;
+        };
+      }
+      if (property !== "read" && property !== "list") return method;
+      return async (...args: unknown[]): Promise<unknown> => {
+        if (failing) throw new Error("the disk is failing");
+        return (method as (...args: unknown[]) => unknown).apply(target, args);
+      };
+    },
+  });
+  api = createApi({ workspace: flaky, token: TOKEN, changes: { changeCount: () => 0 } });
+  await requirements("cs-2027", { suggestedLayout: [{ studyYear: 1, semester: "fall", courses: ["89-110"] }] });
+  await choose([{ requirementsFile: "cs-2027" }]);
+  expect((await send("PUT", "/api/cohort", { cohort: { academicYear: 2027, semester: "fall" }, basedOn: await version() })).status).toBe(200);
+  await expect((await send("GET", "/api/plan")).json()).resolves.toMatchObject({ programWarnings: [] });
+
+  for (const [method, path, body] of [
+    ["POST", "/api/plan/attempts", { courseNumber: "88-101", academicYear: 2027, semester: "fall", status: "planned" }],
+    ["POST", "/api/plan/suggested-layout", {}],
+  ] as const) {
+    failing = false;
+    const basedOn = await version();
+    armed = true;
+    const answer = await send(method, path, { ...body, basedOn });
+
+    expect(answer.status, path).toBe(200);
+    const served = (await answer.json()) as PlanBody & { programWarnings: unknown[] };
+    expect(served.programWarnings, path).toEqual([{ kind: "requirements-unlisted" }]);
+    expect(served.version, path).not.toBe(basedOn);
+    armed = false;
+    failing = false;
+    expect(await version(), path).toBe(served.version);
+  }
 });

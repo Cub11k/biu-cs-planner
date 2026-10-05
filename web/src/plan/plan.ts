@@ -40,6 +40,8 @@ export type AttemptWarning = ServedPlan["attemptWarnings"][number];
 export type PlanWarning = ServedPlan["planWarnings"][number];
 /** What reading the State File raised: an entry left out, a Cohort that could not be read. */
 export type StateWarning = ServedPlan["warnings"][number];
+/** That `requirements/` could not be listed, so the Plan was checked against no Program (#357). */
+export type PlanProgramWarning = ServedPlan["programWarnings"][number];
 /** What one Semester adds up to in credits, as the credit-load check counts it (#352). */
 export type SemesterCredits = ServedPlan["semesterCredits"][number];
 /** What New Plan from Suggested Layout created and skipped. */
@@ -68,6 +70,8 @@ export type PlanResult =
       planWarnings: PlanWarning[];
       /** Each Semester's credit total, served beside the checks so the screen adds nothing up. */
       semesterCredits: SemesterCredits[];
+      /** `requirements-unlisted` when the folder could not be listed and a Program was chosen. */
+      programWarnings: PlanProgramWarning[];
       stateWarnings: StateWarning[];
       version: PlanVersion;
       /** New Plan from Suggested Layout's account of what it did, on its own answer only. */
@@ -109,6 +113,7 @@ async function read(answer: Sent): Promise<PlanResult> {
     attemptWarnings: body.attemptWarnings ?? [],
     planWarnings: body.planWarnings ?? [],
     semesterCredits: Array.isArray(body.semesterCredits) ? body.semesterCredits : [],
+    programWarnings: Array.isArray(body.programWarnings) ? body.programWarnings : [],
     stateWarnings: body.warnings ?? [],
     version: body.version,
     ...(body.summary === undefined ? {} : { summary: body.summary }),

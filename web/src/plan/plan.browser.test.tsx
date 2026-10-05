@@ -40,6 +40,8 @@ let attemptWarnings: unknown[];
 let planWarnings: unknown[];
 /** What the Plan answer says each Semester adds up to: the server's, never summed by the fake. */
 let semesterCredits: unknown[];
+/** The Plan answer's marker for a `requirements/` that could not be listed (#357). */
+let programWarnings: unknown[];
 /** The student's Programs, as the Programs route answers them. */
 let programs: Array<{ requirementsFile: string; track?: string }>;
 let version: number;
@@ -63,6 +65,7 @@ const planBody = (extra: object = {}) => ({
   attemptWarnings,
   planWarnings,
   semesterCredits,
+  programWarnings,
   version: `v${version}`,
   warnings: [],
   ...extra,
@@ -78,6 +81,7 @@ beforeEach(() => {
   attemptWarnings = [];
   planWarnings = [];
   semesterCredits = [];
+  programWarnings = [];
   programs = [];
   version = 1;
   nextId = 1;
@@ -528,6 +532,27 @@ it("shows each column's credit total as the Plan answer serves it, not the sum o
   expect(column(mounted, "2027-spring")!.querySelector("[data-column-credits]")!.textContent).toBe(
     t("en", "planColumnCredits", { credits: 0 }),
   );
+});
+
+/**
+ * #357: an edit that landed while `requirements/` could not be listed is answered with the new Plan
+ * and the marker, and the screen says the Plan was not checked rather than showing it as clean.
+ */
+it("says the requirements folder could not be read when an edit's answer marks it", async () => {
+  const mounted = await mount();
+  await served(mounted);
+  expect(mounted.querySelector("[data-plan-unlisted]")).toBeNull();
+
+  programWarnings = [{ kind: "requirements-unlisted" }];
+  card(mounted, "a2")!.querySelector<HTMLButtonElement>("button[data-attempt-remove]")!.click();
+
+  const said = await vi.waitFor(() => {
+    const found = mounted.querySelector("[data-plan-warnings] [data-plan-unlisted]");
+    if (found === null) throw new Error("the marker was not said");
+    return found;
+  });
+  expect(said.textContent).toBe(t("en", "planWarnUnlisted"));
+  expect(card(mounted, "a2")).toBeNull();
 });
 
 it("speaks Hebrew right to left, the first Academic Year and Semester at the right", async () => {

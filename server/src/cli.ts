@@ -57,8 +57,8 @@ Options:
                       State Files (default: the current directory)
   --no-open           print the URL but do not open a browser
   --host <address>    the address to bind (default: ${LOOPBACK_HOST})
-  --debug             print why the Workspace refused anything to this terminal, file
-                      paths included; never the launch token
+  --debug             print why the Workspace refused or failed anything to this
+                      terminal, file paths included; never the launch token
   --help              show this
 
 Commands:
