@@ -1,4 +1,6 @@
 import { mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { closeSync, constants, openSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
@@ -3461,4 +3463,91 @@ it("names what New Plan from Suggested Layout needs, and refuses a stale revisio
   const malformed = await post(FROM_LAYOUT, { requirementsFile: "" });
   expect(malformed.status).toBe(400);
   await expect(malformed.json()).resolves.toEqual({ error: "not-a-layout-request" });
+});
+
+/**
+ * #250, over HTTP: a FIFO with no writer where a Catalog, the State File or a Requirements File
+ * belongs. `readFile` on one used to block for good, so `GET /api/catalog/2027/offerings` never
+ * answered and the process would not stop. Every route that reads one of them now answers, and
+ * none of them with a 5xx: the port refuses a path that is not a regular file before reading it.
+ *
+ * Each request is raced against a timer, so the regression fails here rather than hanging the
+ * suite, and each FIFO is released afterwards (opened for writing and closed, which hands a
+ * blocked reader an end of file) so a read that did block cannot keep the worker alive.
+ */
+it.skipIf(process.platform === "win32")(
+  "answers every route that reads a file when a FIFO stands where the file belongs",
+  async () => {
+    await post("/api/workspace", {});
+    const fifos = [
+      join(root, "catalogs", "2027.json"),
+      join(root, "me.state.json"),
+      join(root, "requirements", "cs.json"),
+    ];
+    execFileSync("mkfifo", fifos);
+
+    const answered = async (path: string): Promise<number> => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const hung = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${path} still unanswered after 2000ms`)), 2000);
+      });
+      try {
+        return (await Promise.race([get(path), hung])).status;
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+
+    try {
+      for (const path of [
+        "/api/catalog/2027/offerings?semester=fall",
+        "/api/catalog/2027/offerings/89-110",
+        "/api/timetable/2027/fall",
+        "/api/timetable/2027/fall/exams",
+        "/api/plan",
+        "/api/progress",
+        "/api/programs",
+        "/api/requirements",
+        "/api/settings",
+      ]) {
+        expect(await answered(path), path).toBeLessThan(500);
+      }
+      // the setup asserted rather than assumed: the Catalog read met the FIFO and refused it
+      expect(await answered("/api/catalog/2027/offerings?semester=fall")).toBe(409);
+    } finally {
+      for (const fifo of fifos) {
+        try {
+          closeSync(openSync(fifo, constants.O_WRONLY | constants.O_NONBLOCK));
+        } catch {
+          // no reader was waiting on it
+        }
+      }
+    }
+  },
+);
+
+/**
+ * #250's second half: a year in a route path is four digits. `z.coerce.number()` used to read
+ * `0x7e3` as 2019, `2e3` as 2000 and a whitespace-padded `2027` as 2027, while `2027.5` got
+ * `400 bad-year`. Now every spelling but the digits gets the same 400.
+ */
+it("takes a year in a route path only as four digits", async () => {
+  await post("/api/workspace", {});
+
+  for (const year of ["0x7e3", "2e3", "%202027%20", "2027%0a", "2027%09", "02027", "2027.5", "1899", "2201"]) {
+    const exams = await get(`/api/timetable/${year}/fall/exams`);
+    expect(exams.status, year).toBe(400);
+    await expect(exams.json(), year).resolves.toEqual({ error: "bad-year" });
+
+    const offering = await get(`/api/catalog/${year}/offerings/89-110`);
+    expect(offering.status, year).toBe(400);
+    await expect(offering.json(), year).resolves.toEqual({ error: "bad-year" });
+
+    // the offerings list words its 400 for the year and the semester alike
+    const offerings = await get(`/api/catalog/${year}/offerings?semester=fall`);
+    expect(offerings.status, year).toBe(400);
+  }
+
+  // and the digits themselves still name the year
+  expect((await get("/api/timetable/2027/fall/exams")).status).toBe(200);
 });

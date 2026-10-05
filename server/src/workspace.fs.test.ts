@@ -9,6 +9,8 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { closeSync, constants, openSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
@@ -832,8 +834,9 @@ it("gives content that is not JSON a revision, as it gives one to a file it can 
  * is no file — matched, the guard passed, and the atomic rename destroyed a file the app could
  * not read. A file whose contents cannot be seen is exactly the file the guard exists for.
  *
- * A directory where the file belongs is `EISDIR`: a file that is there, needing no permissions
- * trick, so this half of the proof runs everywhere including as root.
+ * A directory where the file belongs is something that is there and is not a regular file,
+ * needing no permissions trick, so this half of the proof runs everywhere including as root.
+ * Since #250 it is refused on the `stat` before any read, as a FIFO is.
  */
 it("refuses a State File it cannot read, rather than reporting it absent", async () => {
   const workspace = fileSystemWorkspace(root);
@@ -852,12 +855,15 @@ it("refuses a State File it cannot read, rather than reporting it absent", async
     .then(() => undefined)
     .catch((thrown: unknown) => thrown as Error);
   expect(refusal?.message).toBe(
-    'refusing the State File "alice": it is there and cannot be read (EISDIR)',
+    'refusing the State File "alice": it is there and is not a regular file',
   );
+  expect(refusal).toMatchObject({ refusal: { reason: "unreadable" } });
   expect(refusal?.message).not.toContain(root);
-  // and the filesystem's own error, whose message does carry the absolute path, is on `cause`
-  // where a log can reach it and a response cannot (#165)
-  expect((refusal?.cause as { code?: unknown } | undefined)?.code).toBe("EISDIR");
+  // and what the `stat` found, whose message does carry the absolute path, is on `cause` where
+  // a log can reach it and a response cannot (#165)
+  expect((refusal?.cause as Error | undefined)?.message).toBe(
+    `${join(root, "alice.state.json")} is not a regular file (a directory)`,
+  );
   // the save a report of absence would have let through, based on there being no file
   await expect(workspace.saveStateFile(ALICE, firstSave(STATE))).rejects.toThrow(
     WorkspaceRefusedError,
@@ -870,6 +876,87 @@ it("refuses a State File it cannot read, rather than reporting it absent", async
     "requirements",
   ]);
 });
+
+/** A FIFO needs `mkfifo`, which Windows has no counterpart for. */
+const fifosArePossible = process.platform !== "win32";
+
+/**
+ * Opens a FIFO for writing and closes it at once, which hands any reader blocked on it an end of
+ * file. Without this a read that did block — the regression under test — would keep its
+ * threadpool thread, and so the test worker, alive after the test had failed. With no reader
+ * there `open` answers `ENXIO`, which is nothing to undo.
+ */
+const releaseFifo = (path: string): void => {
+  try {
+    closeSync(openSync(path, constants.O_WRONLY | constants.O_NONBLOCK));
+  } catch {
+    // no reader was waiting
+  }
+};
+
+/** Settles with what `operation` settled with, or fails after `ms` instead of hanging (#250). */
+const settledWithin = async <T>(ms: number, operation: Promise<T>): Promise<T> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const hung = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`still unanswered after ${ms}ms`)), ms);
+  });
+  try {
+    return await Promise.race([operation, hung]);
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+/**
+ * #250: a FIFO with no writer where a Catalog or a State File belongs. `readFile` on it blocks for
+ * good, in threadpool work nothing can cancel, so the read never settled and the process could
+ * not be stopped. The port now refuses anything that is not a regular file on a `stat` before it
+ * reads, as #109's *unreadable* answer.
+ *
+ * Each read is raced against a timer, so the regression fails this test rather than hanging the
+ * suite, and the FIFO is released afterwards either way.
+ */
+it.skipIf(!fifosArePossible)(
+  "refuses a FIFO where a Catalog or a State File belongs, rather than blocking on it",
+  async () => {
+    const workspace = fileSystemWorkspace(root);
+    await workspace.create();
+    const catalog = join(root, "catalogs", "2027.json");
+    const state = join(root, "alice.state.json");
+    execFileSync("mkfifo", [catalog, state]);
+
+    try {
+      const catalogRead = await settledWithin(
+        2000,
+        workspace.read({ kind: "catalog", academicYear: 2027 }).then(
+          () => undefined,
+          (thrown: unknown) => thrown,
+        ),
+      );
+      expect(catalogRead).toBeInstanceOf(WorkspaceRefusedError);
+      expect(catalogRead).toMatchObject({
+        refusal: { reason: "unreadable", subject: { kind: "catalog", academicYear: 2027 } },
+        message: "refusing the Catalog for the Academic Year 2027: it is there and is not a regular file",
+      });
+      expect((catalogRead as Error).cause).toMatchObject({
+        message: `${catalog} is not a regular file (a FIFO)`,
+      });
+
+      await expect(settledWithin(2000, workspace.readStateFile(ALICE))).rejects.toThrow(
+        WorkspaceRefusedError,
+      );
+      // a save reads the file it is about to replace first, so it is refused rather than blocked
+      await expect(settledWithin(2000, workspace.saveStateFile(ALICE, firstSave(STATE)))).rejects.toThrow(
+        WorkspaceRefusedError,
+      );
+      // and the FIFO is still what is there: refused, not replaced
+      expect((await readdir(root)).sort()).toContain("alice.state.json");
+    } finally {
+      releaseFifo(catalog);
+      releaseFifo(state);
+    }
+  },
+);
 
 /**
  * The same refusal behind a mode bit, which is the shape #109 was reported as and the one a

@@ -99,7 +99,17 @@ const HEALTH_PATH = "/api/health";
 /** A crawl of a whole department is large; a request far past that is not one. */
 const MAX_BODY_BYTES = 16 * 1024 * 1024;
 
-const yearSchema = z.coerce.number().int().min(1900).max(2200);
+/**
+ * An Academic Year in a route path: four digits and nothing else, then the bound (#250). It used
+ * to be `z.coerce.number()`, whose `Number()` reads `0x7e3` as 2019, `2e3` as 2000 and a
+ * whitespace-padded `2027` as 2027, while its sibling `2027.5` got `400 bad-year`. One spelling of
+ * a year, one answer. The pattern is a literal, never built from data (ADR-0007).
+ */
+const yearSchema = z
+  .string()
+  .regex(/^\d{4}$/)
+  .transform(Number)
+  .pipe(z.number().int().min(1900).max(2200));
 
 /** Every write route is capped, not just the one that carries a crawl. */
 const capped = bodyLimit({
