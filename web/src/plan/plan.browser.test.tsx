@@ -263,6 +263,8 @@ it("draws each card with its Course's number, name, credits, status and grade", 
     ...attempts,
     { id: "a3", courseNumber: "89-220", academicYear: 2028, semester: "fall", status: "exempt" },
     { id: "a4", courseNumber: "10-001", academicYear: 2028, semester: "fall", status: "failed", grade: { kind: "pass-fail", passed: false } },
+    { id: "a5", courseNumber: "89-220", academicYear: 2028, semester: "spring", status: "registered" },
+    { id: "a6", courseNumber: "89-220", academicYear: 2028, semester: "spring", status: "credited" },
   ];
   const mounted = await mount();
   await served(mounted);
@@ -283,7 +285,7 @@ it("draws each card with its Course's number, name, credits, status and grade", 
 
   // each status reads apart, in a hue of its own drawn from the tokens
   const stripe = (id: string) => getComputedStyle(card(mounted, id)!).borderInlineStartColor;
-  expect(new Set(["a1", "a2", "a3", "a4"].map(stripe)).size).toBe(4);
+  expect(new Set(["a1", "a2", "a3", "a4", "a5", "a6"].map(stripe)).size).toBe(6);
 });
 
 it("moves a card dragged to another column, and draws the Plan the server answers with", async () => {
@@ -508,7 +510,7 @@ it("totals each column's credits, leaving out exempt Attempts and counting the o
   await served(mounted);
 
   expect(column(mounted, "2027-fall")!.querySelector("[data-column-credits]")!.textContent).toBe(
-    `${t("en", "planColumnCredits", { credits: 11 })} · ${t("en", "planColumnUnknown", { count: 1 })}`,
+    `${t("en", "planColumnCredits", { credits: 11 })}${t("en", "planColumnJoin")}${t("en", "planColumnUnknown", { count: 1 })}`,
   );
   expect(column(mounted, "2027-spring")!.querySelector("[data-column-credits]")!.textContent).toBe(
     t("en", "planColumnCredits", { credits: 0 }),
@@ -672,4 +674,50 @@ it("shows another Academic Year when asked, so a card can go further than a stan
       (option) => option.value === "2030-fall",
     ),
   ).toBe(true);
+});
+
+it("keeps a Summer with a deadline open, names what the deadline assumes, and draws one past the columns above them", async () => {
+  planWarnings = [
+    {
+      kind: "deadline-missed",
+      target: { kind: "semester", academicYear: 2027, semester: "summer" },
+      requirementsFile: "cs-2027",
+      name: { he: "מעבר שנה", en: "First-year progression" },
+      missing: ["89-111"],
+      reliesOn: ["a2"],
+    },
+    {
+      kind: "deadline-missed",
+      target: { kind: "semester", academicYear: 2035, semester: "fall" },
+      requirementsFile: "cs-2027",
+      missing: ["89-220"],
+      reliesOn: [],
+    },
+  ];
+  const mounted = await mount();
+  await served(mounted);
+
+  // the Summer holds no Attempt, and is open because a Warning is about it
+  const summer = column(mounted, "2027-summer")!;
+  expect(summer.querySelector("[data-summer-toggle]")).toBeNull();
+  const said = summer.querySelector("[data-column-warnings]")!.textContent;
+  expect(said).toContain(t("en", "planWarnDeadline", { name: "First-year progression", courses: "89-111" }));
+  expect(said).toContain(t("en", "planWarnAssuming", { courses: "89-111" }));
+  expect(mounted.querySelector("[data-plan-warnings]")!.textContent).toContain(
+    t("en", "planWarnDeadline", { name: t("en", "planWarnDeadlineUnnamed"), courses: "89-220" }),
+  );
+});
+
+it("keeps a grade half typed on a card when a re-read brings the same grade back", async () => {
+  const mounted = await mount();
+  await served(mounted);
+  type(card(mounted, "a1")!.querySelector<HTMLInputElement>("input[data-attempt-grade]")!, "8");
+  attempts = [...attempts, { id: "x1", courseNumber: "89-220", academicYear: 2029, semester: "fall", status: "planned" }];
+
+  await mount("en", 1);
+
+  await vi.waitFor(() => {
+    if (card(mounted, "x1") === null) throw new Error("not read again");
+  });
+  expect(card(mounted, "a1")!.querySelector<HTMLInputElement>("input[data-attempt-grade]")!.value).toBe("8");
 });

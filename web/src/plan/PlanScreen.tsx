@@ -41,7 +41,8 @@ import {
  * says what it did.
  *
  * **Every change is one request, one guarded save and one undo step**, and the screen shows the
- * Plan the server answers with — never one it worked out itself. **Warnings are drawn where they
+ * Plan the server answers with — never one it worked out itself. The one figure it adds up itself
+ * is a column's credit total, which is a reading aid and not the credit-load check: see `creditsOf`. **Warnings are drawn where they
  * point** — on the card of the Attempt, on the column of the Semester, above the columns for a
  * Program — and none blocks a drag or an edit (CLAUDE.md).
  *
@@ -335,13 +336,21 @@ export function PlanScreen({
         warning.target.academicYear === at.academicYear &&
         warning.target.semester === at.semester,
     );
-  const above = warnings.filter(
-    (warning) => warning.target.kind === "program" || (warning.target.kind === "attempt" && !byId.has(warning.target.id)),
-  );
 
   const years = planYears({ cohort, attempts, thisYear: academicYearOf(today), extraYears });
   const shown: SemesterAt[] = years.flatMap(({ academicYear, semesters }) =>
     semesters.map((semester) => ({ academicYear, semester })),
+  );
+  const shownKeys = new Set(shown.map(keyOf));
+  /**
+   * What has nowhere else to be drawn: a Program's Warnings, and one about an Attempt or a Semester
+   * no column shows — a deadline at the end of a Semester past the last column — so none is lost.
+   */
+  const above = warnings.filter(
+    (warning) =>
+      warning.target.kind === "program" ||
+      (warning.target.kind === "attempt" && !byId.has(warning.target.id)) ||
+      (warning.target.kind === "semester" && !shownKeys.has(keyOf(warning.target))),
   );
   const now = { academicYear: academicYearOf(today), semester: semesterOf(today) };
   const addDefault = shown.some((at) => keyOf(at) === keyOf(now)) ? now : shown[0]!;
@@ -418,7 +427,8 @@ export function PlanScreen({
                     {semesters.map((semester) => {
                       const at = { academicYear, semester };
                       const held = attempts.filter((attempt) => keyOf(attempt) === keyOf(at));
-                      const collapsible = semester === "summer" && held.length === 0;
+                      // a Summer holding an Attempt or a Warning about it is open, so neither is hidden
+                      const collapsible = semester === "summer" && held.length === 0 && onColumn(at).length === 0;
                       if (collapsible && !openSummers.has(academicYear)) {
                         return (
                           <button
@@ -426,7 +436,7 @@ export function PlanScreen({
                             type="button"
                             data-summer-toggle={academicYear}
                             aria-expanded={false}
-                            aria-label={`${t(language, "planSummerShow")} ${semesterSaid(language, at)}`}
+                            aria-label={t(language, "planSummerShowOf", { semester: semesterSaid(language, at) })}
                             onClick={() => setOpenSummers(new Set([...openSummers, academicYear]))}
                             className="self-stretch rounded-sm border border-dashed border-rule px-1 text-xs text-pencil [writing-mode:vertical-rl]"
                           >
@@ -442,6 +452,7 @@ export function PlanScreen({
                           attempts={held}
                           courses={courses}
                           warnings={onColumn(at)}
+                          byId={byId}
                           onCollapse={
                             collapsible
                               ? () => setOpenSummers(new Set([...openSummers].filter((year) => year !== academicYear)))
@@ -567,6 +578,7 @@ function Column({
   attempts,
   courses,
   warnings,
+  byId,
   onCollapse,
   onDrop,
   children,
@@ -576,6 +588,8 @@ function Column({
   attempts: readonly Attempt[];
   courses: ReadonlyMap<string, CourseFacts>;
   warnings: readonly AnyWarning[];
+  /** Every Attempt by id, so a deadline's "assuming you pass" can name the Courses it relies on. */
+  byId: ReadonlyMap<string, Attempt>;
   /** How an empty Summer the student opened is closed again; absent for every other column. */
   onCollapse: (() => void) | undefined;
   onDrop: (id: string) => void;
@@ -607,7 +621,7 @@ function Column({
         <h3 className="text-sm font-semibold">{t(language, SEMESTER_STRING[at.semester])}</h3>
         <span data-column-credits className="text-xs text-pencil">
           {t(language, "planColumnCredits", { credits })}
-          {unknown === 0 ? "" : ` · ${t(language, "planColumnUnknown", { count: unknown })}`}
+          {unknown === 0 ? "" : `${t(language, "planColumnJoin")}${t(language, "planColumnUnknown", { count: unknown })}`}
         </span>
         {onCollapse === undefined ? null : (
           <button
@@ -624,7 +638,7 @@ function Column({
       {warnings.length === 0 ? null : (
         <ul data-column-warnings className="list-disc space-y-1 ps-4 text-xs text-ink-soft">
           {warnings.map((warning, index) => (
-            <li key={`${warning.kind}:${index}`}>{warningSaid(language, warning, new Map())}</li>
+            <li key={`${warning.kind}:${index}`}>{warningSaid(language, warning, byId)}</li>
           ))}
         </ul>
       )}
@@ -662,8 +676,11 @@ function Card({
   onRemove: () => void;
 }): React.JSX.Element {
   const ids = useId();
-  const [grade, setGrade] = useState(gradeSaid(language, attempt.grade));
-  useEffect(() => setGrade(gradeSaid(language, attempt.grade)), [language, attempt.grade]);
+  // reset when the grade the file holds says something else, not on every re-read's new object, so a
+  // re-read prompted by another tab does not wipe a grade half typed on this card
+  const held = gradeSaid(language, attempt.grade);
+  const [grade, setGrade] = useState(held);
+  useEffect(() => setGrade(held), [held]);
   const name = localized(language, course?.name);
   const here = keyOf(attempt);
   return (

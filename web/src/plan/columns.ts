@@ -70,8 +70,13 @@ const NOT_A_LOAD: ReadonlySet<Attempt["status"]> = new Set(["exempt", "credited"
 
 /**
  * What one Semester adds up to: the credits of its Attempts the Workspace knows credits for, and
- * how many it does not. Exempt and credited Attempts are left out, as the credit-load check leaves
- * them out (`core`'s `checkPlan`).
+ * how many it does not, leaving out exempt and credited Attempts as the credit-load check does.
+ *
+ * **A reading aid, not the check.** `core`'s `checkPlan` also halves a Year-long Course whose two
+ * halves share an Academic Year, matches course numbers through Equivalences and reads only the
+ * chosen Programs' files, and none of that is known here — so a column holding a Year-long half
+ * can show more than the credit-load Warning counts. The Warning on the column is the server's and
+ * is the one that judges the load.
  */
 export function creditsOf(
   attempts: readonly Pick<Attempt, "courseNumber" | "status">[],

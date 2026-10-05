@@ -9,8 +9,9 @@ import { WorkspaceRefusedError, type CatalogRef, type Workspace } from "./worksp
  * year — a future one included, which has no Catalog (ADR-0008).
  *
  * **Requirements Files first**: the chosen Programs' own, in their order, then every other file in
- * the order the Workspace lists them, so a Course's credits are the ones the credit-load check reads
- * (`checkPlan` takes them from the first Program whose file gives them). **A name the files do not
+ * the order the Workspace lists them, so a Course's credits are, for a Course a chosen Program's file
+ * names, the ones the credit-load check reads (`checkPlan` takes them from the first Program whose
+ * file gives them). Equivalences are not applied: a Course is known by the number its file uses. **A name the files do not
  * give comes from the most recent Catalog** the Workspace holds and can read. A Catalog's credits
  * are never taken: they are a sum of weekly hours, not the Course's credits, and the Plan is checked
  * against the Requirements File alone (`docs/design.md`, "Plan").
