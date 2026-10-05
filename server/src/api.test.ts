@@ -617,7 +617,7 @@ it("removes a Pick, and says so again when there is none left to remove", async 
 
 /**
  * The external-edit guard, over HTTP (#90). `docs/design.md`, "External edits": each save
- * carries the file version it was based on, and the server refuses the overwrite when the
+ * carries the revision of the file it was based on, and the server refuses the overwrite when the
  * file changed on disk meanwhile.
  */
 it("serves the revision a page has to hand back, and takes it on the save", async () => {

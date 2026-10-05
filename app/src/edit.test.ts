@@ -14,8 +14,9 @@ import { WorkspaceRefusedError, type Workspace } from "./workspace.ts";
 /**
  * The external-edit guard where a use case meets it (#90).
  *
- * `docs/design.md`, "Storage" has each save carry the file version it was based on, and the
- * server refuse the overwrite when the file changed on disk meanwhile. Two halves make that
+ * `docs/design.md`, "External edits" (and ADR-0015) has each save carry the revision of the
+ * file it was based on, and the server refuse the overwrite when the file changed on disk
+ * meanwhile. Two halves make that
  * true and they answer different questions, so both are tested: this one asks whether the
  * *student's view* is still current, before their edit is applied to a State they never saw;
  * the adapter's asks whether the *file* is still what was read, at the moment of the write

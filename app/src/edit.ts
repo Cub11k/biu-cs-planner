@@ -138,7 +138,7 @@ export type EditOptions = {
    * a way past the guard.
    *
    * Required, and with no default, because a default is how this hole was open in the first
-   * place: #63 gave `writeStateFile` the parameter, nothing could produce a version, and
+   * place: #63 gave `writeStateFile` the parameter, nothing could produce a revision, and
    * `undefined` went in everywhere while the signature made it look handled. A caller that
    * cannot say what it was based on has not read the file, and cannot safely write it.
    */
