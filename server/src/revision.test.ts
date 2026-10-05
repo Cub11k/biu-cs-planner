@@ -150,6 +150,21 @@ async function stage() {
   ] as const) {
     expect((await send("POST", path, { ...body, basedOn: await version() })).status).toBe(200);
   }
+  // A route with a parameter `PARAMS` has no value for — `/api/plan/attempts/:id` — is about a
+  // thing the collection route above it makes. That route is sent the shared body here, and the
+  // id it answers with (`added`, or `id`) is the parameter's value, so the route is covered
+  // without this file naming it.
+  const ids: Record<string, string> = {};
+  for (const { method, path } of api.routes) {
+    const unknown = /^(.*)\/:(\w+)(\/|$)/.exec(path);
+    if (method === "ALL" || unknown === null || unknown[2]! in PARAMS || unknown[2]! in ids) continue;
+    const [, collection, name] = unknown;
+    if (!api.routes.some((route) => route.method === "POST" && route.path === collection)) continue;
+    const made = await send("POST", collection!, sharedBody(undefined, await version()));
+    const body = (await made.json()) as { added?: unknown; id?: unknown };
+    const id = body.added ?? body.id;
+    if (typeof id === "string") ids[name!] = id;
+  }
   expect((await send("POST", PICKS, { ...CLASHING, basedOn: await version() })).status).toBe(200);
   // one undo, so both stacks hold an entry and a redo has something to put back
   expect((await send("POST", UNDO, { basedOn: await version() })).status).toBe(200);
@@ -165,6 +180,7 @@ async function stage() {
     version,
     takenAt,
     api,
+    ids,
     lie: (half: Lying, revision: () => unknown) => {
       lying = { half, revision };
     },
@@ -193,7 +209,11 @@ const PARAMS: Record<string, string> = { year: "2027", semester: "fall", courseN
  * lane was adding in the run this was written in: a Course in a Semester with a status is what an
  * Attempt is (CONTEXT.md), so a route taking one should parse this body as it stands.
  */
-const shared = ({ takenAt }: Staged, basedOn: string): Record<string, unknown> => ({
+const shared = ({ takenAt }: Staged, basedOn: string): Record<string, unknown> =>
+  sharedBody(takenAt, basedOn);
+
+function sharedBody(takenAt: number | undefined, basedOn: string): Record<string, unknown> {
+  return {
   ...LECTURE,
   groupNumber: "02",
   variant: "A",
@@ -216,7 +236,8 @@ const shared = ({ takenAt }: Staged, basedOn: string): Record<string, unknown> =
   semester: "fall",
   status: "planned",
   basedOn,
-});
+  };
+}
 
 /** The query every read is sent. A read ignores a parameter it does not take. */
 const SHARED_QUERY = "semester=fall";
@@ -255,7 +276,7 @@ function routesOf(staged: Staged): Route[] {
 /** Asks one route, with its parameters filled and, where it takes one, its body. */
 async function ask(staged: Staged, route: Route, basedOn: string): Promise<Response> {
   const path = route.path.replace(/:(\w+)/g, (_, name: string) => {
-    const value = PARAMS[name];
+    const value = PARAMS[name] ?? staged.ids[name];
     if (value === undefined) throw new Error(`${route.key}: no value for the parameter :${name}`);
     return value;
   });
