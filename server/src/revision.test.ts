@@ -212,5 +212,12 @@ for (const half of ["read", "save"] as const) {
         expect(body, where).not.toContain(staged.root);
       }
     }
-  });
+    // A budget rather than the default five seconds, as `tools/pr-review/followers.test.ts` gives
+    // its whole-tree tests and for the same reason: this stages a fresh Workspace — a create, an
+    // import, two Picks and an undo, each a real disk write — for every route and every revision,
+    // over fifty of them. Measured 2026-10-05 on PR #300's branch: 2882ms alone, and 3823–5330ms
+    // inside `npm test` and `npm run test:node`, where it went over the default three times in
+    // five runs once that branch's new test files joined the node project. The assertions are
+    // unchanged; the default timeout was standing in for a measurement nobody had taken.
+  }, 20_000);
 }
