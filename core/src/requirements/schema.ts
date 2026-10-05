@@ -26,8 +26,8 @@ export const textSchema = z.object({
 });
 
 /**
- * An id the maintainer assigns. A Pin names a Requirement by its id and nothing else
- * (`docs/design.md`, "Requirement vocabulary"), so ids are written, never derived from a
+ * An id the maintainer assigns. A Pin names a Requirement by its id — and, since #287, the
+ * Requirements File it is an id in (`CONTEXT.md`, Pin) — so ids are written, never derived from a
  * position or a text that can move.
  */
 const idSchema = z.string().min(1);
