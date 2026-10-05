@@ -40,7 +40,10 @@ const OFFERINGS: TrayOffering[] = [
 
 const tray = (state: State) => state.timetables[0]?.variants[0]?.tray;
 
-const withAttempts = (state: State, attempts: Attempt[]): State => ({ ...state, attempts });
+const withAttempts = (state: State, attempts: Omit<Attempt, "id">[]): State => ({
+  ...state,
+  attempts: attempts.map((attempt, index) => ({ id: `attempt-${index + 1}`, ...attempt })),
+});
 
 it("adds a Course to a Variant's Tray, making the Timetable and the Variant", () => {
   const state = addToTray(empty(), A, "89-110");
@@ -92,7 +95,7 @@ it("removes the Picks of a Course in the Tray only because it was picked", () =>
 });
 
 it("leaves a planned Attempt alone: the Timetable never edits the Plan", () => {
-  const planned: Attempt = {
+  const planned: Omit<Attempt, "id"> = {
     courseNumber: "89-230",
     academicYear: 2027,
     semester: "fall",
@@ -102,7 +105,7 @@ it("leaves a planned Attempt alone: the Timetable never edits the Plan", () => {
 
   const removed = removeFromTray(state, A, "89-230");
 
-  expect(removed.attempts).toEqual([planned]);
+  expect(removed.attempts).toEqual([{ id: "attempt-1", ...planned }]);
   expect(removed.timetables[0]?.variants[0]?.picks).toEqual([]);
   // and with nothing left to remove, it is a no-op rather than a save
   expect(removeFromTray(removed, A, "89-230")).toBe(removed);

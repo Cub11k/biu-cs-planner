@@ -10,6 +10,7 @@ import {
   listBackups,
   listRequirementsFiles,
   listOfferings,
+  addAttemptTo,
   addBlockedTimeTo,
   addCourseToTray,
   addVariant,
@@ -18,13 +19,17 @@ import {
   copyBlockedTimesTo,
   duplicateVariantAs,
   makeVariantPrimary,
+  moveAttemptTo,
   pickGroup,
+  planFromSuggestedLayout,
   pinCourseTo,
   readExams,
+  readPlan,
   readPrograms,
   readProgress,
   readSettings,
   readTimetable,
+  removeAttemptFrom,
   removeBlockedTimeAt,
   removeCourseFromTray,
   removeGroupPick,
@@ -36,7 +41,9 @@ import {
   tickManualRequirement,
   unpinCourseFrom,
   untickManualRequirement,
+  updateAttemptOf,
   workspaceStatus,
+  type PlanResult,
   type ProgramsResult,
   type ProgressResult,
   type QueryWarning,
@@ -48,13 +55,16 @@ import {
 import { editHistories } from "./history.ts";
 import type { HistoryMove } from "./history.ts";
 import {
+  attemptIdSchema,
   blockedTimeSchema,
   CURRENT_CATALOG_SCHEMA_VERSION,
+  gradeSchema,
   groupPickSchema,
   programSchema,
   rawCrawlSchema,
   semesterSchema,
   settingsSchema,
+  statusSchema,
   studentCohortSchema,
 } from "@biu-cs-planner/core";
 import { z } from "zod";
@@ -281,6 +291,7 @@ const copiedBlockedTimesSchema = z.object({
 export const savedSettingsSchema = z.object({
   language: settingsSchema.shape.language.unwrap().optional(),
   examSpacingDays: settingsSchema.shape.examSpacingDays.unwrap().optional(),
+  creditLoadLimit: settingsSchema.shape.creditLoadLimit.unwrap().optional(),
   basedOn: basedOnSchema,
 });
 
@@ -418,6 +429,66 @@ function progressAnswer(c: Context, result: ProgressResult) {
   return c.json({
     ...result.view,
     cohort: result.view.cohort ?? null,
+    version: result.version,
+    warnings: result.warnings,
+  });
+}
+
+/**
+ * An Attempt to add (#290): a Course, the Semester of an Academic Year, a status and an optional
+ * grade, each in the State File's own vocabulary, so a malformed status is refused here as the
+ * shape of the request it is, before the domain sees it. A grade outside 0–100 is a shape this
+ * accepts: it is a Warning with the Attempts, never a refusal (CLAUDE.md).
+ */
+const semesterPlaceShape = {
+  // a number in the body, never coerced from text as a year in a path is
+  academicYear: z.number().int().min(1900).max(2200),
+  semester: semesterSchema,
+};
+const addedAttemptSchema = z.object({
+  courseNumber: z.string().min(1).max(200),
+  ...semesterPlaceShape,
+  status: statusSchema,
+  grade: gradeSchema.optional(),
+  basedOn: basedOnSchema,
+});
+
+/**
+ * A change to an Attempt's result: the status, the grade, or both. `grade: null` clears the grade,
+ * since JSON has no `undefined` and a field left out means "leave it alone".
+ */
+const changedAttemptSchema = z.object({
+  status: statusSchema.optional(),
+  grade: gradeSchema.nullable().optional(),
+  basedOn: basedOnSchema,
+});
+
+/** Where an Attempt moves to: another Semester, of the same Academic Year or another. */
+const movedAttemptSchema = z.object({ ...semesterPlaceShape, basedOn: basedOnSchema });
+
+/** Removing an Attempt carries nothing but the revision it was based on. */
+const removedAttemptSchema = z.object({ basedOn: basedOnSchema });
+
+/**
+ * New Plan from Suggested Layout (#293): which of the student's Programs' layout to follow, by its
+ * Requirements File's name — the first Program when none is named — and the revision it is based on.
+ */
+const fromLayoutSchema = z.object({
+  requirementsFile: z.string().min(1).max(200).optional(),
+  basedOn: basedOnSchema,
+});
+
+/**
+ * Every Plan answer, read or write, in one shape: the Attempts with their Warnings and the revision
+ * they were read from, or the named 409 a refusal has always been.
+ */
+function planAnswer(c: Context, result: PlanResult & { added?: string }) {
+  if (result.kind === "refused") {
+    return c.json({ reason: result.reason, warnings: result.warnings }, 409);
+  }
+  return c.json({
+    ...result.view,
+    ...(result.added === undefined ? {} : { added: result.added }),
     version: result.version,
     warnings: result.warnings,
   });
@@ -797,6 +868,81 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
         c,
         await untickManualRequirement(workspace, tick, { basedOn, history: into }),
       );
+    })
+
+    /**
+     * The Plan (#290): every Attempt with its id, the Warnings over them, and the revision they
+     * were read from. One domain read, so every screen sees the same Plan. No path is named.
+     */
+    .get("/api/plan", async (c) => planAnswer(c, await readPlan(workspace)))
+
+    /**
+     * Adds an Attempt, and answers with the Plan and the new Attempt's id in `added`. A save like
+     * any other: it carries its revision, is refused `state-file-changed` when the file moved
+     * since, and is one undo step because `into` hears it (ADR-0013). The same holds for the three
+     * routes below, which name the Attempt by its id in the path — an id, never a file.
+     */
+    .post("/api/plan/attempts", capped, async (c) => {
+      const body = await bodyAs(c, addedAttemptSchema, "not-an-attempt");
+      if (!body.ok) return c.json({ error: body.error }, 400);
+      const { basedOn, grade, ...fields } = body.value;
+      return planAnswer(
+        c,
+        await addAttemptTo(workspace, { ...fields, ...(grade === undefined ? {} : { grade }) }, {
+          basedOn,
+          history: into,
+        }),
+      );
+    })
+
+    /** Changes an Attempt's status, its grade, or both. */
+    .patch("/api/plan/attempts/:id", capped, async (c) => {
+      const id = attemptIdSchema.safeParse(c.req.param("id"));
+      if (!id.success) return c.json({ error: "bad-attempt-id" }, 400);
+      const body = await bodyAs(c, changedAttemptSchema, "not-an-attempt-change");
+      if (!body.ok) return c.json({ error: body.error }, 400);
+      const { basedOn, ...change } = body.value;
+      return planAnswer(c, await updateAttemptOf(workspace, id.data, change, { basedOn, history: into }));
+    })
+
+    /** Moves an Attempt to another Semester. */
+    .put("/api/plan/attempts/:id/semester", capped, async (c) => {
+      const id = attemptIdSchema.safeParse(c.req.param("id"));
+      if (!id.success) return c.json({ error: "bad-attempt-id" }, 400);
+      const body = await bodyAs(c, movedAttemptSchema, "not-a-semester");
+      if (!body.ok) return c.json({ error: body.error }, 400);
+      const { basedOn, ...to } = body.value;
+      return planAnswer(c, await moveAttemptTo(workspace, id.data, to, { basedOn, history: into }));
+    })
+
+    /** Removes an Attempt. */
+    .delete("/api/plan/attempts/:id", capped, async (c) => {
+      const id = attemptIdSchema.safeParse(c.req.param("id"));
+      if (!id.success) return c.json({ error: "bad-attempt-id" }, 400);
+      const body = await bodyAs(c, removedAttemptSchema, "not-a-removal");
+      if (!body.ok) return c.json({ error: body.error }, 400);
+      return planAnswer(c, await removeAttemptFrom(workspace, id.data, { basedOn: body.value.basedOn, history: into }));
+    })
+
+    /**
+     * New Plan from Suggested Layout (#293): planned Attempts for the layout's Courses, placed
+     * relative to the Cohort, skipping Courses the student already has. One save and one undo step,
+     * answered with the Plan and a `summary` of what was created and skipped. When it cannot run —
+     * no Cohort, no Program, no file, no layout — it writes nothing and answers a named 409 saying
+     * which, with the revision the file still holds; a stale revision is the usual 409.
+     */
+    .post("/api/plan/suggested-layout", capped, async (c) => {
+      const body = await bodyAs(c, fromLayoutSchema, "not-a-layout-request");
+      if (!body.ok) return c.json({ error: body.error }, 400);
+      const { basedOn, requirementsFile } = body.value;
+      const result = await planFromSuggestedLayout(workspace, { requirementsFile }, { basedOn, history: into });
+      if (result.kind === "unavailable") {
+        return c.json({ reason: result.reason, version: result.version }, 409);
+      }
+      if (result.kind === "refused") {
+        return c.json({ reason: result.reason, warnings: result.warnings }, 409);
+      }
+      return c.json({ ...result.view, summary: result.summary, version: result.version, warnings: result.warnings });
     })
 
     .get("/api/catalog/:year/offerings", async (c) => {

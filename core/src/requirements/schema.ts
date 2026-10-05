@@ -172,6 +172,14 @@ const nOfHead = z.object({
  * - `exclusive`: of `courses`, only one counts anywhere below its parent. A limit like `cap`.
  * - `manual`: what the vocabulary cannot express, carried as the department's text, satisfied
  *   only by the student's tick.
+ * - `total`: at least `min` credits from every Course the student counts, or from the Courses of
+ *   `pool` when one is named, such as "120 credits overall". Totals count everything
+ *   (`docs/design.md`, "Assignment"): a `total` takes no Course of its own, so it never competes
+ *   with its siblings for one, needs no double-counting permission, and is neither reduced by a
+ *   `cap` nor by an `exclusive`. A Course counts toward it once, whatever else it counts toward,
+ *   and it cannot be Pinned to. Ruled on #328, as option B: a grand total written as a `credits`
+ *   Requirement instead competes for Courses like any other `credits` leaf, and reads as unmet
+ *   wherever its Courses are already counted elsewhere.
  */
 const leafRequirementSchemas = [
   z.object({ ...requirementHead, kind: z.literal("course"), course: courseNumberSchema }),
@@ -188,6 +196,12 @@ const leafRequirementSchemas = [
     courses: z.array(courseNumberSchema).min(2),
   }),
   z.object({ ...requirementHead, kind: z.literal("manual"), text: textSchema }),
+  z.object({
+    ...requirementHead,
+    kind: z.literal("total"),
+    min: z.number().min(0),
+    pool: idSchema.optional(),
+  }),
 ] as const;
 
 /** One Requirement node, with any children left unread: what `file.ts` parses first. */
@@ -227,6 +241,13 @@ export const trackHeadSchema = z.object({ id: idSchema, name: textSchema });
 
 export const trackSchema = trackHeadSchema.extend({
   requirements: z.array(requirementSchema).default([]),
+  /**
+   * The Track's own entries of the Suggested Layout, placed beside the base rule set's when the
+   * Track is chosen (#293), as its Requirements are. `layoutEntrySchema` is declared below.
+   */
+  get suggestedLayout() {
+    return z.array(layoutEntrySchema).default([]);
+  },
 });
 
 // --- Policies, overlap, layout ----------------------------------------------------------------
@@ -235,13 +256,11 @@ export const trackSchema = trackHeadSchema.extend({
  * BIU's rules where they are not yet confirmed (`docs/design.md`, "Open facts").
  *
  * - `passingGrade`: a numeric grade below it is not a pass, whatever the status says.
- * - `gradeAttempt`: which Attempt decides whether a retaken Course is passed. `best` asks
- *   whether any Attempt passed, `latest` asks whether the most recent decided one did, so a pass
- *   followed by a failed retake reads as not passed. ADR-0009 frames the policy for
- *   minimum-grade Prerequisites, as "the best or the latest *passing* Attempt"; Progress uses
- *   it here to decide completion, which is wider, and nothing reads it for Prerequisites yet
- *   (#291). Whether those are one policy is open until the real rule is checked. The default is
- *   `best`, the reading that never reports as missing a Course the student did pass.
+ * - `gradeAttempt`: which passing Attempt's grade counts when a Course was passed more than once,
+ *   as ADR-0009 frames it for minimum-grade Prerequisites: `best` or `latest` *passing* Attempt.
+ *   It never decides whether the Course was passed: any passing Attempt completes it, so a pass
+ *   followed by a failed retake is still a pass under either policy (ruled on #327). The default
+ *   is `best`.
  */
 export const policiesSchema = z.object({
   passingGrade: z.number().default(60),

@@ -1086,6 +1086,7 @@ it("serves the schema's defaults before any State File exists, and writes none",
   await expect(response.json()).resolves.toEqual({
     language: "en",
     examSpacingDays: 3,
+    creditLoadLimit: 24,
     warnings: [],
   });
   // reading created nothing: `version` was absent above, and the folder is still empty
@@ -1180,6 +1181,36 @@ it("refuses an Exam spacing a number of days cannot be, and stores nothing", asy
   const off = await choose({ examSpacingDays: 0 });
   expect(off.status).toBe(200);
   await expect(off.json()).resolves.toMatchObject({ examSpacingDays: 0 });
+});
+
+/**
+ * #291: the credit load limit round-trips by the route the Exam spacing does, with the same bound
+ * — whole and never negative, `0` allowed — and a stored value the bound refuses still opens.
+ */
+it("reads and writes the credit load limit by the same route, bounded as the spacing is", async () => {
+  await post("/api/workspace", {});
+
+  for (const creditLoadLimit of [-1, 20.5, null, "24"]) {
+    const response = await choose({ creditLoadLimit });
+    expect(response.status, String(creditLoadLimit)).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: "not-settings" });
+  }
+  expect(await settingsVersion()).toBeUndefined();
+
+  const chosen = await choose({ creditLoadLimit: 30 });
+  expect(chosen.status).toBe(200);
+  await expect(chosen.json()).resolves.toMatchObject({ creditLoadLimit: 30, examSpacingDays: 3 });
+  restart();
+  await expect((await get(SETTINGS)).json()).resolves.toMatchObject({ creditLoadLimit: 30 });
+
+  const zero = await choose({ creditLoadLimit: 0 });
+  await expect(zero.json()).resolves.toMatchObject({ creditLoadLimit: 0 });
+
+  await writeFile(join(root, "me.state.json"), JSON.stringify({ schemaVersion: 1, settings: { creditLoadLimit: -3 } }));
+  await expect((await get(SETTINGS)).json()).resolves.toMatchObject({
+    creditLoadLimit: 24,
+    warnings: [{ kind: "settings-unreadable", field: "creditLoadLimit" }],
+  });
 });
 
 /**
@@ -3152,4 +3183,282 @@ it("names no path in a Progress answer", async () => {
   expect(text).not.toContain(root);
   expect(text).not.toContain(await realpath(root));
   expect(text).not.toContain(".json");
+});
+
+/**
+ * #290: the Plan over a real temporary folder — read, add, update, move and remove an Attempt,
+ * each one undo step, malformed shapes refused at the boundary, a stale revision refused. Course
+ * numbers are invented (ADR-0006).
+ */
+const PLAN = "/api/plan";
+const ATTEMPTS = `${PLAN}/attempts`;
+const PLANNED = { courseNumber: "89-110", academicYear: 2027, semester: "fall", status: "planned" };
+
+type PlanBody = {
+  attempts: { id: string; courseNumber: string; academicYear: number; semester: string; status: string }[];
+  attemptWarnings: unknown[];
+  added?: string;
+  version?: string;
+};
+
+const planVersion = async (): Promise<string | undefined> =>
+  ((await (await get(PLAN)).json()) as PlanBody).version;
+
+it("serves an empty Plan before any Attempt, and writes no State File", async () => {
+  const read = await get(PLAN);
+
+  expect(read.status).toBe(200);
+  await expect(read.json()).resolves.toMatchObject({
+    attempts: [],
+    attemptWarnings: [],
+    planWarnings: [],
+    warnings: [],
+  });
+  expect(await readdir(root)).toEqual([]);
+});
+
+it("adds, updates, moves and removes an Attempt by its id, each one undo step", async () => {
+  await post("/api/workspace", {});
+
+  const added = await post(ATTEMPTS, { ...PLANNED, basedOn: await planVersion() });
+  expect(added.status).toBe(200);
+  const body = (await added.json()) as PlanBody;
+  const id = body.added!;
+  expect(body.attempts).toEqual([{ id, ...PLANNED }]);
+  expect(body.version).toBe(await planVersion());
+
+  const updated = await patch(`${ATTEMPTS}/${id}`, {
+    status: "passed",
+    grade: { kind: "numeric", value: 88 },
+    basedOn: await planVersion(),
+  });
+  expect(updated.status).toBe(200);
+  await expect(updated.json()).resolves.toMatchObject({
+    attempts: [{ id, status: "passed", grade: { kind: "numeric", value: 88 } }],
+  });
+
+  const cleared = await patch(`${ATTEMPTS}/${id}`, { grade: null, basedOn: await planVersion() });
+  expect(((await cleared.json()) as PlanBody).attempts[0]).not.toHaveProperty("grade");
+
+  const moved = await put(`${ATTEMPTS}/${id}/semester`, {
+    academicYear: 2028,
+    semester: "spring",
+    basedOn: await planVersion(),
+  });
+  expect(moved.status).toBe(200);
+  await expect(moved.json()).resolves.toMatchObject({
+    attempts: [{ id, academicYear: 2028, semester: "spring" }],
+  });
+
+  const removed = await remove(`${ATTEMPTS}/${id}`, { basedOn: await planVersion() });
+  expect(removed.status).toBe(200);
+  await expect(removed.json()).resolves.toMatchObject({ attempts: [] });
+
+  // the State File on disk holds what the answers said
+  const onDisk = JSON.parse(await readFile(join(root, "me.state.json"), "utf8")) as { attempts: unknown[] };
+  expect(onDisk.attempts).toEqual([]);
+
+  // four edits since the add, undone one at a time, in order
+  for (const label of ["remove-attempt", "move-attempt", "update-attempt", "update-attempt", "add-attempt"]) {
+    await expect((await step(UNDO)).json()).resolves.toMatchObject({ label });
+  }
+  await expect((await get(PLAN)).json()).resolves.toMatchObject({ attempts: [] });
+  await expect((await step(REDO)).json()).resolves.toMatchObject({ label: "add-attempt" });
+  await expect((await get(PLAN)).json()).resolves.toMatchObject({ attempts: [{ id, ...PLANNED }] });
+});
+
+it("accepts a grade outside 0 to 100 and a duplicate, answering with their Warnings", async () => {
+  await post("/api/workspace", {});
+  const added = (await (
+    await post(ATTEMPTS, { ...PLANNED, status: "passed", grade: { kind: "numeric", value: 120 }, basedOn: undefined })
+  ).json()) as PlanBody;
+
+  const again = await post(ATTEMPTS, { ...PLANNED, basedOn: await planVersion() });
+
+  expect(again.status).toBe(200);
+  const body = (await again.json()) as PlanBody;
+  expect(body.attempts).toHaveLength(2);
+  expect(body.attemptWarnings).toEqual([
+    { kind: "grade-out-of-range", target: { kind: "attempt", id: added.added }, value: 120 },
+    {
+      kind: "attempt-duplicate",
+      target: { kind: "attempt", id: body.added },
+      courseNumber: "89-110",
+      academicYear: 2027,
+      semester: "fall",
+      firstId: added.added,
+    },
+  ]);
+});
+
+it("refuses an Attempt edit based on a revision the file no longer holds", async () => {
+  await post("/api/workspace", {});
+  const { added: id } = (await (await post(ATTEMPTS, { ...PLANNED, basedOn: undefined })).json()) as PlanBody;
+  const stale = await planVersion();
+  await patch(`${ATTEMPTS}/${id}`, { status: "registered", basedOn: stale });
+  const before = await readFile(join(root, "me.state.json"), "utf8");
+
+  for (const response of [
+    await post(ATTEMPTS, { ...PLANNED, basedOn: stale }),
+    await patch(`${ATTEMPTS}/${id}`, { status: "passed", basedOn: stale }),
+    await put(`${ATTEMPTS}/${id}/semester`, { academicYear: 2028, semester: "fall", basedOn: stale }),
+    await remove(`${ATTEMPTS}/${id}`, { basedOn: stale }),
+  ]) {
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ reason: "state-file-changed" });
+  }
+  expect(await readFile(join(root, "me.state.json"), "utf8")).toBe(before);
+});
+
+it("names every malformed Attempt request as a 400, before the domain sees it", async () => {
+  await post("/api/workspace", {});
+  const { added: id } = (await (await post(ATTEMPTS, { ...PLANNED, basedOn: undefined })).json()) as PlanBody;
+  const before = await readFile(join(root, "me.state.json"), "utf8");
+
+  for (const body of [
+    {},
+    { ...PLANNED, status: "maybe" },
+    { ...PLANNED, semester: "winter" },
+    { ...PLANNED, academicYear: "2027" },
+    { ...PLANNED, academicYear: 2027.5 },
+    { ...PLANNED, courseNumber: "" },
+    { ...PLANNED, grade: 87 },
+  ]) {
+    const answered = await post(ATTEMPTS, body);
+    expect(answered.status, JSON.stringify(body)).toBe(400);
+    await expect(answered.json()).resolves.toEqual({ error: "not-an-attempt" });
+  }
+  for (const body of [{ status: "maybe" }, { grade: { kind: "letter", value: "A" } }]) {
+    const answered = await patch(`${ATTEMPTS}/${id}`, body);
+    expect(answered.status).toBe(400);
+    await expect(answered.json()).resolves.toEqual({ error: "not-an-attempt-change" });
+  }
+  for (const body of [{}, { academicYear: 2027, semester: "winter" }]) {
+    const answered = await put(`${ATTEMPTS}/${id}/semester`, body);
+    expect(answered.status).toBe(400);
+    await expect(answered.json()).resolves.toEqual({ error: "not-a-semester" });
+  }
+  const tooLong = await remove(`${ATTEMPTS}/${"x".repeat(201)}`, {});
+  expect(tooLong.status).toBe(400);
+  await expect(tooLong.json()).resolves.toEqual({ error: "bad-attempt-id" });
+  expect(await readFile(join(root, "me.state.json"), "utf8")).toBe(before);
+});
+
+it("names no path in a Plan answer", async () => {
+  await post("/api/workspace", {});
+  await post(ATTEMPTS, { ...PLANNED, basedOn: undefined });
+
+  const text = await (await get(PLAN)).text();
+
+  expect(text).not.toContain(root);
+  expect(text).not.toContain(await realpath(root));
+  expect(text).not.toContain(".json");
+});
+
+/**
+ * #291: the Plan answer carries the Plan checks, against the chosen Program's Requirements File,
+ * at the credit load limit the settings route sets.
+ */
+it("carries the Plan checks in the Plan answer, at the stored credit load limit", async () => {
+  await post("/api/workspace", {});
+  await dropRequirements("cs-plan", {
+    schemaVersion: 1,
+    program: { id: "cs", name: { he: "מדעי המחשב" } },
+    courses: [
+      { number: "89-110", credits: 6, offeringPattern: "fall" },
+      { number: "89-111", credits: 6, prerequisites: { kind: "passed", course: "89-110" } },
+    ],
+  });
+  await put("/api/programs", { programs: [{ requirementsFile: "cs-plan" }], basedOn: await planVersion() });
+  const { added: intro } = (await (
+    await post(ATTEMPTS, { ...PLANNED, semester: "spring", basedOn: await planVersion() })
+  ).json()) as PlanBody;
+  const second = await post(ATTEMPTS, {
+    ...PLANNED,
+    courseNumber: "89-111",
+    semester: "spring",
+    basedOn: await planVersion(),
+  });
+  const { added: ds } = (await second.json()) as PlanBody;
+
+  await expect((await get(PLAN)).json()).resolves.toMatchObject({
+    planWarnings: [
+      { kind: "prerequisite-unmet", target: { kind: "attempt", id: ds }, missing: ["89-110"] },
+      { kind: "offering-pattern", target: { kind: "attempt", id: intro }, pattern: "fall" },
+    ],
+  });
+
+  await patch(SETTINGS, { creditLoadLimit: 10, basedOn: await planVersion() });
+  const body = (await (await get(PLAN)).json()) as { planWarnings: { kind: string }[] };
+  expect(body.planWarnings.filter((w) => w.kind === "credit-load")).toEqual([
+    { kind: "credit-load", target: { kind: "semester", academicYear: 2027, semester: "spring" }, credits: 12, limit: 10 },
+  ]);
+});
+
+/**
+ * #293: New Plan from Suggested Layout over the wire — the operation and its summary, one undo
+ * removing every Attempt it created, a stale refusal, and what it needs named. The layout is
+ * invented (ADR-0006).
+ */
+const FROM_LAYOUT = `${PLAN}/suggested-layout`;
+
+it("fills the Plan from the Suggested Layout in one undo step, and summarises it", async () => {
+  await post("/api/workspace", {});
+  await dropRequirements("cs-layout", {
+    schemaVersion: 1,
+    program: { id: "cs", name: { he: "מדעי המחשב" } },
+    suggestedLayout: [
+      { studyYear: 1, semester: "fall", courses: ["89-110", "88-101"] },
+      { studyYear: 2, semester: "spring", courses: ["89-210"] },
+    ],
+  });
+  await put("/api/programs", { programs: [{ requirementsFile: "cs-layout" }], basedOn: await planVersion() });
+  await put("/api/cohort", { cohort: { academicYear: 2027, semester: "fall" }, basedOn: await planVersion() });
+  await post(ATTEMPTS, { ...PLANNED, courseNumber: "88-101", status: "passed", basedOn: await planVersion() });
+
+  const made = await post(FROM_LAYOUT, { basedOn: await planVersion() });
+
+  expect(made.status).toBe(200);
+  const body = (await made.json()) as PlanBody & { summary: { created: unknown[]; skipped: unknown[] } };
+  expect(body.summary).toMatchObject({
+    created: [
+      { courseNumber: "89-110", academicYear: 2027, semester: "fall" },
+      { courseNumber: "89-210", academicYear: 2028, semester: "spring" },
+    ],
+    skipped: [{ courseNumber: "88-101", reason: "attempted" }],
+  });
+  expect(body.attempts.map((a) => [a.courseNumber, a.status])).toEqual([
+    ["88-101", "passed"],
+    ["89-110", "planned"],
+    ["89-210", "planned"],
+  ]);
+  expect(body.version).toBe(await planVersion());
+
+  // one undo takes away both created Attempts and leaves the one the student entered
+  await expect((await step(UNDO)).json()).resolves.toMatchObject({ label: "plan-from-suggested-layout" });
+  const after = (await (await get(PLAN)).json()) as PlanBody;
+  expect(after.attempts.map((a) => a.courseNumber)).toEqual(["88-101"]);
+});
+
+it("names what New Plan from Suggested Layout needs, and refuses a stale revision", async () => {
+  await post("/api/workspace", {});
+
+  const noCohort = await post(FROM_LAYOUT, { basedOn: await planVersion() });
+  expect(noCohort.status).toBe(409);
+  await expect(noCohort.json()).resolves.toEqual({ reason: "cohort-not-chosen" });
+  expect(await readdir(root)).not.toContain("me.state.json");
+
+  await put("/api/cohort", { cohort: { academicYear: 2027, semester: "fall" }, basedOn: await planVersion() });
+  const noProgram = await post(FROM_LAYOUT, { basedOn: await planVersion() });
+  await expect(noProgram.json()).resolves.toEqual({ reason: "program-not-chosen", version: await planVersion() });
+
+  const stale = await planVersion();
+  await post(ATTEMPTS, { ...PLANNED, basedOn: stale });
+  const refused = await post(FROM_LAYOUT, { basedOn: stale });
+  expect(refused.status).toBe(409);
+  await expect(refused.json()).resolves.toMatchObject({ reason: "state-file-changed" });
+
+  const malformed = await post(FROM_LAYOUT, { requirementsFile: "" });
+  expect(malformed.status).toBe(400);
+  await expect(malformed.json()).resolves.toEqual({ error: "not-a-layout-request" });
 });

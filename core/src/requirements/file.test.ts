@@ -75,12 +75,15 @@ function fullFile() {
       { id: "seminar-cap", kind: "cap", max: 4, pool: "seminars" },
       { id: "calc-overlap", kind: "exclusive", courses: ["88-101", "88-102"] },
       { id: "english", kind: "manual", text: { he: "אנגלית", en: "English" } },
+      { id: "overall", kind: "total", min: 120 },
+      { id: "math-total", kind: "total", min: 10, pool: "math" },
     ],
     tracks: [
       {
         id: "ai",
         name: { he: "בינה מלאכותית", en: "AI" },
         requirements: [{ id: "ai-ml", kind: "course", course: "89-391" }],
+        suggestedLayout: [{ studyYear: 3, semester: "spring", courses: ["89-391"] }],
       },
     ],
     doubleCounting: {
@@ -299,6 +302,28 @@ it("reports a duplicate Requirement id, keeps the first and drops the later one"
   expect(result.file?.tracks[0]?.requirements).toEqual([]);
 });
 
+it("reads a Track's own Suggested Layout entry by entry, dropping only an unreadable one (#293)", () => {
+  const file = minimalFile({
+    tracks: [
+      {
+        id: "ai",
+        name: { he: "בינה" },
+        suggestedLayout: [
+          { studyYear: 3, semester: "fall", courses: ["89-391"] },
+          { studyYear: 0, semester: "fall", courses: ["89-392"] },
+        ],
+      },
+    ],
+  });
+
+  const result = parseRequirementsFile(onDisk(file));
+
+  expect(result.file?.tracks[0]?.suggestedLayout).toEqual([{ studyYear: 3, semester: "fall", courses: ["89-391"] }]);
+  expect(result.warnings).toEqual([
+    { kind: "entry-dropped", at: "tracks[0].suggestedLayout[1]", field: "studyYear" },
+  ]);
+});
+
 it("reports duplicate Pool, Course set, Track, Course and Equivalence entries, keeping the first", () => {
   const file = minimalFile({
     pools: [
@@ -346,7 +371,7 @@ it("reports duplicate Pool, Course set, Track, Course and Equivalence entries, k
   ]);
   expect(result.file?.pools).toEqual([{ id: "x", kind: "prefix", prefix: "89-" }]);
   expect(result.file?.courseSets).toEqual([{ id: "s", courses: ["89-110"] }]);
-  expect(result.file?.tracks).toEqual([{ id: "t", name: { he: "1" }, requirements: [] }]);
+  expect(result.file?.tracks).toEqual([{ id: "t", name: { he: "1" }, requirements: [], suggestedLayout: [] }]);
   expect(result.file?.courses).toEqual([{ number: "89-110", credits: 5 }]);
   expect(result.file?.equivalences).toEqual([{ from: "89-109", to: "89-110" }]);
 });
@@ -385,6 +410,23 @@ it("reports a reference to a Pool or a Course set that is not defined, and keeps
     kind: "anyOf",
     of: [{ kind: "set", set: "first-year" }],
   });
+});
+
+it("reports a total naming a Pool that is not defined, and reads one naming none without a Warning", () => {
+  const file = minimalFile({
+    requirements: [
+      { id: "overall", kind: "total", min: 120 },
+      { id: "math", kind: "total", min: 10, pool: "math" },
+    ],
+  });
+
+  const result = parseRequirementsFile(onDisk(file));
+
+  expect(result.warnings).toEqual([{ kind: "unknown-pool", at: "requirements[1]", pool: "math" }]);
+  expect(result.file?.requirements).toEqual([
+    { id: "overall", kind: "total", min: 120 },
+    { id: "math", kind: "total", min: 10, pool: "math" },
+  ]);
 });
 
 it("names a dangling reference where it was read, even after an earlier entry was dropped", () => {
@@ -660,6 +702,8 @@ it("the JSON Schema accepts and rejects exactly what the Zod schema does", () =>
     withPart("requirements", [{ id: "a", kind: "allOf", of: [{ id: "b", kind: "credits", min: -1, pool: "advanced" }] }]),
     withPart("requirements", [{ id: "a", kind: "exclusive", courses: ["89-110"] }]),
     withPart("requirements", [{ id: "a", kind: "someOf", of: [] }]),
+    withPart("requirements", [{ id: "a", kind: "total", min: -1 }]),
+    withPart("requirements", [{ id: "a", kind: "total", pool: "math" }]),
     withPart("pools", [{ id: "x", kind: "range", department: "89", from: "300", to: 399 }]),
     withPart("pools", [{ id: "x", kind: "prefix", prefix: "" }]),
     withPart("courses", [{ number: "89-1", prerequisites: { kind: "anyOf", of: [{ kind: "set" }] } }]),

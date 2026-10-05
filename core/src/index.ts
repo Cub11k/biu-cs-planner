@@ -92,21 +92,40 @@ export {
 export type { BlockedRange, BlockedTimeWarning } from "./state/blocked.ts";
 export { effectiveFile, programWarnings, setCohort, setPrograms } from "./state/programs.ts";
 export { pinCourse, tickManual, unpinCourse, untickManual } from "./state/pins.ts";
+export {
+  addAttempt,
+  attemptWarnings,
+  moveAttempt,
+  removeAttempt,
+  updateAttempt,
+} from "./state/attempts.ts";
+export type { AttemptChange, AttemptTarget, AttemptWarning } from "./state/attempts.ts";
+export { fromSuggestedLayout, suggestedLayoutOf } from "./state/suggested-layout.ts";
+export type { LayoutCreated, LayoutSkipped, LayoutSummary } from "./state/suggested-layout.ts";
+export { semesterIndex, studyPointAt } from "./state/semester-order.ts";
+export type { SemesterAt, StudyPoint } from "./state/semester-order.ts";
 export type { PinRef, RequirementRef } from "./state/pins.ts";
 export type { ListedRequirementsFile, ProgramWarning } from "./state/programs.ts";
 export {
+  attemptIdSchema,
+  attemptSchema,
   blockedTimeSchema,
   CURRENT_STATE_SCHEMA_VERSION,
+  DEFAULT_CREDIT_LOAD_LIMIT,
+  gradeSchema,
   groupPickSchema,
   manualTickSchema,
   pinSchema,
   programSchema,
   settingsSchema,
   stateSchema,
+  statusSchema,
   studentCohortSchema,
 } from "./state/schema.ts";
 export type {
   Attempt,
+  AttemptFacts,
+  AttemptId,
   BlockedTime,
   Grade,
   GroupPick,
@@ -169,3 +188,12 @@ export type {
   SolverWarning,
 } from "./requirements/solve.ts";
 export { requirementsAccepting } from "./requirements/candidates.ts";
+export { checkPlan } from "./plan/checks.ts";
+export type {
+  PlanCheckInput,
+  PlanProgram,
+  PlanTarget,
+  PlanWarning,
+  ProgramTarget,
+  SemesterTarget,
+} from "./plan/checks.ts";

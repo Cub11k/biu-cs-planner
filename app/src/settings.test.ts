@@ -94,7 +94,7 @@ it("serves the schema's defaults when there is no State File yet", async () => {
 
   // The defaults `core/src/state/schema.ts` sets, reached without a file having been written:
   // nothing is created by a read (docs/design.md, "Storage").
-  expect(settings).toEqual({ language: "en", examSpacingDays: 3, version: undefined });
+  expect(settings).toEqual({ language: "en", examSpacingDays: 3, creditLoadLimit: 24, version: undefined });
   expect(await versionOf(workspace)).toBeUndefined();
 });
 
@@ -142,6 +142,16 @@ it("reads and writes exam spacing by the same mechanism as the language", async 
 
   expect(set.kind === "served" && set.settings.examSpacingDays).toBe(10);
   expect(await served(workspace)).toMatchObject({ examSpacingDays: 10 });
+});
+
+it("reads and writes the credit load limit by the same mechanism, leaving the others alone (#291)", async () => {
+  const workspace = ready();
+  await setSettings(workspace, { examSpacingDays: 6 }, { ...AT, basedOn: undefined });
+
+  const set = await setSettings(workspace, { creditLoadLimit: 18 }, { ...AT, basedOn: await versionOf(workspace) });
+
+  expect(set.kind === "served" && set.settings.creditLoadLimit).toBe(18);
+  expect(await served(workspace)).toMatchObject({ language: "en", examSpacingDays: 6, creditLoadLimit: 18 });
 });
 
 it("sets both preferences in one save", async () => {
@@ -333,7 +343,7 @@ it("hands back the State it was given when the preference already says that", ()
     pins: [],
     programs: [],
     manualTicks: [],
-    settings: { language: "he" as const, examSpacingDays: 3 },
+    settings: { language: "he" as const, examSpacingDays: 3, creditLoadLimit: 24 },
   };
 
   expect(choosing({ language: "he" }).apply(state)).toBe(state);
@@ -347,7 +357,7 @@ it("leaves every part of the document but settings the object it already was", (
     pins: [],
     programs: [],
     manualTicks: [],
-    settings: { language: "en" as const, examSpacingDays: 3 },
+    settings: { language: "en" as const, examSpacingDays: 3, creditLoadLimit: 24 },
   };
 
   const next = choosing({ language: "he" }).apply(state);
