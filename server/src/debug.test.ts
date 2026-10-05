@@ -1,10 +1,10 @@
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, expect, it } from "vitest";
-import { BackupRefusedError, WorkspaceRefusedError, type Workspace } from "@biu-cs-planner/app";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { BackupRefusedError, StateFileChangedError, WorkspaceRefusedError, type Workspace } from "@biu-cs-planner/app";
 import { createApi } from "./api.ts";
-import { loggingWorkspace, refusalLine } from "./debug.ts";
+import { failureLine, loggingWorkspace, refusalLine } from "./debug.ts";
 import { fileSystemWorkspace } from "./workspace.fs.ts";
 
 /**
@@ -80,7 +80,7 @@ it("still writes a line when nothing can be read off the refusal", () => {
   );
 });
 
-it("logs each refusal the port raises and rethrows it unchanged, and logs nothing else", async () => {
+it("logs every error the port raises and rethrows it unchanged, the external-edit guard excepted", async () => {
   const refusal = new WorkspaceRefusedError(
     { reason: "unreadable", subject: { kind: "catalog", academicYear: 2027 } },
     "refused",
@@ -99,12 +99,95 @@ it("logs each refusal the port raises and rethrows it unchanged, and logs nothin
   await expect(logged.read({ kind: "catalog", academicYear: 2027 })).rejects.toBe(refusal);
   expect(lines).toEqual(["biu-cs-planner debug: read refused (unreadable) errno=none"]);
 
-  // a throw that is not a refusal is not caught by `app`, so it was never silent: not logged here
+  // a throw that is not a refusal: since #344 a read after a landed save swallows it, so it is logged (#357)
   next = crash;
   await expect(logged.read({ kind: "catalog", academicYear: 2027 })).rejects.toBe(crash);
+  expect(lines[1]).toBe("biu-cs-planner debug: read failed (Error: not a refusal) errno=none");
+
+  // the external-edit guard is the page's to say, and has nothing for this log
+  const changed = new StateFileChangedError("me", { basedOn: undefined, found: undefined });
+  next = changed;
+  await expect(logged.read({ kind: "catalog", academicYear: 2027 })).rejects.toBe(changed);
   next = undefined;
   await expect(logged.read({ kind: "catalog", academicYear: 2027 })).resolves.toBeUndefined();
-  expect(lines).toHaveLength(1);
+  expect(lines).toHaveLength(2);
+});
+
+it("writes a failure's message, errno and cause, and never the launch token", () => {
+  const failure = Object.assign(new Error(`EIO: i/o error, read (token ${TOKEN})`), {
+    code: "EIO",
+    cause: new Error(`below: ${TOKEN}`),
+  });
+
+  const line = failureLine("list", failure, TOKEN);
+
+  expect(line).toBe(
+    "biu-cs-planner debug: list failed (Error: EIO: i/o error, read (token [launch token])) errno=EIO cause: Error: below: [launch token]",
+  );
+  expect(failureLine("list", "a string thrown", TOKEN)).toBe(
+    "biu-cs-planner debug: list failed (a string thrown) errno=none",
+  );
+});
+
+/**
+ * #357 through the API: a Plan edit lands, then `requirements/` fails with an error that is not a
+ * refusal. The answer is the landed edit either way (#344); with `--debug` the terminal learns why
+ * the Plan came back unchecked, the token scrubbed, and without it nothing is written anywhere.
+ */
+it("logs a failure after a landed save under --debug, and nothing without it", async () => {
+  const real = fileSystemWorkspace(root);
+  let failing = false;
+  const flaky: Workspace = new Proxy(real, {
+    get(target, property, receiver) {
+      const method: unknown = Reflect.get(target, property, receiver);
+      if (property !== "list" || typeof method !== "function") return method;
+      return async (...args: unknown[]): Promise<unknown> => {
+        if (failing) throw Object.assign(new Error(`EIO: i/o error, scandir (${TOKEN})`), { code: "EIO" });
+        return (method as (...args: unknown[]) => unknown).apply(target, args);
+      };
+    },
+  });
+  const bearer = { Authorization: `Bearer ${TOKEN}` };
+  const lines: string[] = [];
+  const stderr = vi.spyOn(console, "error").mockImplementation(() => {});
+  const stdout = vi.spyOn(console, "log").mockImplementation(() => {});
+  try {
+    for (const debug of [false, true]) {
+      const api = createApi({
+        workspace: debug ? loggingWorkspace(flaky, (line) => lines.push(line), TOKEN) : flaky,
+        token: TOKEN,
+        changes: { changeCount: () => 0 },
+      });
+      const send = (method: string, path: string, body: unknown) =>
+        api.request(path, { method, headers: { "Content-Type": "application/json", ...bearer }, body: JSON.stringify(body) });
+      failing = false;
+      await send("POST", "/api/workspace", {});
+      const plan = (await (await api.request("/api/plan", { headers: bearer })).json()) as { version?: string };
+      const chosen = await send("PUT", "/api/programs", { programs: [{ requirementsFile: "cs-2027" }], basedOn: plan.version });
+      const { version } = (await chosen.json()) as { version: string };
+
+      failing = true;
+      const answer = await send("POST", "/api/plan/attempts", {
+        courseNumber: "89-110",
+        academicYear: 2027,
+        semester: "fall",
+        status: "planned",
+        basedOn: version,
+      });
+
+      expect(answer.status).toBe(200);
+      await expect(answer.json()).resolves.toMatchObject({ programWarnings: [{ kind: "requirements-unlisted" }] });
+      if (!debug) expect(lines).toEqual([]);
+    }
+
+    expect(lines).toEqual(["biu-cs-planner debug: list failed (Error: EIO: i/o error, scandir ([launch token])) errno=EIO"]);
+    // the log is the only place it went: nothing reached the terminal by any other road
+    expect(stderr).not.toHaveBeenCalled();
+    expect(stdout).not.toHaveBeenCalled();
+  } finally {
+    stderr.mockRestore();
+    stdout.mockRestore();
+  }
 });
 
 /**

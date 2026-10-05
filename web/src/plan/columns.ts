@@ -1,9 +1,9 @@
 /**
  * The Plan screen's columns (#292), derived and never stored: the Semesters from the student's
- * Cohort onward, grouped by Academic Year, and what a column adds up to. Pure, so the rules are
+ * Cohort onward, grouped by Academic Year, and which of the served totals a column shows. Pure, so the rules are
  * tested without a browser.
  */
-import type { Attempt, CourseFacts, Grade, Semester, SemesterAt } from "./plan.ts";
+import type { Attempt, Grade, Semester, SemesterAt, SemesterCredits } from "./plan.ts";
 
 export const SEMESTERS: readonly Semester[] = ["fall", "spring", "summer"];
 
@@ -65,32 +65,18 @@ export function planYears({
   return years;
 }
 
-/** Statuses that are not a load the student carries: done elsewhere, or waived. */
-const NOT_A_LOAD: ReadonlySet<Attempt["status"]> = new Set(["exempt", "credited"]);
-
 /**
- * What one Semester adds up to: the credits of its Attempts the Workspace knows credits for, and
- * how many it does not, leaving out exempt and credited Attempts as the credit-load check does.
- *
- * **A reading aid, not the check.** `core`'s `checkPlan` also halves a Year-long Course whose two
- * halves share an Academic Year, matches course numbers through Equivalences and reads only the
- * chosen Programs' files, and none of that is known here — so a column holding a Year-long half
- * can show more than the credit-load Warning counts. The Warning on the column is the server's and
- * is the one that judges the load.
+ * What one Semester adds up to, read off the totals the Plan answer carries (`core`'s
+ * `semesterCredits`, #352) — the very numbers the credit-load check judges, a Year-long Course
+ * halved and Equivalences applied. Nothing is added up here: a Semester the answer does not list
+ * holds no counted Attempt, so it adds up to nothing.
  */
-export function creditsOf(
-  attempts: readonly Pick<Attempt, "courseNumber" | "status">[],
-  courses: ReadonlyMap<string, CourseFacts>,
+export function columnCredits(
+  totals: readonly SemesterCredits[],
+  at: SemesterAt,
 ): { credits: number; unknown: number } {
-  let credits = 0;
-  let unknown = 0;
-  for (const attempt of attempts) {
-    if (NOT_A_LOAD.has(attempt.status)) continue;
-    const known = courses.get(attempt.courseNumber)?.credits;
-    if (known === undefined) unknown += 1;
-    else credits += known;
-  }
-  return { credits, unknown };
+  const held = totals.find((total) => total.academicYear === at.academicYear && total.semester === at.semester);
+  return held === undefined ? { credits: 0, unknown: 0 } : { credits: held.credits, unknown: held.unknown };
 }
 
 /**

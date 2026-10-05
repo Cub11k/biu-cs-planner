@@ -38,6 +38,12 @@ let attempts: FakeAttempt[];
 let cohort: { academicYear: number; semester: string } | null;
 let attemptWarnings: unknown[];
 let planWarnings: unknown[];
+/** What the Plan answer says each Semester adds up to: the server's, never summed by the fake. */
+let semesterCredits: unknown[];
+/** The Plan answer's marker for a `requirements/` that could not be listed (#357). */
+let programWarnings: unknown[];
+/** The student's Programs, as the Programs route answers them. */
+let programs: Array<{ requirementsFile: string; track?: string }>;
 let version: number;
 let nextId: number;
 let refuseNextEdit: string | undefined;
@@ -58,6 +64,8 @@ const planBody = (extra: object = {}) => ({
   attempts,
   attemptWarnings,
   planWarnings,
+  semesterCredits,
+  programWarnings,
   version: `v${version}`,
   warnings: [],
   ...extra,
@@ -72,6 +80,9 @@ beforeEach(() => {
   cohort = { academicYear: 2027, semester: "fall" };
   attemptWarnings = [];
   planWarnings = [];
+  semesterCredits = [];
+  programWarnings = [];
+  programs = [];
   version = 1;
   nextId = 1;
   refuseNextEdit = undefined;
@@ -95,7 +106,7 @@ beforeEach(() => {
       version += 1;
       return json({ label: "add-attempt", at: 1, version: `v${version}`, canUndo: false, canRedo: true, warnings: [] });
     }
-    if (pathname === "/api/programs") return json({ cohort, programs: [], programWarnings: [], version: `v${version}`, warnings: [] });
+    if (pathname === "/api/programs") return json({ cohort, programs, programWarnings: [], version: `v${version}`, warnings: [] });
     if (pathname === "/api/courses") return json({ courses: COURSES });
     if (pathname === "/api/plan" && method === "GET") return json(planBody());
     if (method !== "GET" && refuseNextEdit !== undefined) {
@@ -499,22 +510,49 @@ it("draws each Warning on the card or the column it points at, and a Program's a
   expect(card(mounted, "a2")!.draggable).toBe(true);
 });
 
-it("totals each column's credits, leaving out exempt Attempts and counting the ones without credits", async () => {
+/**
+ * #352: a column's total is the one the Plan answer serves — `core`'s, which halves a Year-long
+ * Course and applies Equivalences — and never the sum of the credits printed on its cards. Here the
+ * cards say 6 and 5 while the answer says 8, as two halves of a Year-long Course would.
+ */
+it("shows each column's credit total as the Plan answer serves it, not the sum of its cards", async () => {
   attempts = [
     { id: "a1", courseNumber: "89-110", academicYear: 2027, semester: "fall", status: "passed" },
     { id: "a2", courseNumber: "89-111", academicYear: 2027, semester: "fall", status: "planned" },
-    { id: "a3", courseNumber: "89-110", academicYear: 2027, semester: "fall", status: "exempt" },
     { id: "a4", courseNumber: "89-220", academicYear: 2027, semester: "fall", status: "planned" },
   ];
+  semesterCredits = [{ academicYear: 2027, semester: "fall", credits: 8, unknown: 1 }];
   const mounted = await mount();
   await served(mounted);
 
   expect(column(mounted, "2027-fall")!.querySelector("[data-column-credits]")!.textContent).toBe(
-    `${t("en", "planColumnCredits", { credits: 11 })}${t("en", "planColumnJoin")}${t("en", "planColumnUnknown", { count: 1 })}`,
+    `${t("en", "planColumnCredits", { credits: 8 })}${t("en", "planColumnJoin")}${t("en", "planColumnUnknown", { count: 1 })}`,
   );
+  // a Semester the answer does not list adds up to nothing
   expect(column(mounted, "2027-spring")!.querySelector("[data-column-credits]")!.textContent).toBe(
     t("en", "planColumnCredits", { credits: 0 }),
   );
+});
+
+/**
+ * #357: an edit that landed while `requirements/` could not be listed is answered with the new Plan
+ * and the marker, and the screen says the Plan was not checked rather than showing it as clean.
+ */
+it("says the requirements folder could not be read when an edit's answer marks it", async () => {
+  const mounted = await mount();
+  await served(mounted);
+  expect(mounted.querySelector("[data-plan-unlisted]")).toBeNull();
+
+  programWarnings = [{ kind: "requirements-unlisted" }];
+  card(mounted, "a2")!.querySelector<HTMLButtonElement>("button[data-attempt-remove]")!.click();
+
+  const said = await vi.waitFor(() => {
+    const found = mounted.querySelector("[data-plan-warnings] [data-plan-unlisted]");
+    if (found === null) throw new Error("the marker was not said");
+    return found;
+  });
+  expect(said.textContent).toBe(t("en", "planWarnUnlisted"));
+  expect(card(mounted, "a2")).toBeNull();
 });
 
 it("speaks Hebrew right to left, the first Academic Year and Semester at the right", async () => {
@@ -554,6 +592,59 @@ it("fills the Plan from the Suggested Layout, drawing the new cards and the summ
   expect(summary).toContain(t("en", "planLayoutCreated", { count: 1 }));
   expect(summary).toContain(t("en", "planLayoutSkippedAttempted", { course: "89-110" }));
   expect(summary).toContain(t("en", "planLayoutSkippedTwice", { course: "89-111" }));
+});
+
+/** #352: a double major picks whose Suggested Layout the action follows; the first by default. */
+it("lets a double major run the Suggested Layout of either Program, the first by default", async () => {
+  programs = [{ requirementsFile: "cs-2027" }, { requirementsFile: "math-2027", track: "pure" }];
+  const mounted = await mount();
+  await served(mounted);
+  const picker = await vi.waitFor(() => {
+    const found = mounted.querySelector<HTMLSelectElement>("select[data-plan-layout-program]");
+    if (found === null) throw new Error("no Program to choose");
+    return found;
+  });
+  expect([...picker.options].map((option) => option.value)).toEqual(["cs-2027", "math-2027"]);
+  expect(picker.value).toBe("cs-2027");
+
+  const button = mounted.querySelector<HTMLButtonElement>("button[data-plan-layout]")!;
+  button.click();
+  await vi.waitFor(() => {
+    if (lastSent("POST", "/api/plan/suggested-layout") === undefined) throw new Error("not sent");
+  });
+  expect(lastSent("POST", "/api/plan/suggested-layout")?.body).toEqual({ requirementsFile: "cs-2027", basedOn: "v1" });
+  await vi.waitFor(() => {
+    if (button.disabled) throw new Error("still sending");
+  });
+
+  choose(picker, "math-2027");
+  await vi.waitFor(() => {
+    if (picker.value !== "math-2027") throw new Error("not chosen");
+  });
+  button.click();
+  await vi.waitFor(() => {
+    if (lastSent("POST", "/api/plan/suggested-layout")?.body?.requirementsFile !== "math-2027") throw new Error("not sent");
+  });
+  expect(lastSent("POST", "/api/plan/suggested-layout")?.body).toEqual({ requirementsFile: "math-2027", basedOn: "v2" });
+});
+
+it("offers no Program to choose for a single Program, and names none", async () => {
+  programs = [{ requirementsFile: "cs-2027" }];
+  // a Cohort before every Attempt, so its column showing is the sign the Programs route was read
+  cohort = { academicYear: 2026, semester: "fall" };
+  const mounted = await mount();
+  await served(mounted);
+  await vi.waitFor(() => {
+    if (mounted.querySelector('section[data-year="2026"]') === null) throw new Error("the choices were not read");
+  });
+  const button = mounted.querySelector<HTMLButtonElement>("button[data-plan-layout]")!;
+
+  button.click();
+  await vi.waitFor(() => {
+    if (lastSent("POST", "/api/plan/suggested-layout") === undefined) throw new Error("not sent");
+  });
+  expect(mounted.querySelector("select[data-plan-layout-program]")).toBeNull();
+  expect(lastSent("POST", "/api/plan/suggested-layout")?.body).toEqual({ basedOn: "v1" });
 });
 
 it("says the Suggested Layout added nothing when every Course is already there", async () => {

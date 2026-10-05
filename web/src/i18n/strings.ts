@@ -82,6 +82,8 @@ const english = {
   planAddSubmit: "Add",
   planAddTo: "to",
   planLayoutAction: "New Plan from Suggested Layout",
+  /** Beside the action for a student with two Programs: whose Suggested Layout it follows (#352). */
+  planLayoutProgram: "Layout of",
   planLayoutCreated: "Planned courses the Suggested Layout added: {count}.",
   planLayoutNothing: "The Suggested Layout added nothing: every course in it is already in your Plan.",
   planLayoutSkipped: "Skipped:",
@@ -108,6 +110,13 @@ const english = {
   planWarnBeforeCohort: "Before your cohort started.",
   planWarnAssuming: "This assumes you pass {courses}.",
   planWarnOther: "Something here needs a look.",
+  /**
+   * The Plan answer's `requirements-unlisted` (#357): the folder could not be listed, so no Program
+   * was checked against and the column totals know no credits. Said on the Plan screen, beside the
+   * Warnings, because the checks it would otherwise show are missing rather than passed.
+   */
+  planWarnUnlisted:
+    "Your Workspace's requirements folder could not be read, so the Plan was not checked against your programs.",
 
   /**
    * Undo and redo (#144, ADR-0013). Three kinds of string, and they are three because they
@@ -550,7 +559,11 @@ const english = {
   warningFileUnreadable: "The catalog file is not a catalog this app can read.",
   warningSchemaTooNew: "The catalog was written by a newer version of the app.",
   warningSchemaUnsupported: "The catalog's schema version is not one this app reads.",
-  warningWorkspaceRefused: "The workspace would not read the catalog file.",
+  /**
+   * Not a Warning: the Workspace refusing the Catalog is a refusal (#149), and the key says so
+   * (#357). It sits beside the Catalog Warnings because the screen lists it with them.
+   */
+  catalogRefusedByWorkspace: "The workspace would not read the catalog file.",
 
   hintChoose: "Choose a course to see when its groups meet, and click one to pick it.",
   hintShowing: "Every group of {course} is on the week. Click one to pick it.",
@@ -818,6 +831,7 @@ const hebrew: Record<StringKey, string> = {
   planAddSubmit: "הוספה",
   planAddTo: "אל",
   planLayoutAction: "תוכנית חדשה מהפריסה המומלצת",
+  planLayoutProgram: "פריסה של",
   planLayoutCreated: "קורסים מתוכננים שהפריסה המומלצת הוסיפה: {count}.",
   planLayoutNothing: "הפריסה המומלצת לא הוסיפה דבר: כל הקורסים שבה כבר בתוכנית שלך.",
   planLayoutSkipped: "דולגו:",
@@ -842,6 +856,7 @@ const hebrew: Record<StringKey, string> = {
   planWarnBeforeCohort: "לפני תחילת המחזור שלך.",
   planWarnAssuming: "בהנחה ש־{courses} יעברו בהצלחה.",
   planWarnOther: "משהו כאן דורש בדיקה.",
+  planWarnUnlisted: "לא ניתן היה לקרוא את תיקיית הדרישות של סביבת העבודה שלך, ולכן התוכנית לא נבדקה מול תוכניות הלימודים שלך.",
 
   undo: "בטל",
   redo: "בצע שוב",
@@ -1050,7 +1065,7 @@ const hebrew: Record<StringKey, string> = {
   warningFileUnreadable: "הקובץ אינו קטלוג שהיישום יודע לקרוא.",
   warningSchemaTooNew: "הקטלוג נכתב בגרסה חדשה יותר של היישום.",
   warningSchemaUnsupported: "גרסת הסכימה של הקטלוג אינה נתמכת ביישום הזה.",
-  warningWorkspaceRefused: "סביבת העבודה סירבה לקרוא את קובץ הקטלוג.",
+  catalogRefusedByWorkspace: "סביבת העבודה סירבה לקרוא את קובץ הקטלוג.",
 
   hintChoose: "בחרו קורס כדי לראות מתי הקבוצות שלו נפגשות, ולחצו על קבוצה כדי לבחור אותה.",
   hintShowing: "כל הקבוצות של {course} מוצגות בשבוע. לחצו על קבוצה כדי לבחור אותה.",

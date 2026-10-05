@@ -14,7 +14,7 @@ it("plans in the current directory when no Workspace is named", () => {
   });
 });
 
-it("logs Workspace refusals only under --debug, and says so in --help", () => {
+it("logs Workspace refusals and failures only under --debug, and says so in --help", () => {
   expect(parseArguments(["--debug"], cwd)).toMatchObject({ kind: "launch", debug: true });
   const help = parseArguments(["--help"], cwd);
   expect(help.kind === "help" && help.text).toContain("--debug");
