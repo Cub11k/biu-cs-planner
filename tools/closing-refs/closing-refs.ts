@@ -52,29 +52,31 @@ export function unclosedChildren(closes: readonly Closed[]): Finding[] {
 }
 
 /**
- * The body with every fenced code block and inline code span blanked out, which is where GitHub
- * parses no references at all — and where `docs/agents/issue-tracker.md` tells an author to put a
- * quotation that carries a keyword, so reading it there would flag the very thing that advice
- * makes safe.
+ * The body with every fenced code block, inline code span and HTML comment blanked out, which is
+ * where GitHub parses no references at all — and where `docs/agents/issue-tracker.md` tells an
+ * author to put a quotation that carries a keyword, so reading it there would flag the very thing
+ * that advice makes safe.
  *
  * A fence is three or more backticks or tildes, indented at most three spaces, closed by a run
- * of the same character at least as long, or by the end of the body. A code span is a run of
- * backticks closed by a run of exactly the same length. That is CommonMark's rule for both;
- * indented code blocks and HTML comments are not handled, and a reference in one of them is
- * read as written.
+ * of the same character at least as long with nothing after it but spaces, or by the end of the
+ * body. A code span is a run of backticks closed by a run of exactly the same length within the
+ * same paragraph, so a stray backtick cannot hide a `Closes` line paragraphs later. That is
+ * CommonMark's rule for both. An HTML comment runs from `<!--` to `-->`, or to the end of the
+ * body. Indented code blocks are not handled, and a reference in one is read as written.
  */
 export function proseOnly(body: string): string {
   const kept: string[] = [];
   let fence: { char: string; length: number } | undefined;
   for (const line of body.split(/\r?\n/)) {
-    const opener = /^ {0,3}(`{3,}|~{3,})/.exec(line);
     if (fence) {
-      if (opener && opener[1]![0] === fence.char && opener[1]!.length >= fence.length) {
+      const closer = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(line);
+      if (closer && closer[1]![0] === fence.char && closer[1]!.length >= fence.length) {
         fence = undefined;
       }
       kept.push("");
       continue;
     }
+    const opener = /^ {0,3}(`{3,}|~{3,})/.exec(line);
     if (opener) {
       fence = { char: opener[1]![0]!, length: opener[1]!.length };
       kept.push("");
@@ -82,7 +84,13 @@ export function proseOnly(body: string): string {
     }
     kept.push(line);
   }
-  return kept.join("\n").replace(/(?<!`)(`+)(?!`)[\s\S]*?(?<!`)\1(?!`)/g, " ");
+  // A blanked fence line is an empty line, so it ends a paragraph as the fence did.
+  return kept
+    .join("\n")
+    .replace(/<!--[\s\S]*?(?:-->|$)/g, " ")
+    .split(/(\n[ \t]*\n)/)
+    .map((part) => part.replace(/(?<!`)(`+)(?!`)[\s\S]*?(?<!`)\1(?!`)/g, " "))
+    .join("");
 }
 
 /**
@@ -221,9 +229,9 @@ export type Existing = { readonly id: number; readonly body: string };
 
 /**
  * Post when there is something to say and nowhere to say it yet; edit when the comment that
- * is already there no longer says the right thing; otherwise stay silent. A pull request
- * with nothing missing and no earlier comment — which includes every pull request that
- * closes no parent — is always silent.
+ * is already there no longer says the right thing; otherwise stay silent. A pull request with
+ * no listed parent's child left out, no closing line in its body that the list lacks, and no
+ * earlier comment is always silent.
  */
 export function decide(
   closes: readonly Closed[],
@@ -259,7 +267,7 @@ export interface Port {
   body(): Promise<string>;
   /** One issue's sub-issues, with whether each is open. */
   subIssues(issue: number): Promise<Child[]>;
-  /** This check's comment on the pull request, found by `MARKER`. */
+  /** This check's comment on the pull request, found by `MARKER` and its author (`POSTER`). */
   findComment(): Promise<Existing | undefined>;
   postComment(body: string): Promise<void>;
   editComment(id: number, body: string): Promise<void>;

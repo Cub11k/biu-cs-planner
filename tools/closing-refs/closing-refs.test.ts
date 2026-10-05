@@ -141,6 +141,20 @@ describe("proseOnly", () => {
     expect(proseOnly("``a ` b`` c")).toBe("  c");
   });
 
+  it("does not let a fence line with an info string close a fence", () => {
+    expect(writtenClosings("```\n```js\nCloses #11\n```\n", "o/r")).toEqual([]);
+  });
+
+  it("does not let a stray backtick hide a `Closes` line in a later paragraph", () => {
+    // A code span never leaves its paragraph, and a blanked fence ends one too.
+    expect(writtenClosings("don't type ` here\n\nCloses #6\n\nlater `x`", "o/r")).toEqual([6]);
+    expect(writtenClosings("a ` b\n```\ncode\n```\nCloses #7 then `y`", "o/r")).toEqual([7]);
+  });
+
+  it("blanks an HTML comment, closed or running to the end", () => {
+    expect(writtenClosings("<!-- Closes #12 -->\nCloses #3\n<!-- Fixes #4", "o/r")).toEqual([3]);
+  });
+
   it("leaves a lone backtick as written", () => {
     expect(proseOnly("it's a ` stray")).toBe("it's a ` stray");
   });
