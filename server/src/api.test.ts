@@ -2012,8 +2012,8 @@ it("carries nothing a hostile adapter wrote, on any route", async () => {
   // method but the ones `spared` names answers with the hostile refusal once `refuse` is set, so
   // the double covers the whole port with none of it listed — a method added to the port later is
   // hostile here too without anyone remembering to add it. It is a decorator and never a writer:
-  // every save in this test reaches the real adapter through `editStateFile`, as production's do,
-  // which is also why `tools/ci/state-file-writer.ts` has nothing to find here.
+  // every save in this test reaches the real adapter through `editStateFile`, as production's do.
+  // `tools/ci/state-file-writer.ts` cannot see inside a Proxy trap, so that is kept true by review.
   const real = fileSystemWorkspace(root);
   let refuse: (() => WorkspaceRefusedError) | undefined;
   let spared: (property: PropertyKey) => boolean = () => false;

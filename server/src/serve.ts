@@ -15,7 +15,9 @@ import { DEFAULT_PORT, LOOPBACK_HOST } from "./config.ts";
  */
 function workspacePathFromArgv(argv: string[]): string {
   const flag = argv.indexOf("--workspace");
-  return flag !== -1 && argv[flag + 1] ? argv[flag + 1]! : process.cwd();
+  const value = flag === -1 ? undefined : argv[flag + 1];
+  // a flag is not a path: `--workspace --debug` plans in the current directory, as with no value
+  return value !== undefined && value !== "" && !value.startsWith("-") ? value : process.cwd();
 }
 
 const path = workspacePathFromArgv(process.argv);

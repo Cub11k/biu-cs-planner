@@ -138,3 +138,54 @@ it("leaves the page's answer unchanged and tells only the log where the file is"
   ]);
   expect(lines.join("\n")).not.toContain(TOKEN);
 });
+
+/**
+ * The decorator is a pass-through: the adapter is handed the very arguments the caller passed and
+ * the caller gets the adapter's answer back unchanged. One trap serves every method, so a write is
+ * as good a witness as any — and it is a Catalog write rather than a save because a save is
+ * `editStateFile`'s alone, which `tools/ci/state-file-writer.ts` holds every test to. That scanner
+ * cannot see inside a Proxy trap, so this test is what keeps `loggingWorkspace` from being a
+ * writer of its own.
+ */
+it("hands every call to the adapter untouched and its answer back unchanged", async () => {
+  const real = fileSystemWorkspace(root);
+  await real.create();
+  const received: unknown[][] = [];
+  const answer = Promise.resolve();
+  const recording: Workspace = {
+    ...real,
+    write: (...args) => {
+      received.push(args);
+      return answer;
+    },
+  };
+  const logged = loggingWorkspace(recording, () => {}, TOKEN);
+  const ref = { kind: "catalog", academicYear: 2027 } as const;
+  const data = { schemaVersion: 1 };
+
+  const returned = logged.write(ref, data);
+
+  expect(received).toEqual([[ref, data]]);
+  expect(received[0]![0]).toBe(ref);
+  expect(received[0]![1]).toBe(data);
+  await expect(returned).resolves.toBeUndefined();
+});
+
+it("leaves a synchronous method synchronous, and still logs its refusal", () => {
+  const refusal = new WorkspaceRefusedError(
+    { reason: "unreadable", subject: { kind: "workspace" } },
+    "refused",
+  );
+  const lines: string[] = [];
+  const port = {
+    answer: () => 42,
+    refuse: (): never => {
+      throw refusal;
+    },
+  };
+  const logged = loggingWorkspace(port as unknown as Workspace, (line) => lines.push(line), TOKEN) as unknown as typeof port;
+
+  expect(logged.answer()).toBe(42);
+  expect(() => logged.refuse()).toThrow(refusal);
+  expect(lines).toEqual(["biu-cs-planner debug: refuse refused (unreadable) errno=none"]);
+});

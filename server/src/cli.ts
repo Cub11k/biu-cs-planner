@@ -17,7 +17,7 @@ export type Launch = {
   /** Whether to open the browser once the server is up. */
   open: boolean;
   /**
-   * Whether every Workspace refusal is written to stderr with its reason code, errno and cause
+   * Whether every `WorkspaceRefusedError` is written to stderr with its reason code, errno and cause
    * (#165). Off unless asked for; the rule — what it says, where, and that the launch token never
    * appears in it — is in `./debug.ts`.
    */

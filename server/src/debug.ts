@@ -11,9 +11,11 @@ import { WorkspaceRefusedError, type Workspace } from "@biu-cs-planner/app";
  *   - **Destination: stderr**, of the terminal the server was started from. Never a file: a file in
  *     the Workspace would be data the app writes into the folder ADR-0003 says holds the student's
  *     documents, and a file anywhere else is one more thing to find and clean up.
- *   - **What it says:** for every refusal the Workspace port raises — every refusal a use case in
- *     `app` then catches and turns into a reason — its reason code, the errno, and its `cause`
- *     chain, which is where the adapter keeps the filesystem's own error. **The absolute Workspace
+ *   - **What it says:** for every `WorkspaceRefusedError` the Workspace port raises — each one a
+ *     use case in `app` then catches and turns into a reason — its reason code, the errno, and its
+ *     `cause` chain, which is where the adapter keeps the filesystem's own error. Not the external-
+ *     edit guard's `StateFileChangedError`: it is a refusal too, but it has no errno and no cause,
+ *     and the page already says everything about it there is to say. **The absolute Workspace
  *     path may appear**, because the log is opt-in and goes to the student's own terminal.
  *   - **What may never appear, in any mode: the launch token.** No refusal is about the token file,
  *     which lives outside the Workspace, so none should carry it — and every line is scrubbed of it
@@ -78,21 +80,32 @@ export function refusalLine(operation: string, error: WorkspaceRefusedError, tok
  * **A Proxy over the adapter rather than an object listing the port's methods**, the shape the
  * hostile-adapter test in `./api.test.ts` already uses and for its reason: a method added to the
  * port later is logged here too without anyone remembering to add it. It is a decorator and never
- * a writer — every save still arrives from `editStateFile` and reaches the adapter through here
- * untouched — which is why `tools/ci/state-file-writer.ts` has nothing to find in it.
+ * a writer: every save still arrives from `editStateFile` and reaches the adapter with the same
+ * arguments, and its answer comes back unchanged. `tools/ci/state-file-writer.ts` cannot see inside
+ * a Proxy trap at all, so that is kept true by review and by the pass-through test in
+ * `./debug.test.ts`, not by the scanner.
+ *
+ * **Synchronous methods stay synchronous.** Every port method returns a Promise today; one added
+ * later that does not is called and answered as it is, with its throw logged the same way, rather
+ * than being turned into a Promise by this wrapper.
  */
 export function loggingWorkspace(workspace: Workspace, log: DebugLog, token: string): Workspace {
   return new Proxy(workspace, {
     get(target, property, receiver) {
       const method: unknown = Reflect.get(target, property, receiver);
       if (typeof method !== "function") return method;
-      return async (...args: unknown[]): Promise<unknown> => {
+      const logged = (error: unknown): never => {
+        if (error instanceof WorkspaceRefusedError) log(refusalLine(String(property), error, token));
+        throw error;
+      };
+      return (...args: unknown[]): unknown => {
+        let answer: unknown;
         try {
-          return await (method as (...args: unknown[]) => Promise<unknown>).apply(target, args);
+          answer = (method as (...args: unknown[]) => unknown).apply(target, args);
         } catch (error) {
-          if (error instanceof WorkspaceRefusedError) log(refusalLine(String(property), error, token));
-          throw error;
+          return logged(error);
         }
+        return answer instanceof Promise ? answer.catch(logged) : answer;
       };
     },
   });
