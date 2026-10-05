@@ -252,6 +252,11 @@ export function ProgressScreen({
   const preview = usePreview(whatIf, progress);
   const unchanged =
     whatIf !== undefined && progress.kind === "served" && sameChoices(whatIf, choicesOf(progress.programs));
+  // a what-if is of the student's Programs: once none is chosen (an undo, another tab) it is of nothing
+  const noneChosen = progress.kind === "served" && progress.programs.length === 0;
+  useEffect(() => {
+    if (noneChosen) setWhatIf(undefined);
+  }, [noneChosen]);
 
   /**
    * One edit on the view on screen, answered with Progress as it stands afterwards; `then` runs

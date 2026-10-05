@@ -924,3 +924,20 @@ it("marks the what-if in Hebrew, right to left", async () => {
   // adopting comes first, which is the right in Hebrew
   expect(adopt.getBoundingClientRect().left).toBeGreaterThan(leave.getBoundingClientRect().left);
 });
+
+it("drops an open what-if once no Program is chosen any more, as after an undo", async () => {
+  const mounted = await mount();
+  await served(mounted);
+  choose((await startWhatIf(mounted)).querySelector<HTMLSelectElement>('select[data-program-track="0"]')!, "ai");
+  await previewShown(mounted);
+  programs = []; // what another tab saved
+
+  await mount("en", 1);
+
+  await found(mounted, 'select[data-choose="file"]');
+  expect(mounted.querySelector("[data-what-if-view]")).toBeNull();
+  programs = [{ requirementsFile: "cs-2027" }];
+  await mount("en", 2);
+  await served(mounted);
+  expect(mounted.querySelector("section[data-what-if]")).toBeNull();
+});
