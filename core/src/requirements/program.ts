@@ -329,8 +329,10 @@ function isLimit(requirement: Requirement | undefined): boolean {
  *    cap has left, so a Course can count in part.
  * 3. Statuses are settled from the leaves up.
  *
- * `relaxed` skips steps 1 and 2's limits. More placements then never mean fewer satisfied
- * nodes, which is what makes the result an upper bound the solver can prune against.
+ * `relaxed` skips step 1, and in step 2 lets each leaf count capped credits up to the sum of the
+ * maxima over it, as if no other leaf had used any. More placements then never mean fewer
+ * satisfied nodes, and no Assignment counts more at any leaf than this does, which is what makes
+ * the result an upper bound the solver can prune against.
  */
 export function score(
   program: CompiledProgram,
@@ -384,18 +386,35 @@ export function score(
     const requirement = node.requirement;
     if (requirement?.kind !== "credits") continue;
     const outcome = outcomes[node.index]!;
+    const capsHere = program.caps.filter((cap) => within(program, nodes[cap]!.parent, node.index));
+    const limitsOf = (course: string) =>
+      capsHere.filter((cap) => {
+        const capRequirement = nodes[cap]!.requirement;
+        return capRequirement?.kind === "cap" && program.poolHas(capRequirement.pool, course);
+      });
+
+    if (relaxed) {
+      // However the caps' budgets are shared out, the credits of capped courses that count at
+      // this one leaf never exceed the sum of the maxima of the caps over it. Free courses count
+      // in full. Both only grow with more placements, so the bound stays a bound.
+      let free = 0;
+      let capped = 0;
+      for (const course of placed.get(node.index) ?? []) {
+        const full = program.credits(course) ?? 0;
+        if (limitsOf(course).length === 0) free += full;
+        else capped += full;
+      }
+      const ceiling = capsHere.reduce((sum, cap) => {
+        const capRequirement = nodes[cap]!.requirement;
+        return sum + (capRequirement?.kind === "cap" ? capRequirement.max : 0);
+      }, 0);
+      outcome.counted = free + Math.min(capped, ceiling);
+      continue;
+    }
+
     for (const course of placed.get(node.index) ?? []) {
       const full = program.credits(course) ?? 0;
-      const limits = relaxed
-        ? []
-        : program.caps.filter((cap) => {
-            const capRequirement = nodes[cap]!.requirement;
-            return (
-              capRequirement?.kind === "cap" &&
-              within(program, nodes[cap]!.parent, node.index) &&
-              program.poolHas(capRequirement.pool, course)
-            );
-          });
+      const limits = limitsOf(course);
       const allowed = Math.min(full, ...limits.map((cap) => remaining.get(cap)!));
       for (const cap of limits) {
         remaining.set(cap, remaining.get(cap)! - allowed);

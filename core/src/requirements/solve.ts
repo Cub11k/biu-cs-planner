@@ -1,0 +1,539 @@
+import type { Attempt, Pin } from "../state/schema.ts";
+import { countedIn, type Assignment, type Placement } from "./evaluate.ts";
+import {
+  accepts,
+  compileProgram,
+  constrained,
+  leavesAccepting,
+  mayShare,
+  score,
+  standings,
+  type CompiledProgram,
+  type Lens,
+} from "./program.ts";
+import type { RequirementsFile } from "./schema.ts";
+
+/**
+ * The Assignment solver: which Requirement each of a student's Courses counts toward, chosen to
+ * satisfy as many Requirements as it can (`docs/design.md`, "Assignment").
+ *
+ * **Objective.** The number of satisfied Requirement nodes, the Program itself included, summed
+ * over the Programs of a double major. Ties go to the Assignment with more credits counted toward
+ * `credits` Requirements, each counted only up to its minimum, so a spare Course goes where it is
+ * progress rather than surplus. That refines the ticket's "more credits in partially satisfied
+ * `credits` nodes", which is what it amounts to between two Assignments meeting the same
+ * Requirements, into a sum that only rewards progress. A tie on both goes to whichever
+ * Assignment the search reaches first, and the search runs in a fixed order: Courses by fewest
+ * choices, then Program, then course number, and each Course's choices in tree order, with
+ * "nowhere" last. That refines the ticket's "stable order by Requirement id and course number":
+ * tree order is the order the maintainer wrote and the order the trivial first-fit Assignment
+ * uses, so where first-fit is already as good as anything the solver changes nothing. Nothing
+ * depends on the order Attempts or Pins are listed in.
+ *
+ * **Constraints.** A Course counts once among sibling Requirements, so toward one Requirement of
+ * a Program, unless the file's permissions let it count toward more; where they do, a Course
+ * placed on one Requirement is placed on every other it may share with. Across a double major's
+ * Programs it counts in one of them unless both files allow it in both. Pins are hard
+ * constraints, and a Pin that cannot be honoured is dropped with a Warning.
+ *
+ * **Search.** Two phases. First, depth-first branch and bound for the most satisfied
+ * Requirements, over the Courses that have a choice. The first complete Assignment it reaches is
+ * the greedy one, every Course on its first legal choice, so there is always an answer. A branch
+ * is cut unless placing every remaining Course on every Requirement that accepts it, with
+ * exclusives lifted and each cap counted in full at every leaf below it, would satisfy more than
+ * the best so far: those relaxations make more placements never satisfy fewer nodes, which is
+ * what makes that an upper bound. When this phase finishes, no Assignment satisfies more.
+ * "Nowhere" is a choice only for a Course a cap or an exclusive could stop counting, or one
+ * another Program may also want; for any other Course, placing it is never worse.
+ *
+ * Second, the tie-break, by moving one Course at a time while a move improves the score. It is
+ * not searched for exhaustively: credits toward a minimum are a fine-grained quantity no cheap
+ * bound closes, and a search that also hunted them visited every Assignment of a 45-Course
+ * Program without finishing in 200,000 steps. Measured; with this split, the same Program
+ * finishes well inside the default cap.
+ *
+ * **Limits.** Each lens may take `maxIterations` steps across both phases, and the whole call may take
+ * `maxMillis` by the clock it is given. `core` reads no clock of its own, so without `now` there
+ * is no time cap and the iteration cap alone bounds the work. On hitting either the best
+ * Assignment so far is returned with `stoppedEarly`.
+ */
+
+export interface SolveLimits {
+  /** Search nodes each lens may visit. */
+  maxIterations?: number;
+  /** Milliseconds the whole call may take, measured by `now`. Ignored without `now`. */
+  maxMillis?: number;
+  /** A clock in milliseconds. The solver never reads one of its own. */
+  now?: () => number;
+}
+
+export const DEFAULT_SOLVE_LIMITS = { maxIterations: 20_000, maxMillis: 250 } as const;
+
+export type SolverWarning =
+  | { kind: "track-unknown"; program: string; track: string }
+  | { kind: "pin-requirement-unknown"; courseNumber: string; requirementId: string }
+  | { kind: "pin-not-accepted"; courseNumber: string; requirementId: string }
+  /** A Pin that would count a Course where an earlier Pin already counts it and may not share. */
+  | { kind: "pin-conflict"; courseNumber: string; requirementId: string };
+
+export interface SolveInput {
+  /** One Program, or the two of a double major, each with its Track. */
+  programs: readonly { file: RequirementsFile; track?: string }[];
+  attempts: readonly Attempt[];
+  pins?: readonly Pin[];
+  limits?: SolveLimits;
+}
+
+export interface Solution {
+  /** One Assignment per Program, in the order the Programs were given. */
+  assignments: Assignment[];
+  stoppedEarly: boolean;
+  warnings: SolverWarning[];
+}
+
+/** One Course in one Program: what the search decides. */
+interface Choice {
+  program: number;
+  course: string;
+  origins: readonly string[];
+  /** Each choice is a set of leaves; `[]` is "nowhere". */
+  options: number[][];
+  /** Pinned leaves, when the Course is pinned; then there is no choice to make. */
+  pinned: number[] | undefined;
+  /** Choices in the other Program for the same Course, by an Attempt they share. */
+  links: number[];
+}
+
+/** Compared in order: satisfied nodes, then credits toward `credits` minimums. */
+interface Score {
+  satisfied: number;
+  credits: number;
+}
+
+function better(a: Score, b: Score): boolean {
+  return a.satisfied > b.satisfied || (a.satisfied === b.satisfied && a.credits > b.credits);
+}
+
+/** Whether a file lets a Course counted in it count in the other Program too. */
+function acrossAllowed(program: CompiledProgram, course: string): boolean {
+  const across = program.file.doubleCounting.acrossPrograms;
+  if (across === undefined) return false;
+  return across.pool === undefined || program.poolHas(across.pool, course);
+}
+
+/**
+ * The leaves a Course goes to when placed on `first`: that one, and every later-found leaf that
+ * may share with all of those before it.
+ */
+function withSharing(program: CompiledProgram, first: number, leaves: number[], course: string) {
+  const chosen = [first];
+  for (const leaf of leaves) {
+    if (chosen.every((other) => mayShare(program, other, leaf, course))) chosen.push(leaf);
+  }
+  return chosen.sort((a, b) => a - b);
+}
+
+/** Pins resolved to leaves, by Program and canonical course, with the Warnings they raise. */
+function resolvePins(
+  programs: readonly CompiledProgram[],
+  pins: readonly Pin[],
+  warn: (warning: SolverWarning) => void,
+): Map<string, number[]>[] {
+  const resolved = programs.map(() => new Map<string, number[]>());
+  const ordered = [...pins].sort(
+    (a, b) =>
+      a.courseNumber.localeCompare(b.courseNumber) || a.requirementId.localeCompare(b.requirementId),
+  );
+  for (const { courseNumber, requirementId } of ordered) {
+    let found = false;
+    programs.forEach((program, p) => {
+      const leaf = program.byId.get(requirementId);
+      if (leaf === undefined) return;
+      found = true;
+      const course = program.canonical(courseNumber);
+      if (!accepts(program, leaf, course)) {
+        warn({ kind: "pin-not-accepted", courseNumber, requirementId });
+        return;
+      }
+      const leaves = resolved[p]!.get(course) ?? [];
+      if (leaves.every((other) => mayShare(program, other, leaf, course))) {
+        resolved[p]!.set(course, [...leaves, leaf]);
+      } else {
+        warn({ kind: "pin-conflict", courseNumber, requirementId });
+      }
+    });
+    if (!found) warn({ kind: "pin-requirement-unknown", courseNumber, requirementId });
+  }
+  return resolved;
+}
+
+class Search {
+  private iterations = 0;
+  stopped = false;
+  private readonly picked: (number[] | undefined)[];
+  private best: { score: Score; picked: (number[] | undefined)[] };
+  private readonly order: number[];
+  private readonly programs: readonly CompiledProgram[];
+  private readonly choices: Choice[];
+  private readonly maxIterations: number;
+  private readonly outOfTime: () => boolean;
+
+  constructor(
+    programs: readonly CompiledProgram[],
+    choices: Choice[],
+    maxIterations: number,
+    outOfTime: () => boolean,
+  ) {
+    this.programs = programs;
+    this.choices = choices;
+    this.maxIterations = maxIterations;
+    this.outOfTime = outOfTime;
+    this.picked = choices.map((choice) => choice.pinned);
+    this.order = choices
+      .map((choice, index) => ({ choice, index }))
+      .filter(({ choice }) => choice.pinned === undefined)
+      .sort(
+        (a, b) =>
+          a.choice.options.length - b.choice.options.length ||
+          a.choice.program - b.choice.program ||
+          a.choice.course.localeCompare(b.choice.course),
+      )
+      .map(({ index }) => index);
+
+    for (const index of this.order) {
+      this.picked[index] = this.choices[index]!.options.find((option) => this.legal(index, option));
+    }
+    this.best = { score: this.score(false), picked: [...this.picked] };
+    for (const index of this.order) this.picked[index] = undefined;
+  }
+
+  /** A choice may not put a Course in both Programs unless both allow it. */
+  private legal(index: number, option: number[]): boolean {
+    if (option.length === 0) return true;
+    const choice = this.choices[index]!;
+    return choice.links.every((link) => {
+      const other = this.picked[link];
+      if (other === undefined || other.length === 0) return true;
+      const linked = this.choices[link]!;
+      return (
+        acrossAllowed(this.programs[choice.program]!, choice.course) &&
+        acrossAllowed(this.programs[linked.program]!, linked.course)
+      );
+    });
+  }
+
+  /**
+   * The score of what is picked. `relaxed` also places every undecided Course on every leaf that
+   * accepts it, with caps and exclusives lifted: an upper bound on any way of finishing the
+   * Assignment, on both parts of the score.
+   */
+  private score(relaxed: boolean): Score {
+    const placements = this.programs.map(() => new Map<number, string[]>());
+    this.choices.forEach((choice, index) => {
+      const leaves =
+        this.picked[index] ?? (relaxed ? [...new Set(choice.options.flat())] : []);
+      for (const leaf of leaves) {
+        const atLeaf = placements[choice.program]!.get(leaf) ?? [];
+        placements[choice.program]!.set(leaf, [...atLeaf, choice.course]);
+      }
+    });
+    let satisfied = 0;
+    let credits = 0;
+    const allDemands: number[] = [];
+    let separately = 0;
+    this.programs.forEach((program, p) => {
+      const outcomes = score(program, placements[p]!, new Set(), relaxed);
+      const demands: number[] = [];
+      outcomes.forEach((outcome, index) => {
+        if (outcome.status === "satisfied") satisfied++;
+        const requirement = program.nodes[index]!.requirement;
+        if (outcome.status === "satisfied" && requirement?.kind === "course") {
+          demands.push(program.credits(program.canonical(requirement.course)) ?? 0);
+        }
+        if (requirement?.kind !== "credits") return;
+        credits += Math.min(outcome.counted, requirement.min);
+        if (outcome.status === "satisfied") demands.push(requirement.min);
+      });
+      if (relaxed) separately += this.unaffordable(demands, this.supply([p]));
+      allDemands.push(...demands);
+    });
+    if (relaxed) {
+      const together =
+        this.programs.length > 1
+          ? this.unaffordable(allDemands, this.supply(this.programs.map((_, p) => p)))
+          : 0;
+      satisfied -= Math.max(separately, together);
+    }
+    return { satisfied, credits };
+  }
+
+  /**
+   * The credits of the Courses that could still count in these Programs: undecided, or placed
+   * somewhere. `undefined` when any of them lets a Course count twice within it, since then no
+   * sum of credits limits what its leaves can meet. A Course in two Programs that may not count
+   * in both is supply once, at the larger of its two credit values.
+   */
+  private supply(programs: number[]): number | undefined {
+    if (programs.some((p) => this.programs[p]!.permissions.length > 0)) return undefined;
+    let supply = 0;
+    const counted = new Set<number>();
+    this.choices.forEach((choice, index) => {
+      const picked = this.picked[index];
+      if (!programs.includes(choice.program) || counted.has(index)) return;
+      if (picked !== undefined && picked.length === 0) return;
+      const credits = (i: number) =>
+        this.programs[this.choices[i]!.program]!.credits(this.choices[i]!.course) ?? 0;
+      let largest = credits(index);
+      for (const link of choice.links) {
+        const linked = this.choices[link]!;
+        if (!programs.includes(linked.program)) continue;
+        const shared =
+          acrossAllowed(this.programs[choice.program]!, choice.course) &&
+          acrossAllowed(this.programs[linked.program]!, linked.course);
+        if (shared) continue;
+        counted.add(link);
+        largest = Math.max(largest, credits(link));
+      }
+      supply += largest;
+    });
+    return supply;
+  }
+
+  /**
+   * How many of the leaves the relaxed score calls satisfied no real Assignment can satisfy
+   * together, for want of credits. Where no file allows double counting within it, each Course
+   * counts at one leaf at most, so the leaves met at once cannot demand more than `supply`: a
+   * `credits` leaf demands its minimum, and a `course` leaf its own Course's credits. Keeping the
+   * leaves with the smallest demands keeps as many as possible, so every other one is a node the
+   * relaxed score over-counts. This is what lets the search prove a Requirement out of reach
+   * rather than visit every Assignment looking for one that reaches it, which is most
+   * Requirements for a student partway through a degree.
+   */
+  private unaffordable(demands: number[], supply: number | undefined): number {
+    if (supply === undefined) return 0;
+    let kept = 0;
+    for (const demand of demands.sort((a, b) => a - b)) {
+      if (demand > supply) break;
+      supply -= demand;
+      kept++;
+    }
+    return demands.length - kept;
+  }
+
+  run(): (number[] | undefined)[] {
+    this.visit(0);
+    if (!this.stopped) this.polish();
+    return this.best.picked;
+  }
+
+  /** Counts one unit of work, and says whether the limits have been reached. */
+  private spent(): boolean {
+    this.iterations++;
+    if (this.iterations > this.maxIterations || this.outOfTime()) this.stopped = true;
+    return this.stopped;
+  }
+
+  /**
+   * The tie-break, pursued by moving one Course at a time to another of its choices, in search
+   * order, whenever that strictly improves the score, until no single move does. It never
+   * lowers the number of satisfied Requirements the search found, since a move is kept only when
+   * the whole score improves.
+   */
+  private polish(): void {
+    this.picked.splice(0, this.picked.length, ...this.best.picked);
+    let improved = true;
+    while (improved) {
+      improved = false;
+      for (const index of this.order) {
+        const current = this.picked[index]!;
+        for (const option of this.choices[index]!.options) {
+          if (option === current) continue;
+          this.picked[index] = undefined;
+          if (!this.legal(index, option)) {
+            this.picked[index] = current;
+            continue;
+          }
+          if (this.spent()) {
+            this.picked[index] = current;
+            return;
+          }
+          this.picked[index] = option;
+          const reached = this.score(false);
+          if (better(reached, this.best.score)) {
+            this.best = { score: reached, picked: [...this.picked] };
+            improved = true;
+            break;
+          }
+          this.picked[index] = current;
+        }
+      }
+    }
+  }
+
+  private visit(depth: number): void {
+    if (this.stopped || this.spent()) return;
+    if (depth === this.order.length) {
+      const reached = this.score(false);
+      if (better(reached, this.best.score)) this.best = { score: reached, picked: [...this.picked] };
+      return;
+    }
+    // Only more satisfied Requirements justify going deeper; the tie-break is `polish`'s.
+    if (this.score(true).satisfied <= this.best.score.satisfied) return;
+
+    const index = this.order[depth]!;
+    for (const option of this.choices[index]!.options) {
+      if (!this.legal(index, option)) continue;
+      this.picked[index] = option;
+      this.visit(depth + 1);
+      this.picked[index] = undefined;
+      if (this.stopped) return;
+    }
+  }
+}
+
+/** The Courses one lens counts, as choices for the search, across every Program. */
+function choicesFor(
+  programs: readonly CompiledProgram[],
+  attempts: readonly Attempt[],
+  pinned: readonly Map<string, number[]>[],
+  lens: Lens,
+): Choice[] {
+  const choices: Choice[] = [];
+  programs.forEach((program, p) => {
+    const standing = standings(program, attempts);
+    for (const course of countedIn(standing, lens)) {
+      const leaves = leavesAccepting(program, course);
+      const pins = pinned[p]!.get(course);
+      if (leaves.length === 0 && pins === undefined) continue;
+      const options = new Map<string, number[]>();
+      for (const leaf of leaves) {
+        const option = withSharing(program, leaf, leaves, course);
+        options.set(option.join(","), option);
+      }
+      choices.push({
+        program: p,
+        course,
+        origins: standing.get(course)!.origins,
+        options: [...options.values()],
+        pinned: pins,
+        links: [],
+      });
+    }
+  });
+
+  choices.forEach((choice, index) => {
+    choice.links = choices.flatMap((other, otherIndex) =>
+      other.program !== choice.program && other.origins.some((o) => choice.origins.includes(o))
+        ? [otherIndex]
+        : [],
+    );
+    const program = programs[choice.program]!;
+    const contested = choice.links.some(
+      (link) =>
+        !acrossAllowed(program, choice.course) ||
+        !acrossAllowed(programs[choices[link]!.program]!, choices[link]!.course),
+    );
+    const limited = choice.options.some((option) =>
+      option.some((leaf) => constrained(program, leaf, choice.course)),
+    );
+    if (choice.pinned === undefined && (contested || limited)) choice.options.push([]);
+  });
+  return choices;
+}
+
+/**
+ * Two Pins in different Programs on one Course that the files do not let count in both: the
+ * later Program's Pins give way, with a Warning, as the later of two Pins in one Program does.
+ */
+function settleCrossPins(
+  programs: readonly CompiledProgram[],
+  choices: Choice[],
+  warn: (warning: SolverWarning) => void,
+): void {
+  choices.forEach((choice, index) => {
+    if (choice.pinned === undefined) return;
+    const clash = choice.links.some((link) => {
+      const other = choices[link]!;
+      return (
+        link < index &&
+        other.pinned !== undefined &&
+        other.pinned.length > 0 &&
+        !(
+          acrossAllowed(programs[choice.program]!, choice.course) &&
+          acrossAllowed(programs[other.program]!, other.course)
+        )
+      );
+    });
+    if (!clash) return;
+    for (const leaf of choice.pinned) {
+      const requirementId = programs[choice.program]!.nodes[leaf]!.requirement!.id;
+      warn({ kind: "pin-conflict", courseNumber: choice.course, requirementId });
+    }
+    choice.pinned = [];
+  });
+}
+
+function placementsOf(program: CompiledProgram, choices: Choice[], picked: (number[] | undefined)[], p: number) {
+  const placements: Placement[] = [];
+  choices.forEach((choice, index) => {
+    const leaves = picked[index];
+    if (choice.program !== p || !leaves || leaves.length === 0) return;
+    placements.push({
+      courseNumber: choice.course,
+      requirementIds: [...leaves].sort((a, b) => a - b).map((leaf) => program.nodes[leaf]!.requirement!.id),
+    });
+  });
+  return placements.sort((a, b) => a.courseNumber.localeCompare(b.courseNumber));
+}
+
+/**
+ * Finds the Assignment that satisfies the most Requirements, for each lens and each Program,
+ * honouring Pins. Pure and bounded: the same inputs always give the same Assignment, and it
+ * never runs past its limits.
+ */
+export function solveAssignment(input: SolveInput): Solution {
+  const maxIterations = input.limits?.maxIterations ?? DEFAULT_SOLVE_LIMITS.maxIterations;
+  const maxMillis = input.limits?.maxMillis ?? DEFAULT_SOLVE_LIMITS.maxMillis;
+  const now = input.limits?.now;
+  const deadline = now === undefined ? undefined : now() + maxMillis;
+  const outOfTime = () => now !== undefined && deadline !== undefined && now() >= deadline;
+
+  const warnings: SolverWarning[] = [];
+  const seen = new Set<string>();
+  const warn = (warning: SolverWarning) => {
+    const key = JSON.stringify(warning);
+    if (!seen.has(key)) {
+      seen.add(key);
+      warnings.push(warning);
+    }
+  };
+
+  const programs = input.programs.map(({ file, track }) => {
+    const program = compileProgram(file, track);
+    if (track !== undefined && program.track === undefined) {
+      warn({ kind: "track-unknown", program: file.program.id, track });
+    }
+    return program;
+  });
+  const pinned = resolvePins(programs, input.pins ?? [], warn);
+
+  let stoppedEarly = false;
+  const byLens = {} as Record<Lens, Placement[][]>;
+  for (const lens of ["completed", "projected"] as const) {
+    const choices = choicesFor(programs, input.attempts, pinned, lens);
+    settleCrossPins(programs, choices, warn);
+    const search = new Search(programs, choices, maxIterations, outOfTime);
+    const picked = search.run();
+    stoppedEarly ||= search.stopped;
+    byLens[lens] = programs.map((program, p) => placementsOf(program, choices, picked, p));
+  }
+
+  return {
+    assignments: programs.map((_, p) => ({
+      completed: byLens.completed[p]!,
+      projected: byLens.projected[p]!,
+    })),
+    stoppedEarly,
+    warnings,
+  };
+}
