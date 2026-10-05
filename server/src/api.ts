@@ -502,7 +502,11 @@ function variantQuery(
   const variant = variantSchema.safeParse(c.req.query("variant"));
   // `?position=` beside it, for the second of two Variants sharing a name (#322)
   const asked = c.req.query("position");
-  const position = positionSchema.safeParse(asked === undefined ? undefined : Number(asked));
+  // an empty `?position=` is not position 0: `Number("")` is 0, so it is refused as text that
+  // is no number would be
+  const position = positionSchema.safeParse(
+    asked === undefined ? undefined : asked.trim() === "" ? Number.NaN : Number(asked),
+  );
   return variant.success && position.success
     ? { ok: true, variant: variant.data, position: position.data }
     : { ok: false, error: "bad-variant" };

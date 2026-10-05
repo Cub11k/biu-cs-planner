@@ -177,8 +177,9 @@ export type EditRefusal =
    * The save was made and the revision the Workspace handed back for it is not one in the port's
    * format (#311, #326). **The write may well have landed**, so this is not `workspace-refused`:
    * that reason reaches the page as an edit that changed nothing, which here may be false. What
-   * is refused is passing the adapter's account of the save on. A page that meets it re-reads
-   * the State File rather than telling the student their edit was lost.
+   * is refused is passing the adapter's account of the save on. Every screen words it as a save
+   * that may have landed, never as one that was lost; the Timetable and an undo or redo step also
+   * re-read the State File on it (the Progress screen and the language switch do not yet).
    */
   | "save-revision-unreadable";
 

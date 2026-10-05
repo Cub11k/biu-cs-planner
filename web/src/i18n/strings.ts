@@ -513,10 +513,6 @@ const english = {
   picksHeldLost: "Your click was not saved.",
 
   /**
-   * The Variant tabs above the week (#281). A Variant's own name is the student's text and is
-   * never translated; these are the words around it.
-   */
-  /**
    * A save that was made and whose revision the Workspace could not hand back readably (#326). It
    * may well have landed, so unlike every other refusal sentence this does not say nothing changed.
    * One sentence for every screen, since it is about the save and not about what was saved.
@@ -537,6 +533,10 @@ const english = {
   /** Beside the Blocked Time form when its save did not land; the reason follows it (#324). */
   blockedNotSaved: "Not saved. What you typed is still here.",
 
+  /**
+   * The Variant tabs above the week (#281). A Variant's own name is the student's text and is
+   * never translated; these are the words around it.
+   */
   variantTabs: "Variants",
   variantPrimaryMark: "primary",
   variantNew: "New variant",

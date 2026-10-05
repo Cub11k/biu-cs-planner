@@ -35,19 +35,6 @@ export type VariantTabsProps = {
 };
 
 /**
- * The Variant tabs above the week (#281; docs/design.md, "Screens").
- *
- * Choosing a tab is view state in the page and never a State File edit: it asks the API for that
- * Variant and nothing is written. Every other control here is an ordinary edit through the one
- * guarded writer, which is why each is one undo step and why a stale page has it refused.
- *
- * A tab list with a roving `tabIndex`: one Tab stop for the whole row, the arrow keys move between
- * tabs — the visual direction, so in Hebrew the right arrow goes to the tab on the right, which is
- * the previous one — and Enter or Space shows the tab focused. Switching is manual rather than on
- * focus, because showing a Variant asks the server, and arrowing past three tabs should not ask
- * three times.
- */
-/**
  * Which tab is the one shown: the one at the position the answer named while it carries the name,
  * and otherwise the first of that name — so with two Variants of one name exactly one tab is
  * selected, and each can be (#322).
@@ -66,6 +53,19 @@ export function shownTabIndex(
 /** The id of the tab at this position, for the panel's `aria-labelledby`. */
 export const variantTabId = (panelId: string, index: number): string => `${panelId}-tab-${index}`;
 
+/**
+ * The Variant tabs above the week (#281; docs/design.md, "Screens").
+ *
+ * Choosing a tab is view state in the page and never a State File edit: it asks the API for that
+ * Variant and nothing is written. Every other control here is an ordinary edit through the one
+ * guarded writer, which is why each is one undo step and why a stale page has it refused.
+ *
+ * A tab list with a roving `tabIndex`: one Tab stop for the whole row, the arrow keys move between
+ * tabs — the visual direction, so in Hebrew the right arrow goes to the tab on the right, which is
+ * the previous one — and Enter or Space shows the tab focused. Switching is manual rather than on
+ * focus, because showing a Variant asks the server, and arrowing past three tabs should not ask
+ * three times.
+ */
 export function VariantTabs({
   language,
   variants,
