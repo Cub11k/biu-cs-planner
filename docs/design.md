@@ -22,7 +22,7 @@ Three kinds of file, each with its own lifecycle, each carrying a `schemaVersion
 |---|---|---|
 | Catalog | Offerings of one Academic Year (Groups, Meetings, credits, Exams, Hebrew and English names) | Crawled once a year, re-crawled before registration windows |
 | Requirements File | Rules, Pools, Prerequisites, Offering Patterns, Equivalences, policies and Suggested Layout for one Program, across one or more Cohorts (`cohorts` in `core/src/requirements/schema.ts`, PR #319) | Yearly or less often |
-| State File | Attempts, Timetables, Pins, settings | Whenever the student edits |
+| State File | Attempts, Timetables, Pins, the student's Cohort and Programs, ticked Manual Requirements, settings (`stateSchema` in `core/src/state/schema.ts`, PR #330) | Whenever the student edits |
 
 - Zod schemas in `core` are the single source of truth. They generate TypeScript types, validate every file on load and every request, and export JSON Schema so hand-written Requirements Files get editor autocomplete and inline errors.
 - Migration functions upgrade older files on load, so old State Files keep opening.
@@ -73,7 +73,7 @@ Requirements form a tree of these building blocks:
 
 Anything the vocabulary cannot express becomes a Manual Requirement with its text. New building blocks are added only when real data forces them.
 
-**Every Requirement carries a stable id.** A Pin in the State File references a Requirement by that id and by nothing else, so an id has to survive a Requirements File being re-edited or reissued for a new Cohort — otherwise every Pin a student has made silently stops resolving. Ids are assigned by the maintainer writing the file, not derived from a Requirement's position in the tree or from its text, both of which move.
+**Every Requirement carries a stable id.** A Pin in the State File references a Requirement by that id and the Requirements File it is in, and a ticked Manual Requirement the same way (`CONTEXT.md`, "Pin", ruled on #287), so an id has to survive a Requirements File being re-edited or reissued for a new Cohort — otherwise every Pin a student has made silently stops resolving. Ids are assigned by the maintainer writing the file, not derived from a Requirement's position in the tree or from its text, both of which move.
 
 ### Assignment
 
@@ -308,7 +308,7 @@ The rejected options (cookies, TLS, sockets) are in [ADR 0004](adr/0004-localhos
 3. Timetable: manual grid, Variants, Clashes, Exams, Blocked Times; then the State File and Workspace storage
    - Built, the Tray included: Variants, Blocked Times and the Tray landed in PR #317. Exams are checked (`app/src/exams.ts`, served at `/api/timetable/:year/:semester/exams`), and the side pane's exam-period rail is not drawn yet.
 4. Requirement engine, Assignment solver, Progress
-   - The engine and the solver exist in `core` (`core/src/requirements/`, PR #319): the Requirements File, Progress evaluation and the Assignment solver. Reaching them from the app and the Progress screen is #300.
+   - The engine and the solver exist in `core` (`core/src/requirements/`, PR #319): the Requirements File, Progress evaluation and the Assignment solver. The app reaches them and the Progress screen shows them since PR #330 (`app/src/progress.ts`, `web/src/progress/`).
 5. Plan screen and Plan checks
 6. Plan Diffs
 7. Generator
