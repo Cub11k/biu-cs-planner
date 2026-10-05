@@ -16,6 +16,12 @@ export type Launch = {
   host: string;
   /** Whether to open the browser once the server is up. */
   open: boolean;
+  /**
+   * Whether every Workspace refusal is written to stderr with its reason code, errno and cause
+   * (#165). Off unless asked for; the rule — what it says, where, and that the launch token never
+   * appears in it — is in `./debug.ts`.
+   */
+  debug: boolean;
 };
 
 /**
@@ -51,6 +57,8 @@ Options:
                       State Files (default: the current directory)
   --no-open           print the URL but do not open a browser
   --host <address>    the address to bind (default: ${LOOPBACK_HOST})
+  --debug             print why the Workspace refused anything to this terminal, file
+                      paths included; never the launch token
   --help              show this
 
 Commands:
@@ -126,6 +134,7 @@ export function parseArguments(
   let workspace: string | undefined;
   let host: string = LOOPBACK_HOST;
   let open = true;
+  let debug = false;
 
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index]!;
@@ -137,6 +146,10 @@ export function parseArguments(
 
       case "--no-open":
         open = false;
+        break;
+
+      case "--debug":
+        debug = true;
         break;
 
       case "--workspace": {
@@ -179,6 +192,7 @@ export function parseArguments(
     workspace: resolve(cwd, workspace ?? "."),
     host,
     open,
+    debug,
   };
 }
 

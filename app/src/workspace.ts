@@ -313,6 +313,15 @@ export const WORKSPACE_LAYOUT: WorkspaceFolder[] = ["catalogs", "requirements", 
  * nothing but adapter discipline stopped the next one from doing so.
  */
 export class WorkspaceRefusedError extends Error {
+  /*
+   * **`cause` is for the `--debug` log and nothing else** (#165). An adapter keeps the error it
+   * met there — the filesystem's, absolute path and errno included — and no use case reads it:
+   * every `catch` in `app` answers a refusal with a reason code, and the page is told only that.
+   * Under `--debug` the server's `loggingWorkspace` (`server/src/debug.ts`) writes the reason
+   * code, the errno and the `cause` chain to stderr; otherwise nothing reads it at all. The
+   * absolute Workspace path may appear in that log, and **the launch token may never**, in any
+   * mode. A `catch` that wants to log a refusal itself is the place that rule has to be kept.
+   */
   override readonly name = "WorkspaceRefusedError";
   /** Why, and about what, in this port's words. The only part of a refusal `app` reads. */
   readonly refusal: WorkspaceRefusal;

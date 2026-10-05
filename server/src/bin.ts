@@ -2,6 +2,7 @@ import { serve, type ServerType } from "@hono/node-server";
 import { watchWorkspace } from "@biu-cs-planner/app";
 import { Hono } from "hono";
 import { createApi } from "./api.ts";
+import { loggingWorkspace } from "./debug.ts";
 import { parseArguments, rotatedNotice, type Launch } from "./cli.ts";
 import { onAFreePort } from "./port.ts";
 import { openInBrowser } from "./browser.ts";
@@ -42,9 +43,12 @@ async function main(argv: readonly string[]): Promise<void> {
   await start(invocation);
 }
 
-async function start({ workspace, host, open }: Launch): Promise<void> {
+async function start({ workspace, host, open, debug }: Launch): Promise<void> {
   const token = await launchToken();
-  const folder = fileSystemWorkspace(workspace);
+  // `--debug` puts every Workspace refusal on stderr, and is off otherwise (#165, ./debug.ts)
+  const folder = debug
+    ? loggingWorkspace(fileSystemWorkspace(workspace), (line) => console.error(line), token)
+    : fileSystemWorkspace(workspace);
   // watched for as long as the process runs, so a Catalog dropped in by hand reaches the
   // page without a manual reload (docs/design.md, "Storage"). Nothing calls `stop`: Ctrl-C
   // ends the process, and see server/src/serve.ts for why no handler intercepts it.

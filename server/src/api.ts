@@ -78,6 +78,12 @@ import { z } from "zod";
  * Every route sits behind `onlyTheLauncher`, so a route added here is protected by being
  * added here — the launch token, the Host and Origin checks and the JSON-only rule for
  * writes are not something each new endpoint has to remember (ADR-0004).
+ *
+ * **Nothing here logs.** A refusal the routes answer with a named reason is written down only
+ * under `--debug`, by the Workspace handed in here (`loggingWorkspace` in `./debug.ts`, #165):
+ * off by default, to stderr, with the reason code, errno and `cause`, the absolute Workspace path
+ * allowed and **the launch token never, in any mode**. A route that wants to log has that rule to
+ * keep, and no response ever carries what the log does.
  */
 export type ApiDependencies = {
   workspace: Workspace;

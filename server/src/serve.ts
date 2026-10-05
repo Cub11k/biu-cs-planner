@@ -1,6 +1,7 @@
 import { serve } from "@hono/node-server";
 import { watchWorkspace } from "@biu-cs-planner/app";
 import { createApi } from "./api.ts";
+import { loggingWorkspace } from "./debug.ts";
 import { fileSystemWorkspace } from "./workspace.fs.ts";
 import { launchToken, launchUrl } from "./token.ts";
 import { DEFAULT_PORT, LOOPBACK_HOST } from "./config.ts";
@@ -19,7 +20,10 @@ function workspacePathFromArgv(argv: string[]): string {
 
 const path = workspacePathFromArgv(process.argv);
 const token = await launchToken();
-const workspace = fileSystemWorkspace(path);
+// `--debug` as the real CLI takes it: every Workspace refusal on stderr, off otherwise (#165)
+const workspace = process.argv.includes("--debug")
+  ? loggingWorkspace(fileSystemWorkspace(path), (line) => console.error(line), token)
+  : fileSystemWorkspace(path);
 
 /**
  * The folder is watched from here on, and until the process ends.

@@ -9,7 +9,15 @@ it("plans in the current directory when no Workspace is named", () => {
     workspace: cwd,
     host: "127.0.0.1",
     open: true,
+    // #165: no log unless asked for
+    debug: false,
   });
+});
+
+it("logs Workspace refusals only under --debug, and says so in --help", () => {
+  expect(parseArguments(["--debug"], cwd)).toMatchObject({ kind: "launch", debug: true });
+  const help = parseArguments(["--help"], cwd);
+  expect(help.kind === "help" && help.text).toContain("--debug");
 });
 
 it("resolves --workspace against the current directory", () => {
