@@ -349,11 +349,16 @@ const UNDID_PICKING = t("en", "undoneEdit", { edit: t("en", "editPickGroup") });
 const REDID_PICKING = t("en", "redoneEdit", { edit: t("en", "editPickGroup") });
 
 /**
- * What a template says before its first placeholder: the part of a sentence that is the same
- * whatever is put into it. How a fragment is named by its key when the whole sentence cannot be,
- * because what fills the placeholder is the thing that could be wrong.
+ * The longest stretch of a template with no placeholder in it: the part of a sentence that is the
+ * same whatever is put into it, and for these templates the part that makes the claim — "Undid "
+ * for `undoneEdit`, " is there, but could not be read:" for `catalogUnreadable`. How a fragment is
+ * named by its key when the whole sentence cannot be, because what fills the placeholder is the
+ * thing that could be wrong.
  */
-const stem = (template: string): string => template.split("{")[0] ?? template;
+const stem = (template: string): string =>
+  template
+    .split(/\{[^}]*\}/)
+    .reduce((longest, piece) => (piece.length > longest.length ? piece : longest), "");
 
 /** Waits for a sentence to reach the screen, and says which one was missing when it does not. */
 async function saying(mounted: HTMLElement, sentence: string): Promise<void> {
