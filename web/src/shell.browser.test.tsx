@@ -35,6 +35,25 @@ const realFetch = globalThis.fetch;
 /** What the fake server was asked, method and path, and with which body. */
 let sent: Array<{ method: string; pathname: string; body: unknown }>;
 let canUndo: boolean;
+/** Whether the Catalog serves one Course, so the week has a Group to click. */
+let serveCatalog: boolean;
+
+const OFFERING = {
+  courseNumber: "89-110",
+  nameHebrew: "מבוא למדעי המחשב",
+  nameEnglish: "Introduction to Computer Science",
+  credits: { known: true, total: 5 },
+  semesters: ["fall"],
+  groups: [
+    {
+      number: "01",
+      lessonType: "הרצאה",
+      lecturers: [],
+      meetings: [{ semester: "fall", day: "tuesday", start: "15:00", end: "18:00" }],
+    },
+  ],
+  exams: { known: false, sittings: [] },
+};
 
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -43,6 +62,7 @@ beforeEach(() => {
   startedAt = location.pathname + location.search + location.hash;
   sent = [];
   canUndo = false;
+  serveCatalog = false;
   ROOT.lang = "en";
   ROOT.dir = "ltr";
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -58,6 +78,11 @@ beforeEach(() => {
       canUndo = false;
       return json({ label: "set-programs", at: 1, version: "v2", canUndo: false, canRedo: true, warnings: [] });
     }
+    // every click is refused as stale: the case whose notice a press of undo has to retire
+    if (pathname.endsWith("/picks") && method === "POST") {
+      return json({ reason: "state-file-changed", warnings: [] }, 409);
+    }
+    if (pathname.startsWith("/api/catalog") && serveCatalog) return json({ offerings: [OFFERING], warnings: [] });
     if (pathname.startsWith("/api/timetable")) {
       return json({
         variantName: "A",
@@ -343,4 +368,67 @@ it("leaves the navigation out when there is only one screen to go to", async () 
 
   expect(mounted.querySelector("nav")).toBeNull();
   expect(mounted.querySelector("h1")?.textContent).toBe(t("en", "timetable"));
+});
+
+/** A screen that never says what it is showing, as one still loading never does. */
+const SILENT: ScreenDefinition = {
+  path: "/silent",
+  label: "navScreens",
+  render: () => <main data-silent-screen>still loading</main>,
+};
+
+it("bases no press on the screen that was open before", async () => {
+  canUndo = true;
+  history.replaceState(null, "", "/");
+  const mounted = await mount({ screens: [TIMETABLE_SCREEN, SILENT] });
+  const undo = (): HTMLButtonElement =>
+    mounted.querySelector<HTMLButtonElement>('button[data-history="undo"]')!;
+  // the Timetable says which revision it shows, and the press is offered on it
+  await vi.waitFor(() => {
+    if (undo().disabled) throw new Error("undo was never offered on the Timetable");
+  });
+
+  link(mounted, "/silent").click();
+  await vi.waitFor(() => {
+    if (mounted.querySelector("[data-silent-screen]") === null) throw new Error("no switch");
+  });
+
+  // nothing on screen is showing the Timetable's revision any more
+  expect(undo().disabled).toBe(true);
+});
+
+it("retires the Timetable's account of a refused click when undo is pressed", async () => {
+  canUndo = true;
+  serveCatalog = true;
+  history.replaceState(null, "", "/");
+  const mounted = await mount({ screens: [TIMETABLE_SCREEN] });
+  const chooser = await vi.waitFor(() => {
+    const found = [...mounted.querySelectorAll("button")].find((button) =>
+      button.textContent?.includes(OFFERING.courseNumber),
+    );
+    if (found === undefined) throw new Error("the Catalog served no Course to choose");
+    return found;
+  });
+  chooser.click();
+  const tile = await vi.waitFor(() => {
+    const found = mounted.querySelector<HTMLElement>(".day-column .tile");
+    if (found === null) throw new Error("choosing the Course put no Meeting on the week");
+    return found;
+  });
+  tile.click();
+  const stale = t("en", "picksStale");
+  await vi.waitFor(() => {
+    if (!(mounted.textContent ?? "").includes(stale)) throw new Error("the refusal was not said");
+  });
+
+  const undo = await vi.waitFor(() => {
+    const found = mounted.querySelector<HTMLButtonElement>('button[data-history="undo"]');
+    if (found === null || found.disabled) throw new Error("undo was never offered");
+    return found;
+  });
+  undo.click();
+
+  await vi.waitFor(() => {
+    if ((mounted.textContent ?? "").includes(stale)) throw new Error("the click's account outlived the press");
+  });
 });
