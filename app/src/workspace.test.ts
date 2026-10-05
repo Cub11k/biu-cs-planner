@@ -135,7 +135,8 @@ it("refuses a write into a folder that is not a Workspace, as a refusal and not 
 
 /**
  * The second way a layout is not one: a plain file standing where a folder of it belongs, which
- * `status` reports as ready and a write used to meet as a raw `ENOTDIR` (#121). The stem is
+ * `status` used to report as ready (it reports it under `notAFolder` now, #243) and a write used
+ * to meet as a raw `ENOTDIR` (#121). The stem is
  * shared and the tail is the adapter's, because "is there and is not a folder" and "could not
  * be made" are different news about the same folder.
  */

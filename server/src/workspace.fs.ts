@@ -788,7 +788,10 @@ export function fileSystemWorkspace(
     return within(real, realRoot) ? path : undefined;
   };
 
-  /** A folder counts towards the Workspace Layout only if it is usable. */
+  /**
+   * A folder is there, for the Workspace Layout, only if it is usable; `layoutOf` then asks
+   * whether what is there is a folder (#243).
+   */
   const usableFolder = (folder: WorkspaceFolder): Promise<string | undefined> =>
     usablePath(join(root, DIRECTORY[folder]));
 

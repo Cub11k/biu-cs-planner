@@ -2178,7 +2178,9 @@ it("names a save refused for want of a backup as that, for a Pick, its removal, 
   await post("/api/workspace", {});
   await post(PICKS, LECTURE);
   await save(PICKS, CLASHING);
-  // the one snapshot so far took `moment`, so the next is nudged a millisecond past it
+  // the one snapshot so far took `moment`, so the next is nudged a millisecond past it; the
+  // temporary's name is `temporaryPath`'s in `./workspace.fs.ts`, and if that changes the save
+  // lands and every 409 below fails rather than passing
   await mkdir(join(root, ".backups", `.tmp-${process.pid}-me.2026-10-07T12-00-00-001Z.state.json`));
   const before = await readFile(join(root, "me.state.json"), "utf8");
 

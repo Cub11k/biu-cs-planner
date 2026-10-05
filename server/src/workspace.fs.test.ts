@@ -1005,8 +1005,9 @@ it("refuses to list Catalogs when catalogs is a plain file, rather than reportin
  * `ABSENT` says so; for the folder being listed it is the opposite answer, and reusing that list
  * here is the defect this ticket's amendment warned about.
  *
- * **It rests on that reading alone and not on the argument the `catalogs` case makes.** There
- * `status` reports the Workspace ready, which is what makes an empty answer a lie; here every
+ * **It rests on that reading alone and not on the argument the `catalogs` case made.** There
+ * `status` used to report the Workspace ready, which is what made an empty answer a lie (it says
+ * `notAFolder` now, #243); here every
  * folder of the Workspace Layout is missing, so `status` reports **not ready** and the student
  * would be offered the Workspace Layout. Asserted below rather than left to be assumed either way.
  * The refusal is still the right answer — something is at that name and it is the wrong kind of
@@ -1023,7 +1024,8 @@ it("refuses to list State Files when the Workspace root is a file rather than a 
   await writeFile(notAFolder, "not a folder");
   const workspace = fileSystemWorkspace(notAFolder);
 
-  // not the ready Workspace the catalogs case turns on: this one has no layout at all
+  // not the Workspace the catalogs case turns on, with only one part wrong: this one has no
+  // layout at all
   expect(await workspace.status()).toEqual({
     ready: false,
     missing: ["catalogs", "requirements", "backups"],

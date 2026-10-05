@@ -340,7 +340,6 @@ function tileFor(
 const isPicked = (mounted: HTMLElement, groupNumber: string, lessonType?: string): boolean =>
   tileFor(mounted, groupNumber, lessonType).classList.contains("is-picked");
 
-/** Waits for a sentence to reach the screen, and says which one was missing when it does not. */
 /**
  * The sentences these tests wait for and rule out, named by their keys and never written out
  * here, so a rewording in the translation files changes what they look for rather than turning a
@@ -356,6 +355,7 @@ const REDID_PICKING = t("en", "redoneEdit", { edit: t("en", "editPickGroup") });
  */
 const stem = (template: string): string => template.split("{")[0] ?? template;
 
+/** Waits for a sentence to reach the screen, and says which one was missing when it does not. */
 async function saying(mounted: HTMLElement, sentence: string): Promise<void> {
   await vi.waitFor(() => {
     if (!(mounted.textContent ?? "").includes(sentence)) {
