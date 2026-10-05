@@ -266,6 +266,55 @@ describe("the Plan checks in the answer", () => {
     }
   });
 
+  it("counts a Manual Requirement ticked in this Program as met, and one ticked in another as not", async () => {
+    const withManual = { ...CS, requirements: [{ id: "english", kind: "manual", text: { he: "אנגלית" } }] };
+    const read = async (requirementsFile: string) => {
+      const workspace = memoryWorkspace({ created: true });
+      workspace.seed({ kind: "requirements", name: "cs-2027" }, withManual);
+      workspace.seed(REF, {
+        schemaVersion: 1,
+        programs: [{ requirementsFile: "cs-2027" }],
+        manualTicks: [{ requirementId: "english", requirementsFile }],
+      });
+      const result = await readPlan(workspace, ALICE);
+      return result.kind === "served" ? result.view.planWarnings : undefined;
+    };
+
+    expect(await read("cs-2027")).toEqual([]);
+    expect(await read("math-2027")).toMatchObject([{ kind: "requirements-missing", requirementIds: ["english"] }]);
+  });
+
+  it("honours the student's Pins in the missing-Requirements lens", async () => {
+    const competing = {
+      ...CS,
+      pools: [{ id: "all", kind: "prefix", prefix: "89-" }],
+      requirements: [
+        { id: "electives", kind: "credits", min: 6, pool: "all" },
+        { id: "intro", kind: "course", course: "89-110" },
+      ],
+    };
+    const read = async (pins: unknown[]) => {
+      const workspace = memoryWorkspace({ created: true });
+      workspace.seed({ kind: "requirements", name: "cs-2027" }, competing);
+      workspace.seed(REF, {
+        schemaVersion: 1,
+        programs: [{ requirementsFile: "cs-2027" }],
+        attempts: [{ id: "a", courseNumber: "89-110", academicYear: 2027, semester: "fall", status: "planned" }],
+        pins,
+      });
+      const result = await readPlan(workspace, ALICE);
+      return result.kind === "served" ? result.view.planWarnings : undefined;
+    };
+
+    // one Course, two Requirements it could meet: the Pin decides which is left missing
+    expect(await read([{ courseNumber: "89-110", requirementId: "electives", requirementsFile: "cs-2027" }])).toMatchObject([
+      { kind: "requirements-missing", requirementIds: ["intro"] },
+    ]);
+    expect(await read([{ courseNumber: "89-110", requirementId: "intro", requirementsFile: "cs-2027" }])).toMatchObject([
+      { kind: "requirements-missing", requirementIds: ["electives"] },
+    ]);
+  });
+
   it("names the Requirements a Plan leaves missing, read off the projected lens", async () => {
     const read = await readPlan(seeded({ programs: [{ requirementsFile: "cs-2027" }] }), ALICE);
 

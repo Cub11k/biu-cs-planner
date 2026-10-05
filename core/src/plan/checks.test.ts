@@ -213,6 +213,18 @@ describe("Prerequisite order", () => {
       check([attempt("a", "89-110", 2026, "fall", "passed"), attempt("n", "89-591", 2027, "fall")], [program(manual)]),
     ).toEqual([]);
     expect(ofKind(check([attempt("n", "89-591", 2027, "fall")], [program(manual)]), "prerequisite-manual")).toHaveLength(1);
+    // whichever order the file lists the alternatives in
+    const approvalFirst = file({
+      courses: [
+        {
+          number: "89-592",
+          prerequisites: { kind: "anyOf", of: [{ kind: "manual", text: approval }, { kind: "passed", course: "89-110" }] },
+        },
+      ],
+    });
+    expect(
+      check([attempt("a", "89-110", 2026, "fall", "passed"), attempt("o", "89-592", 2027, "fall")], [program(approvalFirst)]),
+    ).toEqual([]);
   });
 
   it("satisfies a Prerequisite through an Equivalence, in either direction", () => {
