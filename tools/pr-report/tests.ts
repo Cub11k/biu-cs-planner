@@ -89,6 +89,8 @@ const TEST_FNS = new Set(["it", "test"]);
 type Invocation = {
   /** `it`, `test` or `describe`. */
   fn: string;
+  /** The identifier the chain starts at, so where its name is bound can be asked (`shadowed`). */
+  head: ts.Identifier;
   /** What `.each` was handed, where the chain holds one, so its rows can be counted. */
   each?: ts.Expression;
   /**
@@ -106,7 +108,7 @@ function modifierName(callee: ts.Expression): string {
 
 /** The callee, unwrapped through properties and modifier calls to the function it names. */
 function invocationOf(expression: ts.Expression): Invocation | undefined {
-  if (ts.isIdentifier(expression)) return { fn: expression.text };
+  if (ts.isIdentifier(expression)) return { fn: expression.text, head: expression };
 
   // `it.only`, `describe.skip`, `it.concurrent` — a modifier that takes no arguments.
   if (ts.isPropertyAccessExpression(expression)) return invocationOf(expression.expression);
@@ -131,6 +133,80 @@ function invocationOf(expression: ts.Expression): Invocation | undefined {
   }
 
   return undefined;
+}
+
+/** Every name a binding introduces, destructuring included: `{ a, b: [c] }` binds `a` and `c`. */
+function boundNames(name: ts.BindingName): string[] {
+  if (ts.isIdentifier(name)) return [name.text];
+  return name.elements.flatMap((element) =>
+    ts.isOmittedExpression(element) ? [] : boundNames(element.name),
+  );
+}
+
+/** The names a list of statements declares for its own scope. An import declares none here. */
+function declaredBy(statements: readonly ts.Statement[]): string[] {
+  return statements.flatMap((statement) => {
+    if (ts.isVariableStatement(statement)) {
+      return statement.declarationList.declarations.flatMap((d) => boundNames(d.name));
+    }
+    if (
+      (ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) &&
+      statement.name
+    ) {
+      return [statement.name.text];
+    }
+    return [];
+  });
+}
+
+/** The names one node binds for the code inside it, where it opens a scope at all. */
+function bindsInside(node: ts.Node): string[] {
+  if (ts.isSourceFile(node) || ts.isBlock(node) || ts.isModuleBlock(node)) {
+    return declaredBy(node.statements);
+  }
+  if (ts.isCaseClause(node) || ts.isDefaultClause(node)) return declaredBy(node.statements);
+  if (ts.isFunctionLike(node)) {
+    const own = ts.isFunctionExpression(node) && node.name ? [node.name.text] : [];
+    return [...own, ...node.parameters.flatMap((p) => boundNames(p.name))];
+  }
+  if (ts.isForStatement(node) || ts.isForOfStatement(node) || ts.isForInStatement(node)) {
+    const init = node.initializer;
+    return init && ts.isVariableDeclarationList(init)
+      ? init.declarations.flatMap((d) => boundNames(d.name))
+      : [];
+  }
+  if (ts.isCatchClause(node) && node.variableDeclaration) {
+    return boundNames(node.variableDeclaration.name);
+  }
+  return [];
+}
+
+/**
+ * True when the identifier a chain starts at names a binding this file declares, rather than
+ * the `it`, `test` or `describe` it imports or the global one.
+ *
+ * Without this, any chain headed by a variable of that name read as an entry:
+ * `(test) => test.path.startsWith("tools/")` was counted as a test titled "tools/", one more
+ * than the run collected (#273). An import is not a declaration here, so `import { it } from
+ * "vitest"` leaves `it` unshadowed; a parameter, a `const`, a function, a class, a loop or
+ * `catch` variable of that name anywhere around the call is a local binding and the chain is
+ * not a test. Read from the syntax, scope by scope outward — no type checker, nothing evaluated.
+ *
+ * **Which is also why a fixture-extended `test` would stop counting.** Vitest's
+ * `const test = base.extend({ … })`, or a helper handed the test function as a parameter, binds
+ * the name locally, and every entry made through it would be dropped — an undercount, which the
+ * report's cross-check against the run would show. Nothing in this repository writes either
+ * shape; one that does needs this to learn it rather than to stop asking. The approximations
+ * lean the other way: a `var` hoisted out of a nested block, an `enum`, a `namespace` and
+ * `import x = require(…)` are not seen as bindings, so a chain headed by one still counts,
+ * which is the behaviour before #273.
+ */
+function shadowed(head: ts.Identifier): boolean {
+  const name = head.text;
+  for (let node: ts.Node | undefined = head.parent; node; node = node.parent) {
+    if (bindsInside(node).includes(name)) return true;
+  }
+  return false;
 }
 
 /** `as const`, a `satisfies` and a pair of brackets, none of which is the table itself. */
@@ -359,7 +435,10 @@ export function readTestFile(absPath: string, root: string): TestFile {
     }
 
     if (ts.isCallExpression(node)) {
-      const invocation = invocationOf(node.expression);
+      const found = invocationOf(node.expression);
+      // Only a name that would count is worth the walk outward through its scopes.
+      const counts = found && (found.fn === "describe" || TEST_FNS.has(found.fn));
+      const invocation = found && counts && !shadowed(found.head) ? found : undefined;
       // The title is what makes this the entry rather than the modifier call inside it:
       // `it.each(TABLE)` is a call on `it` as well, and its first argument is the table.
       const title = invocation ? titleOf(node) : undefined;
