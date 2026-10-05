@@ -272,3 +272,10 @@ it("explains hatching in the legend, in both languages", async () => {
   expect(mounted.textContent).toContain(t("he", "legendHatched"));
   expect(mounted.textContent).toContain(t("he", "blockedHeading"));
 });
+
+it("names an unlabelled Blocked Time on the week as the editor does", async () => {
+  const mounted = await openWeek({ blockedTimes: [{ ...WORK, label: "" }] });
+
+  await until(() => expect(blocks(mounted)[0]?.textContent).toContain(t("en", "blockedUnlabelled")));
+  expect(rows(mounted)[0]).toContain(t("en", "blockedUnlabelled"));
+});

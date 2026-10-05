@@ -107,7 +107,7 @@ export function WeekGrid({
             {blocked
               .filter((block) => block.day === day)
               .map((block) => (
-                <BlockedBlock key={block.key} block={block} range={range} />
+                <BlockedBlock key={block.key} block={block} range={range} language={language} />
               ))}
             {tiles
               .filter((tile) => tile.day === day)
@@ -189,7 +189,15 @@ function tileClass(group: WeekGroup, clashes: boolean, highlighted: boolean): st
  * the Groups that land on it are seen landing on it. Not a control: it is edited in the Blocked
  * Times editor, and clicking through it reaches nothing.
  */
-function BlockedBlock({ block, range }: { block: BlockedTile; range: HourRange }): React.JSX.Element {
+function BlockedBlock({
+  block,
+  range,
+  language,
+}: {
+  block: BlockedTile;
+  range: HourRange;
+  language: Language;
+}): React.JSX.Element {
   const box = tileBox({ ...block, lane: 0, lanes: 1 }, range, HOUR_PX);
   return (
     <div
@@ -197,7 +205,8 @@ function BlockedBlock({ block, range }: { block: BlockedTile; range: HourRange }
       data-blocked-index={block.index}
       style={{ top: box.topPx, height: box.heightPx }}
     >
-      <span className="blocked-label">{block.label}</span>{" "}
+      {/* the editor's and the Clashes strip's word for no label, so the three agree */}
+      <span className="blocked-label">{block.label || t(language, "blockedUnlabelled")}</span>{" "}
       <bdi dir="ltr" className="blocked-times">
         {formatClock(block.startMinutes)}–{formatClock(block.endMinutes)}
       </bdi>

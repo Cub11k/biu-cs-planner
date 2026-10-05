@@ -209,8 +209,20 @@ export function clashesIn(state: State, at: VariantRef): TimetableClash[] {
     blockedTimes,
   ).map((clash): TimetableClash => {
     if (clash.kind === "meeting-meeting") return clash;
-    // `findMeetingClashes` hands back the very span it was given, so identity finds the row
-    const blockedTimeIndex = blockedTimes.findIndex((row) => row === clash.blockedTime);
-    return { ...clash, blockedTime: blockedTimes[blockedTimeIndex]!, blockedTimeIndex };
+    // `findMeetingClashes` hands back the very span it was given, so identity finds the row; a
+    // content match backs it up should that ever stop being true, rather than a -1 reaching a page
+    const byIdentity = blockedTimes.findIndex((row) => row === clash.blockedTime);
+    const blockedTimeIndex =
+      byIdentity !== -1
+        ? byIdentity
+        : blockedTimes.findIndex(
+            (row) =>
+              row.semester === clash.blockedTime.semester &&
+              row.day === clash.blockedTime.day &&
+              row.start === clash.blockedTime.start &&
+              row.end === clash.blockedTime.end,
+          );
+    const row = blockedTimes[blockedTimeIndex] ?? { ...clash.blockedTime, label: "" };
+    return { ...clash, blockedTime: row, blockedTimeIndex };
   });
 }
