@@ -15,7 +15,6 @@ export const LANGUAGES = ["en", "he"] as const;
 export type Language = (typeof LANGUAGES)[number];
 
 const english = {
-  appName: "BIU CS Planner",
   apiUnreachable: "API unreachable",
 
   /** The other language, named in itself: the switch says where it takes you. */
@@ -431,7 +430,6 @@ export const STRING_KEYS = Object.keys(english) as StringKey[];
 
 /** Typed against the English keys, so a missing Hebrew string is a compile error. */
 const hebrew: Record<StringKey, string> = {
-  appName: "מתכנן מדעי המחשב בר־אילן",
   apiUnreachable: "ה-API אינו זמין",
 
   otherLanguage: "English",

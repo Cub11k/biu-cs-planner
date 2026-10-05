@@ -396,7 +396,7 @@ it("picks a Group when its block is clicked, and draws it in ink", async () => {
     groupNumber: "01",
     meetings: [{ semester: "fall", day: "tuesday", start: "15:00", end: "18:00" }],
   });
-  expect(mounted.textContent).toContain("1 group picked");
+  expect(mounted.textContent).toContain(t("en", "picksCountOne"));
 });
 
 it("removes the Pick when the picked block is clicked again", async () => {
@@ -414,7 +414,7 @@ it("removes the Pick when the picked block is clicked again", async () => {
     }
   });
   expect(sent.some((request) => request.method === "DELETE")).toBe(true);
-  expect(mounted.textContent).toContain("Nothing picked yet");
+  expect(mounted.textContent).toContain(t("en", "picksNone"));
 });
 
 it("replaces the Pick when another Group of the same Lesson Type is clicked", async () => {
@@ -433,7 +433,7 @@ it("replaces the Pick when another Group of the same Lesson Type is clicked", as
   });
   // one Pick per Lesson Type per Offering: the first is gone rather than kept beside it
   expect(tileFor(mounted, "01").classList.contains("is-picked")).toBe(false);
-  expect(mounted.textContent).toContain("1 group picked");
+  expect(mounted.textContent).toContain(t("en", "picksCountOne"));
 });
 
 /**
@@ -461,8 +461,8 @@ it("draws a Pick that Clashes in red pen, and still keeps it", async () => {
   // and nothing was refused: both are still Picks, and the Clash is counted as a Warning
   expect(tileFor(mounted, "01").classList.contains("is-picked")).toBe(true);
   expect(tileFor(mounted, "03", "Tirgul").classList.contains("is-picked")).toBe(true);
-  expect(mounted.textContent).toContain("2 groups picked");
-  expect(mounted.textContent).toContain("1 clash");
+  expect(mounted.textContent).toContain(t("en", "picksCount", { count: 2 }));
+  expect(mounted.textContent).toContain(t("en", "clashesCountOne"));
 });
 
 /**
@@ -484,13 +484,13 @@ it("says a click was not saved when the file changed under the page, and keeps t
   tileFor(mounted, "03", "Tirgul").click();
 
   await vi.waitFor(() => {
-    if (!(mounted.textContent ?? "").includes("your click was not saved")) {
+    if (!(mounted.textContent ?? "").includes(t("en", "picksStale"))) {
       throw new Error("a refused save said nothing to the student");
     }
   });
   // the Pick that is in the file is still drawn: a refusal costs nothing already there
   expect(tileFor(mounted, "01").classList.contains("is-picked")).toBe(true);
-  expect(mounted.textContent).toContain("1 group picked");
+  expect(mounted.textContent).toContain(t("en", "picksCountOne"));
   // and the screen re-read, so what it shows is the file rather than its own memory of it
   expect(timetableReads()).toBeGreaterThan(readsBefore);
 
@@ -503,7 +503,7 @@ it("says a click was not saved when the file changed under the page, and keeps t
       throw new Error("clicking again after a refusal saved nothing");
     }
   });
-  expect(mounted.textContent).not.toContain("your click was not saved");
+  expect(mounted.textContent).not.toContain(t("en", "picksStale"));
 });
 
 /** The refused answer the screen has to say something honest about. */
@@ -514,11 +514,11 @@ it("says the folder is not a workspace rather than that nothing is picked", asyn
   tileFor(mounted, "01").click();
 
   await vi.waitFor(() => {
-    if (!(mounted.textContent ?? "").includes("not a workspace yet")) {
+    if (!(mounted.textContent ?? "").includes(t("en", "workspaceNotReady"))) {
       throw new Error("the refusal reached the screen as something else");
     }
   });
-  expect(mounted.textContent).not.toContain("Nothing picked yet");
+  expect(mounted.textContent).not.toContain(t("en", "picksNone"));
 });
 
 /**
@@ -552,12 +552,19 @@ it("says whether a click was saved is not known, and goes and looks, when its an
   tileFor(mounted, "01").click();
 
   await waitForText(mounted, t("en", "picksSaveAnswerUnreadable"));
-  for (const claim of ["picksStale", "picksUnreadable", "picksAnswerUnreadable"] as const) {
+  // By key, not by a fragment of English: the first and the last two are every sentence that
+  // says the click was not saved, and the middle two say something could not be read (#252).
+  for (const claim of [
+    "picksStale",
+    "picksUnreadable",
+    "picksAnswerUnreadable",
+    "picksBackupRefused",
+    "picksHeldLost",
+  ] as const) {
     expect(mounted.textContent, `${claim} claims what this page cannot know`).not.toContain(
       t("en", claim),
     );
   }
-  expect(mounted.textContent).not.toContain("not saved");
   await vi.waitFor(() => {
     if (timetableReads() <= readsBefore) throw new Error("the week was never read again");
     if (availabilityAsks() <= asksBefore) throw new Error("the undo buttons were never asked");
@@ -579,9 +586,9 @@ it("says whether a click was saved is not known, and goes and looks, when its an
  * revision a click claims, and whether a tile the page has not read reads as unpicked. Only
  * a mounted screen with two answers arriving at different times has both halves.
  */
-const STILL_LOADING = "Your saved picks are still loading";
-const NOT_SAVED = "Your click was not saved.";
-const FILE_CHANGED = "The file changed since this page read it";
+const STILL_LOADING = t("en", "picksHeld");
+const NOT_SAVED = t("en", "picksHeldLost");
+const FILE_CHANGED = t("en", "picksStale");
 
 /** March 2027: the Spring Semester of the same Academic Year, which is another week. */
 const ANOTHER_SEMESTER = new Date(2027, 2, 15);
@@ -670,7 +677,7 @@ it("holds a click made before the Picks arrived, says so, and saves it on the re
   // and the student was never sent looking for a change that never happened
   expect(mounted.textContent).not.toContain(FILE_CHANGED);
   expect(mounted.textContent).not.toContain(STILL_LOADING);
-  expect(mounted.textContent).toContain("1 group picked");
+  expect(mounted.textContent).toContain(t("en", "picksCountOne"));
 });
 
 /**
@@ -690,7 +697,7 @@ it("puts the account of a click in a live region, so it is announced", async () 
   release();
   // and the count that replaces it is announced by the same region
   await vi.waitFor(() => {
-    if (!(region?.textContent ?? "").includes("1 group picked")) {
+    if (!(region?.textContent ?? "").includes(t("en", "picksCountOne"))) {
       throw new Error("the region never carried what became of the click");
     }
   });
@@ -725,7 +732,7 @@ it("sends nothing at all for a held click on a Group the file already picks", as
   expect(sent.filter((request) => request.method !== "GET")).toEqual([]);
   expect(mounted.textContent).not.toContain(FILE_CHANGED);
   // and the Pick was not replaced by itself: one Pick, the one that was already there
-  expect(mounted.textContent).toContain("1 group picked");
+  expect(mounted.textContent).toContain(t("en", "picksCountOne"));
 });
 
 /**
@@ -755,7 +762,7 @@ it("saves several held clicks in order, each on the revision the one before prod
     { groupNumber: "03", basedOn: "v1" },
   ]);
   expect(mounted.textContent).not.toContain(FILE_CHANGED);
-  expect(mounted.textContent).toContain("2 groups picked");
+  expect(mounted.textContent).toContain(t("en", "picksCount", { count: 2 }));
 });
 
 /**
@@ -828,7 +835,7 @@ it("holds and sends a click once when mounted the way the app mounts it", async 
     }
   });
   expect(sent.filter((request) => request.method === "POST")).toHaveLength(1);
-  expect(mounted.textContent).toContain("1 group picked");
+  expect(mounted.textContent).toContain(t("en", "picksCountOne"));
   expect(mounted.textContent).not.toContain(FILE_CHANGED);
 });
 
@@ -885,7 +892,7 @@ it("starts a held click's save once even when a fresh answer arrives mid-save", 
     }
   });
   expect(sent.filter((request) => request.method === "POST")).toHaveLength(1);
-  expect(mounted.textContent).toContain("1 group picked");
+  expect(mounted.textContent).toContain(t("en", "picksCountOne"));
   expect(mounted.textContent).not.toContain(FILE_CHANGED);
 });
 
@@ -924,7 +931,7 @@ it("sends the rest of the queue on the re-read, not on the revision just refused
   // the refused click is not re-applied (#104), and the student is told it was not saved
   expect(tileFor(mounted, "01").classList.contains("is-picked")).toBe(false);
   expect(mounted.textContent).toContain(FILE_CHANGED);
-  expect(mounted.textContent).toContain("1 group picked");
+  expect(mounted.textContent).toContain(t("en", "picksCountOne"));
 });
 
 /**
@@ -1029,5 +1036,5 @@ it("still says a click was refused when the save that refused it succeeds afterw
   // the refusal is still on screen: the click that was refused is still unaccounted for
   // otherwise, and a success is not an answer about it
   expect(mounted.textContent).toContain(FILE_CHANGED);
-  expect(mounted.textContent).toContain("1 group picked");
+  expect(mounted.textContent).toContain(t("en", "picksCountOne"));
 });
