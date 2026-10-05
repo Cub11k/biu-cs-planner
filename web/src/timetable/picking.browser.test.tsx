@@ -789,6 +789,72 @@ it("reports a click held for a re-read as not sent when that re-read is unreadab
 });
 
 /**
+ * #218 for clicks held before the first read: one is sent, its answer is unreadable, and the
+ * re-read that asks for comes back unreadable too, so the week is kept. The clicks still waiting
+ * are reported as not sent — never left waiting in silence, and never sent later on whatever the
+ * next read brings.
+ */
+it("reports clicks held before the first read as not sent when the re-read after one is unreadable", async () => {
+  const releaseRead = holdTheRead();
+  const mounted = await openWeek();
+  tileFor(mounted, "01").click();
+  tileFor(mounted, "03", "Tirgul").click();
+  await waitForText(mounted, STILL_LOADING);
+
+  const releaseSaves = holdTheSaves();
+  unreadableSave = 200;
+  releaseRead();
+  await vi.waitFor(() => {
+    if (sent.filter((request) => request.method === "POST").length === 0) {
+      throw new Error("the first held click was never sent");
+    }
+  });
+  // the re-read the unreadable answer asks for is unreadable as well
+  nextRead = "unreadable";
+  releaseSaves();
+
+  await waitForText(mounted, t("en", "picksHeldLost"));
+  await waitForText(mounted, t("en", "picksReadStale"));
+  // only the first was ever sent
+  expect(sent.filter((request) => request.method === "POST").length, traffic()).toBe(1);
+});
+
+/** #334 still holds while a week kept by an earlier unreadable re-read (#218) is on screen. */
+it("holds a click for a refusal's re-read even while a kept week is on screen", async () => {
+  const mounted = await openWeek();
+  tileFor(mounted, "01").click();
+  await vi.waitFor(() => {
+    if (!tileFor(mounted, "01").classList.contains("is-picked")) throw new Error("not picked");
+  });
+  nextRead = "unreadable";
+  changedUnderneath = true;
+  tileFor(mounted, "03", "Tirgul").click();
+  await waitForText(mounted, t("en", "picksReadStale"));
+
+  // the kept week's revision is spent, so this is refused, and its re-read is held open
+  const release = holdTheRead();
+  const refusedBefore = exchanges.filter((line) => line.includes("-> 409")).length;
+  tileFor(mounted, "03", "Tirgul").click();
+  await vi.waitFor(() => {
+    if (exchanges.filter((line) => line.includes("-> 409")).length === refusedBefore) {
+      throw new Error(`the click on the kept week was never refused\n${traffic()}`);
+    }
+  });
+  await waitForText(mounted, t("en", "picksStale"));
+  const postsBefore = sent.filter((request) => request.method === "POST").length;
+  tileFor(mounted, "03", "Tirgul").click();
+  await waitForText(mounted, t("en", "picksHeldForReread"));
+  expect(sent.filter((request) => request.method === "POST").length, traffic()).toBe(postsBefore);
+
+  release();
+  await vi.waitFor(() => {
+    if (!tileFor(mounted, "03", "Tirgul").classList.contains("is-picked")) {
+      throw new Error(`the held click never landed\n${traffic()}`);
+    }
+  });
+});
+
+/**
  * #326: a save that was made and whose revision the Workspace could not hand back readably. The
  * fake accepts the Pick and then refuses as the real server does, so the click landed — and the
  * sentence must not say nothing changed, the week must stay, and the page goes and re-reads it.

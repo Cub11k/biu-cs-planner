@@ -405,6 +405,17 @@ export function TimetablePane({
     (answer: TimetableResult) => void,
     number,
   ] = useReloading(askTimetable, workspaceChanges + rereads + stepRereads, keepReadWeek);
+  /**
+   * `readsKept` as of now, for the two waits below to note when they start: a wait ends with a
+   * kept read only if the count rose **after** it began, since an earlier kept read may already
+   * be on screen when a refusal starts a new one.
+   */
+  const readsKeptNow = useRef(readsKept);
+  readsKeptNow.current = readsKept;
+  /** `readsKept` when the current `state-file-changed` wait began (#334). */
+  const keptWhenRereadBegan = useRef(0);
+  /** `readsKept` when the held-click drain's `refusedOn` was set. */
+  const keptWhenRefused = useRef(0);
 
   const offerings = catalog.kind === "served" ? catalog.offerings : [];
   /**
@@ -449,6 +460,7 @@ export function TimetablePane({
     if (answer.kind === "refused" && answer.reason === "state-file-changed") {
       setStaleSave(true);
       // and until the re-read lands, an edit made on this answer waits for it (#334)
+      keptWhenRereadBegan.current = readsKeptNow.current;
       setRereadingFrom(sentOn);
       setRereads((count) => count + 1);
       return answer;
@@ -632,7 +644,7 @@ export function TimetablePane({
     // The re-read came back unreadable and the week on screen was kept (#218): no revision came
     // with it, so the held edits are not sent on the one they were waiting to leave — they are
     // reported as not sent, never re-sent on a state that may have changed.
-    if (timetable === rereadingFrom && readsKept > 0) {
+    if (timetable === rereadingFrom && readsKept > keptWhenRereadBegan.current) {
       setRereadingFrom(undefined);
       const dropped = heldEdits.current.splice(0);
       setHeldEditCount(0);
@@ -788,6 +800,15 @@ export function TimetablePane({
   useEffect(() => {
     const next = held[0];
     if (next === undefined || sending.current) return;
+    // The re-read that refusal asked for came back unreadable and the week was kept (#218): no
+    // revision is coming for these clicks, so they are reported as not sent, never sent later on
+    // whatever the next read happens to bring.
+    if (refusedOn.current === timetable && readsKept > keptWhenRefused.current) {
+      refusedOn.current = undefined;
+      setHeld([]);
+      setHeldLost(true);
+      return;
+    }
     // this revision has already been refused once; the re-read it triggered is what to wait for
     if (refusedOn.current === timetable) return;
 
@@ -840,11 +861,12 @@ export function TimetablePane({
             answer.reason === "save-revision-unreadable")) ||
         answer.kind === "unreadable-answer"
       ) {
+        keptWhenRefused.current = readsKeptNow.current;
         refusedOn.current = sentOn;
       }
       setHeld((waiting) => waiting.slice(1));
     });
-  }, [held, timetable, save, academicYear, semester]);
+  }, [held, timetable, save, academicYear, semester, readsKept]);
 
   // one spelling of the year on the whole screen: the header and the sidebar disagreeing
   // about 2026-27 and 2027 reads as if a different year were the one missing
