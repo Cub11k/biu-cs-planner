@@ -31,10 +31,14 @@ export async function workspaceStatus(workspace: Workspace): Promise<WorkspaceSt
  * `server/src/workspace.fs.ts` turns everything the filesystem can answer `mkdir` with into a
  * single `WorkspaceRefusedError` naming the folder it got stuck on.
  *
- * That is the adapter's doing and **not a promise the port makes** — `Workspace.create` in
- * `./workspace.ts` documents only that it creates the layout, in visible contrast to `read` a
- * few lines below it, which documents its refusal. So what is caught is the base class, and any
- * adapter's refusal, present or future, lands on this one word rather than on a 500.
+ * That is the adapter's doing and **not a promise the port makes**. `Workspace.create` in
+ * `./workspace.ts` documents what a refused create leaves — it is not all-or-nothing, a refusal
+ * part way keeps the parts already made and promises only that nothing already standing there
+ * was replaced, and `status()` is how to see what is left (#166) — but not what the refusal
+ * *is*: it names `WorkspaceRefusedError` as what the filesystem adapter raises, which is a
+ * description of that adapter, in visible contrast to `read` further down, whose own doc
+ * promises its refusal. So what is caught is the base class, and any adapter's refusal, present
+ * or future, lands on this one word rather than on a 500.
  *
  * **The same word `app/src/catalog.ts` and `app/src/edit.ts` use for the same caught class**,
  * rather than a reason of this use case's own. `server/src/api.ts` already answers
@@ -93,10 +97,11 @@ export type CreateOutcome =
  * a permission it lacks, and naming the wrong one sends them to fix what is not broken.
  *
  * **And it cannot promise that nothing was made**, which is the tempting second sentence and an
- * untrue one: `create` in `server/src/workspace.fs.ts` loops the layout and does not roll back,
- * so a refusal on the second or third part leaves the first one created. What *is* certain is
- * that nothing already standing there was replaced. A message claiming the folder is untouched
- * would be #111's mistake made about the one thing the student can go and check.
+ * untrue one: `Workspace.create` in `./workspace.ts` documents that it is not transactional and
+ * that a refusal does not undo what it made, so a refusal on the second or third part can leave
+ * the first one created (#166). What the port *does* promise is that nothing already standing
+ * there was replaced. A message claiming the folder is untouched would be #111's mistake made
+ * about the one thing the student can go and check.
  */
 export async function createWorkspace(workspace: Workspace): Promise<CreateOutcome> {
   try {
