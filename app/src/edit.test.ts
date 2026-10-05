@@ -346,7 +346,7 @@ const cannotBeRead = (workspace: MemoryWorkspace): Workspace => ({
     Promise.reject(
       new WorkspaceRefusedError(
         { reason: "unreadable", subject: { kind: "state", name: "alice" } },
-        "refusing ./alice.state.json: it is there and cannot be read (EACCES)",
+        'refusing the State File "alice": it is there and cannot be read (EACCES)',
       ),
     ),
 });
