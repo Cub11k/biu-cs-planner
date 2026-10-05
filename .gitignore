@@ -6,6 +6,9 @@ dist/
 .npm/
 .playwright/
 
+# What an incremental `tsc -b` leaves behind; one was committed by mistake during #292 (#352)
+*.tsbuildinfo
+
 # Screenshots Vitest attaches to a failing browser test, for looking at and throwing away
 .vitest/
 

@@ -193,6 +193,9 @@ export type {
 } from "./requirements/solve.ts";
 export { requirementsAccepting } from "./requirements/candidates.ts";
 export { checkPlan } from "./plan/checks.ts";
+// What each Semester of the Plan adds up to, as the credit-load check counts it (#352).
+export { semesterCredits } from "./plan/credits.ts";
+export type { CreditsProgram, SemesterCredits } from "./plan/credits.ts";
 // Plan Diffs between a Variant and the Plan, and "apply to Plan" (#295).
 export { applyPlanDiff, findPlanDiff, isActionable, planDiffs } from "./plan/diffs.ts";
 export type {

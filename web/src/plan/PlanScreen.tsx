@@ -3,10 +3,10 @@ import { api } from "../api.ts";
 import { unauthorizedSaid, type ScreenDefinition, type ScreenProps } from "../AppShell.tsx";
 import { LANGUAGES, t, type Language, type StringKey } from "../i18n/strings.ts";
 import { academicYearOf, academicYearSpan, semesterOf } from "../timetable/calendar.ts";
-import { creditsOf, gradeOf, planYears, retakeSemester } from "./columns.ts";
+import { columnCredits, gradeOf, planYears, retakeSemester } from "./columns.ts";
 import {
   addAttempt,
-  fetchCohort,
+  fetchChoices,
   fetchCourses,
   fetchPlan,
   moveAttempt,
@@ -15,7 +15,7 @@ import {
   updateAttempt,
   type Attempt,
   type AttemptWarning,
-  type Cohort,
+  type Choices,
   type CourseFacts,
   type Grade,
   type LayoutSummary,
@@ -38,11 +38,13 @@ import {
  * on it, a failed one offers a retake, and any one can be removed; a Course is added to a Semester
  * by number or name. And New Plan from Suggested Layout (#293), offered always: it only adds the
  * Courses the student does not have, so running it on a filled Plan is harmless, and its summary
- * says what it did.
+ * says what it did. A double major chooses which Program's layout it follows, the first by default
+ * (#352).
  *
  * **Every change is one request, one guarded save and one undo step**, and the screen shows the
- * Plan the server answers with — never one it worked out itself. The one figure it adds up itself
- * is a column's credit total, which is a reading aid and not the credit-load check: see `creditsOf`. **Warnings are drawn where they
+ * Plan the server answers with — never one it worked out itself. That includes a column's credit
+ * total, which is the server's too (#352): the number the credit-load check judges, so a column and
+ * its Warning cannot disagree (`columnCredits`). **Warnings are drawn where they
  * point** — on the card of the Attempt, on the column of the Semester, above the columns for a
  * Program — and none blocks a drag or an edit (CLAUDE.md).
  *
@@ -233,7 +235,7 @@ function useRead<T>(changes: number, read: () => Promise<T>, initial: T): T {
   return value;
 }
 
-const readCohort = (): Promise<Cohort | undefined> => fetchCohort(api);
+const readChoices = (): Promise<Choices | undefined> => fetchChoices(api);
 const readCourses = (): Promise<CourseFacts[]> => fetchCourses(api);
 
 export function PlanScreen({
@@ -251,7 +253,13 @@ export function PlanScreen({
   const [rereads, setRereads] = useState(0);
   const changes = workspaceChanges + stepRereads + rereads;
   const [plan, setPlan] = usePlan(changes);
-  const cohort = useRead(changes, readCohort, undefined);
+  const choices = useRead(changes, readChoices, undefined);
+  const cohort = choices?.cohort;
+  const programs = choices?.programs ?? [];
+  /** Whose Suggested Layout the action follows when the student has two Programs (#352); page state. */
+  const [layoutProgram, setLayoutProgram] = useState<string | undefined>(undefined);
+  // the first Program until the student picks another, and again if the one picked is gone
+  const layoutFrom = layoutProgram !== undefined && programs.includes(layoutProgram) ? layoutProgram : programs[0];
   const courseList = useRead(changes, readCourses, []);
   const courses = new Map(courseList.map((course) => [course.courseNumber, course]));
 
@@ -374,11 +382,32 @@ export function PlanScreen({
             send((basedOn) => addAttempt(api, { courseNumber, ...at, status: "planned" }, basedOn))
           }
         />
+        {programs.length < 2 ? null : (
+          <label className="flex items-center gap-2">
+            <span>{t(language, "planLayoutProgram")}</span>
+            <select
+              data-plan-layout-program
+              value={layoutFrom}
+              disabled={served === undefined || sending}
+              onChange={(event) => setLayoutProgram(event.target.value)}
+              className="rounded-sm border border-rule bg-paper px-2 py-1 text-ink"
+            >
+              {programs.map((program) => (
+                <option key={program} value={program}>
+                  {program}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <button
           type="button"
           data-plan-layout
           disabled={served === undefined || sending}
-          onClick={() => send((basedOn) => planFromSuggestedLayout(api, basedOn))}
+          onClick={() =>
+            // one Program needs no naming: the route follows the first when none is named
+            send((basedOn) => planFromSuggestedLayout(api, basedOn, programs.length < 2 ? undefined : layoutFrom))
+          }
           className="rounded-sm border border-rule bg-paper px-3 py-1 text-ink-soft disabled:opacity-50"
         >
           {t(language, "planLayoutAction")}
@@ -449,8 +478,7 @@ export function PlanScreen({
                           key={semester}
                           language={language}
                           at={at}
-                          attempts={held}
-                          courses={courses}
+                          total={columnCredits(served.semesterCredits, at)}
                           warnings={onColumn(at)}
                           byId={byId}
                           onCollapse={
@@ -575,8 +603,7 @@ const DRAGGED = "application/x-biu-attempt";
 function Column({
   language,
   at,
-  attempts,
-  courses,
+  total,
   warnings,
   byId,
   onCollapse,
@@ -585,8 +612,8 @@ function Column({
 }: {
   language: Language;
   at: SemesterAt;
-  attempts: readonly Attempt[];
-  courses: ReadonlyMap<string, CourseFacts>;
+  /** What the column adds up to, as the Plan answer serves it. */
+  total: { credits: number; unknown: number };
   warnings: readonly AnyWarning[];
   /** Every Attempt by id, so a deadline's "assuming you pass" can name the Courses it relies on. */
   byId: ReadonlyMap<string, Attempt>;
@@ -596,7 +623,7 @@ function Column({
   children: React.ReactNode;
 }): React.JSX.Element {
   const [over, setOver] = useState(false);
-  const { credits, unknown } = creditsOf(attempts, courses);
+  const { credits, unknown } = total;
   return (
     <section
       data-semester={keyOf(at)}

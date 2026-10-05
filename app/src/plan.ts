@@ -7,6 +7,7 @@ import {
   suggestedLayoutOf,
   moveAttempt,
   removeAttempt,
+  semesterCredits,
   updateAttempt,
   type Attempt,
   type AttemptChange,
@@ -17,6 +18,7 @@ import {
   type PlanProgram,
   type PlanWarning,
   type SemesterAt,
+  type SemesterCredits,
   type SolvePin,
   type State,
   type StateFileVersion,
@@ -49,7 +51,8 @@ import type { Workspace } from "./workspace.ts";
  * the student's chosen Programs, recomputed from the State File and `requirements/` on every read
  * and never stored. A Program whose file the Workspace does not hold, or cannot read, is left out
  * of them; the Programs route is where that is said (`./programs.ts`). The missing-Requirements
- * lens runs the solver, so it is given a clock (`now`) for its time cap, as Progress is.
+ * lens runs the solver, so it is given a clock (`now`) for its time cap, as Progress is. Beside them,
+ * each Semester's credit total from the same Programs (#352), so no screen adds credits up itself.
  */
 
 export type PlanView = {
@@ -59,6 +62,12 @@ export type PlanView = {
   attemptWarnings: AttemptWarning[];
   /** The Plan checks against the chosen Programs' Requirements Files (`checkPlan`). */
   planWarnings: PlanWarning[];
+  /**
+   * What each Semester adds up to in credits, against the same Programs (`semesterCredits`, #352):
+   * the totals the credit-load check judges, so the screen shows the number its Warning is about.
+   * A Semester holding no counted Attempt is not listed.
+   */
+  semesterCredits: SemesterCredits[];
 };
 
 export type PlanResult =
@@ -133,6 +142,7 @@ async function planOf(workspace: Workspace, state: State, now: () => number, aft
       pins: pinsFor(state, programs),
       limits: { now },
     }),
+    semesterCredits: semesterCredits({ attempts: state.attempts, programs }),
   };
 }
 

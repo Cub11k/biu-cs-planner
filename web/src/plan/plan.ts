@@ -2,7 +2,8 @@
  * Asking the API for the Plan and sending the Plan screen's edits (#292): adding an Attempt,
  * changing its status or grade, moving it to another Semester, removing it, and New Plan from
  * Suggested Layout (#293). Beside it, the two reads the screen draws with but never edits through:
- * the student's Cohort, which is where the columns start, and the Courses' names and credits.
+ * the student's Cohort and Programs, which is where the columns start and whose layouts the
+ * action offers, and the Courses' names and credits.
  *
  * Beside the screen rather than inside it, as `../progress/progress.ts` is, so every answer the API
  * can give is testable against a fake fetch. The shapes are read off the contract and never
@@ -39,6 +40,8 @@ export type AttemptWarning = ServedPlan["attemptWarnings"][number];
 export type PlanWarning = ServedPlan["planWarnings"][number];
 /** What reading the State File raised: an entry left out, a Cohort that could not be read. */
 export type StateWarning = ServedPlan["warnings"][number];
+/** What one Semester adds up to in credits, as the credit-load check counts it (#352). */
+export type SemesterCredits = ServedPlan["semesterCredits"][number];
 /** What New Plan from Suggested Layout created and skipped. */
 export type LayoutSummary = ServedLayout["summary"];
 
@@ -63,6 +66,8 @@ export type PlanResult =
       attempts: Attempt[];
       attemptWarnings: AttemptWarning[];
       planWarnings: PlanWarning[];
+      /** Each Semester's credit total, served beside the checks so the screen adds nothing up. */
+      semesterCredits: SemesterCredits[];
       stateWarnings: StateWarning[];
       version: PlanVersion;
       /** New Plan from Suggested Layout's account of what it did, on its own answer only. */
@@ -103,6 +108,7 @@ async function read(answer: Sent): Promise<PlanResult> {
     attempts: body.attempts,
     attemptWarnings: body.attemptWarnings ?? [],
     planWarnings: body.planWarnings ?? [],
+    semesterCredits: Array.isArray(body.semesterCredits) ? body.semesterCredits : [],
     stateWarnings: body.warnings ?? [],
     version: body.version,
     ...(body.summary === undefined ? {} : { summary: body.summary }),
@@ -167,11 +173,18 @@ export function removeAttempt(client: ApiClient, id: string, basedOn: PlanVersio
 }
 
 /**
- * New Plan from Suggested Layout (#293), from the layout of the student's first Program: planned
- * Attempts for the Courses they do not have yet, one save and one undo step.
+ * New Plan from Suggested Layout (#293): planned Attempts for the Courses the student does not have
+ * yet, one save and one undo step. The layout is that of the Program `requirementsFile` names — a
+ * double major chooses (#352) — or of the student's first Program when it names none.
  */
-export function planFromSuggestedLayout(client: ApiClient, basedOn: PlanVersion): Promise<PlanResult> {
-  const request = { json: { basedOn } } as InferRequestType<LayoutRoute>;
+export function planFromSuggestedLayout(
+  client: ApiClient,
+  basedOn: PlanVersion,
+  requirementsFile?: string,
+): Promise<PlanResult> {
+  const request = {
+    json: { ...(requirementsFile === undefined ? {} : { requirementsFile }), basedOn },
+  } as InferRequestType<LayoutRoute>;
   return ask(() => client.api.plan["suggested-layout"].$post(request));
 }
 
@@ -179,10 +192,17 @@ export function planFromSuggestedLayout(client: ApiClient, basedOn: PlanVersion)
 export type Cohort = SemesterAt | null;
 
 /**
- * The student's Cohort, or `undefined` when it could not be had. A read the screen shapes its
- * columns by and never edits through: the Cohort is set on the Progress screen (#331).
+ * What the student chose on the Progress screen: their Cohort, which the columns start at, and
+ * their Programs by Requirements File name, in order, which New Plan from Suggested Layout chooses
+ * among (#352).
  */
-export async function fetchCohort(client: ApiClient): Promise<Cohort | undefined> {
+export type Choices = { cohort: Cohort; programs: string[] };
+
+/**
+ * The student's Cohort and Programs, or `undefined` when they could not be had. A read the screen
+ * draws by and never edits through: both are set on the Progress screen (#331).
+ */
+export async function fetchChoices(client: ApiClient): Promise<Choices | undefined> {
   let answer: Sent;
   try {
     answer = await client.api.programs.$get();
@@ -193,7 +213,13 @@ export async function fetchCohort(client: ApiClient): Promise<Cohort | undefined
   const served = await readBody(
     () => answer.json() as Promise<Extract<InferResponseType<ProgramsRoute>, { programs: unknown }>>,
   );
-  return served.readable ? (served.body.cohort ?? null) : undefined;
+  if (!served.readable) return undefined;
+  const programs = Array.isArray(served.body.programs)
+    ? served.body.programs.flatMap((program) =>
+        typeof program?.requirementsFile === "string" ? [program.requirementsFile] : [],
+      )
+    : [];
+  return { cohort: served.body.cohort ?? null, programs };
 }
 
 /** One Course's name and credits, as far as the Workspace knows them. */

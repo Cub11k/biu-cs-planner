@@ -82,6 +82,8 @@ const english = {
   planAddSubmit: "Add",
   planAddTo: "to",
   planLayoutAction: "New Plan from Suggested Layout",
+  /** Beside the action for a student with two Programs: whose Suggested Layout it follows (#352). */
+  planLayoutProgram: "Layout of",
   planLayoutCreated: "Planned courses the Suggested Layout added: {count}.",
   planLayoutNothing: "The Suggested Layout added nothing: every course in it is already in your Plan.",
   planLayoutSkipped: "Skipped:",
@@ -810,6 +812,7 @@ const hebrew: Record<StringKey, string> = {
   planAddSubmit: "הוספה",
   planAddTo: "אל",
   planLayoutAction: "תוכנית חדשה מהפריסה המומלצת",
+  planLayoutProgram: "פריסה של",
   planLayoutCreated: "קורסים מתוכננים שהפריסה המומלצת הוסיפה: {count}.",
   planLayoutNothing: "הפריסה המומלצת לא הוסיפה דבר: כל הקורסים שבה כבר בתוכנית שלך.",
   planLayoutSkipped: "דולגו:",

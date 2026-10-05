@@ -39,7 +39,7 @@ describe("readPlan", () => {
 
     expect(await readPlan(workspace, ALICE)).toEqual({
       kind: "served",
-      view: { attempts: [], attemptWarnings: [], planWarnings: [] },
+      view: { attempts: [], attemptWarnings: [], planWarnings: [], semesterCredits: [] },
       version: undefined,
       warnings: [],
     });
@@ -452,5 +452,63 @@ describe("planFromSuggestedLayout", () => {
       kind: "refused",
       reason: "state-file-changed",
     });
+  });
+});
+
+/**
+ * #352: the Plan answer carries each Semester's credit total from the chosen Programs, and it is the
+ * number the credit-load Warning is about. A Year-long Course's two halves in one Academic Year are
+ * where the Plan screen's own sum used to differ: it gave each half the year's full credits.
+ */
+describe("the credit totals in the answer", () => {
+  const CS = {
+    schemaVersion: 1,
+    program: { id: "cs", name: { he: "מדעי המחשב" } },
+    courses: [
+      { number: "89-110", credits: 5 },
+      { number: "89-120", credits: 8, offeringPattern: "year-long" },
+    ],
+  };
+
+  it("serves the totals the credit-load check measures, a Year-long Course halved", async () => {
+    const workspace = memoryWorkspace({ created: true });
+    workspace.seed({ kind: "requirements", name: "cs-2027" }, CS);
+    workspace.seed(REF, {
+      schemaVersion: 1,
+      programs: [{ requirementsFile: "cs-2027" }],
+      settings: { creditLoadLimit: 1 },
+      attempts: [
+        { id: "f", courseNumber: "89-120", academicYear: 2027, semester: "fall", status: "planned" },
+        { id: "s", courseNumber: "89-120", academicYear: 2027, semester: "spring", status: "planned" },
+        { id: "a", courseNumber: "89-110", academicYear: 2027, semester: "fall", status: "planned" },
+        { id: "x", courseNumber: "99-999", academicYear: 2027, semester: "spring", status: "planned" },
+      ],
+    });
+
+    const read = await readPlan(workspace, ALICE);
+    if (read.kind !== "served") throw new Error("not served");
+
+    expect(read.view.semesterCredits).toEqual([
+      { academicYear: 2027, semester: "fall", credits: 9, unknown: 0 },
+      { academicYear: 2027, semester: "spring", credits: 4, unknown: 1 },
+    ]);
+    const loads = read.view.planWarnings.flatMap((w) => (w.kind === "credit-load" ? [[w.target.semester, w.credits]] : []));
+    expect(loads).toEqual(read.view.semesterCredits.map((s) => [s.semester, s.credits]));
+  });
+
+  it("serves the totals on an edit's answer too", async () => {
+    const workspace = memoryWorkspace({ created: true });
+    workspace.seed({ kind: "requirements", name: "cs-2027" }, CS);
+    workspace.seed(REF, { schemaVersion: 1, programs: [{ requirementsFile: "cs-2027" }] });
+
+    const added = await addAttemptTo(
+      workspace,
+      { courseNumber: "89-110", academicYear: 2027, semester: "fall", status: "planned" },
+      { ...ALICE, basedOn: await versionOf(workspace) },
+    );
+
+    expect(added.kind === "served" && added.view.semesterCredits).toEqual([
+      { academicYear: 2027, semester: "fall", credits: 5, unknown: 0 },
+    ]);
   });
 });
