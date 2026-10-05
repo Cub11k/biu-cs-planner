@@ -66,6 +66,7 @@ export {
   variantAt,
 } from "./state/picks.ts";
 export type { PickSlot, VariantRef } from "./state/picks.ts";
+export { timetableAt } from "./state/timetable.ts";
 export type { TimetableAt } from "./state/timetable.ts";
 export {
   createVariant,

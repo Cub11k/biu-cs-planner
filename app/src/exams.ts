@@ -7,7 +7,7 @@ import {
   type StateFileWarning,
 } from "@biu-cs-planner/core";
 import { readStateFile, type EditRefusal } from "./edit.ts";
-import { DEFAULT_STATE_FILE, variantRefFor, type TimetableRef } from "./picks.ts";
+import { DEFAULT_STATE_FILE, variantShownIn, type TimetableRef } from "./picks.ts";
 import { listOfferings, type QueryWarning } from "./queries.ts";
 import type { Workspace } from "./workspace.ts";
 
@@ -132,7 +132,7 @@ export async function readExams(workspace: Workspace, at: TimetableRef): Promise
 
   // The same Variant the week is read from, through the same function, so the rail and the grid
   // beside it cannot come to be about two different Variants (`./picks.ts`).
-  const where = variantRefFor(at);
+  const where = variantShownIn(loaded.state, at);
   const variant = variantAt(loaded.state, where);
   const courseNumbers = (variant?.picks ?? []).map((pick) => pick.courseNumber);
 

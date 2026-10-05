@@ -1904,6 +1904,8 @@ it("names no path in a refusal when the State File cannot be read, on every rout
     ["POST pick", await post(PICKS, { ...LECTURE, basedOn })],
     ["DELETE pick", await remove(PICKS, { courseNumber: "89-110", lessonType: "הרצאה", basedOn })],
     ["PATCH settings", await patch(SETTINGS, { language: "en", basedOn })],
+    ["POST variant", await post(`${TIMETABLE}/variants`, { name: "B", basedOn })],
+    ["DELETE variant", await remove(`${TIMETABLE}/variants`, { variant: "A", basedOn })],
     ["POST undo", await post(UNDO, { basedOn })],
     ["POST redo", await post(REDO, { basedOn })],
     ["POST restore", await post(RESTORE, { takenAt, basedOn })],
@@ -2178,4 +2180,171 @@ it("names a save refused for want of a backup as that, for a Pick, its removal, 
   }
   // and the file the student is looking at is the one each refused save found
   expect(await readFile(join(root, "me.state.json"), "utf8")).toBe(before);
+});
+
+/**
+ * The Variant tabs over HTTP (#281): each operation end to end on a real temp-dir Workspace, a
+ * stale revision refused, and undo putting the previous Variants back.
+ */
+const VARIANTS = `${TIMETABLE}/variants`;
+
+type TimetableBody = {
+  variantName: string;
+  variants: Array<{ name: string; primary: boolean }>;
+  picks: unknown[];
+  variantWarnings: Array<{ kind: string }>;
+  version?: string;
+};
+
+const tabs = (body: TimetableBody) => body.variants.map((v) => [v.name, v.primary]);
+
+/** A State File holding Variant A (primary, with a Pick) and an empty B. */
+async function twoVariants(): Promise<void> {
+  await post("/api/workspace", {});
+  await post(PICKS, LECTURE);
+  expect((await save(VARIANTS, { name: "B" })).status).toBe(200);
+}
+
+it("creates a Variant, answers about it, and lists every tab with the primary marked", async () => {
+  await twoVariants();
+
+  const created = await save(VARIANTS, { name: "Sunday off" });
+
+  expect(created.status).toBe(200);
+  const body = (await created.json()) as TimetableBody;
+  expect(body).toMatchObject({ variantName: "Sunday off", picks: [], variantWarnings: [] });
+  expect(tabs(body)).toEqual([
+    ["A", true],
+    ["B", false],
+    ["Sunday off", false],
+  ]);
+  // and the revision the next edit is to be based on comes with it
+  expect(body.version).toBe(await currentVersion());
+});
+
+it("reads the primary by default and the Variant named on request", async () => {
+  await twoVariants();
+
+  await expect((await get(TIMETABLE)).json()).resolves.toMatchObject({
+    variantName: "A",
+    picks: [LECTURE],
+  });
+  await expect((await get(`${TIMETABLE}?variant=B`)).json()).resolves.toMatchObject({
+    variantName: "B",
+    picks: [],
+  });
+  await expect((await get(`${EXAMS}?variant=B`)).json()).resolves.toMatchObject({
+    variantName: "B",
+  });
+  // a Hebrew name survives the query string, as a student's own text has to
+  await save(VARIANTS, { name: "ללא ראשון" });
+  await expect(
+    (await get(`${TIMETABLE}?variant=${encodeURIComponent("ללא ראשון")}`)).json(),
+  ).resolves.toMatchObject({ variantName: "ללא ראשון" });
+});
+
+it("picks into the Variant named in the body", async () => {
+  await twoVariants();
+
+  await save(PICKS, { ...CLASHING, variant: "B" });
+
+  await expect((await get(`${TIMETABLE}?variant=B`)).json()).resolves.toMatchObject({
+    picks: [CLASHING],
+  });
+  await expect((await get(TIMETABLE)).json()).resolves.toMatchObject({ picks: [LECTURE] });
+});
+
+it("duplicates, renames, makes primary and deletes, each answering about the right tab", async () => {
+  await twoVariants();
+
+  const duplicated = (await (await save(`${VARIANTS}/duplicate`, { variant: "A" })).json()) as TimetableBody;
+  expect(duplicated).toMatchObject({ variantName: "C", picks: [LECTURE] });
+
+  const renamed = (await (
+    await save(`${VARIANTS}/rename`, { variant: "C", name: "Mornings" })
+  ).json()) as TimetableBody;
+  expect(renamed.variantName).toBe("Mornings");
+
+  const primary = (await (
+    await save(`${VARIANTS}/primary`, { variant: "Mornings" })
+  ).json()) as TimetableBody;
+  expect(tabs(primary)).toEqual([
+    ["A", false],
+    ["Mornings", true],
+    ["B", false],
+  ]);
+
+  const deleted = (await (
+    await unsave(VARIANTS, { variant: "Mornings" })
+  ).json()) as TimetableBody;
+  // the primary went, so the first remaining one is promoted and the answer is about it
+  expect(deleted.variantName).toBe("A");
+  expect(tabs(deleted)).toEqual([
+    ["A", true],
+    ["B", false],
+  ]);
+});
+
+it("renames into a name already used, and carries the Warning rather than refusing", async () => {
+  await twoVariants();
+
+  const renamed = await save(`${VARIANTS}/rename`, { variant: "B", name: "A" });
+
+  expect(renamed.status).toBe(200);
+  await expect(renamed.json()).resolves.toMatchObject({
+    variantWarnings: [{ kind: "variant-name-not-unique", name: "A" }],
+  });
+});
+
+it("refuses a Variant edit based on a revision the file no longer holds", async () => {
+  await twoVariants();
+  const stale = await currentVersion();
+  await save(VARIANTS, { name: "C" });
+
+  const refused = await remove(VARIANTS, { variant: "B", basedOn: stale });
+
+  expect(refused.status).toBe(409);
+  await expect(refused.json()).resolves.toMatchObject({ reason: "state-file-changed" });
+  expect(tabs((await (await get(TIMETABLE)).json()) as TimetableBody)).toEqual([
+    ["A", true],
+    ["B", false],
+    ["C", false],
+  ]);
+});
+
+it("undoes a Variant edit, putting the previous Variants back", async () => {
+  await twoVariants();
+  await save(`${VARIANTS}/primary`, { variant: "B" });
+  await unsave(VARIANTS, { variant: "A" });
+
+  const undone = await step(UNDO);
+
+  await expect(undone.json()).resolves.toMatchObject({ label: "delete-variant" });
+  const back = (await (await get(`${TIMETABLE}?variant=A`)).json()) as TimetableBody;
+  expect(tabs(back)).toEqual([
+    ["A", false],
+    ["B", true],
+  ]);
+  expect(back.picks).toEqual([LECTURE]);
+});
+
+it("names every bad Variant request as a 400", async () => {
+  await twoVariants();
+  const basedOn = await currentVersion();
+
+  const answers: [string, Response][] = [
+    ["empty name", await post(VARIANTS, { name: "", basedOn })],
+    ["rename with no name", await post(`${VARIANTS}/rename`, { variant: "A", basedOn })],
+    ["primary with no Variant", await post(`${VARIANTS}/primary`, { basedOn })],
+    ["delete with no Variant", await remove(VARIANTS, { basedOn })],
+    ["duplicate a number", await post(`${VARIANTS}/duplicate`, { variant: 7, basedOn })],
+  ];
+  for (const [where, answer] of answers) {
+    expect(answer.status, where).toBe(400);
+    await expect(answer.json(), where).resolves.toEqual({ error: "not-a-variant" });
+  }
+
+  const read = await get(`${TIMETABLE}?variant=`);
+  expect(read.status).toBe(400);
+  await expect(read.json()).resolves.toEqual({ error: "bad-variant" });
 });

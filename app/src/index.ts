@@ -52,7 +52,17 @@ export {
   type TimetableRef,
   type TimetableResult,
   type TimetableView,
+  type VariantTab,
 } from "./picks.ts";
+// The Variant tabs (#281): each a `core` edit plus a label through `editStateFile`.
+export {
+  addVariant,
+  duplicateVariantAs,
+  makeVariantPrimary,
+  removeVariant,
+  renameVariantAs,
+  type VariantNaming,
+} from "./variants.ts";
 export {
   watchWorkspace,
   DEFAULT_SETTLE_MS,
