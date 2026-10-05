@@ -204,7 +204,7 @@ export function setPrimaryVariant(state: State, at: VariantRef): State {
  * student does can leave two registered Variants, and the registered one is always the primary.
  * Hands the same State back when that is already exactly so.
  *
- * Only the flags: offering to bring the Plan along is `markRegistered` (`../plan/diffs.ts`), which
+ * Only the flags: offering to bring the Plan along is `markRegistered` (`../plan/registration.ts`), which
  * calls this and then applies the Plan Diffs in the same edit.
  */
 export function setRegisteredVariant(state: State, at: VariantRef): State {

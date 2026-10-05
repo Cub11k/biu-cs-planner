@@ -768,8 +768,12 @@ export function TimetablePane({
                 setRegistering({ variant: on.variantName, preview });
                 return;
               }
+              // the Variant the preview was about, named outright: the student may have switched
+              // tabs while it was read, and a mark is about the tab it was pressed on
+              const pressedOn = { variant: on.variantName, position: on.variantPosition };
               void sendEdit(
-                (query, basedOn) => markRegistered(api, query, query.variant ?? "", false, basedOn),
+                (query, basedOn) =>
+                  markRegistered(api, { ...query, ...pressedOn }, pressedOn.variant, false, basedOn),
                 followAnswer,
               );
             });

@@ -160,7 +160,7 @@ The weekly schedule work for one Semester of one Academic Year, holding that Sem
 _Avoid_: schedule, system
 
 **Variant**:
-A named alternative set of Picks for a Semester; one Variant is primary. At most one is the registered one, the Variant the student registered with: marking it makes it primary and clears both on its siblings, and is the moment the Plan may be brought along, by applying all its Plan Diffs and setting the Semester's planned Attempts of its Courses to registered, as one undo step and only if the student accepts. Unmarking clears the mark and nothing else (#297).
+A named alternative set of Picks for a Semester; one Variant is primary. At most one is the registered one, the Variant the student registered with: marking it makes it primary and clears both on its siblings, and is the moment the Plan may be brought along, by applying all its Plan Diffs and setting the Semester's planned Attempts of its Courses to registered, as one undo step and only if the student accepts. Unmarking clears the mark and nothing else (#297). In code and on screen, *registration* means this mark and the offer that comes with it, never a Pick (which Pick's _Avoid_ list warns against).
 _Avoid_: option, draft, scenario
 
 **Pick**:

@@ -1301,13 +1301,6 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
     })
 
     /**
-     * Blocked Times (#282): add, replace, remove, and copy to another Semester. Domain
-     * operations on the Timetable of one Semester; a Blocked Time is addressed by its position
-     * in the list the Timetable answer carries, which is safe because the save is refused when
-     * the file moved since that answer (#90). Each is one undo step, and each answers with the
-     * Timetable — Blocked Times, the Clashes with them, and any Warning — about the Variant named.
-     */
-    /**
      * "Apply to Plan" for one Plan Diff of the Variant named (#295; ADR-0008): one save, one undo
      * step, and only the Plan's Attempts change — never the Timetable. Answered with the Timetable
      * afterwards, whose Plan Diffs no longer hold the one applied. A Plan Diff the file as it stands
@@ -1398,6 +1391,13 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
       );
     })
 
+    /**
+     * Blocked Times (#282): add, replace, remove, and copy to another Semester. Domain
+     * operations on the Timetable of one Semester; a Blocked Time is addressed by its position
+     * in the list the Timetable answer carries, which is safe because the save is refused when
+     * the file moved since that answer (#90). Each is one undo step, and each answers with the
+     * Timetable — Blocked Times, the Clashes with them, and any Warning — about the Variant named.
+     */
     .post("/api/timetable/:year/:semester/blocked-times", capped, async (c) => {
       const ref = timetableRef(c);
       if (!ref.ok) return c.json({ error: ref.error }, 400);

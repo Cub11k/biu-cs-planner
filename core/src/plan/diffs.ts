@@ -7,7 +7,7 @@ import type { Attempt, AttemptId, State } from "../state/schema.ts";
  * Plan Diffs (#295; ADR-0008): where one Variant and the Plan disagree, each resolved only by an
  * explicit "apply to Plan".
  *
- * The Plan and a Timetable are never synced. A Variant is compared with the Plan's **planned**
+ * Nothing keeps the Plan and a Timetable alike on its own. A Variant is compared with the Plan's **planned**
  * Attempts in its Academic Year and Semester and with that year's Catalog, and every divergence is
  * reported as one of four kinds:
  *

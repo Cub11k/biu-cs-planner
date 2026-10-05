@@ -217,3 +217,22 @@ it("says so when a hand-edited file marks two Variants registered", async () => 
   expect(mounted.textContent).not.toContain(t("en", "variantPrimaryNotUnique"));
   expect(marks(mounted)).toEqual(["A", "B"]);
 });
+
+it("marks the tab it was pressed on, even when another tab is shown before the preview arrives", async () => {
+  const mounted = await openWeek({}, { registers: {} });
+  let release = (): void => {};
+  fake!.registrationGate = new Promise((resolve) => {
+    release = resolve;
+  });
+
+  action(mounted, "mark-registered").click();
+  await until(() => expect(fake!.sent.some((request) => request.pathname.endsWith("/registration"))).toBe(true));
+  mounted.querySelector<HTMLButtonElement>('[role="tab"][data-variant="B"]')!.click();
+  await until(() =>
+    expect(mounted.querySelector('[role="tab"][data-variant="B"]')?.getAttribute("aria-selected")).toBe("true"),
+  );
+  release();
+
+  await until(() => expect(marks(mounted)).toEqual(["A"]));
+  expect(marksSent()[0]?.body).toMatchObject({ variant: "A", position: 0, applyDiffs: false });
+});

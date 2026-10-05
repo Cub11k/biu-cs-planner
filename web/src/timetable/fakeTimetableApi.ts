@@ -52,6 +52,8 @@ export type FakeApi = {
   labels: string[];
   /** The Plan Diffs each Variant is served with; a test may change them between answers. */
   planDiffs: FakePlanDiffs;
+  /** While set, the registration preview waits for it before answering (#297). */
+  registrationGate: Promise<void> | undefined;
   /** Set to refuse the next save as a file that changed under the page. */
   changeUnderneath: boolean;
   version: number;
@@ -115,6 +117,7 @@ export function installFakeApi(options: {
     blockedTimes: options.blockedTimes ?? [],
     copied: new Map(),
     planDiffs: options.planDiffs ?? {},
+    registrationGate: undefined,
     sent: [],
     labels: [],
     changeUnderneath: false,
@@ -258,6 +261,7 @@ export function installFakeApi(options: {
 
     const route = pathname.replace("/api/timetable/2027/fall", "");
     if (method === "GET" && route === "/registration") {
+      await fake.registrationGate;
       const position = url.searchParams.get("position");
       const variant = resolved(url.searchParams.get("variant"), position === null ? undefined : Number(position));
       const name = variant?.name ?? "A";
