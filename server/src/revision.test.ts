@@ -301,6 +301,8 @@ async function learnRoutes(): Promise<Learned[]> {
     const before = await staged.version();
     const answer = await ask(staged, route, before);
     expect(answer.status, `${route.key} did not take the shared body: give it one in BODIES`).not.toBe(400);
+    // a route that broke on the honest pass would otherwise count as serving no revision
+    expect(answer.status, `${route.key} failed on an honest adapter`).toBeLessThan(500);
     const body: unknown = answer.status === 200 ? await answer.json() : undefined;
     const served =
       typeof body === "object" && body !== null && "version" in body ? body.version : undefined;
@@ -344,6 +346,12 @@ const routesServing = async (): Promise<Learned[]> => {
     "POST /api/progress/ticks",
   ]) {
     expect(serving, `the honest pass should find ${named} serving a revision`).toContain(named);
+  }
+  // and the ones that write, saving: a shared body that stopped moving one would drop it from
+  // the save half without a word
+  const saving = routes.filter((route) => route.saves).map((route) => route.key);
+  for (const named of ["PUT /api/programs", "PUT /api/cohort", "POST /api/progress/pins", "POST /api/progress/ticks"]) {
+    expect(saving, `the honest pass should find ${named} saving`).toContain(named);
   }
   return routes;
 };
