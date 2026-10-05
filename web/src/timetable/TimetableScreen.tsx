@@ -416,6 +416,17 @@ export function TimetablePane({
   const keptWhenRereadBegan = useRef(0);
   /** `readsKept` when the held-click drain's `refusedOn` was set. */
   const keptWhenRefused = useRef(0);
+  /**
+   * Whether an edit made now has to wait for a `state-file-changed` re-read (#334): the answer the
+   * refusal was sent on is still the one on screen, **and** that re-read has not come back
+   * unreadable and been kept (#218). Decided from this render, not from the effect below that ends
+   * the wait: the render that draws a kept week comes before that effect, and a click landing
+   * between the two used to be held and then dropped, though the re-read it waited for was over.
+   */
+  const waitingForReread =
+    rereadingFrom !== undefined &&
+    rereadingFrom === timetable &&
+    readsKept <= keptWhenRereadBegan.current;
 
   const offerings = catalog.kind === "served" ? catalog.offerings : [];
   /**
@@ -584,11 +595,11 @@ export function TimetablePane({
       timetable.kind === "served" &&
         timetable.version !== undefined &&
         awaitingFrom !== timetable &&
-        rereadingFrom !== timetable
+        !waitingForReread
         ? { version: timetable.version, answer: timetable }
         : undefined,
     );
-  }, [timetable, awaitingFrom, rereadingFrom, onRevision]);
+  }, [timetable, awaitingFrom, waitingForReread, onRevision]);
 
   /** Whatever became of the last click or press, the one being made now is the account owed. */
   const retireNotices = (): void => {
@@ -613,7 +624,7 @@ export function TimetablePane({
       const query = { academicYear, semester, variant: on.variantName, position: on.variantPosition };
       return edit(query, on.version).then((answer) => settle(answer, on, follow));
     };
-    return rereadingFrom === timetable ? hold(timetable.variantName, sendOn) : sendOn(timetable);
+    return waitingForReread ? hold(timetable.variantName, sendOn) : sendOn(timetable);
   };
 
   /**
@@ -781,7 +792,7 @@ export function TimetablePane({
     // ink removes the Pick; a click on pencil records one — decided on the week it was made on,
     // and kept if it has to wait for a re-read (#334).
     const remove = group.picked === true;
-    if (rereadingFrom === timetable) {
+    if (waitingForReread) {
       void hold(timetable.variantName, (on) =>
         save(group, remove, on.version, { ...query, position: on.variantPosition }, on),
       );
