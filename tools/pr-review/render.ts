@@ -1,6 +1,6 @@
 import type { CallCycle, Cycle } from "./cycles.ts";
 import { FOLLOWER_HOME, byFile, explainFollower, type Follower } from "./followers.ts";
-import { explain, summarise, type ForbiddenEdge } from "./layering.ts";
+import { TOOLS, explain, summarise, type ForbiddenEdge } from "./layering.ts";
 import { MARKER, commitMarker } from "./outdated.ts";
 import type { Finding, PassOutcome } from "./review.ts";
 
@@ -124,6 +124,17 @@ function pass(name: string, subtitle: string, outcome: PassOutcome, out: string[
 }
 
 /**
+ * What the comment says of `tools/` when nothing is forbidden, from `TOOLS` rather than
+ * beside it. `tools/` is judged here only as far as `collect` hands it in, which is its test
+ * files; its other modules are judged by `npm test` alone, and a reader of a clean line must
+ * not take it for a verdict on them (#274).
+ */
+const TOOLS_COVERAGE =
+  `Outside the four, ${TOOLS.rule}. This comment judges that only for the relative imports of ` +
+  "`tools/`'s test files: every other `tools/` module is judged by `npm test`, through the whole-tree " +
+  "assertion in `tools/pr-review/layering.test.ts`, and not by this comment.";
+
+/**
  * The automatic comment: the mechanical check, plus a plain statement of what has and has
  * not judged this commit. A reader must never take "no cycles" for "reviewed and clean".
  */
@@ -163,9 +174,11 @@ export function renderGraphs({ headSha, graphs, judgement }: GraphsComment): str
 
   if (!forbidden.length) {
     // The rule is spelled out from the table, not beside it: a sentence written by hand
-    // here would go on reassuring readers after someone edited the table.
+    // here would go on reassuring readers after someone edited the table. `tools/` gets its
+    // own sentence, and says how far this comment reaches into it, because `collect` hands
+    // in its test files and nothing else (#274).
     out.push(
-      `**Layering:** every import is one the rule allows — ${summarise()}.`,
+      `**Layering:** every import is one the rule allows — ${summarise()}. ${TOOLS_COVERAGE}`,
     );
   } else {
     out.push(
@@ -230,13 +243,16 @@ export function renderGraphs({ headSha, graphs, judgement }: GraphsComment): str
   }
   out.push("");
   out.push(
-    "> Three things this check does not do. It records only calls that leave the module they " +
-      "are written in, so recursion that stays inside one file never shows up. It reads only " +
-      "the static `import` and `export … from` at the top of a file, so a dynamic " +
-      "`await import(…)` is in neither graph. And the layering check judges the direction " +
-      "between workspaces only: an import that leaves them, a layer broken inside one " +
-      "workspace, and the package names a *test* file imports — the graphs keep only a " +
-      "test's relative imports — are nobody's finding here and belong to the Standards pass.",
+    "> Three things this check does not do. It records only calls that leave the module " +
+      "they are written in, so recursion that stays inside one file never shows up. It reads " +
+      "only the static `import` and `export … from` at the top of a file, so a dynamic `await " +
+      "import(…)` is in neither graph. And the layering check judges only the direction " +
+      "between workspaces and the imports of `tools/`'s test files: an import that leaves the " +
+      "workspaces, a layer broken inside one workspace, and the package names a *test* file " +
+      "imports — the graphs keep only a test's relative imports — are nobody's finding here " +
+      "and belong to the Standards pass. A `tools/` module that is not a test is not judged " +
+      "here at all: `npm test` judges it, through the whole-tree assertion in " +
+      "`tools/pr-review/layering.test.ts`, and this comment never names one.",
   );
 
   return out.join("\n").trimEnd();

@@ -190,6 +190,62 @@ describe("how many tests a file runs", () => {
   });
 });
 
+/**
+ * #273: a chain counts only when it starts at the imported or global `it`, `test` or
+ * `describe`. A local binding of that name is somebody's variable, and on PR #265's branch
+ * `test.path.startsWith("tools/")` was counted as a test titled "tools/" — 60 against 59 run.
+ */
+describe("a local binding named like a test function", () => {
+  it("is not a test, whichever way the name is bound", () => {
+    const file = fromSource([
+      'import { describe, it, test } from "vitest";',
+      'describe("suite", () => {',
+      '  it("is a real test", () => {',
+      '    const found = files.filter((test) => test.path.startsWith("tools/"));',
+      '    files.forEach(({ it }) => it.name.endsWith("x"));',
+      '    for (const test of files) test.run("in a loop");',
+      '    try { run(); } catch (it) { it.report("caught"); }',
+      '    function named(test: Thing) { return test.check("a parameter"); }',
+      '    const describe = make();',
+      '    describe("not a suite", () => {',
+      '      it("still a real test, under the real suite only", () => {});',
+      '    });',
+      '  });',
+      '  test.each([[1], [2]])("a real table %s", () => {});',
+      '});',
+    ]);
+
+    expect(file.cases.map((c) => [c.suite.join(" > "), c.title])).toEqual([
+      ["suite", "is a real test"],
+      ["suite", "still a real test, under the real suite only"],
+      ["suite", "a real table %s"],
+    ]);
+    expect(counts(file)).toEqual({ tests: 4, entries: 3, atLeast: 0 });
+  });
+
+  it("is not a test when the file binds the name at its top level either", () => {
+    const file = fromSource([
+      "const test = { skip: (why: string) => why };",
+      'test.skip("a method call, not a skipped test");',
+    ]);
+
+    expect(counts(file)).toEqual({ tests: 0, entries: 0, atLeast: 0 });
+  });
+
+  it("leaves the real ones alone where the same name is a variable only in a sibling scope", () => {
+    const file = fromSource([
+      'const pick = (test: Thing) => test.title("not a test");',
+      'it("counts", () => {});',
+      'it.skipIf(false)("counts when called through a modifier", () => {});',
+    ]);
+
+    expect(file.cases.map((c) => c.title)).toEqual([
+      "counts",
+      "counts when called through a modifier",
+    ]);
+  });
+});
+
 describe("a table the source does not fix", () => {
   it("says so rather than counting the suite as one test", () => {
     const file = fromSource(["it.each(atRuntime())(\"handles %s\", () => {});"]);
