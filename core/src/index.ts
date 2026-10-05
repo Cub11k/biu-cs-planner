@@ -66,6 +66,18 @@ export {
   variantAt,
 } from "./state/picks.ts";
 export type { PickSlot, VariantRef } from "./state/picks.ts";
+export type { TimetableAt } from "./state/timetable.ts";
+export {
+  createVariant,
+  deleteVariant,
+  duplicateVariant,
+  freeVariantName,
+  renameVariant,
+  resolveVariantName,
+  setPrimaryVariant,
+  variantWarnings,
+} from "./state/variants.ts";
+export type { VariantWarning } from "./state/variants.ts";
 export {
   CURRENT_STATE_SCHEMA_VERSION,
   groupPickSchema,

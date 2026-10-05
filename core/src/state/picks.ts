@@ -4,7 +4,8 @@ import {
   type MeetingClash,
   type PickedGroup,
 } from "../timetable/clashes.ts";
-import type { GroupPick, PickedMeeting, State, Timetable, Variant } from "./schema.ts";
+import type { GroupPick, PickedMeeting, State, Variant } from "./schema.ts";
+import { timetableAt, variantNamed, withTimetable } from "./timetable.ts";
 
 /**
  * The first edits the app can make: recording a Pick and removing one.
@@ -46,9 +47,6 @@ export type VariantRef = {
  */
 export type PickSlot = { courseNumber: string; lessonType: string };
 
-const isTimetableFor = (timetable: Timetable, at: VariantRef): boolean =>
-  timetable.academicYear === at.academicYear && timetable.semester === at.semester;
-
 const fills = (pick: GroupPick, slot: PickSlot): boolean =>
   pick.courseNumber === slot.courseNumber && pick.lessonType === slot.lessonType;
 
@@ -75,14 +73,9 @@ const isSamePick = (held: GroupPick, pick: GroupPick): boolean =>
   held.groupNumber === pick.groupNumber &&
   sameMeetings(held.meetings, pick.meetings);
 
-/** The Timetable of one Semester, or nothing when the State File holds none for it. */
-function timetableAt(state: State, at: VariantRef): Timetable | undefined {
-  return state.timetables.find((timetable) => isTimetableFor(timetable, at));
-}
-
 /** The named Variant, or nothing when neither it nor its Timetable is there yet. */
 export function variantAt(state: State, at: VariantRef): Variant | undefined {
-  return timetableAt(state, at)?.variants.find((variant) => variant.name === at.variant);
+  return variantNamed(timetableAt(state, at), at.variant);
 }
 
 /**
@@ -92,37 +85,40 @@ export function variantAt(state: State, at: VariantRef): Variant | undefined {
  * Variant is primary only when it is the Timetable's first: exactly one Variant of a
  * Timetable is primary (core/src/state/schema.ts), and an app that made every new one
  * primary would be writing the file that `parseStateFile` warns about.
+ *
+ * Exported for the other edits that live inside a Variant — the Tray's (`./tray.ts`) — so a
+ * Course added to the Tray of a Semester nobody has opened makes its Variant exactly the way a
+ * first Pick does.
  */
-function inVariant(
+export function withVariant(
+  state: State,
+  at: VariantRef,
+  rewrite: (variant: Variant) => Variant,
+): State {
+  return withTimetable(state, at, (timetable) => {
+    const held = variantNamed(timetable, at.variant);
+    const variant: Variant = held ?? {
+      name: at.variant,
+      primary: timetable.variants.length === 0,
+      picks: [],
+    };
+
+    const rewritten = rewrite(variant);
+    if (rewritten === variant) return timetable;
+
+    const variants =
+      held === undefined
+        ? [...timetable.variants, rewritten]
+        : timetable.variants.map((existing) => (existing === held ? rewritten : existing));
+    return { ...timetable, variants };
+  });
+}
+
+const inVariant = (
   state: State,
   at: VariantRef,
   rewrite: (picks: GroupPick[]) => GroupPick[],
-): State {
-  const timetable = timetableAt(state, at) ?? {
-    academicYear: at.academicYear,
-    semester: at.semester,
-    variants: [],
-    blockedTimes: [],
-  };
-  const variant = timetable.variants.find((v) => v.name === at.variant) ?? {
-    name: at.variant,
-    primary: timetable.variants.length === 0,
-    picks: [],
-  };
-
-  const rewritten: Variant = { ...variant, picks: rewrite(variant.picks) };
-  const variants = timetable.variants.some((v) => v.name === at.variant)
-    ? timetable.variants.map((v) => (v.name === at.variant ? rewritten : v))
-    : [...timetable.variants, rewritten];
-
-  const next: Timetable = { ...timetable, variants };
-  return {
-    ...state,
-    timetables: state.timetables.some((t) => isTimetableFor(t, at))
-      ? state.timetables.map((t) => (isTimetableFor(t, at) ? next : t))
-      : [...state.timetables, next],
-  };
-}
+): State => withVariant(state, at, (variant) => ({ ...variant, picks: rewrite(variant.picks) }));
 
 /**
  * Records a Pick: one Group chosen for one Lesson Type of an Offering, carrying the
