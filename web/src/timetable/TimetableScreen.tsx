@@ -43,6 +43,7 @@ import {
 } from "./blockedTimes.ts";
 import { lessonTypeName } from "./lessonType.ts";
 import { shownTabIndex, VariantTabs, variantTabId } from "./VariantTabs.tsx";
+import { keepVariantInUrl, variantInUrl, type VariantUrlBrowser } from "./variantUrl.ts";
 import { WeekGrid } from "./WeekGrid.tsx";
 
 const SEMESTER_STRING = {
@@ -66,6 +67,9 @@ type HeldClick = { group: WeekGroup; query: TimetableQuery };
 
 /** The tab a student chose: a Variant's name, and its position for when two share it (#322). */
 type VariantWanted = { name: string; position: number | undefined };
+
+/** The page's own URL, where the open tab is kept across a reload (#325); none outside a browser. */
+const pageUrl = (): VariantUrlBrowser | undefined => (typeof window === "undefined" ? undefined : window);
 
 /**
  * Why the API served no Catalog, said in words the student can act on. A Warning nobody
@@ -292,6 +296,15 @@ export function TimetablePane({
    * carries the name.
    */
   const variantWanted = useRef<VariantWanted | undefined>(undefined);
+  /**
+   * Seeded once from the URL, so a reload opens the tab that was open (#325) — the server answers
+   * with the primary when it no longer exists, and the page follows that answer below.
+   */
+  const seeded = useRef(false);
+  if (!seeded.current) {
+    seeded.current = true;
+    variantWanted.current = variantInUrl(pageUrl());
+  }
   /** The week, as the panel the Variant tabs control (#324). */
   const weekPanelId = useId();
 
@@ -468,6 +481,13 @@ export function TimetablePane({
     setUnknownSave(undefined);
     setHeldLost(false);
   }, [steps]);
+
+  /** The tab shown goes into the URL, so a reload or a bookmark opens it again (#325). */
+  const shownName = timetable.kind === "served" ? timetable.variantName : undefined;
+  const shownPosition = timetable.kind === "served" ? timetable.variantPosition : undefined;
+  useEffect(() => {
+    if (shownName !== undefined) keepVariantInUrl(pageUrl(), { name: shownName, position: shownPosition });
+  }, [shownName, shownPosition]);
 
   /**
    * Which revision the shell may step from: the one on screen, once the State File has been read

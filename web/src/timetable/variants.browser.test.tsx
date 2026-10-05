@@ -19,6 +19,7 @@ import type { Offering } from "./catalog.ts";
 import { installFakeApi, type FakeApi, type FakeVariant } from "./fakeTimetableApi.ts";
 import type { GroupPick } from "./picks.ts";
 import { TimetableScreen } from "./TimetableScreen.tsx";
+import { claimLaunchToken, TOKEN_STORAGE_KEY } from "../token.ts";
 
 /** October 2026: the Fall Semester of Academic Year 2027, which is what the fixture is. */
 const TODAY = new Date(2026, 9, 15);
@@ -66,7 +67,14 @@ let fake: FakeApi;
 let host: HTMLElement | undefined;
 let root: Root | undefined;
 
+/**
+ * The page's URL as the file started, put back after each test: the open tab is kept in the URL
+ * (#325), and a tab one test opened would otherwise be what the next test's screen opens on.
+ */
+let startedAt: string;
+
 beforeEach(() => {
+  startedAt = `${location.pathname}${location.search}${location.hash}`;
   fake = installFakeApi({ offerings: [OFFERING], variants: twoVariants() });
 });
 
@@ -76,6 +84,7 @@ afterEach(() => {
   root = undefined;
   host = undefined;
   fake.restore();
+  history.replaceState(null, "", startedAt);
 });
 
 function render(language: Language, workspaceChanges: number): void {
@@ -425,4 +434,63 @@ it("opens and edits each of two Variants that share a name", async () => {
     ["Z", ["01"]],
     ["A", ["02"]],
   ]);
+});
+
+/**
+ * #325: a full reload opens the Variant that was open — kept in the URL, so a bookmark or a second
+ * tab opens it too — and the primary when it no longer exists. The page is thrown away and mounted
+ * again against the same fake server, with nothing surviving but the URL.
+ */
+function reload(language: Language = "en"): void {
+  root?.unmount();
+  root = createRoot(host!);
+  render(language, 0);
+}
+
+it("opens the tab that was open after a reload, from the URL", async () => {
+  const mounted = await openWeek();
+  await until(() => expect(selectedTab(mounted)).toBe("B"));
+  tab(mounted, "A").click();
+  await until(() => expect(selectedTab(mounted)).toBe("A"));
+  await until(() => expect(new URLSearchParams(location.search).get("variant")).toBe("A"));
+
+  reload();
+
+  await until(() => expect(selectedTab(mounted)).toBe("A"));
+  expect(inked(mounted)).toEqual(["01"]);
+  // the first read after the reload asked for it, rather than for the primary and then switching
+  const reads = fake.sent.filter((request) => request.method === "GET" && request.pathname.endsWith("/fall"));
+  expect(reads.at(-1)?.search).toBe("?variant=A&position=0");
+});
+
+it("opens the primary after a reload when the tab that was open is gone", async () => {
+  const mounted = await openWeek();
+  tab(mounted, "A").click();
+  await until(() => expect(new URLSearchParams(location.search).get("variant")).toBe("A"));
+  // another window deleted A while this page was away
+  fake.variants = fake.variants.filter((variant) => variant.name !== "A");
+
+  reload();
+
+  await until(() => expect(tabNames(mounted)).toEqual(["B"]));
+  await until(() => expect(selectedTab(mounted)).toBe("B"));
+  await until(() => expect(new URLSearchParams(location.search).get("variant")).toBe("B"));
+});
+
+it("still takes the Launch Token out of the fragment, and opens the tab the URL names", async () => {
+  const token = "a-launch-token-long-enough-to-pass-the-pattern-0123456789";
+  history.replaceState(null, "", `${location.pathname}?variant=A&position=0#t=${token}`);
+  try {
+    // what `main.tsx` does before anything renders
+    expect(claimLaunchToken(window)).toBe(token);
+    expect(location.hash).toBe("");
+    expect(localStorage.getItem(TOKEN_STORAGE_KEY)).toBe(token);
+
+    const mounted = await openWeek();
+
+    await until(() => expect(selectedTab(mounted)).toBe("A"));
+    expect(location.hash).not.toContain(token);
+  } finally {
+    localStorage.removeItem(TOKEN_STORAGE_KEY);
+  }
 });
