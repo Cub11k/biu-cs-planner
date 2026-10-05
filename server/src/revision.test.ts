@@ -17,6 +17,15 @@ import { fileSystemWorkspace } from "./workspace.fs.ts";
  * asked. None may answer with it, and each must be refused rather than serve something else, so a
  * route that stopped reaching the port fails here rather than passing by accident.
  *
+ * **The routes are read off the API's own route table, not listed here** (#332). PR #330 added the
+ * Programs, Cohort and Progress routes after this test was written, and a list kept by hand did not
+ * grow with them. So every route `createApi` registers is asked once honestly first, and whichever
+ * answers a 200 with a `version` is a route that serves a revision — and the ones whose `version`
+ * moved are the ones that save. Both lies are then put to exactly those routes. A route added
+ * later is covered without editing this file, as long as the shared body below fits it; one it
+ * does not fit answers 400 on the honest pass, and that fails here until it is given a body of its
+ * own in `BODIES`.
+ *
  * Its own file rather than a test in `./api.test.ts`, which another lane holds in the run this was
  * written in; it builds the API the same way that file does.
  *
@@ -62,12 +71,12 @@ const CLASHING = {
 
 const TIMETABLE = "/api/timetable/2027/fall";
 const PICKS = `${TIMETABLE}/picks`;
-const EXAMS = `${TIMETABLE}/exams`;
-const SETTINGS = "/api/settings";
+const BLOCKED = `${TIMETABLE}/blocked-times`;
+const VARIANTS = `${TIMETABLE}/variants`;
+const PINS = "/api/progress/pins";
+const TICKS = "/api/progress/ticks";
 const UNDO = "/api/history/undo";
-const REDO = "/api/history/redo";
 const BACKUPS = "/api/backups";
-const RESTORE = "/api/backups/restore";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -78,7 +87,8 @@ afterEach(async () => {
 type Lying = "read" | "save";
 
 /**
- * A real Workspace with an undo, a redo, a snapshot and a Catalog behind it, made honestly — and
+ * A real Workspace with an undo, a redo, a snapshot, a Catalog, a Blocked Time, a Pin, a tick and a
+ * second Variant behind it, made honestly — and
  * then a switch that makes the adapter misreport the revision from then on.
  */
 async function stage() {
@@ -129,6 +139,17 @@ async function stage() {
   expect((await send("POST", "/api/workspace", {})).status).toBe(200);
   expect((await send("POST", "/api/catalog/2027/import", CRAWL)).status).toBe(200);
   expect((await send("POST", PICKS, { ...LECTURE, basedOn: undefined })).status).toBe(200);
+  // Something for every route that removes or changes a thing to act on, so that each of them
+  // saves on the honest pass: a Blocked Time to replace, remove or copy, a Pin and a tick to take
+  // back, and a second Variant to make primary. Before the edit the undo below takes back.
+  for (const [path, body] of [
+    [BLOCKED, { day: "monday", start: "18:00", end: "20:00", label: "work" }],
+    [PINS, { courseNumber: "89-110", requirementsFile: "cs-2027", requirementId: "electives" }],
+    [TICKS, { requirementsFile: "cs-2027", requirementId: "hebrew" }],
+    [VARIANTS, { name: "B" }],
+  ] as const) {
+    expect((await send("POST", path, { ...body, basedOn: await version() })).status).toBe(200);
+  }
   expect((await send("POST", PICKS, { ...CLASHING, basedOn: await version() })).status).toBe(200);
   // one undo, so both stacks hold an entry and a redo has something to put back
   expect((await send("POST", UNDO, { basedOn: await version() })).status).toBe(200);
@@ -143,6 +164,7 @@ async function stage() {
     send,
     version,
     takenAt,
+    api,
     lie: (half: Lying, revision: () => unknown) => {
       lying = { half, revision };
     },
@@ -151,29 +173,121 @@ async function stage() {
 
 type Staged = Awaited<ReturnType<typeof stage>>;
 
-/** Every route that serves a revision, and the request that asks it for one. */
-const ROUTES: [string, (staged: Staged, basedOn: string) => Promise<Response>][] = [
-  ["GET week", ({ send }) => send("GET", TIMETABLE)],
-  ["GET exams", ({ send }) => send("GET", EXAMS)],
-  ["GET settings", ({ send }) => send("GET", SETTINGS)],
-  ["POST pick", ({ send }, basedOn) => send("POST", PICKS, { ...LECTURE, groupNumber: "02", basedOn })],
-  [
-    "DELETE pick",
-    ({ send }, basedOn) =>
-      send("DELETE", PICKS, { courseNumber: "89-110", lessonType: "הרצאה", basedOn }),
-  ],
-  // not the language the file holds, which would be no edit and so no save to misreport
-  ["PATCH settings", ({ send }, basedOn) => send("PATCH", SETTINGS, { language: "he", basedOn })],
-  ["POST undo", ({ send }, basedOn) => send("POST", UNDO, { basedOn })],
-  ["POST redo", ({ send }, basedOn) => send("POST", REDO, { basedOn })],
-  [
-    "POST restore",
-    ({ send, takenAt }, basedOn) => send("POST", RESTORE, { takenAt, basedOn }),
-  ],
-];
+/** A route as the route table names it: `POST /api/timetable/:year/:semester/picks`. */
+type Route = { method: string; path: string; key: string };
 
-/** The routes that save, which are the ones a misreported save can reach. */
-const SAVES = new Set(["POST pick", "DELETE pick", "PATCH settings", "POST undo", "POST redo", "POST restore"]);
+/** What a path parameter is filled with. A route with a parameter not here fails, naming it. */
+const PARAMS: Record<string, string> = { year: "2027", semester: "fall", courseNumber: "89-110" };
+
+/**
+ * The one body every route that takes a body is sent, unless `BODIES` gives it its own: a field
+ * for each thing a route in this API names, with values the staged Workspace makes into a real
+ * edit. Routes parse their bodies with `z.object`, which drops a field it does not know, so one
+ * body serves them all — a Pick route reads the Pick's fields and ignores the Blocked Time's.
+ *
+ * The values are chosen to **move** the file where they can: Group 02 over the staged 01, a name
+ * no Variant has, the language the file does not hold. An edit that moves nothing saves nothing,
+ * and a save the adapter never made is a save it cannot misreport.
+ *
+ * `academicYear`, `semester` and `status` are there for routes about an Attempt, which another
+ * lane was adding in the run this was written in: a Course in a Semester with a status is what an
+ * Attempt is (CONTEXT.md), so a route taking one should parse this body as it stands.
+ */
+const shared = ({ takenAt }: Staged, basedOn: string): Record<string, unknown> => ({
+  ...LECTURE,
+  groupNumber: "02",
+  variant: "A",
+  name: "Z",
+  day: "sunday",
+  start: "08:00",
+  end: "10:00",
+  label: "commute",
+  index: 0,
+  toYear: 2027,
+  toSemester: "spring",
+  language: "he",
+  requirementsFile: "cs-2027",
+  requirementId: "core",
+  programs: [{ requirementsFile: "cs-2027" }],
+  cohort: { academicYear: 2026, semester: "fall" },
+  file: {},
+  takenAt,
+  academicYear: 2027,
+  semester: "fall",
+  status: "planned",
+  basedOn,
+});
+
+/** The query every read is sent. A read ignores a parameter it does not take. */
+const SHARED_QUERY = "semester=fall";
+
+/** The routes `shared` does not fit, each with the body it takes. Keyed as `Route.key` is. */
+const BODIES: Record<string, (staged: Staged, basedOn: string) => unknown> = {
+  "POST /api/catalog/:year/import": () => CRAWL,
+  // the Pin, the tick and the Variant `stage` made, so these three move the file too
+  "DELETE /api/progress/pins": (staged, basedOn) => ({
+    ...shared(staged, basedOn),
+    requirementId: "electives",
+  }),
+  "DELETE /api/progress/ticks": (staged, basedOn) => ({
+    ...shared(staged, basedOn),
+    requirementId: "hebrew",
+  }),
+  "POST /api/timetable/:year/:semester/variants/primary": (staged, basedOn) => ({
+    ...shared(staged, basedOn),
+    variant: "B",
+  }),
+};
+
+/** Every route `createApi` registers, once each: the route table, less its middleware. */
+function routesOf(staged: Staged): Route[] {
+  const seen = new Map<string, Route>();
+  for (const { method, path } of staged.api.routes) {
+    // `use` registers middleware under `ALL`; a route registered with `capped` before its handler
+    // is listed once per handler, and is one route
+    if (method === "ALL") continue;
+    const key = `${method} ${path}`;
+    if (!seen.has(key)) seen.set(key, { method, path, key });
+  }
+  return [...seen.values()];
+}
+
+/** Asks one route, with its parameters filled and, where it takes one, its body. */
+async function ask(staged: Staged, route: Route, basedOn: string): Promise<Response> {
+  const path = route.path.replace(/:(\w+)/g, (_, name: string) => {
+    const value = PARAMS[name];
+    if (value === undefined) throw new Error(`${route.key}: no value for the parameter :${name}`);
+    return value;
+  });
+  // the one query a read takes that is not optional: the Catalog's offerings name their Semester
+  if (route.method === "GET") return staged.send("GET", `${path}?${SHARED_QUERY}`);
+  const body = BODIES[route.key] ?? shared;
+  return staged.send(route.method, path, body(staged, basedOn));
+}
+
+/** What the honest pass learned about one route. */
+type Learned = Route & { serves: boolean; saves: boolean };
+
+/**
+ * Every route, asked once against an honest adapter in a Workspace of its own: whether it answers
+ * a 200 with a `version`, which is what serving a revision is, and whether that `version` moved,
+ * which is what saving is. A route the shared body does not fit answers 400 and fails here.
+ */
+async function learnRoutes(): Promise<Learned[]> {
+  const learned: Learned[] = [];
+  for (const route of routesOf(await stage())) {
+    const staged = await stage();
+    const before = await staged.version();
+    const answer = await ask(staged, route, before);
+    expect(answer.status, `${route.key} did not take the shared body: give it one in BODIES`).not.toBe(400);
+    const body: unknown = answer.status === 200 ? await answer.json() : undefined;
+    const served =
+      typeof body === "object" && body !== null && "version" in body ? body.version : undefined;
+    if (served !== undefined) expect(isStateFileRevision(served), route.key).toBe(true);
+    learned.push({ ...route, serves: served !== undefined, saves: served !== undefined && served !== before });
+  }
+  return learned;
+}
 
 /**
  * The revisions a careless or hostile adapter could hand back: the file's own content, a path to
@@ -189,18 +303,44 @@ const REVISIONS: [string, (staged: Staged, honest: string) => Promise<unknown>][
   ["not a string", async ({ root }) => ({ path: root })],
 ];
 
+/**
+ * What the two lies are put to, learned once for both: every route that serves a revision, and of
+ * those, every one that saves. Asserted to include the routes the ticket names, so a derivation
+ * that went wrong cannot pass by covering nothing.
+ */
+let learned: Promise<Learned[]> | undefined;
+const routesServing = async (): Promise<Learned[]> => {
+  learned ??= learnRoutes();
+  const routes = await learned;
+  const serving = routes.filter((route) => route.serves).map((route) => route.key);
+  for (const named of [
+    "GET /api/timetable/:year/:semester",
+    "GET /api/programs",
+    "PUT /api/programs",
+    "PUT /api/cohort",
+    "GET /api/progress",
+    "POST /api/progress/pins",
+    "POST /api/progress/ticks",
+  ]) {
+    expect(serving, `the honest pass should find ${named} serving a revision`).toContain(named);
+  }
+  return routes;
+};
+
 for (const half of ["read", "save"] as const) {
   it(`serves no revision a hostile adapter made up on a ${half}, on any route`, async () => {
-    for (const [route, ask] of ROUTES) {
-      if (half === "save" && !SAVES.has(route)) continue;
+    const routes = (await routesServing()).filter((route) =>
+      half === "read" ? route.serves : route.saves,
+    );
+    for (const route of routes) {
       for (const [kind, make] of REVISIONS) {
         const staged = await stage();
         const honest = await staged.version();
         const revision = await make(staged, honest);
         staged.lie(half, () => revision);
 
-        const answer = await ask(staged, honest);
-        const where = `${route}, ${kind}, on the ${half}`;
+        const answer = await ask(staged, route, honest);
+        const where = `${route.key}, ${kind}, on the ${half}`;
         // refused, and refused as this: a route answering for some other reason, or not reaching
         // the port at all, would prove nothing about the revision
         expect(answer.status, where).toBe(409);
@@ -214,10 +354,9 @@ for (const half of ["read", "save"] as const) {
     }
     // A budget rather than the default five seconds, as `tools/pr-review/followers.test.ts` gives
     // its whole-tree tests and for the same reason: this stages a fresh Workspace — a create, an
-    // import, two Picks and an undo, each a real disk write — for every route and every revision,
-    // over fifty of them. Measured 2026-10-05 on PR #300's branch: 2882ms alone, and 3823–5330ms
-    // inside `npm test` and `npm run test:node`, where it went over the default three times in
-    // five runs once that branch's new test files joined the node project. The assertions are
-    // unchanged; the default timeout was standing in for a measurement nobody had taken.
-  }, 20_000);
+    // import, two Picks, four other edits and an undo, each a real disk write — for every route and
+    // every revision, and the routes are every one the API has (#332). The first of the two tests
+    // also runs the honest pass, one more Workspace per route. Measured on PR #300's branch with
+    // nine routes listed by hand: 2882ms alone, 3823–5330ms inside `npm test`.
+  }, 120_000);
 }
