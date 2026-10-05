@@ -65,6 +65,13 @@ export {
 } from "./variants.ts";
 // The Tray (#283): adding a Course to a Variant's Tray and removing one, with its Picks.
 export { addCourseToTray, removeCourseFromTray } from "./tray.ts";
+// Blocked Times (#282): add, replace, remove, and copy to another Semester.
+export {
+  addBlockedTimeTo,
+  copyBlockedTimesTo,
+  removeBlockedTimeAt,
+  replaceBlockedTimeAt,
+} from "./blockedTimes.ts";
 export {
   watchWorkspace,
   DEFAULT_SETTLE_MS,

@@ -2482,3 +2482,118 @@ it("copies the Tray with the Variant it belongs to", async () => {
   expect(copy.variantName).toBe("B");
   expect(copy.tray.map((entry) => entry.courseNumber)).toEqual(["89-110"]);
 });
+
+/**
+ * Blocked Times over HTTP (#282): each operation on a real temp-dir Workspace, the Clash with a
+ * Pick named by its label, a stale revision refused, and undo.
+ */
+const BLOCKED = `${TIMETABLE}/blocked-times`;
+const WORK = { day: "tuesday", start: "13:00", end: "17:00", label: "work" };
+
+const put = (path: string, body: unknown) =>
+  api.request(path, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...bearer },
+    body: JSON.stringify(body),
+  });
+
+type BlockedBody = {
+  blockedTimes: Array<{ semester: string; day: string; start: string; end: string; label: string }>;
+  blockedTimeWarnings: Array<{ kind: string; index: number }>;
+  clashes: Array<{ kind: string; blockedTime?: { label: string } }>;
+};
+
+it("adds a Blocked Time, splitting a night shift, and keeps it across a restart", async () => {
+  await post("/api/workspace", {});
+
+  const added = await save(BLOCKED, { day: "monday", start: "23:00", end: "01:00", label: "shift" });
+
+  expect(added.status).toBe(200);
+  const rows = [
+    { semester: "fall", day: "monday", start: "23:00", end: "00:00", label: "shift" },
+    { semester: "fall", day: "tuesday", start: "00:00", end: "01:00", label: "shift" },
+  ];
+  await expect(added.json()).resolves.toMatchObject({ blockedTimes: rows });
+  restart();
+  await expect((await get(TIMETABLE)).json()).resolves.toMatchObject({ blockedTimes: rows });
+});
+
+it("records a Pick over a Blocked Time and reports the Clash with its label", async () => {
+  await post("/api/workspace", {});
+  await save(BLOCKED, WORK);
+
+  const picked = await save(PICKS, LECTURE);
+
+  expect(picked.status).toBe(200);
+  const body = (await picked.json()) as BlockedBody;
+  expect(body.clashes).toMatchObject([
+    { kind: "meeting-blocked-time", blockedTime: { label: "work" } },
+  ]);
+});
+
+it("accepts a range that does not advance, and says so", async () => {
+  await post("/api/workspace", {});
+
+  const added = (await (await save(BLOCKED, { ...WORK, end: "13:00" })).json()) as BlockedBody;
+
+  expect(added.blockedTimes).toHaveLength(1);
+  expect(added.blockedTimeWarnings).toMatchObject([
+    { kind: "blocked-time-does-not-advance", index: 0 },
+  ]);
+});
+
+it("replaces and removes a Blocked Time by position, and one undo puts it back", async () => {
+  await post("/api/workspace", {});
+  await save(BLOCKED, WORK);
+
+  const replaced = (await (
+    await put(BLOCKED, { ...WORK, label: "job", index: 0, basedOn: await currentVersion() })
+  ).json()) as BlockedBody;
+  expect(replaced.blockedTimes.map((b) => b.label)).toEqual(["job"]);
+
+  const removed = (await (await unsave(BLOCKED, { index: 0 })).json()) as BlockedBody;
+  expect(removed.blockedTimes).toEqual([]);
+
+  await expect((await step(UNDO)).json()).resolves.toMatchObject({ label: "remove-blocked-time" });
+  await expect((await get(TIMETABLE)).json()).resolves.toMatchObject({
+    blockedTimes: [{ label: "job" }],
+  });
+});
+
+it("copies a Semester's Blocked Times to another, which then reads them as its own", async () => {
+  await post("/api/workspace", {});
+  await save(BLOCKED, WORK);
+
+  const copied = await save(`${BLOCKED}/copy`, { toYear: 2027, toSemester: "spring" });
+
+  expect(copied.status).toBe(200);
+  await expect((await get("/api/timetable/2027/spring")).json()).resolves.toMatchObject({
+    blockedTimes: [{ ...WORK, semester: "spring" }],
+  });
+});
+
+it("refuses a stale Blocked Time edit, and names every bad body as a 400", async () => {
+  await post("/api/workspace", {});
+  const stale = await currentVersion();
+  await save(BLOCKED, WORK);
+
+  const refused = await remove(BLOCKED, { index: 0, basedOn: stale });
+  expect(refused.status).toBe(409);
+  await expect(refused.json()).resolves.toMatchObject({ reason: "state-file-changed" });
+
+  const basedOn = await currentVersion();
+  const answers: [string, Response, string][] = [
+    ["24:00", await post(BLOCKED, { ...WORK, end: "24:00", basedOn }), "not-a-blocked-time"],
+    ["saturday", await post(BLOCKED, { ...WORK, day: "saturday", basedOn }), "not-a-blocked-time"],
+    ["negative index", await remove(BLOCKED, { index: -1, basedOn }), "not-a-blocked-time"],
+    [
+      "copy to nowhere",
+      await post(`${BLOCKED}/copy`, { toYear: 2027, toSemester: "winter", basedOn }),
+      "not-a-blocked-time-copy",
+    ],
+  ];
+  for (const [where, answer, error] of answers) {
+    expect(answer.status, where).toBe(400);
+    await expect(answer.json(), where).resolves.toEqual({ error });
+  }
+});

@@ -1,4 +1,5 @@
 import {
+  blockedTimeWarnings,
   clashesIn,
   recordPick,
   removePick,
@@ -7,6 +8,8 @@ import {
   trayEntries,
   variantAt,
   variantWarnings,
+  type BlockedTime,
+  type BlockedTimeWarning,
   type GroupPick,
   type TimetableClash,
   type PickSlot,
@@ -90,6 +93,14 @@ export type TimetableView = {
    * that does not have it — is listed with `known: false` rather than left out.
    */
   tray: TrayEntry[];
+  /**
+   * The Semester's Blocked Times (#282), the same whichever Variant is shown — they belong to the
+   * Semester, so switching Variants never hides one. In file order, which is how an edit
+   * addresses one: by its position here.
+   */
+  blockedTimes: BlockedTime[];
+  /** A Blocked Time that keeps no time free, by position, as the file stands after the edit. */
+  blockedTimeWarnings: BlockedTimeWarning[];
 };
 
 export type TimetableResult =
@@ -172,6 +183,8 @@ async function view(workspace: Workspace, state: State, at: TimetableRef): Promi
     clashes: clashesIn(state, shown),
     variantWarnings: variantWarnings(state, at),
     tray,
+    blockedTimes: timetableAt(state, at)?.blockedTimes ?? [],
+    blockedTimeWarnings: blockedTimeWarnings(state, at),
   };
 }
 

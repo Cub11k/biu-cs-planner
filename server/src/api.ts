@@ -8,18 +8,22 @@ import {
   importCrawl,
   listBackups,
   listOfferings,
+  addBlockedTimeTo,
   addCourseToTray,
   addVariant,
+  copyBlockedTimesTo,
   duplicateVariantAs,
   makeVariantPrimary,
   pickGroup,
   readExams,
   readSettings,
   readTimetable,
+  removeBlockedTimeAt,
   removeCourseFromTray,
   removeGroupPick,
   removeVariant,
   renameVariantAs,
+  replaceBlockedTimeAt,
   restoreBackup,
   setSettings,
   workspaceStatus,
@@ -32,6 +36,7 @@ import {
 import { editHistories } from "./history.ts";
 import type { HistoryMove } from "./history.ts";
 import {
+  blockedTimeSchema,
   CURRENT_CATALOG_SCHEMA_VERSION,
   groupPickSchema,
   rawCrawlSchema,
@@ -185,6 +190,52 @@ const namedVariantSchema = z.object({ variant: variantNameSchema, basedOn: based
 const trayCourseSchema = z.object({
   variant: variantSchema,
   courseNumber: z.string().min(1),
+  basedOn: basedOnSchema,
+});
+
+/**
+ * A Blocked Time as a student types it (#282): a Day, a start, an end and a label. The shapes
+ * come from `core`'s own `blockedTimeSchema`, so a time this route accepts is one the State File
+ * can hold; the Semester is left out because it is the Timetable's, named by the path. An end
+ * before the start is accepted — it is a range that wraps past midnight, and `core` splits it —
+ * and so is an end equal to the start, which is kept and comes back as a Warning.
+ *
+ * `variant` decides only which Variant the answer shows: Blocked Times belong to the Semester.
+ */
+const blockedRangeShape = {
+  day: blockedTimeSchema.shape.day,
+  start: blockedTimeSchema.shape.start,
+  end: blockedTimeSchema.shape.end,
+  label: blockedTimeSchema.shape.label.max(200),
+};
+
+const newBlockedTimeSchema = z.object({
+  ...blockedRangeShape,
+  variant: variantSchema,
+  basedOn: basedOnSchema,
+});
+
+/** A position in the Timetable's list of Blocked Times, which is how one is addressed. */
+const blockedIndexSchema = z.number().int().min(0);
+
+const replacedBlockedTimeSchema = z.object({
+  ...blockedRangeShape,
+  index: blockedIndexSchema,
+  variant: variantSchema,
+  basedOn: basedOnSchema,
+});
+
+const removedBlockedTimeSchema = z.object({
+  index: blockedIndexSchema,
+  variant: variantSchema,
+  basedOn: basedOnSchema,
+});
+
+/** Where a Semester's Blocked Times are copied to: another Semester, of any Academic Year. */
+const copiedBlockedTimesSchema = z.object({
+  toYear: z.number().int().min(1900).max(2200),
+  toSemester: semesterSchema,
+  variant: variantSchema,
   basedOn: basedOnSchema,
 });
 
@@ -756,6 +807,79 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
           basedOn,
           history: into,
         }),
+      );
+    })
+
+    /**
+     * Blocked Times (#282): add, replace, remove, and copy to another Semester. Domain
+     * operations on the Timetable of one Semester; a Blocked Time is addressed by its position
+     * in the list the Timetable answer carries, which is safe because the save is refused when
+     * the file moved since that answer (#90). Each is one undo step, and each answers with the
+     * Timetable — Blocked Times, the Clashes with them, and any Warning — about the Variant named.
+     */
+    .post("/api/timetable/:year/:semester/blocked-times", capped, async (c) => {
+      const ref = timetableRef(c);
+      if (!ref.ok) return c.json({ error: ref.error }, 400);
+      const body = await bodyAs(c, newBlockedTimeSchema, "not-a-blocked-time");
+      if (!body.ok) return c.json({ error: body.error }, 400);
+
+      const { basedOn, variant, ...range } = body.value;
+      return timetableAnswer(
+        c,
+        await addBlockedTimeTo(workspace, { ...ref.at, variant }, range, {
+          basedOn,
+          history: into,
+        }),
+      );
+    })
+
+    .put("/api/timetable/:year/:semester/blocked-times", capped, async (c) => {
+      const ref = timetableRef(c);
+      if (!ref.ok) return c.json({ error: ref.error }, 400);
+      const body = await bodyAs(c, replacedBlockedTimeSchema, "not-a-blocked-time");
+      if (!body.ok) return c.json({ error: body.error }, 400);
+
+      const { basedOn, variant, index, ...range } = body.value;
+      return timetableAnswer(
+        c,
+        await replaceBlockedTimeAt(workspace, { ...ref.at, variant }, index, range, {
+          basedOn,
+          history: into,
+        }),
+      );
+    })
+
+    .delete("/api/timetable/:year/:semester/blocked-times", capped, async (c) => {
+      const ref = timetableRef(c);
+      if (!ref.ok) return c.json({ error: ref.error }, 400);
+      const body = await bodyAs(c, removedBlockedTimeSchema, "not-a-blocked-time");
+      if (!body.ok) return c.json({ error: body.error }, 400);
+
+      const { basedOn, variant, index } = body.value;
+      return timetableAnswer(
+        c,
+        await removeBlockedTimeAt(workspace, { ...ref.at, variant }, index, {
+          basedOn,
+          history: into,
+        }),
+      );
+    })
+
+    .post("/api/timetable/:year/:semester/blocked-times/copy", capped, async (c) => {
+      const ref = timetableRef(c);
+      if (!ref.ok) return c.json({ error: ref.error }, 400);
+      const body = await bodyAs(c, copiedBlockedTimesSchema, "not-a-blocked-time-copy");
+      if (!body.ok) return c.json({ error: body.error }, 400);
+
+      const { basedOn, variant, toYear, toSemester } = body.value;
+      return timetableAnswer(
+        c,
+        await copyBlockedTimesTo(
+          workspace,
+          { ...ref.at, variant },
+          { academicYear: toYear, semester: toSemester },
+          { basedOn, history: into },
+        ),
       );
     })
 

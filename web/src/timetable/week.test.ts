@@ -456,7 +456,7 @@ describe("what the week shows", () => {
         first: { group: first, meeting: span },
         second: { group: second, meeting: span },
       },
-      { kind: "meeting-blocked-time", overlap: span, group: third, meeting: span, blockedTime: span },
+      { kind: "meeting-blocked-time", overlap: span, group: third, meeting: span, blockedTime: { ...span, label: "work" }, blockedTimeIndex: 0 },
     ]);
 
     expect([...keys].sort()).toEqual(
