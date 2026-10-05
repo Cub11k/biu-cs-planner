@@ -109,3 +109,45 @@ export type {
   Timetable,
   Variant,
 } from "./state/schema.ts";
+export {
+  CURRENT_REQUIREMENTS_SCHEMA_VERSION,
+  requirementsFileSchema,
+} from "./requirements/schema.ts";
+export type {
+  Cohort,
+  CourseSet,
+  Deadline,
+  DoubleCounting,
+  Equivalence,
+  LayoutEntry,
+  LocalizedText,
+  OfferingPattern,
+  Policies,
+  Pool,
+  Prerequisite,
+  Requirement,
+  RequirementsCourse,
+  RequirementsFile,
+  Track,
+} from "./requirements/schema.ts";
+export { parseRequirementsFile, requirementsJsonSchema } from "./requirements/file.ts";
+export type {
+  IdNamespace,
+  RequirementsFileRead,
+  RequirementsFileWarning,
+} from "./requirements/file.ts";
+export { evaluateProgress, firstFitAssignment } from "./requirements/evaluate.ts";
+export type {
+  Assignment,
+  EvaluatedRequirement,
+  Lens,
+  LensEvaluation,
+  Lenses,
+  Placement,
+  Progress,
+  ProgressInput,
+  ProgressWarning,
+  RequirementStatus,
+} from "./requirements/evaluate.ts";
+export { DEFAULT_SOLVE_LIMITS, solveAssignment } from "./requirements/solve.ts";
+export type { Solution, SolveInput, SolveLimits, SolverWarning } from "./requirements/solve.ts";
