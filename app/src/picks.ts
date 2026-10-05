@@ -4,6 +4,7 @@ import {
   removePick,
   resolveVariantName,
   timetableAt,
+  trayEntries,
   variantAt,
   variantWarnings,
   type GroupPick,
@@ -13,6 +14,7 @@ import {
   type StateFileVersion,
   type StateFileWarning,
   type State,
+  type TrayEntry,
   type VariantRef,
   type VariantWarning,
 } from "@biu-cs-planner/core";
@@ -23,6 +25,7 @@ import {
   type EditRefusal,
   type StateEditing,
 } from "./edit.ts";
+import { listOfferings } from "./queries.ts";
 import type { Workspace } from "./workspace.ts";
 
 /**
@@ -80,6 +83,13 @@ export type TimetableView = {
    * because the edit that made a collision is exactly the one whose answer has to say so.
    */
   variantWarnings: VariantWarning[];
+  /**
+   * The Tray of the Variant shown, derived (#283): the Courses added to it, the Courses picked in
+   * it and the Courses planned for the Semester, each with a chip per Lesson Type read off this
+   * year's Catalog. A Course the Catalog cannot answer for — no Catalog, a refused one, or one
+   * that does not have it — is listed with `known: false` rather than left out.
+   */
+  tray: TrayEntry[];
 };
 
 export type TimetableResult =
@@ -132,16 +142,38 @@ export const variantEditedIn = (state: State, at: TimetableRef): VariantRef =>
     ? variantShownIn(state, at)
     : { academicYear: at.academicYear, semester: at.semester, variant: at.variant };
 
-const view = (state: State, at: TimetableRef): TimetableView => {
+/**
+ * The Timetable as the screen shows it, built from one State.
+ *
+ * **Async because of the Tray**, whose chips are read off the Catalog — which `./exams.ts` argued
+ * a Pick's answer should not have to read. The read is made only when the Tray has something in
+ * it, so a Variant with nothing added, picked or planned costs no Catalog read, and once it has,
+ * the chips are part of the answer every edit gives: a chip that filled a poll later than the ink
+ * beside it would be a Tray disagreeing with the week. A Catalog that cannot be read is not a
+ * refusal and carries no Warning here — the Catalog's own routes say what is wrong with it — and
+ * every entry is simply `known: false`.
+ */
+async function view(workspace: Workspace, state: State, at: TimetableRef): Promise<TimetableView> {
   const shown = variantShownIn(state, at);
+  const unread = trayEntries(state, shown, undefined);
+  const tray =
+    unread.length === 0
+      ? unread
+      : trayEntries(
+          state,
+          shown,
+          (await listOfferings(workspace, { academicYear: at.academicYear, semester: at.semester }))
+            .offerings,
+        );
   return {
     variantName: shown.variant,
     variants: (timetableAt(state, at)?.variants ?? []).map((variant) => ({ name: variant.name, primary: variant.primary })),
     picks: variantAt(state, shown)?.picks ?? [],
     clashes: clashesIn(state, shown),
     variantWarnings: variantWarnings(state, at),
+    tray,
   };
-};
+}
 
 /** What the Timetable screen shows: the Picks in the file now, and their Clashes. */
 export async function readTimetable(
@@ -155,7 +187,7 @@ export async function readTimetable(
 
   return {
     kind: "served",
-    view: view(loaded.state, at),
+    view: await view(workspace, loaded.state, at),
     version: loaded.version,
     warnings: loaded.warnings,
   };
@@ -190,7 +222,7 @@ export async function editTimetable(
 
   return {
     kind: "served",
-    view: view(outcome.state, answerAbout()),
+    view: await view(workspace, outcome.state, answerAbout()),
     version: outcome.version,
     warnings: outcome.warnings,
   };

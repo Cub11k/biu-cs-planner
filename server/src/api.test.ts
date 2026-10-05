@@ -2348,3 +2348,112 @@ it("names every bad Variant request as a 400", async () => {
   expect(read.status).toBe(400);
   await expect(read.json()).resolves.toEqual({ error: "bad-variant" });
 });
+
+/**
+ * The Tray over HTTP (#283): add and remove on a real temp-dir Workspace, the read carrying the
+ * derived Tray with chips read off the imported Catalog, undo, and a stale revision refused.
+ */
+const TRAY = `${TIMETABLE}/tray`;
+
+type TrayBody = {
+  picks: unknown[];
+  tray: Array<{
+    courseNumber: string;
+    origins: string[];
+    known: boolean;
+    chips: Array<{ lessonType: string; groupNumber?: string }>;
+    complete: boolean | null;
+  }>;
+};
+
+it("adds a Course to the Tray, keeps it across a restart, and reads its chips off the Catalog", async () => {
+  await post("/api/workspace", {});
+  await post("/api/catalog/2027/import", CRAWL);
+
+  const added = await save(TRAY, { courseNumber: "89-110" });
+
+  expect(added.status).toBe(200);
+  const expected = [
+    {
+      courseNumber: "89-110",
+      origins: ["added"],
+      known: true,
+      chips: [{ lessonType: "הרצאה" }],
+      complete: false,
+    },
+  ];
+  await expect(added.json()).resolves.toMatchObject({ tray: expected });
+
+  restart();
+  await expect((await get(TIMETABLE)).json()).resolves.toMatchObject({ tray: expected });
+});
+
+it("fills the chip and marks the Course complete once its one Lesson Type is picked", async () => {
+  await post("/api/workspace", {});
+  await post("/api/catalog/2027/import", CRAWL);
+  await save(TRAY, { courseNumber: "89-110" });
+
+  const picked = (await (await save(PICKS, LECTURE)).json()) as TrayBody;
+
+  expect(picked.tray).toEqual([
+    {
+      courseNumber: "89-110",
+      origins: ["added", "picked"],
+      known: true,
+      chips: [{ lessonType: "הרצאה", groupNumber: "01" }],
+      complete: true,
+    },
+  ]);
+});
+
+it("removes a Course with its Picks, and one undo puts both back", async () => {
+  await post("/api/workspace", {});
+  await save(TRAY, { courseNumber: "89-110" });
+  await save(PICKS, LECTURE);
+
+  const removed = (await (await unsave(TRAY, { courseNumber: "89-110" })).json()) as TrayBody;
+  expect(removed).toMatchObject({ picks: [], tray: [] });
+
+  const undone = await step(UNDO);
+  await expect(undone.json()).resolves.toMatchObject({ label: "remove-from-tray" });
+  await expect((await get(TIMETABLE)).json()).resolves.toMatchObject({
+    picks: [LECTURE],
+    tray: [{ courseNumber: "89-110", origins: ["added", "picked"] }],
+  });
+});
+
+it("lists a Course with its chips unknown when no Catalog is imported", async () => {
+  await post("/api/workspace", {});
+
+  const added = (await (await save(TRAY, { courseNumber: "89-110" })).json()) as TrayBody;
+
+  expect(added.tray).toEqual([
+    { courseNumber: "89-110", origins: ["added"], known: false, chips: [], complete: null },
+  ]);
+});
+
+it("refuses a Tray edit based on a revision the file no longer holds, and a body that is not one", async () => {
+  await post("/api/workspace", {});
+  const stale = await currentVersion();
+  await save(TRAY, { courseNumber: "89-110" });
+
+  const refused = await remove(TRAY, { courseNumber: "89-110", basedOn: stale });
+  expect(refused.status).toBe(409);
+  await expect(refused.json()).resolves.toMatchObject({ reason: "state-file-changed" });
+
+  const malformed = await post(TRAY, { courseNumber: "", basedOn: await currentVersion() });
+  expect(malformed.status).toBe(400);
+  await expect(malformed.json()).resolves.toEqual({ error: "not-a-tray-course" });
+});
+
+it("copies the Tray with the Variant it belongs to", async () => {
+  await post("/api/workspace", {});
+  await save(TRAY, { courseNumber: "89-110" });
+
+  const copy = (await (await save(`${VARIANTS}/duplicate`, {})).json()) as TrayBody & {
+    variantName: string;
+  };
+
+  expect(copy.variantName).toBe("B");
+  expect(copy.tray.map((entry) => entry.courseNumber)).toEqual(["89-110"]);
+});

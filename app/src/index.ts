@@ -63,6 +63,8 @@ export {
   renameVariantAs,
   type VariantNaming,
 } from "./variants.ts";
+// The Tray (#283): adding a Course to a Variant's Tray and removing one, with its Picks.
+export { addCourseToTray, removeCourseFromTray } from "./tray.ts";
 export {
   watchWorkspace,
   DEFAULT_SETTLE_MS,

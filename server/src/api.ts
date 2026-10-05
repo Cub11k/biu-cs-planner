@@ -8,6 +8,7 @@ import {
   importCrawl,
   listBackups,
   listOfferings,
+  addCourseToTray,
   addVariant,
   duplicateVariantAs,
   makeVariantPrimary,
@@ -15,6 +16,7 @@ import {
   readExams,
   readSettings,
   readTimetable,
+  removeCourseFromTray,
   removeGroupPick,
   removeVariant,
   renameVariantAs,
@@ -175,6 +177,16 @@ const renamedVariantSchema = z.object({
 
 /** The Variant to delete or to make primary: always named, because both act on one tab. */
 const namedVariantSchema = z.object({ variant: variantNameSchema, basedOn: basedOnSchema });
+
+/**
+ * A Course to add to a Variant's Tray or take out of it, by course number — never by Catalog
+ * entry, as the State File references every Course (#283).
+ */
+const trayCourseSchema = z.object({
+  variant: variantSchema,
+  courseNumber: z.string().min(1),
+  basedOn: basedOnSchema,
+});
 
 /**
  * A change to the student's preferences: the fields being set, and the revision the page that
@@ -707,6 +719,43 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
       return timetableAnswer(
         c,
         await makeVariantPrimary(workspace, { ...ref.at, variant }, { basedOn, history: into }),
+      );
+    })
+
+    /**
+     * The Tray (#283): add a Course to the Tray of the Variant named — the primary when none is —
+     * and take one out. Taking one out takes its Picks in that Variant with it, in the same save,
+     * so it is one undo step. Every Timetable answer carries the Tray as derived, chips and all.
+     */
+    .post("/api/timetable/:year/:semester/tray", capped, async (c) => {
+      const ref = timetableRef(c);
+      if (!ref.ok) return c.json({ error: ref.error }, 400);
+      const body = await bodyAs(c, trayCourseSchema, "not-a-tray-course");
+      if (!body.ok) return c.json({ error: body.error }, 400);
+
+      const { basedOn, variant, courseNumber } = body.value;
+      return timetableAnswer(
+        c,
+        await addCourseToTray(workspace, { ...ref.at, variant }, courseNumber, {
+          basedOn,
+          history: into,
+        }),
+      );
+    })
+
+    .delete("/api/timetable/:year/:semester/tray", capped, async (c) => {
+      const ref = timetableRef(c);
+      if (!ref.ok) return c.json({ error: ref.error }, 400);
+      const body = await bodyAs(c, trayCourseSchema, "not-a-tray-course");
+      if (!body.ok) return c.json({ error: body.error }, 400);
+
+      const { basedOn, variant, courseNumber } = body.value;
+      return timetableAnswer(
+        c,
+        await removeCourseFromTray(workspace, { ...ref.at, variant }, courseNumber, {
+          basedOn,
+          history: into,
+        }),
       );
     })
 
