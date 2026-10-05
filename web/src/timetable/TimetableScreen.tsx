@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "../api.ts";
 import { t, type Language, type StringKey } from "../i18n/strings.ts";
 import { academicYearOf, academicYearSpan, semesterOf } from "./calendar.ts";
@@ -443,8 +443,11 @@ export function TimetablePane({
    * and no re-read an unreadable answer asked for is still on its way. `undefined` otherwise — a
    * served view's revision is `string | undefined`, and `undefined` is the claim that there is no
    * State File, which the server fails closed on (#111).
+   *
+   * A layout effect, so the shell hears it before the browser paints: the buttons are enabled in
+   * the same frame as the week that makes them pressable, as they were while this screen drew them.
    */
-  useEffect(() => {
+  useLayoutEffect(() => {
     onRevision(
       timetable.kind === "served" && timetable.version !== undefined && awaitingFrom !== timetable
         ? { version: timetable.version, answer: timetable }
