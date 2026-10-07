@@ -72,7 +72,7 @@ export const attemptIdSchema = z.string().min(1).max(200);
  *
  * **`id` is what names an Attempt** (#290), because nothing else can: a retake makes course
  * number plus Semester non-unique, and a position moves with every add and remove. Two tabs and
- * Plan Diffs both have to name one Attempt and mean the same one tomorrow. `CONTEXT.md` records
+ * Plan Diffs both have to name one Attempt and mean the same one tomorrow. `GLOSSARY.md` records
  * the decision under Attempt.
  *
  * **Required in the State, and the schema version did not move for it.** A file written before
@@ -119,7 +119,7 @@ export const pickedMeetingSchema = z.object({
  *
  * The domain term is **Pick** and prose should say so; the code symbol is `GroupPick` only
  * because a type called `Pick` shadows TypeScript's built-in `Pick<T, K>`, which every
- * importer would otherwise have to alias around. Recorded in `CONTEXT.md` under Pick.
+ * importer would otherwise have to alias around. Recorded in `GLOSSARY.md` under Pick.
  */
 export const groupPickSchema = z.object({
   courseNumber: z.string(),
@@ -215,7 +215,7 @@ export const timetableSchema = timetableHeadSchema.extend({
  * existed, so a Pin without one still opens, and it names the student's **first Program**
  * (`effectiveFile` in `./programs.ts`): a single major, which is every State File written before
  * Programs could be chosen, has only that one. Every Pin and tick this build writes names its
- * file. `CONTEXT.md` records the decision under Pin.
+ * file. `GLOSSARY.md` records the decision under Pin.
  *
  * Opaque here, as the id always was: resolving it is the Progress engine's job, and a Pin that no
  * longer resolves is a Warning there rather than a broken State File.

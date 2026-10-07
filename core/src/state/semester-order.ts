@@ -2,7 +2,7 @@ import type { Semester } from "../catalog/schema.ts";
 
 /**
  * The order Semesters fall in: by Academic Year, and within one Fall < Spring < Summer
- * (`CONTEXT.md`, Academic Year). One place says it, because the Requirement engine's `latest`
+ * (`GLOSSARY.md`, Academic Year). One place says it, because the Requirement engine's `latest`
  * policy, the Plan checks and the Attempt Warnings all compare Semesters and must agree.
  */
 const SEMESTER_ORDER: Readonly<Record<Semester, number>> = { fall: 0, spring: 1, summer: 2 };

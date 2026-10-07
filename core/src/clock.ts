@@ -6,7 +6,7 @@
  * tested against.
  *
  * The set it reads is the set the schemas let in, and not a wider one: `hh:mm` from `00:00`
- * through `23:59`, zero-padded, which is the spelling `CONTEXT.md` gives a time. `core` once
+ * through `23:59`, zero-padded, which is the spelling `GLOSSARY.md` gives a time. `core` once
  * read an unpadded hour that every one of those schemas refuses, and #54 ruled that second
  * opinion out (ADR-0012) — the schemas are the single source of truth for what a clock string
  * is, and this module turns one that has already passed one of them into a number.

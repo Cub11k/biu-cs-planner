@@ -124,7 +124,7 @@ export type Tile = {
 };
 
 /**
- * Group identity is the number and the Lesson Type together (CONTEXT.md, "Group"), under
+ * Group identity is the number and the Lesson Type together (GLOSSARY.md, "Group"), under
  * the Course — each Lesson Type is numbered from 01, so every Course has a lecture 01 and
  * the Course is what tells two of them apart on one week.
  */
@@ -264,7 +264,7 @@ export function blockedTiles(blockedTimes: readonly BlockedTime[], semester: Sem
 
 /**
  * Whether this exact Group is among these Picks. Identity is the `groupKey` — the Course,
- * the Lesson Type and the Group number together (CONTEXT.md, "Group") — so a Pick of
+ * the Lesson Type and the Group number together (GLOSSARY.md, "Group") — so a Pick of
  * another Group in the same slot is not this Group.
  *
  * Asked of the Picks rather than read off `WeekGroup.picked`, because the one caller that

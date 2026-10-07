@@ -34,7 +34,7 @@ export function courseName(offering: Offering, language: Language): string {
 /**
  * A Year-long Offering carries the Meetings of both its Semesters, so a Timetable for one
  * Semester has to ask for that Semester's Meetings rather than for the Group's
- * (CONTEXT.md, "Year-long Course"; docs/research/shoham-raw-shape.md).
+ * (GLOSSARY.md, "Year-long Course"; docs/research/shoham-raw-shape.md).
  */
 export function meetingsInSemester(
   group: { meetings: readonly Meeting[] },
@@ -46,7 +46,7 @@ export function meetingsInSemester(
 /**
  * An Untimed Group has no Meetings at all in this Semester — an online Course, or one
  * Shoham has not published times for yet. It belongs in the "No fixed time" strip and
- * never on the grid (CONTEXT.md, "Untimed Group"; docs/design.md, "Grid and Picks").
+ * never on the grid (GLOSSARY.md, "Untimed Group"; docs/design.md, "Grid and Picks").
  */
 export function isUntimedIn(group: { meetings: readonly Meeting[] }, semester: Semester): boolean {
   return meetingsInSemester(group, semester).length === 0;

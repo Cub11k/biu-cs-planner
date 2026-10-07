@@ -22,7 +22,7 @@ import type { Workspace } from "./workspace.ts";
  *
  * **Why a use case of its own rather than part of `readTimetable`.** Picks carry a snapshot of
  * their Group's Meetings and nothing about Exams — an Exam belongs to the Offering and is shared
- * by all its Groups (CONTEXT.md) — so this answer needs the Catalog as well as the State File,
+ * by all its Groups (GLOSSARY.md) — so this answer needs the Catalog as well as the State File,
  * while a Pick needs neither. Folding it into `TimetableView` would put a Catalog read behind
  * every Pick and every undo, each of which answers with that same view, and would leave every
  * write route carrying Warnings about a file it never wrote to. The exam rail is its own panel on

@@ -47,7 +47,7 @@ import type { Workspace } from "./workspace.ts";
  * apply — `core` reads no clock of its own, so without one only its iteration cap would bound a
  * read (#300's amendment). The clock is injected the way `./workspace.memory.ts` injects one.
  *
- * **A Pin and a tick name their Requirements File** (`CONTEXT.md`, Pin): each reaches only the
+ * **A Pin and a tick name their Requirements File** (`GLOSSARY.md`, Pin): each reaches only the
  * Program whose file it names, and one written before Pins named their file reaches the first
  * Program. A Pin naming a file that is not among the student's Programs is a Warning here.
  */

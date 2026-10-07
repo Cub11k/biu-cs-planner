@@ -186,7 +186,7 @@ const pickSlotSchema = z.object({ courseNumber: z.string(), lessonType: z.string
 const basedOnSchema = z.string().optional();
 
 /**
- * A Variant's name: the student's own text, which is what tells two Variants apart (CONTEXT.md).
+ * A Variant's name: the student's own text, which is what tells two Variants apart (GLOSSARY.md).
  *
  * Bounded as a shape and nothing more — a name is some text, and a tab with no text is not a name
  * anyone can click — the way `pickedMeetingSchema`'s pattern says which strings a time is. A name
@@ -449,7 +449,7 @@ function programsAnswer(c: Context, result: ProgramsResult) {
 
 /**
  * Which Manual Requirement a tick is about (#288): its id and the Requirements File it is an id in
- * — always the file, since an id is unique only within one (`CONTEXT.md`, Pin) — and the revision
+ * — always the file, since an id is unique only within one (`GLOSSARY.md`, Pin) — and the revision
  * the page was based on.
  */
 const savedTickSchema = z.object({
@@ -600,7 +600,7 @@ async function bodyAs<T>(
 
 /**
  * Which Semester of which Academic Year, off the path. A Timetable covers one Semester of
- * one Academic Year (CONTEXT.md), so both name it — and both are parsed before anything
+ * one Academic Year (GLOSSARY.md), so both name it — and both are parsed before anything
  * downstream sees them, as the Catalog routes parse a year. The name of what was wrong
  * comes back, for the same reason `bodyAs` hands one back.
  */
@@ -1106,7 +1106,7 @@ export function createApi({ workspace, token, changes }: ApiDependencies) {
      * `checkExams`. `app/src/exams.ts` is that caller and this is where its answer comes out.
      *
      * **A route beside the week rather than a field on it.** An Exam belongs to the Offering and
-     * is shared by all its Groups (CONTEXT.md), so this answer needs the Catalog as well as the
+     * is shared by all its Groups (GLOSSARY.md), so this answer needs the Catalog as well as the
      * State File, while a Pick needs neither — and `TimetableView` is what every write route
      * answers with, so folding the exam period in would put a Catalog read behind every Pick and
      * every undo. The exam rail is its own panel in the side pane (`docs/design.md`, "Screens"),

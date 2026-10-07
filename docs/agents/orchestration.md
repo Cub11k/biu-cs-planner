@@ -59,13 +59,13 @@ These hold regardless of what the table says:
   a repo this size some parents still name a file in common — `issue-tracker.md` says so, and says
   not to answer it by splitting a parent back into atoms. Sequence them across runs instead. Do not
   put both in one table and hope the overlapping file is one neither of them reaches.
-- **The table names `CONTEXT.md` and every `docs/adr/` file the run expects to be touched**, each
-  one assigned to **at most one** agent. There is one `CONTEXT.md` and one `docs/adr/` for the whole
+- **The table names `GLOSSARY.md` and every `docs/adr/` file the run expects to be touched**, each
+  one assigned to **at most one** agent. There is one `GLOSSARY.md` and one `docs/adr/` for the whole
   repo (`domain.md`, "Layout: single-context"), so two agents amending one entry are two agents in
   one file, which the top of this section already rules out — and two agents each adding "the next
   free number" collide over the directory rather than over any line in it. A table does not arrive
   at those files on its own: an implementer reaches for the record *because* its own commit just
-  made the record false, which for `CONTEXT.md` is what `CLAUDE.md` asks for in as many words
+  made the record false, which for `GLOSSARY.md` is what `CLAUDE.md` asks for in as many words
   ("update it when a term changes") and for an ADR is the same reflex one document over. So the
   files most likely to be written outside a lane are the ones a lane table never thinks to list.
   **When no agent can be given one, the brief says so**, and the amendment is left to the
@@ -76,7 +76,7 @@ These hold regardless of what the table says:
   line 11, missing each other by luck of line numbers — and PR #197 amended
   `0004-localhost-auth-bearer-token.md`. #110 records the same thing in the run of 2026-09-24: #103
   landed "in a run with four other agents, two of them writing in `docs/adr/`", with `CONTEXT.md`
-  "outside every lane. Deliberately left rather than raced." Twice is a pattern.
+  (now `GLOSSARY.md`) "outside every lane. Deliberately left rather than raced." Twice is a pattern.
 - **Prefix every scratch file with your ticket number *and* something that identifies you within
   the ticket, which no other writer in it is using** — `182-review-1-graphs.ts`, not
   `182-graphs.ts`. The scratchpad is shared across agents and sessions. A run in September 2026 had
@@ -273,5 +273,5 @@ here, and the pull request that learned it is the cheapest place to propose the 
 - Frozen ticket bodies, and amendments as comments — `issue-tracker.md`
 - How big a ticket is, and composition as a parent plus sub-issues — `issue-tracker.md`
 - Why a worktree at all, and how to create and remove one — `worktrees.md`
-- The vocabulary code and commits must use — `CONTEXT.md`
+- The vocabulary code and commits must use — `GLOSSARY.md`
 - Crawled data staying out of this repo — ADR-0006, and `CLAUDE.md`

@@ -752,7 +752,7 @@ const COHORT_YEARS_BACK = 15;
 
 /**
  * The student's Cohort (#331): what it is, and a form to set or clear it. An Academic Year is named
- * by the Gregorian year it ends in (`CONTEXT.md`), which is not the year a student would type for
+ * by the Gregorian year it ends in (`GLOSSARY.md`), which is not the year a student would type for
  * "the year I started", so the year is never typed as a bare number: it is chosen, and said, as the
  * span the Timetable shows (`2025-26`). The form starts from the Cohort the server holds, and
  * starts again whenever that changes.

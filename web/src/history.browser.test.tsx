@@ -320,7 +320,7 @@ const buttonFor = (mounted: HTMLElement, which: "undo" | "redo"): HTMLButtonElem
 
 /**
  * The tile for one Group, found by the detail line `tileText` writes on it — the Lesson Type
- * as well as the number, because a Group is identified by both (CONTEXT.md, "Group").
+ * as well as the number, because a Group is identified by both (GLOSSARY.md, "Group").
  */
 function tileFor(
   mounted: HTMLElement,

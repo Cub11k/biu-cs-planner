@@ -2,7 +2,7 @@ import { variantAt, withVariant, type VariantRef } from "./picks.ts";
 import type { GroupPick, State } from "./schema.ts";
 
 /**
- * The Tray (#283): the Courses waiting to be scheduled in a Variant (CONTEXT.md).
+ * The Tray (#283): the Courses waiting to be scheduled in a Variant (GLOSSARY.md).
  *
  * **Stored is only what cannot be derived**: the Courses a student added to the Variant
  * directly, by course number, in `Variant.tray`. The Tray a student sees is derived — that list,

@@ -1,6 +1,6 @@
 /**
  * A Lesson Type is the label Shoham printed on a Group, so it arrives as free Hebrew text
- * and the set is open (CONTEXT.md, "Lesson Type"). Two things are read off it here, and
+ * and the set is open (GLOSSARY.md, "Lesson Type"). Two things are read off it here, and
  * both fall back rather than fail on a label nobody has seen before.
  */
 import { t, type Language, type StringKey } from "../i18n/strings.ts";

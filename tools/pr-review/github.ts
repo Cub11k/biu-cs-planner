@@ -220,7 +220,7 @@ export async function fetchStandardsDocs(
     .map((e) => `docs/adr/${e.name}`)
     .sort();
 
-  const paths = ["CLAUDE.md", "CONTEXT.md", ...adrs];
+  const paths = ["CLAUDE.md", "GLOSSARY.md", ...adrs];
   const texts = await Promise.all(paths.map((p) => fetchFile(repo, p, ref, token)));
   return paths.map((path, i) => `## ${path}\n\n${texts[i]}`).join("\n\n---\n\n");
 }

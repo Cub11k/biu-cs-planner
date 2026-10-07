@@ -25,7 +25,7 @@ type ServedTimetable = Extract<Answer, { picks: unknown }>;
 /**
  * A Pick as the API hands it over. `GroupPick` and not `Pick`, because a type named `Pick`
  * shadows TypeScript's built-in `Pick<T, K>` for everything that imports it — the term is
- * still Pick everywhere else (CONTEXT.md).
+ * still Pick everywhere else (GLOSSARY.md).
  */
 export type GroupPick = ServedTimetable["picks"][number];
 

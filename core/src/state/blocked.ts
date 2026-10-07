@@ -43,7 +43,7 @@ const NEXT_DAY: Readonly<Record<Day, Day | undefined>> = {
 
 /**
  * One typed range as the rows it is stored as, which is where the glossary puts the split
- * (CONTEXT.md, Blocked Time; the ruling on #39): a Blocked Time never wraps past midnight, and
+ * (GLOSSARY.md, Blocked Time; the ruling on #39): a Blocked Time never wraps past midnight, and
  * the screen that takes a wrapping range from a student is what makes it two.
  *
  * Each end is read in its own position (`core/src/clock.ts`, #48), so:

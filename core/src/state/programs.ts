@@ -108,7 +108,7 @@ export function programWarnings(
 
 /**
  * The Requirements File a Pin or a ticked Manual Requirement is about: the one it names, or — for
- * one written before Pins named their file — the student's first Program's (`CONTEXT.md`, Pin).
+ * one written before Pins named their file — the student's first Program's (`GLOSSARY.md`, Pin).
  * `undefined` when it names none and the student has chosen no Program, so it is about nothing
  * that is evaluated.
  */

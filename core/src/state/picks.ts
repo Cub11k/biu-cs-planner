@@ -24,7 +24,7 @@ import { timetableAt, variantNamed, withTimetable } from "./timetable.ts";
 /**
  * The Variant a first Pick goes into when nothing else names one.
  *
- * A Pick lives in a Variant (CONTEXT.md), so picking requires one, and there is no screen
+ * A Pick lives in a Variant (GLOSSARY.md), so picking requires one, and there is no screen
  * for creating or naming Variants yet. A single letter rather than a translated word:
  * a Variant's name is the student's own text, it is written into their file, and a name
  * that arrived from the UI language would read as the wrong language the moment they
@@ -36,7 +36,7 @@ export const DEFAULT_VARIANT_NAME = "A";
 export type VariantRef = {
   academicYear: number;
   semester: Semester;
-  /** Variants are named, and the name is what tells them apart (CONTEXT.md). */
+  /** Variants are named, and the name is what tells them apart (GLOSSARY.md). */
   variant: string;
   /**
    * Which Variant of that name, by its position in file order, while two share it (#322). Absent

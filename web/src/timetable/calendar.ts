@@ -8,7 +8,7 @@ import type { Semester } from "./catalog.ts";
 
 /**
  * An Academic Year is named by the Gregorian year it ends in: 2026-27 is 2027
- * (CONTEXT.md, "Academic Year"). It turns over in September, when registration for the
+ * (GLOSSARY.md, "Academic Year"). It turns over in September, when registration for the
  * Fall Semester opens — which is also when the year's Catalog is worth crawling.
  */
 export function academicYearOf(date: Date): number {

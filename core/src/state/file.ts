@@ -265,7 +265,7 @@ function checkBlockedSemesters(
  * other, and this is why they still agree.
  *
  * A period crossing midnight is therefore still two Blocked Times, one either side of it, as
- * `CONTEXT.md` has it: `23:00`–`00:00` on one Day and `00:00`–`01:00` on the next.
+ * `GLOSSARY.md` has it: `23:00`–`00:00` on one Day and `00:00`–`01:00` on the next.
  *
  * A time neither reading can place cannot reach here: `blockedTimeSchema` carries the same
  * pattern `core/src/clock.ts` reads with, so `readEach` has already refused the entry and
@@ -527,7 +527,7 @@ export class StateFileUnwritableError extends Error {
  * `watchWorkspace` serves, both of which are versions of something else (`app/src/changes.ts`
  * says the same thing from the other side).
  *
- * **The type is named for the wire and the prose word is "revision"** (`CONTEXT.md`, Revision;
+ * **The type is named for the wire and the prose word is "revision"** (`GLOSSARY.md`, Revision;
  * ADR-0015). "Version" alone is ambiguous with both of those, so the name stays only because it
  * is in this package's surface and on the wire, where renaming it is a change to every caller.
  *

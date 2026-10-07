@@ -64,7 +64,7 @@ import type { TestFile } from "../pr-report/tests.ts";
 export const WORKSPACES = ["core", "app", "server", "web"] as const;
 
 /**
- * Not the Workspace of `CONTEXT.md` — that is a student's folder of Catalogs and State
+ * Not the Workspace of `GLOSSARY.md` — that is a student's folder of Catalogs and State
  * Files, and `app` exports a `Workspace` type for it. This is the npm sense, the one
  * `package.json` and `docs/design.md` use, so the name says which.
  */

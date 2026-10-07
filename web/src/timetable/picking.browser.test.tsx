@@ -439,7 +439,7 @@ async function openWeek(options: { strict?: boolean } = {}): Promise<HTMLElement
 
 /**
  * The tile for one Group, found by the detail line `tileText` writes on it — the Lesson Type
- * as well as the number, because a Group is identified by both (CONTEXT.md, "Group").
+ * as well as the number, because a Group is identified by both (GLOSSARY.md, "Group").
  */
 function tileFor(
   mounted: HTMLElement,
@@ -467,7 +467,7 @@ it("picks a Group when its block is clicked, and draws it in ink", async () => {
   });
   const recorded = sent.find((request) => request.method === "POST");
   expect(recorded?.pathname).toBe("/api/timetable/2027/fall/picks");
-  // the snapshot of the Group's Meetings travels with the Pick (CONTEXT.md, "Pick")
+  // the snapshot of the Group's Meetings travels with the Pick (GLOSSARY.md, "Pick")
   expect(recorded?.body).toMatchObject({
     courseNumber: "89-110",
     groupNumber: "01",

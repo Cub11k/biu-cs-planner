@@ -5,7 +5,7 @@ import { stateSchema, type State } from "./schema.ts";
 
 /**
  * Pins and ticked Manual Requirements as a student edits them (#288): four plain edits, each
- * referencing its Requirement by id and Requirements File (`CONTEXT.md`, Pin). A Pin or tick
+ * referencing its Requirement by id and Requirements File (`GLOSSARY.md`, Pin). A Pin or tick
  * written before Pins named their file is read as naming the first Program's.
  *
  * File names and Requirement ids are invented (ADR-0006).

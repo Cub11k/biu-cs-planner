@@ -313,7 +313,7 @@ it("reads 00:00 to 00:00 as the whole Day", () => {
 });
 
 /**
- * A Blocked Time never wraps past midnight, so a night shift is two of them (CONTEXT.md,
+ * A Blocked Time never wraps past midnight, so a night shift is two of them (GLOSSARY.md,
  * "Blocked Time"). The first half ending at `00:00` is the end of its own Day and must not
  * reach into the next one.
  */

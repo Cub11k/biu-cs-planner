@@ -4,7 +4,7 @@ A local course planner for Bar-Ilan CS students: degree Plan across Semesters pl
 
 ## Read first
 
-- `CONTEXT.md`: the domain glossary. Use its terms in code, docs and conversation, and update it when a term changes.
+- `GLOSSARY.md`: the domain glossary. Use its terms in code, docs and conversation, and update it when a term changes.
 - `docs/design.md`: the agreed design, the next step, build order, deferred items and open facts.
 - `docs/adr/`: why hard-to-reverse decisions were made. Read the relevant ADR before proposing an alternative.
 - `docs/research/`: findings on BIU data sources, distribution options and shortcuts. Check here before researching those again.
@@ -50,7 +50,7 @@ The five canonical triage roles, each label string equal to its name. See `docs/
 
 ### Domain docs
 
-Single-context: `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+Single-context: `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
 
 ### Worktrees
 

@@ -7,7 +7,7 @@ import type { ManualTick, Pin, State } from "./schema.ts";
  * handed with its own label, so each is one undo step (ADR-0013), and each hands back the State it
  * was given when nothing moves, so nothing is saved.
  *
- * **A Requirement is named by its id and its Requirements File** (`CONTEXT.md`, Pin), because an
+ * **A Requirement is named by its id and its Requirements File** (`GLOSSARY.md`, Pin), because an
  * id is unique only within one file and a double major has two. Every Pin and tick written here
  * names its file. One written before Pins named their file is read as naming the student's first
  * Program's (`effectiveFile`), so pinning a Course in the first Program replaces such a Pin, and

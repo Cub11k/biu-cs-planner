@@ -24,7 +24,7 @@ export type QueryWarning = CatalogFileWarning | { kind: "no-catalog-for-year"; a
 
 /**
  * The Workspace would not touch the Catalog file, so there is no Catalog to say anything about
- * (#149, #187). **A refusal, not a Warning**: `CONTEXT.md`'s Warning is a problem found in
+ * (#149, #187). **A refusal, not a Warning**: `GLOSSARY.md`'s Warning is a problem found in
  * something that was read, and here nothing was. So it is an answer of its own, beside the read
  * and not inside its Warnings, which is the line `docs/design.md` draws ("External edits").
  *

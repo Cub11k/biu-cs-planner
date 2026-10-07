@@ -51,7 +51,7 @@ const EMPTY: BlockedRange = { day: "sunday", start: "08:00", end: "10:00", label
  * A form rather than a popover over the grid: every control is an ordinary field with a label,
  * reached with Tab and submitted with Enter, which is what keeps it usable without a mouse. The
  * student types one range; a range that ends before it starts wraps past midnight, and the server
- * stores it as two rows (CONTEXT.md, Blocked Time) — this form does not need to know that rule,
+ * stores it as two rows (GLOSSARY.md, Blocked Time) — this form does not need to know that rule,
  * and the list then shows both rows, which is the truth about what was stored.
  */
 export function BlockedTimesEditor({

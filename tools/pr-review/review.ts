@@ -86,7 +86,7 @@ const issueText = (issue: LinkedIssue): string =>
 export type ReviewInput = {
   pr: PullRequest;
   diff: string;
-  /** CLAUDE.md, CONTEXT.md and the ADRs, already read from the checkout. */
+  /** CLAUDE.md, GLOSSARY.md and the ADRs, already read from the checkout. */
   standardsDocs: string;
 };
 

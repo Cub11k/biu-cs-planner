@@ -248,7 +248,7 @@ function statuses(nodes: readonly EvaluatedRequirement[], lens: Lens, into = new
 
 /**
  * Pairs two evaluations of one Requirements File by Requirement id, never by position: an id is
- * unique within one file (`CONTEXT.md`, Pin), so it is the same Requirement in both trees, and the
+ * unique within one file (`GLOSSARY.md`, Pin), so it is the same Requirement in both trees, and the
  * base rule set they share pairs up while each Track's own Requirements are what one side has and
  * the other lacks. Only meaningful for one file — two files' ids name unrelated Requirements, and
  * the caller compares nothing across them.

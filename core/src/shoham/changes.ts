@@ -37,7 +37,7 @@ export function offeringKey(courseNumber: string, semesters: Semester[]): string
  * Shoham numbers each Lesson Type's Groups from 01, so 01 of the lecture and 01 of the
  * tirgul are two Groups a student picks separately -- the number alone is not an identity.
  * `code|group|kind|semester` is unique across the whole crawl, which is that pair being
- * unique within an Offering (docs/research/shoham-raw-shape.md). CONTEXT.md says so too.
+ * unique within an Offering (docs/research/shoham-raw-shape.md). GLOSSARY.md says so too.
  */
 export function groupKey(number: string, lessonType: string): string {
   return `${number}|${lessonType}`;

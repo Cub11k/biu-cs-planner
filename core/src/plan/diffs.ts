@@ -49,7 +49,7 @@ import type { Attempt, AttemptId, State } from "../state/schema.ts";
  * Diff still names the course number as its side wrote it: the Variant's for an `add` and a
  * `move-here`, which are about a Course in the Variant, and the Attempt's for the rest.
  *
- * **A Year-long Course is one unit across Fall and Spring** (CONTEXT.md: two Attempts, a Fall half
+ * **A Year-long Course is one unit across Fall and Spring** (GLOSSARY.md: two Attempts, a Fall half
  * and a Spring half of one Academic Year). Adding one adds every half the Plan lacks; dropping one
  * drops both planned halves, so neither half is left behind as a split the Plan checks would then
  * report. A planned half that some Variant of the other half's Timetable holds is never a drop:

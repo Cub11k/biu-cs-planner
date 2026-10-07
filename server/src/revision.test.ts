@@ -207,7 +207,7 @@ const PARAMS: Record<string, string> = { year: "2027", semester: "fall", courseN
  *
  * `academicYear`, `semester` and `status` are there for routes about an Attempt, which another
  * lane was adding in the run this was written in: a Course in a Semester with a status is what an
- * Attempt is (CONTEXT.md), so a route taking one should parse this body as it stands.
+ * Attempt is (GLOSSARY.md), so a route taking one should parse this body as it stands.
  */
 const shared = ({ takenAt }: Staged, basedOn: string): Record<string, unknown> =>
   sharedBody(takenAt, basedOn);

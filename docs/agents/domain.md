@@ -2,12 +2,17 @@
 
 How the engineering skills should consume this repo's domain documentation when exploring the codebase.
 
-**Layout: single-context.** One `CONTEXT.md` and one `docs/adr/` at the repo root. There is no
-`CONTEXT-MAP.md` and no per-package context; this is a single-package repo.
+**Layout: single-context.** One `GLOSSARY.md` and one `docs/adr/` at the repo root. There is no
+`GLOSSARY-MAP.md` and no per-package context; this is a single-package repo.
+
+**The glossary was `CONTEXT.md` until 2026-10-07.** It was renamed when mattpocock-skills 1.3.1
+moved its skills to `GLOSSARY.md`. ADRs, tickets, pull requests and session transcripts from before
+then say `CONTEXT.md` and mean this file. The ADRs keep that wording, because an ADR's original text
+is left as it was ("Correcting an ADR" below).
 
 ## Before exploring, read these
 
-- **`CONTEXT.md`** at the repo root: the domain glossary.
+- **`GLOSSARY.md`** at the repo root: the domain glossary.
 - **`docs/adr/`**: read ADRs that touch the area you're about to work in.
 - **`docs/design.md`**: the agreed design, the next step, the build order, deferred items and open facts.
 - **`docs/research/`**: existing findings on BIU data sources, distribution options and shortcuts. Check here before researching those again.
@@ -22,7 +27,7 @@ If any of these files don't exist, **proceed silently**. Don't flag their absenc
 ```
 /
 ├── CLAUDE.md
-├── CONTEXT.md
+├── GLOSSARY.md
 ├── docs/
 │   ├── design.md
 │   ├── adr/
@@ -35,7 +40,7 @@ If any of these files don't exist, **proceed silently**. Don't flag their absenc
 
 ## Use the glossary's vocabulary
 
-When your output names a domain concept (in an issue title, a refactor proposal, a hypothesis, a test name), use the term as defined in `CONTEXT.md`. Don't drift to synonyms the glossary explicitly avoids — it records an _Avoid_ list per term, and those are the near-misses to stay off.
+When your output names a domain concept (in an issue title, a refactor proposal, a hypothesis, a test name), use the term as defined in `GLOSSARY.md`. Don't drift to synonyms the glossary explicitly avoids — it records an _Avoid_ list per term, and those are the near-misses to stay off.
 
 If the concept you need isn't in the glossary yet, that's a signal: either you're inventing language the project doesn't use (reconsider) or there's a real gap (note it for `/domain-modeling`).
 

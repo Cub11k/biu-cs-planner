@@ -20,7 +20,7 @@ Semesters, and build the weekly Timetable for an Academic Year.
   browser is only the screen. The planner is used mostly around registration windows.
 - **Hebrew and English**, right-to-left supported from the first component.
 
-The vocabulary above is precise, and [`CONTEXT.md`](CONTEXT.md) defines every term in it.
+The vocabulary above is precise, and [`GLOSSARY.md`](GLOSSARY.md) defines every term in it.
 
 ## Running it
 
@@ -155,7 +155,7 @@ your own.
 
 ## Documentation
 
-- [`CONTEXT.md`](CONTEXT.md) — the domain glossary; the words the code uses
+- [`GLOSSARY.md`](GLOSSARY.md) — the domain glossary; the words the code uses
 - [`docs/design.md`](docs/design.md) — the agreed design, build order, deferred items, open facts
 - [`docs/adr/`](docs/adr/) — why the hard-to-reverse decisions went the way they did
 - [`docs/research/`](docs/research/) — findings on BIU's data sources and on distribution

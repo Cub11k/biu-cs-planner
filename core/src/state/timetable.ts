@@ -8,7 +8,7 @@ import type { State, Timetable, Variant } from "./schema.ts";
  * `state -> state` function (ADR-0013).
  */
 
-/** One Semester of one Academic Year: what names a Timetable (CONTEXT.md). */
+/** One Semester of one Academic Year: what names a Timetable (GLOSSARY.md). */
 export type TimetableAt = { academicYear: number; semester: Semester };
 
 export const isTimetableFor = (timetable: Timetable, at: TimetableAt): boolean =>

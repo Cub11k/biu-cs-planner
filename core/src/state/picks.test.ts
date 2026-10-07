@@ -175,7 +175,7 @@ it("hands back the same State when there is nothing to remove", () => {
 
 it("ignores a Year-long Group's other Semester when looking for Clashes", () => {
   // A Year-long Course is picked once for the year and the same Group covers both
-  // Semesters, so its snapshot carries both (CONTEXT.md, "Year-long Course"). Two such
+  // Semesters, so its snapshot carries both (GLOSSARY.md, "Year-long Course"). Two such
   // Groups whose *Spring* Meetings overlap are not a Clash in the Fall Variant, and
   // reporting one would put red pen on a Meeting no Fall week draws.
   const yearLong = (

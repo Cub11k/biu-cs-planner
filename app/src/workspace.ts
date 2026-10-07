@@ -280,7 +280,7 @@ export function statusOf(layout: {
  * The **Workspace Layout**: the folders a Workspace holds, which is what this module and both
  * adapters mean whenever they say "the layout".
  *
- * Named because the bare word was ambiguous. `CONTEXT.md` glosses **Suggested Layout** — the
+ * Named because the bare word was ambiguous. `GLOSSARY.md` glosses **Suggested Layout** — the
  * department's recommended placement of Courses across Semesters — and the code used "the
  * layout" for something entirely unrelated: `catalogs/`, `requirements/` and `.backups/`, the
  * folders `create` makes and `status` reports missing. Two meanings, one of them glossed and
@@ -601,7 +601,7 @@ export class BackupRefusedError extends WorkspaceRefusedError {
 /**
  * What a State File holds, and which revision that content is.
  *
- * `version` is the field's name, and what it holds is the State File's **revision** (`CONTEXT.md`;
+ * `version` is the field's name, and what it holds is the State File's **revision** (`GLOSSARY.md`;
  * ADR-0015). The revision is produced by whatever read the file, because that is the only thing that
  * can: `core` is handed already-parsed JSON and performs no I/O, so it never sees what a
  * revision would have to be computed from (`StateFileVersion` in

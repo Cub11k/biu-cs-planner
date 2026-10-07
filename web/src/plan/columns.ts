@@ -10,7 +10,7 @@ export const SEMESTERS: readonly Semester[] = ["fall", "spring", "summer"];
 /** How many study years the columns cover from the Cohort at least: a standard BIU CS degree. */
 export const STANDARD_DEGREE_YEARS = 3;
 
-/** Where a Semester falls in time: a larger number is later (`CONTEXT.md`, Academic Year). */
+/** Where a Semester falls in time: a larger number is later (`GLOSSARY.md`, Academic Year). */
 export const semesterIndex = (at: SemesterAt): number => at.academicYear * 3 + SEMESTERS.indexOf(at.semester);
 
 const fromIndex = (index: number): SemesterAt => ({

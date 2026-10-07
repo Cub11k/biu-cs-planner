@@ -184,7 +184,7 @@ credits at all — 100 of 186 Offerings managed it. Reading `sections` settles *
 Every per-Group record here carries `terms` too, but they add nothing: the `details` block already
 carries the same Exams for all 186 (course, Semester) pairs.
 
-**The word.** `CONTEXT.md` reserves *section* as a term to avoid for a **Group**, and that stands.
+**The word.** `GLOSSARY.md` reserves *section* as a term to avoid for a **Group**, and that stands.
 `sections` survives only where this file and the code quote the crawl's own key, the way `points`
 and `name_en` do. Everywhere else — prose, type names, Warnings — a record of this kind is a
 **per-Group detail record**, because a Group is what it describes.
@@ -296,7 +296,7 @@ For the Importer:
 - Read provenance from the `meta` block, and warn only when there is none to read. The older
   crawls have no `meta`, and that is not an error.
 
-For the domain model: `CONTEXT.md` defines a Group as having "a lecturer", but the data has **zero
+For the domain model: `GLOSSARY.md` defines a Group as having "a lecturer", but the data has **zero
 or more**, and Untimed Groups are 144 of 510 rather than an edge case.
 
 ## Open facts this answers

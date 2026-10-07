@@ -567,7 +567,7 @@ export function TimetablePane({
       const done = remove
         ? removePick(api, query, slot, basedOn)
         : // the snapshot is taken from the Meetings the page was showing: a Pick carries the
-          // Group's Meetings as they stood when it was made (CONTEXT.md, "Pick")
+          // Group's Meetings as they stood when it was made (GLOSSARY.md, "Pick")
           recordPick(
             api,
             query,

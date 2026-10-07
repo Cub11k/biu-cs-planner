@@ -278,7 +278,7 @@ const english = {
    * stacks are intact, so this must not read like losing anything: it is a folder to go and
    * find, and the undo is waiting for it.
    *
-   * "Your work" and never "your plan": CONTEXT.md keeps **Plan** for a student's Attempts
+   * "Your work" and never "your plan": GLOSSARY.md keeps **Plan** for a student's Attempts
    * across Semesters, and every edit these sentences can be shown for today is a Pick in a
    * Timetable. A State File holds Attempts, Timetables, Pins and settings, so naming one of
    * them would be wrong about the other three — and naming the Plan would tell a student
