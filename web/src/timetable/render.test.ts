@@ -14,7 +14,8 @@ import { courseName, type Group, type Offering } from "./catalog.ts";
 import type { GroupPick } from "./picks.ts";
 import { weekGroups } from "./week.ts";
 import { CoursePicker } from "./CoursePicker.tsx";
-import { CatalogNotice, TimetableScreen } from "./TimetableScreen.tsx";
+import { CatalogNotice } from "./CatalogPane.tsx";
+import { TimetableScreen } from "./TimetableScreen.tsx";
 import { WeekGrid } from "./WeekGrid.tsx";
 
 const group = (
