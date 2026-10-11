@@ -71,8 +71,8 @@ export const timetableEnglish = {
     "but the file already has that change, so there is nothing to click again.",
   picksStaleConflicts:
     "The file changed since this page read it, so your click was not saved. " +
-    "Clicking again now would replace something saved since — a different Group in that " +
-    "Lesson Type, or a Variant that was removed. Check the week before you do.",
+    "Clicking again now would replace what the file holds — the Group now in that Lesson Type, " +
+    "or a Variant that was removed. Check the week before you do.",
   /** `historyBackupRefused`'s sentence, for a click on a Group. */
   picksBackupRefused:
     "The app could not make a backup of your saved work before changing it, so your click was " +
@@ -287,8 +287,8 @@ export const timetableHebrew: Record<keyof typeof timetableEnglish, string> = {
     "אבל השינוי הזה כבר נמצא בקובץ, כך שאין צורך ללחוץ שוב.",
   picksStaleConflicts:
     "הקובץ השתנה מאז שהדף קרא אותו, ולכן הלחיצה לא נשמרה. " +
-    "לחיצה נוספת עכשיו תחליף משהו שנשמר מאז — קבוצה אחרת באותו סוג שיעור, " +
-    "או גרסה שנמחקה. בדקו את השבוע לפני כן.",
+    "לחיצה נוספת עכשיו תחליף את מה שנמצא בקובץ — את הקבוצה שנמצאת עכשיו באותו סוג שיעור, " +
+    "או חלופה שנמחקה. בדקו את השבוע לפני כן.",
   picksBackupRefused:
     "היישום לא הצליח ליצור גיבוי של העבודה השמורה שלכם לפני שינויה, ולכן הלחיצה לא נשמרה.",
   picksHeld: "הבחירות השמורות עדיין נטענות. הלחיצה שלכם ממתינה להן.",

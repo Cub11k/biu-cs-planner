@@ -39,10 +39,14 @@ const LECTURE: GroupPick = {
   meetings: [{ semester: "fall", day: "tuesday", start: "15:00", end: "18:00" }],
 };
 
-/** One ordinary edit: a pure `state -> state` function from `core`, plus a label. */
+/**
+ * One ordinary edit: a pure `state -> state` function from `core`, plus a label — and, as the real
+ * Pick does, the opt-in to #104's report, here never a conflict.
+ */
 const picking = (pick: GroupPick): StateEditing => ({
   label: "pick-group",
   apply: (state) => recordPick(state, FALL_2027_A, pick),
+  conflictsWith: () => false,
 });
 
 const ready = (): MemoryWorkspace => memoryWorkspace({ created: true });
@@ -328,6 +332,7 @@ it("reports the adapter's refusal when the file changes between the read and the
         workspace.seed(REF, { schemaVersion: 1, pins: [] });
         return recordPick(state, FALL_2027_A, { ...LECTURE, groupNumber: "02" });
       },
+      conflictsWith: () => false,
     },
     { basedOn: current },
   );
@@ -365,12 +370,21 @@ describe("what a refused edit would do now", () => {
     });
   });
 
+  // A rename of a Variant that is gone hands the State back unchanged too, and is not "already done".
+  it("says nothing of it for an edit that does not opt in", async () => {
+    const second = { ...LECTURE, groupNumber: "02" };
+    const { label, apply } = picking(second);
+    const outcome = await refusedAfter(picking(second), { label, apply });
+    expect(outcome).toEqual({ kind: "refused", reason: "state-file-changed", warnings: [] });
+  });
+
   it("says nothing of it when re-running the edit throws, and is still the refusal", async () => {
     const throwing: StateEditing = {
       label: "pick-group",
       apply: () => {
         throw new Error("a bug in an edit");
       },
+      conflictsWith: () => false,
     };
     const outcome = await refusedAfter(picking({ ...LECTURE, groupNumber: "02" }), throwing);
     expect(outcome).toEqual({ kind: "refused", reason: "state-file-changed", warnings: [] });

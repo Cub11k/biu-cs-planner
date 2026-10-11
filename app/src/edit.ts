@@ -130,10 +130,13 @@ export type StateEditing = {
   label: string;
   apply(state: State): State;
   /**
-   * Whether running `apply` on `state` would overwrite something another writer saved rather than
-   * make the student's change (#104): a Pick into a Variant that is gone, or into a Lesson Type now
-   * filled with a different Group. Asked only of a refused edit, to say so; nothing is re-applied.
-   * An edit with no way to collide leaves it out.
+   * Whether running `apply` on `state` would replace something the file now holds rather than only
+   * add the student's change (#104): a Pick into a Lesson Type the file fills with another Group, or
+   * into a Variant that is gone. Asked only of a refused edit, to say so; nothing is re-applied.
+   *
+   * **Also the opt-in to the report.** An edit without it gets no `reapply`, because `apply`
+   * handing the State back unchanged is "already done" only for an edit that does nothing when its
+   * change is already there — a rename of a Variant that is gone hands it back unchanged too.
    */
   conflictsWith?(state: State): boolean;
 };
@@ -147,9 +150,10 @@ export type Reapply = "still-possible" | "already-done" | "conflicts-now";
 
 /** Re-runs a refused edit on the newly read State. Cheap because an edit is a pure function (ADR-0013). */
 function reapplyOn(state: State, editing: StateEditing): Reapply | undefined {
+  if (editing.conflictsWith === undefined) return undefined;
   try {
     if (editing.apply(state) === state) return "already-done";
-    return editing.conflictsWith?.(state) === true ? "conflicts-now" : "still-possible";
+    return editing.conflictsWith(state) ? "conflicts-now" : "still-possible";
   } catch {
     // a report about a refusal is not worth turning the refusal into a 500
     return undefined;
@@ -244,8 +248,8 @@ export type EditOutcome =
   | EditRefused;
 
 /**
- * An edit that did not happen, and why. `reapply` comes with `state-file-changed` when the file as
- * it now is could be read: what clicking again would do (#104).
+ * An edit that did not happen, and why. `reapply` comes with `state-file-changed` for an edit that
+ * opts in (`conflictsWith`) when the file as it now is could be read: what clicking again would do (#104).
  */
 export type EditRefused = {
   kind: "refused";
@@ -451,7 +455,8 @@ export type Landed = Extract<EditOutcome, { kind: "saved" | "unchanged" }>;
  *
  * **Nor for a view that throws** (#395): a throw from `answer`'s own computation after the edit
  * landed — the solver, a check — is answered `no-view`, the landed revision and Warnings without a
- * view, so the page bases its next save on the revision the file holds and goes and reads it.
+ * view, on a 200 the server marks `noView`. No page reads that body yet: each takes it as an answer
+ * it cannot read, which already re-reads the file, so the student is never told the edit failed.
  */
 export async function editAndAnswer<Answer>(
   workspace: Workspace,

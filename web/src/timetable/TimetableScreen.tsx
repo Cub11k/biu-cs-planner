@@ -938,8 +938,8 @@ export function TimetablePane({
     // this Pick then that is already so: there is nothing to send, and sending it anyway
     // would write a Pick over itself and spend an undo entry doing it.
     //
-    // This is where reconciling stops and #104 begins: nothing here re-applies an edit the
-    // server answered. A held click was never sent, and it goes out on the revision the
+    // This is where reconciling stops: nothing here re-applies an edit the server
+    // answered, and #104 only reports what clicking again would do. A held click was never sent, and it goes out on the revision the
     // first answer carries, so the guard has nothing to refuse it for.
     if (isPicked(timetable.picks, next.group)) {
       setHeld((waiting) => waiting.slice(1));

@@ -300,6 +300,8 @@ export async function pickGroup(
       // #104: re-picking would now replace a different Group in the slot, or remake a Variant that is
       // gone. A page shows a Variant the file lacks only while its Timetable has none, so a Timetable
       // holding Variants and not this one has lost it.
+      // shortcut: the refusal does not know what the page showed, so a Group the student was
+      // switching away from reads as a conflict too; send the Group the page saw if that misleads.
       conflictsWith: (state) => {
         const variant = variantAt(state, variantEditedIn(state, at));
         if (variant === undefined) return (timetableAt(state, at)?.variants.length ?? 0) > 0;
