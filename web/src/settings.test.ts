@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { createApiClient } from "./api.ts";
-import { fetchSettings, saveSettings, unreadAfter } from "./settings.ts";
+import { fetchSettings, guessLanguage, saveSettings, unreadAfter } from "./settings.ts";
 
 /**
  * The half of the settings that lives in `web`: what the typed client actually sends to the two
@@ -88,6 +88,31 @@ it("says nothing about the language when the answer names one it cannot render",
   const result = await fetchSettings(api);
 
   expect(result).toMatchObject({ kind: "served", language: undefined, examSpacingDays: 3 });
+});
+
+/**
+ * #173: `null` is the file saying nobody chose, which is a different answer from a language this
+ * build cannot render — the first is where a guess applies, the second keeps what is on screen.
+ */
+it("reads a language nobody chose as null, not as a language it cannot render", async () => {
+  const { api } = client(() => served({ language: null }));
+
+  const result = await fetchSettings(api);
+
+  expect(result).toMatchObject({ kind: "served", language: null });
+});
+
+/**
+ * The guess #173 allows: the first of the browser's languages this build has strings for, in the
+ * browser's order, and English when it has none of them. A display and never a preference.
+ */
+it("guesses the first of the browser's languages it has strings for, else English", () => {
+  expect(guessLanguage(["he-IL", "en-US"])).toBe("he");
+  expect(guessLanguage(["HE"])).toBe("he");
+  expect(guessLanguage(["ru", "he"])).toBe("he");
+  expect(guessLanguage(["en-GB", "he"])).toBe("en");
+  expect(guessLanguage(["fr"])).toBe("en");
+  expect(guessLanguage([])).toBe("en");
 });
 
 it("patches the change to /api/settings, carrying the revision it is based on", async () => {

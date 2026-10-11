@@ -27,11 +27,12 @@ import { useSettings } from "./settings.ts";
  * handed to whichever screen is open, and to `useSettings`, which re-reads the language when
  * another tab or an editor changes it (docs/design.md, "Storage").
  *
- * **The first paint is `en`/`ltr`** and the document flips when the answer lands. `./settings.ts`
- * carries the argument, including why `navigator.language` does not seed it. Two things would make
- * that flash smaller and neither is available here: a blocking inline script in `index.html`, which
- * would have no synchronous answer to apply because the language is not in `localStorage`, and
- * holding the first paint, which needs a timeout for an answer that may never come.
+ * **The first render is the browser's language** (`guessLanguage` in `./settings.ts`, #173) and the
+ * document flips when the answer lands only if the State File holds a different choice; the guess
+ * is shown and never written. `./settings.ts` carries the argument. Before React mounts the page is
+ * `index.html`'s static `en`/`ltr`, which its blocking script does not touch: that script stamps
+ * only the colour scheme, and holding the first paint would need a timeout for an answer that may
+ * never come.
  */
 export function App(): React.JSX.Element {
   const workspaceChanges = useWorkspaceChanges();
