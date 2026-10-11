@@ -174,6 +174,8 @@ module**. Not when they merely share a subsystem, and not when they would merely
 — the lane is the test because a composed ticket then *is* one lane in the sense
 `orchestration.md` means, and the unit the tracker shows is the unit an agent is dispatched on.
 
+To find the open tickets whose body or comments name a file, run `npm run lanes -- <path>...`.
+
 **Lanes between parents will intersect, and that is not a defect in the grouping.** This repo is
 small: `server/src/api.ts` and `docs/design.md` are each named by five or more open tickets at the
 time of writing, and no grouping of them is disjoint. So two parents whose lanes intersect are

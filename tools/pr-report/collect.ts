@@ -177,7 +177,9 @@ function exportedNames(modules: readonly Module[]): Map<string, ExportedNames> {
  * review can run the graph checks without paying for a test run.
  */
 export function collect(root: string): Report {
-  const isTest = (f: string): boolean => /\.test\.tsx?$/.test(f);
+  // `*.contract.ts` is a suite other test files run (`app/src/workspace.contract.ts`, #384): its
+  // titles are tests, and it is no production module.
+  const isTest = (f: string): boolean => /\.(test|contract)\.tsx?$/.test(f);
 
   const files = SOURCE_DIRS.flatMap((d) => walk(join(root, d)));
   const sourceFiles = files.filter((f) => !isTest(f));

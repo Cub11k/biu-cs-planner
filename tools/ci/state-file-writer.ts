@@ -37,6 +37,9 @@
  *   `server/src/workspace.fs.ts`. The exemption is "the test that tests the port may exercise
  *   the port", which is the reason those calls are legitimate, rather than a list of the two
  *   files that happen to have that reason today.
+ * - One more file is literal, for the same reason the wrapper is: `CONTRACT`, the port's own
+ *   suite, which both adapters' tests run (#384). It is not a `*.test.ts` and implements
+ *   nothing, so nothing could derive it; that it is the port's suite is the decision.
  *
  * **Test files are not blanket-exempt, deliberately.** `*.test.ts` waved through wholesale is
  * how this check would become useless: a future test is the easiest place for a second write
@@ -128,6 +131,13 @@ export const METHOD = "saveStateFile";
 
 /** The one file whose production code may call it. The decision, so it is written out. */
 export const WRITER = "app/src/edit.ts";
+
+/**
+ * The port's interface as one suite, run by both adapters' tests (#384). It exercises the port
+ * exactly as those tests do and is no production code, so it may call the method; and it is
+ * written out because nothing about its name says what it tests.
+ */
+export const CONTRACT = "app/src/workspace.contract.ts";
 
 /**
  * The trees that hold the code this rule governs. The same four `tools/pr-report/collect.ts`
@@ -573,7 +583,7 @@ export const implementors = (all: readonly Mention[]): string[] =>
  * implements it -- the test of the port, exercising the port.
  */
 export const mayCall = (file: string, implementing: readonly string[]): boolean => {
-  if (file === WRITER) return true;
+  if (file === WRITER || file === CONTRACT) return true;
 
   const subject = moduleUnderTest(file);
 

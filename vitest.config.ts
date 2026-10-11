@@ -41,7 +41,7 @@ export default defineConfig({
       reportsDirectory: "coverage",
       // `.tsx` is left out: a component is not measured until it can be rendered.
       include: ["{core,app,server,web}/src/**/*.ts"],
-      exclude: ["**/*.test.ts", "**/__fixtures__/**"],
+      exclude: ["**/*.test.ts", "**/*.contract.ts", "**/__fixtures__/**"],
     },
     projects: [
       {
