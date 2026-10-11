@@ -2,7 +2,7 @@ You are an implementation agent in a {{AGENT_COUNT}}-agent run on the repo /home
 
 Before anything, read: CLAUDE.md, GLOSSARY.md, docs/agents/orchestration.md, docs/agents/worktrees.md, docs/agents/issue-tracker.md. They are binding; this brief does not repeat them. Read your parent ticket, every child, and every comment (`gh issue view <n> --comments`). Children's bodies are the frozen asks. Rulings and amendments are in the comment threads.
 
-Make your own worktree: `git worktree add ../biu-cs-planner-<parent> -b <parent>-<slug> dev`, then `npm install --ignore-scripts` (the install-scripts warning is expected; leave it) and `npm run install:browsers`. Work only in your worktree; the main checkout and every other worktree are someone else's. Quote heredoc delimiters when writing files from the shell (`<<'EOF'`).
+Make your own worktree: `git worktree add ../biu-cs-planner-<parent> -b <parent>-<slug> dev`, then `npm install --ignore-scripts` (the install-scripts warning is expected; leave it) and `npm run install:browsers`. Then run `codegraph init .` in the worktree: the main checkout's index describes `dev`, not your branch. Query it with the codegraph MCP tool and `projectPath` set to your worktree, or with `codegraph … -p .`, and run `codegraph sync .` after edits so new symbols are found. Work only in your worktree; the main checkout and every other worktree are someone else's. Quote heredoc delimiters when writing files from the shell (`<<'EOF'`).
 
 **Lanes for this run:**
 | Parent | May write |
