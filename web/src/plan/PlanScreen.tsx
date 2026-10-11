@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useState } from "react";
 import { api } from "../api.ts";
 import { unauthorizedSaid, type ScreenDefinition, type ScreenProps } from "../AppShell.tsx";
+import { useEditing } from "../editing.ts";
 import { LANGUAGES, t, type Language, type StringKey } from "../i18n/strings.ts";
 import { academicYearOf, academicYearSpan, semesterOf } from "../timetable/calendar.ts";
 import { columnCredits, gradeOf, planYears, retakeSemester } from "./columns.ts";
@@ -198,27 +199,6 @@ function warningSaid(language: Language, warning: AnyWarning, attempts: Readonly
   }
 }
 
-/** Re-asks whenever the Workspace changes or a re-read is owed, keeping the last answer on screen. */
-function usePlan(changes: number): [PlanState, (answer: PlanResult) => void] {
-  const [answer, setAnswer] = useState<PlanState>({ kind: "loading" });
-  const shown = useRef(0);
-  const show = useCallback((fresh: PlanResult): void => {
-    shown.current += 1;
-    setAnswer(fresh);
-  }, []);
-  useEffect(() => {
-    const mine = (shown.current += 1);
-    void fetchPlan(api).then((fresh) => {
-      // an answer older than what is on screen — an edit's own, say — is dropped
-      if (shown.current === mine) setAnswer(fresh);
-    });
-    return () => {
-      shown.current += 1;
-    };
-  }, [changes]);
-  return [answer, show];
-}
-
 /** One read the screen draws with and never edits through, re-asked as the Plan is. */
 function useRead<T>(changes: number, read: () => Promise<T>, initial: T): T {
   const [value, setValue] = useState<T>(initial);
@@ -235,6 +215,7 @@ function useRead<T>(changes: number, read: () => Promise<T>, initial: T): T {
   return value;
 }
 
+const readPlan = (): Promise<PlanResult> => fetchPlan(api);
 const readChoices = (): Promise<Choices | undefined> => fetchChoices(api);
 const readCourses = (): Promise<CourseFacts[]> => fetchCourses(api);
 
@@ -250,9 +231,11 @@ export function PlanScreen({
   onRevision,
   notices,
 }: ScreenProps): React.JSX.Element {
-  const [rereads, setRereads] = useState(0);
-  const changes = workspaceChanges + stepRereads + rereads;
-  const [plan, setPlan] = usePlan(changes);
+  const editing = useEditing(readPlan, workspaceChanges + stepRereads, onEdited);
+  const plan = editing.answer;
+  /** No edit may be sent: one is in flight, or the revision on screen is spent (#377). */
+  const sending = editing.sending || editing.spent;
+  const changes = workspaceChanges + stepRereads + editing.rereads;
   const choices = useRead(changes, readChoices, undefined);
   const cohort = choices?.cohort;
   const programs = choices?.programs ?? [];
@@ -267,8 +250,6 @@ export function PlanScreen({
   const [refused, setRefused] = useState<Said | undefined>(undefined);
   /** New Plan from Suggested Layout's account of what it just did (#293). */
   const [summary, setSummary] = useState<LayoutSummary | undefined>(undefined);
-  /** An edit is in flight: the controls wait for its answer, which carries the next revision. */
-  const [sending, setSending] = useState(false);
   /** The empty Summers the student opened, by Academic Year: page state, never stored. */
   const [openSummers, setOpenSummers] = useState<ReadonlySet<number>>(new Set());
   const [extraYears, setExtraYears] = useState(0);
@@ -287,39 +268,21 @@ export function PlanScreen({
     );
   }, [plan, sending, onRevision]);
 
-  /** One edit on the Plan on screen, answered with the Plan as it stands afterwards. */
+  /** One edit on the Plan on screen; the hook takes its answer, and this says what the student is owed. */
   const send = (edit: (basedOn: string | undefined) => Promise<PlanResult>): void => {
-    if (plan.kind !== "served" || sending) return;
-    onActed();
-    setRefused(undefined);
-    setSummary(undefined);
-    setSending(true);
-    void edit(plan.version).then((answer) => {
-      setSending(false);
+    const sent = editing.send(edit, (answer) => {
       switch (answer.kind) {
         case "served":
-          setPlan(answer);
           if (answer.summary !== undefined) setSummary(answer.summary);
-          onEdited();
           return;
         case "unavailable":
           setRefused({ key: UNAVAILABLE_STRING[answer.reason] });
           return;
         case "refused":
           setRefused({ key: answer.reason === undefined ? "planNotDone" : REFUSAL_STRING[answer.reason] });
-          // the file is not what the screen shows: keep it on screen and go and look
-          if (answer.reason === "state-file-changed") setRereads((count) => count + 1);
-          // the save was made and its revision could not be read, so it may have moved (#326)
-          if (answer.reason === "save-revision-unreadable") {
-            setRereads((count) => count + 1);
-            onEdited();
-          }
           return;
         case "unreadable-answer":
-          // not the claim that nothing was written: everything holding a revision goes and looks
           setRefused({ key: "planAnswerUnreadable" });
-          setRereads((count) => count + 1);
-          onEdited();
           return;
         case "unauthorized":
           setRefused({ key: tokenHeld ? "tokenRetired" : "tokenMissing" });
@@ -329,6 +292,10 @@ export function PlanScreen({
           return;
       }
     });
+    if (!sent) return;
+    onActed();
+    setRefused(undefined);
+    setSummary(undefined);
   };
 
   const said = statusSaid(language, plan, tokenHeld);

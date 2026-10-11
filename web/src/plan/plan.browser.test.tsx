@@ -47,6 +47,10 @@ let programs: Array<{ requirementsFile: string; track?: string }>;
 let version: number;
 let nextId: number;
 let refuseNextEdit: string | undefined;
+/** While set, a read of the Plan waits on it, so a test can look at the screen mid-re-read (#377). */
+let heldRead: Promise<void> | undefined;
+/** The reason the next read of the Plan is refused with, rather than served. */
+let refuseNextRead: string | undefined;
 /** What New Plan from Suggested Layout answers: Attempts it creates, or a reason it cannot. */
 let layout: { create: FakeAttempt[]; skipped: unknown[] } | { unavailable: string };
 let canUndo: boolean;
@@ -86,6 +90,8 @@ beforeEach(() => {
   version = 1;
   nextId = 1;
   refuseNextEdit = undefined;
+  heldRead = undefined;
+  refuseNextRead = undefined;
   layout = { create: [], skipped: [] };
   canUndo = false;
   ROOT.lang = "en";
@@ -108,11 +114,21 @@ beforeEach(() => {
     }
     if (pathname === "/api/programs") return json({ cohort, programs, programWarnings: [], version: `v${version}`, warnings: [] });
     if (pathname === "/api/courses") return json({ courses: COURSES });
-    if (pathname === "/api/plan" && method === "GET") return json(planBody());
+    if (pathname === "/api/plan" && method === "GET") {
+      if (heldRead !== undefined) await heldRead;
+      if (refuseNextRead !== undefined) {
+        const reason = refuseNextRead;
+        refuseNextRead = undefined;
+        return json({ reason, warnings: [] }, 409);
+      }
+      return json(planBody());
+    }
     if (method !== "GET" && refuseNextEdit !== undefined) {
       const reason = refuseNextEdit;
       refuseNextEdit = undefined;
       version += 1; // somebody else wrote the file
+      // an answer nobody can read, which is not the claim that nothing was written
+      if (reason === "unreadable-answer") return new Response("<html>", { status: 502 });
       return json({ reason, warnings: [] }, 409);
     }
     if (pathname === "/api/plan/attempts" && method === "POST") {
@@ -697,6 +713,89 @@ it("tells a stale revision from what the Suggested Layout needs, and reads the P
       throw new Error("the screen did not read again");
     }
   });
+});
+
+/** Holds every read of the Plan until the function it hands back is called. */
+function holdReads(): () => void {
+  let release!: () => void;
+  heldRead = new Promise((resolve) => (release = resolve));
+  return () => {
+    heldRead = undefined;
+    release();
+  };
+}
+
+const removeButton = (mounted: HTMLElement, id: string): HTMLButtonElement =>
+  mounted.querySelector<HTMLButtonElement>(`button[data-attempt-remove="${id}"]`)!;
+
+/**
+ * #377: an answer that says the file moved, or may have, spends the revision on screen. Until the
+ * re-read it starts is drawn the controls stay disabled, as while an edit is in flight, so nothing
+ * is sent on it; the next edit is based on the revision the re-read brought.
+ */
+it.each([
+  { reason: "state-file-changed", said: "planStale" },
+  { reason: "save-revision-unreadable", said: "saveUnconfirmed" },
+  { reason: "unreadable-answer", said: "planAnswerUnreadable" },
+] as const)("sends nothing on a spent revision after $reason, until the re-read is drawn", async ({ reason, said }) => {
+  const mounted = await mount();
+  await served(mounted);
+  refuseNextEdit = reason;
+  const release = holdReads();
+  const reads = sent.filter((request) => request.method === "GET" && request.pathname === "/api/plan").length;
+
+  removeButton(mounted, "a1").click();
+
+  await vi.waitFor(() => {
+    if (!status(mounted).includes(t("en", said))) throw new Error("the answer was not said");
+  });
+  await vi.waitFor(() => {
+    if (sent.filter((request) => request.method === "GET" && request.pathname === "/api/plan").length <= reads) {
+      throw new Error("the screen did not read again");
+    }
+  });
+  // the re-read is in flight: the revision on screen is spent, and every control waits for it
+  expect(removeButton(mounted, "a2").disabled).toBe(true);
+  expect(mounted.querySelector<HTMLButtonElement>("button[data-plan-layout]")!.disabled).toBe(true);
+  removeButton(mounted, "a2").click();
+  expect(sent.filter((request) => request.method === "DELETE")).toHaveLength(1);
+
+  release();
+  await vi.waitFor(() => {
+    if (removeButton(mounted, "a2").disabled) throw new Error("the controls were not released");
+  });
+  removeButton(mounted, "a2").click();
+  await vi.waitFor(() => {
+    if (card(mounted, "a2") !== null) throw new Error("the edit was not drawn");
+  });
+  expect(lastSent("DELETE", "/api/plan/attempts/a2")?.body).toEqual({ basedOn: "v2" });
+});
+
+it("releases the controls when the re-read after a spent revision is not served", async () => {
+  const mounted = await mount();
+  await served(mounted);
+  refuseNextEdit = "state-file-changed";
+  refuseNextRead = "state-file-unreadable";
+  const release = holdReads();
+
+  removeButton(mounted, "a1").click();
+  await vi.waitFor(() => {
+    if (!status(mounted).includes(t("en", "planStale"))) throw new Error("the refusal was not said");
+  });
+  release();
+  await vi.waitFor(() => {
+    if (!status(mounted).includes(t("en", "planFileUnreadable"))) throw new Error("the re-read was not drawn");
+  });
+
+  // the next read is served, and is edited on as soon as it is drawn
+  await mount("en", 1);
+  await served(mounted);
+  expect(removeButton(mounted, "a2").disabled).toBe(false);
+  removeButton(mounted, "a2").click();
+  await vi.waitFor(() => {
+    if (card(mounted, "a2") !== null) throw new Error("the edit was not drawn");
+  });
+  expect(lastSent("DELETE", "/api/plan/attempts/a2")?.body).toEqual({ basedOn: "v2" });
 });
 
 it("reads the Plan again when the Workspace changes, from another tab or an editor", async () => {
