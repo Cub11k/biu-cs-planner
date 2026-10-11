@@ -6,7 +6,8 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { settingsSchema } from "@biu-cs-planner/core";
 import { BackupRefusedError, WorkspaceRefusedError, type Workspace } from "@biu-cs-planner/app";
-import { createApi, savedSettingsSchema } from "./api.ts";
+import { createApi } from "./api.ts";
+import { savedSettingsSchema } from "./history.api.ts";
 import { fileSystemWorkspace } from "./workspace.fs.ts";
 
 let root: string;
@@ -475,7 +476,7 @@ it("never writes the token into the Workspace, which may be synced or committed"
 /**
  * How the page hears that the Workspace changed under it. One integer behind the same guard
  * as everything else, asked for over the same typed client — see the route's own comment in
- * ./api.ts for why that, and not Server-Sent Events or a websocket.
+ * ./workspace.api.ts for why that, and not Server-Sent Events or a websocket.
  */
 it("reports the Workspace's change count, and reports it again once it has moved", async () => {
   const before = await get("/api/workspace/changes");
@@ -1594,7 +1595,7 @@ it("answers an unchanged choice with the revision the file still holds", async (
  *
  * A preference added to `core`'s `settingsSchema` and not to that schema would be a field the
  * State File holds and no route can set — readable, unwritable, and silent. This is the line that
- * says so. If it fails: add the field to `savedSettingsSchema` in `./api.ts`, unwrapping its
+ * says so. If it fails: add the field to `savedSettingsSchema` in `./history.api.ts`, unwrapping its
  * default the way the two beside it do, and give it a test above.
  */
 it("accepts every preference the State File schema holds, and no route-only extra", () => {

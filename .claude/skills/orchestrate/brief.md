@@ -9,7 +9,7 @@ Make your own worktree: `git worktree add ../biu-cs-planner-<parent> -b <parent>
 |---|---|
 {{LANES_ROWS}}
 
-{{SHARED_FILES_PARAGRAPH: name each hotspot file shared this run, its owner, and what the other rows may do in it; or "No file is shared this run."}} **Before opening your PR, merge origin/dev into your branch, resolve anything, and re-run all checks.** GLOSSARY.md belongs to {{GLOSSARY_OWNER}} and docs/design.md to {{DESIGN_OWNER}}. If your work makes either false, say so in the PR. If a ticket forces you outside your row, do it, keep it minimal, and declare the file.
+{{SHARED_FILES_PARAGRAPH: name each file shared this run (a composition point a new resource or screen adds a line to, or web/src/timetable/TimetableScreen.tsx or server/src/api.test.ts), its owner, and what the other rows may do in it; or "No file is shared this run."}} **Before opening your PR, merge origin/dev into your branch, resolve anything, and re-run all checks.** GLOSSARY.md belongs to {{GLOSSARY_OWNER}} and docs/design.md to {{DESIGN_OWNER}}. If your work makes either false, say so in the PR. If a ticket forces you outside your row, do it, keep it minimal, and declare the file.
 
 Test baseline on clean dev at dispatch ({{DEV_COMMIT}}): **{{FILES}} test files, {{TESTS}} tests**, typecheck green. Report your branch's counts **and the dev commit your branch contains**.
 

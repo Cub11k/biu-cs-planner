@@ -47,15 +47,15 @@ Apply `docs/agents/orchestration.md`, "Which tickets a run carries": **feature p
 - **Candidates:** open `ready-for-agent` parents and standalone tickets whose `issue_dependencies_summary.blocked_by` is 0, counting blockers inside the same parent as satisfied.
 - **Compose** what is not composed yet: feature asks as parents of two or three children sharing a lane, sweeps as parents of as many small fixes as fit (`docs/agents/issue-tracker.md`, "The shape" and "Commands"). Verify each attach by reading the parent's sub-issues.
 - **Lanes:** draw one row per agent (`orchestration.md`, "Lanes"). Assign `GLOSSARY.md`, `docs/design.md` and every ADR to at most one row. A ticket whose files another row holds waits for the next batch.
-- **Hotspot files** that every feature touches (`server/src/api.ts`, `web/src/i18n/strings.ts`, `web/src/timetable/TimetableScreen.tsx`) may be shared only by naming one owner and limiting the other rows to small, declared edits in their own routes, keys or lines, with every agent merging `dev` before opening its PR. Say so in the brief.
+- **Claim the split files as ordinary lane units** (#366, `orchestration.md`, "Lanes"): a resource's routes in `server/src/<resource>.api.ts` (settings live in `history.api.ts`), a screen's strings in `web/src/i18n/<screen>.ts`, a Timetable pane in its own `web/src/timetable/*.tsx`. Two kinds of file are still shared. The **composition points** (`server/src/api.ts`, `web/src/i18n/strings.ts`, and `server/src/api.shared.ts`, which every route module imports) change only for a new resource, a new screen or a shared helper: one row owns each, and another row's edit there is one declared line. **`web/src/timetable/TimetableScreen.tsx`** still holds every Timetable edit's handler, so it is shared only by naming one owner and limiting the other rows to declared edits in their own handlers; `server/src/api.test.ts`, not split yet, is shared the same way, each route lane appending its own tests as a declared edit. Say so in the brief.
 
-**Done when** you have a lanes table with no file in two rows (beyond declared hotspot sharing), every ticket in it composed and unblocked, and an agent count that fits the user's scope.
+**Done when** you have a lanes table with no file in two rows (beyond the declared sharing above), every ticket in it composed and unblocked, and an agent count that fits the user's scope.
 
 ## 5. Write the brief
 
 Copy [`brief.md`](brief.md) into the scratchpad as `orch-brief-run<N>.md` and fill every slot: the date, the agent count, the lanes table, the baseline and its commit, and the attribution lines from the current system reminder. Per-run facts go in the brief. A lesson the next run also needs goes in `orchestration.md` instead ("What stays in the dispatch brief").
 
-**Done when** no slot is left unfilled, and every hotspot-sharing exception is spelled out.
+**Done when** no slot is left unfilled, and every shared file is spelled out.
 
 ## 6. Dispatch
 

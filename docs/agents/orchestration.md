@@ -49,6 +49,25 @@ The table belongs in the brief, not in this file: it is rewritten for every run.
 
 These hold regardless of what the table says:
 
+- **The unit a lane claims is a file, and the three files every feature used to touch are split so
+  that it can be** (#366). Until then `server/src/api.ts`, `web/src/i18n/strings.ts` and
+  `web/src/timetable/TimetableScreen.tsx` sat in every lane, and from the fourth run on each brief
+  declared them shared as an exception to this section. A lane now claims:
+  - a resource's routes: `server/src/<resource>.api.ts` (`workspace`, `catalog`, `progress`, `plan`,
+    `timetable`, `backups`, and `history` for undo, redo and settings);
+  - a screen's strings: `web/src/i18n/<screen>.ts` (`shell`, `plan`, `progress`, `timetable`), each
+    carrying both languages;
+  - a Timetable pane: its own component file in `web/src/timetable/`.
+
+  What is still shared is named, and small. The **composition points** — `server/src/api.ts`, which
+  mounts each route module, `web/src/i18n/strings.ts`, which composes the tables into one `t()`, and
+  `server/src/api.shared.ts`, the helpers every route module imports — change only for a new
+  resource, a new screen or a shared helper, so one row owns each and another row's edit there is
+  one declared line. **`TimetableScreen.tsx` still holds the handler of every Timetable edit**,
+  because they all go through its save-and-hold machinery; it is shared only with one named owner
+  and the other rows limited to declared edits in their own handlers. **`server/src/api.test.ts` is
+  not split yet** either: most route tests still live in it, so a route lane appends its own `it`
+  blocks there as a declared edit, or puts them in a `<resource>.api.test.ts` beside its module.
 - **Other worktrees are not yours.** `git worktree list` will show them. Never run a command
   with `-C` pointing at another worktree, and never run a repo-wide command from the main
   checkout, which stays on `dev`.
