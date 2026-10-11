@@ -168,11 +168,15 @@ it("drops a read already in flight when an answer spends the revision, so only t
   await servedV1();
   mount(1);
   await vi.waitFor(() => expect(reads).toHaveLength(2));
-  await edit({ kind: "refused", reason: "state-file-changed" });
-  await until((editing) => editing.spent);
+  let refuse!: (fake: Fake) => void;
+  expect(latest!.send(() => new Promise((resolve) => (refuse = resolve)))).toBe(true);
+  await until((editing) => editing.sending);
 
-  // asked before the file moved: it is not what the file says now
+  // asked before the file moved, and answering before the screen has even re-rendered: it is not
+  // what the file says now
+  refuse({ kind: "refused", reason: "state-file-changed" });
   reads[1]!.answer(served("v1-stale"));
+  await until((editing) => editing.spent);
   await new Promise((resolve) => setTimeout(resolve, 50));
   expect(latest!.spent).toBe(true);
   expect(onScreen(latest!)).toBe("v1");
