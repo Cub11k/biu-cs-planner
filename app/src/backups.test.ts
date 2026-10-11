@@ -8,8 +8,8 @@ import { WorkspaceRefusedError, type BackupRef, type StateFileRef } from "./work
 
 /**
  * The two use cases behind `.backups/` (#67). They run against the in-memory Workspace, which
- * is the port — the filesystem adapter is asserted to the same backup behaviour, under the
- * same test titles, in `server/src/workspace.fs.test.ts`.
+ * is the port — the filesystem adapter is held to the same backup behaviour by the one suite
+ * both adapters run, `./workspace.contract.ts`.
  *
  * **Every save here goes through `editStateFile`** and nothing in this file reaches the port's
  * save directly, which is the point rather than a nicety: taking a snapshot is the guarded
