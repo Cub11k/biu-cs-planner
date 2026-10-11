@@ -132,8 +132,8 @@ const languageOf = (served: string): Language | undefined =>
 /**
  * The language to show when nobody chose one (#173): the first of the browser's languages, in its
  * order, that this build has strings for, and English when it has none of them. It is also the
- * first render, before any State File is read, so the commonest first paint — a student who has
- * chosen nothing — is already right and flips to nothing at all. Shown, never stored (ADR-0014).
+ * first React render, before any State File is read, so for the commonest case — a student who has
+ * chosen nothing — the answer landing flips nothing. Shown, never stored (ADR-0014).
  */
 export const guessLanguage = (preferred: readonly string[]): Language =>
   preferred.map((tag) => languageOf(tag.split("-")[0]!.toLowerCase())).find(Boolean) ?? "en";

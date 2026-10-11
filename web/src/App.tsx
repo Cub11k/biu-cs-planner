@@ -30,9 +30,12 @@ import { useSettings } from "./settings.ts";
  * **The first render is the browser's language** (`guessLanguage` in `./settings.ts`, #173) and the
  * document flips when the answer lands only if the State File holds a different choice; the guess
  * is shown and never written. `./settings.ts` carries the argument. Before React mounts the page is
- * `index.html`'s static `en`/`ltr`, which its blocking script does not touch: that script stamps
- * only the colour scheme, and holding the first paint would need a timeout for an answer that may
- * never come.
+ * `index.html`'s static `en`/`ltr`, so a first-run Hebrew browser still flips once, at mount rather
+ * than when the answer lands. Its blocking script stamps only the colour scheme, deliberately: a
+ * stamp of the guess there would be a second copy of `guessLanguage` in a script no module can
+ * reach, which is the same argument that keeps the scheme's narrowing out of it, and the stamp
+ * would be overwritten whenever the file holds a different choice. Holding the first paint would
+ * need a timeout for an answer that may never come.
  */
 export function App(): React.JSX.Element {
   const workspaceChanges = useWorkspaceChanges();

@@ -24,8 +24,8 @@ import type { EditHistories, HistoryMove } from "./history.ts";
  * leaves each field's `.default()` in place, so a body naming only the language parses as that
  * language *and* the default Exam spacing — and this route would silently reset the preference it
  * was not asked about. Measured on zod 4.6.5: `settingsSchema.partial().parse({})` is
- * `{ language: "en", examSpacingDays: 3 }` (before #173 made that default `null`). Unwrapping the
- * default before making the field optional is what leaves an unmentioned field absent.
+ * `{ language: null, examSpacingDays: 3, creditLoadLimit: 24 }`. Unwrapping the default before
+ * making the field optional is what leaves an unmentioned field absent.
  *
  * A body naming no field at all is well formed and changes nothing, which the domain answers as
  * an unchanged save.

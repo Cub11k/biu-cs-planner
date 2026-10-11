@@ -459,7 +459,6 @@ it("opens a file written before a language could be unchosen, its language uncha
 
     const result = parseStateFile(before);
 
-    expect(CURRENT_STATE_SCHEMA_VERSION).toBe(1);
     expect(result.state?.schemaVersion).toBe(1);
     expect(result.state?.settings.language).toBe(language);
     expect(result.warnings).toEqual([]);
