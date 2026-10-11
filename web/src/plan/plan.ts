@@ -96,8 +96,10 @@ const plan: AnswerReaders<PlanResult, { reason?: unknown }, ServedPlan & { summa
   refused: ({ reason }) =>
     isUnavailable(reason) ? { kind: "unavailable", reason } : { kind: "refused", reason: reason as PlanRefusal | undefined },
   served: (body) =>
-    // the columns loop over the Attempts, and an answer without them is not a Plan (#382)
-    Array.isArray(body.attempts)
+    // the columns loop over the Attempts, and the layout's sentence over what it created and
+    // skipped: an answer without them is not a Plan (#382)
+    Array.isArray(body.attempts) &&
+    (body.summary === undefined || (Array.isArray(body.summary.created) && Array.isArray(body.summary.skipped)))
       ? {
           kind: "served",
           attempts: body.attempts,

@@ -236,6 +236,9 @@ it("reads a typed grade as a number, a pass or a fail in either language, a clea
 });
 
 /** The columns loop over the Attempts, so a Plan without them is an answer this page cannot read (#382). */
-it("reads a served answer with no Attempts as unreadable", async () => {
+it("reads a served answer with no Attempts, or a summary with no lists, as unreadable", async () => {
   expect(await fetchPlan(client(() => Response.json({})).api)).toEqual({ kind: "unreadable-answer" });
+  expect(await fetchPlan(client(() => Response.json({ ...SERVED, summary: {} })).api)).toEqual({
+    kind: "unreadable-answer",
+  });
 });

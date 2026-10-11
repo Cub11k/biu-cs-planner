@@ -74,9 +74,9 @@ export type AnswerBody<T> = { readable: true; body: T } | { readable: false };
  * was not in that census and read both of its bodies outside the catch for the same reason
  * (#206).
  *
- * It takes the read as a thunk rather than the answer, so the typed client's own union of
- * body types flows through untouched: `readBody(() => answer.json())` has exactly the type
- * `answer.json()` had.
+ * It takes the read as a thunk rather than the answer, so it never sees a client or a status.
+ * Its one production caller is `askApi` below, which reads every body as `unknown` and hands it
+ * to the callback that claims its shape.
  */
 export async function readBody<T>(read: () => Promise<T>): Promise<AnswerBody<T>> {
   let body: T;
@@ -106,8 +106,8 @@ const isObject = (value: unknown): boolean =>
  * **Nothing in `body.test.ts` pins this number, and nothing there could.** A test beside it can
  * only restate the declaration — `expect(UNAUTHORIZED).toBe(401)`, or the same literal wrapped
  * in a `Response`, which adds an assertion that the platform keeps its own status and none about
- * this code. What pins it is the readers' own tests: each has a case that answers 401 and
- * expects `unauthorized`, and setting this to 403 fails them across every reader's file. A test
+ * this code. What pins it is `askApi`'s own 401 case in `body.test.ts` and the readers' tests
+ * that answer 401 and expect `unauthorized`. A test
  * claiming otherwise was written here and removed (#209's reviewer).
  */
 export const UNAUTHORIZED = 401;
@@ -136,7 +136,7 @@ export type AnswerReaders<R, Refused, Served> = {
  * The bodies are cast to the callbacks' types and nothing more: `readBody` promises an object and
  * no shape, and each `served` checks the one field it loops over.
  */
-export async function askApi<R, Refused = Record<string, unknown>, Served = Record<string, unknown>>(
+export async function askApi<R, Refused, Served>(
   send: () => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>,
   readers: AnswerReaders<R, Refused, Served>,
 ): Promise<R | Transport> {
@@ -147,7 +147,7 @@ export async function askApi<R, Refused = Record<string, unknown>, Served = Reco
     return { kind: "unreachable" };
   }
   const status: number = answer.status;
-  if (!answer.ok && status === UNAUTHORIZED) return { kind: "unauthorized" };
+  if (status === UNAUTHORIZED) return { kind: "unauthorized" };
   const read = await readBody(() => answer.json());
   if (!read.readable) return { kind: "unreadable-answer" };
   if (!answer.ok) return readers.refused(read.body as Refused, status);
@@ -159,7 +159,7 @@ export async function askApi<R, Refused = Record<string, unknown>, Served = Reco
  * never acts through: the value `served` makes of the body, or `undefined` for a refusal, the
  * guard, no server, a body that could not be read, or one `served` could not use.
  */
-export async function askFor<T, Served = Record<string, unknown>>(
+export async function askFor<T, Served>(
   send: () => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>,
   served: (body: Served) => T | undefined,
 ): Promise<T | undefined> {

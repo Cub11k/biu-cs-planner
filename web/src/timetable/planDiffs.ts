@@ -49,7 +49,7 @@ export async function applyPlanDiff(
     json: { ...variantOf(query), kind: diff.kind, courseNumber: diff.courseNumber, basedOn },
   } as InferRequestType<ApplyRoute>;
   return askApi(() => client.api.timetable[":year"][":semester"]["plan-diffs"].apply.$post(request), {
-    refused: (body, status): PlanDiffAnswer =>
+    refused: (body: Parameters<typeof timetable.refused>[0], status: number): PlanDiffAnswer =>
       status === CONFLICT && body.reason === "plan-diff-stale"
         ? { kind: "plan-diff-stale" }
         : timetable.refused(body, status),

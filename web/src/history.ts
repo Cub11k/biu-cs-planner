@@ -108,8 +108,8 @@ const unnamed = (warnings: HistoryWarning[]): HistoryStep => ({
  * it. Both read as a disabled button, and only one of them is honest about why.
  *
  * **An unreadable body is folded into `undefined` here, where below it gets an arm and a
- * sentence.** Both sites guard the parse — `readBody` in ./body.ts has a catch of its own — so
- * the difference is not the mechanism but what each does with the result. This is an ask and not
+ * sentence.** Both sites guard the parse the same way — `askFor` here and `askApi`
+ * below, in ./body.ts — so the difference is not the mechanism but what each does with the result. This is an ask and not
  * an act: nobody pressed anything, so there is nothing the student is owed an account of, and an
  * unreadable answer to it is one more way of not knowing, which `undefined` already says. An act
  * gets an account, an ask does not (#171, #206).

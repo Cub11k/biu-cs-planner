@@ -105,7 +105,7 @@ export async function markRegistered(
     json: { variant, ...positionOf(query), ...choice, basedOn },
   } as InferRequestType<RegisteredRoutes["$post"]>;
   return askApi(() => client.api.timetable[":year"][":semester"].variants.registered.$post(request), {
-    refused: (body, status): MarkAnswer => {
+    refused: (body: Parameters<typeof timetable.refused>[0], status: number): MarkAnswer => {
       if (status === CONFLICT || status === NOT_FOUND) {
         if (body.reason === "plan-diff-stale") return { kind: "plan-diff-stale" };
         if (body.reason === "variant-not-found") return { kind: "variant-not-found" };
