@@ -205,7 +205,7 @@ it("opens a file that is a version and nothing else", () => {
     pins: [],
     programs: [],
     manualTicks: [],
-    settings: { language: "en", examSpacingDays: 3, creditLoadLimit: 24 },
+    settings: { language: null, examSpacingDays: 3, creditLoadLimit: 24 },
   });
 });
 
@@ -428,8 +428,42 @@ it("falls back to every default when settings are not settings at all", () => {
     settings: "hebrew, three days",
   });
 
-  expect(result.state?.settings).toEqual({ language: "en", examSpacingDays: 3, creditLoadLimit: 24 });
+  expect(result.state?.settings).toEqual({ language: null, examSpacingDays: 3, creditLoadLimit: 24 });
   expect(result.warnings).toEqual([{ kind: "settings-unreadable" }]);
+});
+
+/**
+ * #173: a State File can say no language was chosen, so `web` can tell *never chosen* from *chose
+ * English* and guess for the first. `null` is that statement, and a file that leaves the field out
+ * says it too — which is every file a new student has.
+ */
+it("says no language was chosen when the file names none", () => {
+  for (const settings of [undefined, {}, { language: null }]) {
+    const result = parseStateFile({ schemaVersion: CURRENT_STATE_SCHEMA_VERSION, settings });
+
+    expect(result.state?.settings.language).toBeNull();
+    expect(result.warnings).toEqual([]);
+  }
+});
+
+/**
+ * #173 is not a migration, and this is why: every value a file could hold before it is still a
+ * value the field accepts, so a file today's version wrote opens with the same language, under the
+ * same `schemaVersion`, and no Warning. Such a file holds `"en"` even when nobody chose it, because
+ * the old default was written out on the first save — and it stays `"en"`, since reading it as
+ * *never chosen* would overwrite every deliberate English choice with a guess.
+ */
+it("opens a file written before a language could be unchosen, its language unchanged", () => {
+  for (const language of ["en", "he"] as const) {
+    const before = { schemaVersion: 1, settings: { language, examSpacingDays: 3 } };
+
+    const result = parseStateFile(before);
+
+    expect(CURRENT_STATE_SCHEMA_VERSION).toBe(1);
+    expect(result.state?.schemaVersion).toBe(1);
+    expect(result.state?.settings.language).toBe(language);
+    expect(result.warnings).toEqual([]);
+  }
 });
 
 it("strips a setting it does not know", () => {
