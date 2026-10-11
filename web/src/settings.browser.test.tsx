@@ -50,7 +50,7 @@ let root: Root | undefined;
 const realFetch = globalThis.fetch;
 
 /** The fake server's State File: the two preferences, and the revision they are. */
-let language: string;
+let language: string | null;
 let examSpacingDays: number;
 let version: number;
 /** Whether there is a State File at all; `undefined` is what a first save is based on. */
@@ -210,7 +210,14 @@ afterEach(() => {
   ROOT.lang = "en";
   ROOT.dir = "ltr";
   globalThis.fetch = realFetch;
+  // the browser's own `languages` getter back, from the prototype
+  Reflect.deleteProperty(navigator, "languages");
 });
+
+/** Makes this browser prefer these languages, as a Hebrew speaker's would (#173). */
+function browserPrefers(languages: string[]): void {
+  Object.defineProperty(navigator, "languages", { configurable: true, get: () => languages });
+}
 
 /** Mounts the app, as a page load does. Called twice by the reload test. */
 function mount(): HTMLElement {
@@ -787,4 +794,64 @@ it("re-reads the preferences at once after a Pick, so the next language switch i
   });
   expect(changesSent()).toEqual([{ language: "he", basedOn: "v2" }]);
   expect(changeCount).toBe(0);
+});
+
+/**
+ * #173's ruling, the half a student sees: a State File that says nobody chose a language opens in
+ * the browser's, with no click — and the guess is shown, never written. A guess the page saved
+ * would be indistinguishable from a choice on the next device, which is the one thing it must
+ * never look like (ADR-0014).
+ */
+it("opens in the browser's language when nobody chose one, and writes nothing", async () => {
+  language = null;
+  browserPrefers(["he-IL", "en-US"]);
+  expect([ROOT.lang, ROOT.dir]).toEqual(["en", "ltr"]);
+
+  const mounted = mount();
+  await settingsReady(mounted);
+
+  await vi.waitFor(() => {
+    expect([ROOT.lang, ROOT.dir]).toEqual(["he", "rtl"]);
+  });
+  expect(mounted.textContent).toContain(t("he", "timetable"));
+  expect(changesSent()).toEqual([]);
+  expect(language).toBeNull();
+});
+
+/** An explicit choice always wins over the guess, including a choice of English. */
+it("opens in the language the student chose, whatever the browser prefers", async () => {
+  language = "en";
+  browserPrefers(["he-IL"]);
+
+  const mounted = mount();
+  await settingsReady(mounted);
+
+  expect([ROOT.lang, ROOT.dir]).toEqual(["en", "ltr"]);
+  expect(mounted.textContent).toContain(t("en", "timetable"));
+});
+
+/** A choice made while the guess is on screen is what gets stored, and from then on it wins. */
+it("stores the choice a student makes over a guess, and keeps it across a reload", async () => {
+  language = null;
+  browserPrefers(["he-IL"]);
+  const first = mount();
+  await settingsReady(first);
+  await vi.waitFor(() => {
+    expect([ROOT.lang, ROOT.dir]).toEqual(["he", "rtl"]);
+  });
+
+  switchFor(first).click();
+
+  await vi.waitFor(() => {
+    expect([ROOT.lang, ROOT.dir]).toEqual(["en", "ltr"]);
+  });
+  expect(changesSent()).toEqual([{ language: "en", basedOn: "v1" }]);
+
+  root?.unmount();
+  root = undefined;
+  const second = mount();
+  await settingsReady(second);
+
+  expect([ROOT.lang, ROOT.dir]).toEqual(["en", "ltr"]);
+  expect(changesSent()).toHaveLength(1);
 });

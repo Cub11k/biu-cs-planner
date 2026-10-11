@@ -14,23 +14,24 @@
  * File, and a language is that kind: a Hebrew speaker wants Hebrew on every device they own. So
  * this module reads and writes a language over HTTP, and nothing here mirrors it into the browser.
  *
- * **What the first paint does, and why it is not a guess.** The page cannot know the language
- * until it has read a State File, so the first render is `en`/`ltr` and the document flips when
- * the answer lands — a flash of left-to-right for a Hebrew student, once, on a same-origin
- * loopback GET. The two alternatives were weighed and turned down:
+ * **What the first paint does.** The page cannot know the language until it has read a State
+ * File, so the first render is the **guess** — `guessLanguage` over the browser's languages — and
+ * the document flips when the answer lands only if the file holds a choice that differs from it: a
+ * student whose stored choice disagrees with their browser sees that flash, once per load, on a
+ * same-origin loopback GET. Before React mounts, what shows is `index.html`'s static
+ * `<html lang="en" dir="ltr">`. Holding the first paint was weighed and turned down:
  *
  *   - **Holding the first paint** until the answer arrives. The answer may never arrive — the
  *     server is not running, or this page has no launch token — so a hold needs a timeout, which
  *     is this flash with extra steps and a blank page in front of it. `main.tsx` can apply the
  *     scheme before React mounts because `localStorage` is synchronous; nothing makes an HTTP
  *     answer synchronous.
- *   - **Seeding from `navigator.language`**, which is the only signal there is on a first run. It
- *     cannot work as the code stands, and the reason is concrete rather than a preference:
- *     `settingsSchema` gives `language` the non-null default `"en"`, so nothing above `core` can
- *     tell *never chosen* from *chose English*. A guess would therefore be overwritten by the
- *     default the moment the answer landed — or, if it were written to the file to make it stick,
- *     would overwrite a deliberate English choice with Hebrew. Making that distinction expressible
- *     is a change to `core`'s schema and belongs in its own ticket.
+ *
+ * **The guess is shown and never written (#173, ADR-0014).** `core`'s `settingsSchema` holds `null`
+ * for *never chosen*, so this page can tell that from *chose English*: `null` shows the guess, and a
+ * language the file holds always wins over it. Nothing here sends the guess — the only change that
+ * goes out is one the student made — so a guess can neither follow the student to another device
+ * as though it were a preference nor overwrite a deliberate English choice.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api.ts";
@@ -81,12 +82,14 @@ export type SettingsResult =
   | {
       kind: "served";
       /**
+       * `null` when the State File says nobody chose one (#173), which is where the guess applies.
+       *
        * `undefined` when the API served a language this build has no strings for. Not an error
        * and not a crash: `t()` would index the translation tables with it and render nothing, so
        * an unrecognised value is read as *never told* and whatever is on screen is kept —
        * `./scheme.ts` gives every way of not knowing that same one answer.
        */
-      language: Language | undefined;
+      language: Language | null | undefined;
       examSpacingDays: ServedSettings["examSpacingDays"];
       version: SettingsVersion;
       warnings: SettingsWarning[];
@@ -122,18 +125,18 @@ export type SettingsResult =
   /** The request never arrived: the server is not running, or not running here. */
   | { kind: "unreachable" };
 
-/**
- * The language the first render is in, before any State File has been read.
- *
- * The same default `core`'s `settingsSchema` gives the field, deliberately: the page and the file
- * agree about what "nothing chosen" looks like, so the commonest first paint — a student who has
- * chosen nothing — is already correct and flips to nothing at all.
- */
-export const FIRST_PAINT_LANGUAGE: Language = "en";
-
 /** A language the translation files have strings for, or nothing. */
 const languageOf = (served: string): Language | undefined =>
   LANGUAGES.find((known) => known === served);
+
+/**
+ * The language to show when nobody chose one (#173): the first of the browser's languages, in its
+ * order, that this build has strings for, and English when it has none of them. It is also the
+ * first React render, before any State File is read, so for the commonest case — a student who has
+ * chosen nothing — the answer landing flips nothing. Shown, never stored (ADR-0014).
+ */
+export const guessLanguage = (preferred: readonly string[]): Language =>
+  preferred.map((tag) => languageOf(tag.split("-")[0]!.toLowerCase())).find(Boolean) ?? "en";
 
 /**
  * Sends one request and reads its answer, every one the same way (`askApi` in ./body.ts): a body
@@ -152,7 +155,7 @@ const ask = (send: () => Promise<Response>): Promise<SettingsResult> =>
       Array.isArray(body.warnings)
         ? {
             kind: "served",
-            language: languageOf(body.language),
+            language: body.language === null ? null : languageOf(body.language),
             examSpacingDays: body.examSpacingDays,
             version: body.version,
             warnings: body.warnings,
@@ -213,7 +216,7 @@ export type UseSettingsOptions = {
 };
 
 export type SettingsUse = {
-  /** The language to render in: the file's, once it has been read, and `en` before that. */
+  /** The language to render in: the file's when it holds a choice, and the guess otherwise. */
   language: Language;
   /** The Warnings the last served read carried, `settings-unreadable` among them. */
   warnings: SettingsWarning[];
@@ -301,7 +304,7 @@ export const unreadAfter = (
 };
 
 /** What the page knows about the preferences: only ever set from an answer that carried them. */
-type Known = { language: Language; version: SettingsVersion; warnings: SettingsWarning[] };
+type Known = { language: Language | null; version: SettingsVersion; warnings: SettingsWarning[] };
 
 /**
  * The language the page renders in, and the way to change it.
@@ -354,7 +357,7 @@ export function useSettings(options: UseSettingsOptions = {}): SettingsUse {
    */
   const show = (fresh: Extract<SettingsResult, { kind: "served" }>): void => {
     setKnown((was) => ({
-      language: fresh.language ?? was?.language ?? FIRST_PAINT_LANGUAGE,
+      language: fresh.language === undefined ? (was?.language ?? null) : fresh.language,
       version: fresh.version,
       warnings: fresh.warnings,
     }));
@@ -446,7 +449,8 @@ export function useSettings(options: UseSettingsOptions = {}): SettingsUse {
         };
 
   return {
-    language: known?.language ?? FIRST_PAINT_LANGUAGE,
+    // nobody chose, or nothing read yet: the guess, which nothing here ever sends
+    language: known?.language ?? guessLanguage(navigator.languages),
     warnings: known?.warnings ?? [],
     choose,
     notice,
