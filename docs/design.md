@@ -169,7 +169,7 @@ The states need to differ in more than one property at once. Border style alone 
    - backups and restore
    - settings: language, Exam spacing, credit load limit (#291, default 24)
 
-   **First cut (#238):** whether the folder is a Workspace, with "create the workspace folders" when it is not (`POST /api/workspace`, whose refusal is worded without claiming nothing changed), and backups and restore: the snapshots newest first with a Restore on each (`GET /api/backups`, `POST /api/backups/restore`). A restore is based on the State File revision `GET /api/settings` serves, since the listing carries none; it is an ordinary undoable edit, and every refusal it can answer with — `backup-refused` among them — has a sentence about a restore, not one borrowed from another screen. Import, the State File picker and settings come later.
+   **First cut (#238):** whether the folder is a Workspace, with "create the workspace folders" when it is not (`POST /api/workspace`, whose refusal is worded without claiming nothing changed), and backups and restore: the snapshots newest first with a Restore on each (`GET /api/backups`, `POST /api/backups/restore`). A restore is based on the State File revision `GET /api/settings` serves, since the listing carries none; it is an ordinary undoable edit, and every refusal it can answer with — `backup-refused` among them — has a sentence about a restore, not one borrowed from another screen — except the two generic save sentences, `workspaceNotReady` and `saveUnconfirmed`, which are true of any save. Import, the State File picker and settings come later.
 
 ## Architecture
 

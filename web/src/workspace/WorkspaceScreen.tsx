@@ -39,7 +39,10 @@ const STATE_FILE_STRING = {
   "save-revision-unreadable": "workspaceStateFileUnreadable",
 } as const satisfies Record<NonNullable<StateFileRefusal>, StringKey>;
 
-/** Why a restore was not made, each in words about a restore and none borrowed from another screen. */
+/**
+ * Why a restore was not made, in words about a restore. Two are the shell's generic save sentences,
+ * true of any save: `workspaceNotReady` and `saveUnconfirmed`.
+ */
 const RESTORE_REFUSAL_STRING = {
   "workspace-not-ready": "workspaceNotReady",
   "state-file-unreadable": "workspaceRestoreFileUnreadable",
@@ -60,6 +63,9 @@ const whenSaid = (language: Language, takenAt: number): string =>
 
 const say = (language: Language, said: Said): string =>
   t(language, said.key, said.takenAt === undefined ? undefined : { when: whenSaid(language, said.takenAt) });
+
+/** A part of the Workspace Layout by the name it has on disk: the backups folder is hidden. */
+const onDisk = (part: string): string => (part === "backups" ? ".backups" : part);
 
 const readBackups = (): Promise<BackupsResult> => fetchBackups(api);
 
@@ -174,8 +180,10 @@ export function WorkspaceScreen({
     void createWorkspace(api).then((answer) => {
       setCreating(false);
       setCreated(answer);
-      // a refused create may still have made some of the folders (#166), so either way look again
+      // a refused create may still have made some of the folders (#166), so either way look again,
+      // and so does whatever else was told the folder is not a Workspace yet
       setAsked((count) => count + 1);
+      onEdited();
     });
   };
 
@@ -201,15 +209,16 @@ export function WorkspaceScreen({
       {folder === undefined || folder.ready ? null : (
         <section data-workspace-not-ready className="mb-4 rounded-sm border border-rule bg-hint p-3 text-sm text-ink">
           {folder.missing.length === 0 ? null : (
-            <p>{t(language, "workspaceMissing", { folders: folder.missing.join(t(language, "progressListSeparator")) })}</p>
+            <p>{t(language, "workspaceMissing", { folders: folder.missing.map(onDisk).join(t(language, "workspaceListSeparator")) })}</p>
           )}
           {notAFolder.length === 0 ? null : (
-            <p>{t(language, "workspaceNotAFolder", { folders: notAFolder.join(t(language, "progressListSeparator")) })}</p>
+            <p>{t(language, "workspaceNotAFolder", { folders: notAFolder.map(onDisk).join(t(language, "workspaceListSeparator")) })}</p>
           )}
           <button
             type="button"
             data-workspace-create
-            disabled={creating}
+            // a file standing in a folder's place makes every create refuse, until it is moved
+            disabled={creating || sending || notAFolder.length > 0}
             onClick={create}
             className="mt-2 rounded-sm border border-rule bg-paper px-3 py-1 text-ink-soft disabled:opacity-50"
           >
@@ -235,7 +244,7 @@ export function WorkspaceScreen({
                 <button
                   type="button"
                   data-restore
-                  disabled={sending}
+                  disabled={sending || creating}
                   aria-label={t(language, "workspaceRestoreLabel", { when: whenSaid(language, takenAt) })}
                   onClick={() => restore(takenAt, served)}
                   className="rounded-sm border border-rule bg-paper px-3 py-1 text-ink-soft disabled:opacity-50"

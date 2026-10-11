@@ -28,6 +28,8 @@ let status: { ready: boolean; missing: string[]; notAFolder?: string[] };
 let refuseRestore: string | undefined;
 /** The reason the listing is refused with while set. */
 let refuseList: string | undefined;
+/** What the next restore is served as, when it is not a plain restore that moved the file. */
+let restoreServed: Record<string, unknown> | undefined;
 /** The reasons the next creates are refused with, one per create. */
 let refuseCreates: string[];
 
@@ -43,6 +45,7 @@ beforeEach(() => {
   refuseRestore = undefined;
   refuseList = undefined;
   refuseCreates = [];
+  restoreServed = undefined;
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = input instanceof Request ? input.url : String(input);
     const { pathname } = new URL(url, location.href);
@@ -78,6 +81,7 @@ beforeEach(() => {
         return json({ reason, warnings: [] }, 409);
       }
       const takenAt = body!.takenAt as number;
+      if (restoreServed !== undefined) return json({ takenAt, version: `v${version}`, ...restoreServed });
       snapshots = [2_100_000_000_000, ...snapshots];
       version += 1;
       canUndo = true;
@@ -177,9 +181,22 @@ it.each([
   ["backup-not-found", "workspaceRestoreNotFound"],
   ["backup-unreadable", "workspaceRestoreUnreadable"],
   ["workspace-refused", "workspaceRestoreRefused"],
+  ["state-file-unreadable", "workspaceRestoreFileUnreadable"],
+  ["workspace-not-ready", "workspaceNotReady"],
+  ["save-revision-unreadable", "saveUnconfirmed"],
 ] as const)("says a restore refused as %s as a restore's refusal", async (reason, key) => {
   const mounted = mount();
   refuseRestore = reason;
+  (await restoreButton(mounted, 2_000_000_000_000)).click();
+  await saysSo(mounted, key);
+});
+
+it.each([
+  ["an unchanged restore", { kind: "unchanged", warnings: [] }, "workspaceRestoreUnchanged"],
+  ["a restore with entries left out", { kind: "restored", warnings: [{ kind: "entry-dropped", at: "pins[0]" }] }, "workspaceRestoredPartly"],
+] as const)("says %s as such", async (_, served, key) => {
+  const mounted = mount();
+  restoreServed = served;
   (await restoreButton(mounted, 2_000_000_000_000)).click();
   await saysSo(mounted, key);
 });
@@ -216,7 +233,7 @@ it("offers a folder that is not a Workspace its folders, says a refused create w
     if (found === null) throw new Error("creating was not offered");
     return found;
   });
-  expect(mounted.querySelector("[data-workspace-not-ready]")?.textContent).toContain("requirements, backups");
+  expect(mounted.querySelector("[data-workspace-not-ready]")?.textContent).toContain("requirements, .backups");
   create.click();
   await saysSo(mounted, "workspaceCreateRefused");
   expect(said(mounted)).not.toContain(t("en", "picksUnreadable"));

@@ -15,10 +15,11 @@
 export const workspaceEnglish = {
   workspace: "Workspace",
   workspaceStatusLoading: "Reading the workspace folder…",
-  /** The Workspace Layout is not all there; `{folders}` are its folder names, which are not translated. */
+  /** The Workspace Layout is not all there; `{folders}` are its folder names on disk, which are not translated. */
   workspaceMissing: "This folder is not a workspace yet. Missing: {folders}.",
   /** A name the Workspace Layout needs is held by a plain file (#243), which creating cannot fix. */
   workspaceNotAFolder: "These are files where the workspace needs folders: {folders}. Move or rename them first.",
+  workspaceListSeparator: ", ",
   workspaceCreate: "Create the workspace folders",
   workspaceCreated: "The workspace folders were created.",
   /**
@@ -28,7 +29,7 @@ export const workspaceEnglish = {
    */
   workspaceCreateRefused:
     "The app could not create its folders here. Check the folder it was started in — something may already be using one of those names, or the app may not be allowed to write in it.",
-  workspaceCreateNotDone: "The workspace folders were not created.",
+  workspaceCreateNotDone: "Not all of the workspace folders could be created.",
   workspaceAnswerUnreadable: "The answer from the app could not be read, so it is not known whether the folders were created.",
 
   workspaceBackups: "Backups",
@@ -45,7 +46,8 @@ export const workspaceEnglish = {
   /** The accessible name of one backup's Restore button; `{when}` is the moment it was taken. */
   workspaceRestoreLabel: "Restore the backup from {when}",
   workspaceRestored: "Restored the backup from {when}. Undo puts back what it replaced.",
-  workspaceRestoredPartly: "Some of that backup could not be read and was left out.",
+  /** Raised by the snapshot or by the State File it replaced: the restore answer does not say which. */
+  workspaceRestoredPartly: "Some entries could not be read and were left out.",
   workspaceRestoreUnchanged: "Your work already matches the backup from {when}, so nothing changed.",
   workspaceRestoreStale: "Your work changed elsewhere since this page read it, so the backup was not restored. The page is reading it again.",
   workspaceRestoreFileUnreadable: "The file your work is saved in could not be read, so the backup was not restored.",
@@ -70,11 +72,12 @@ export const workspaceHebrew: Record<keyof typeof workspaceEnglish, string> = {
   workspaceStatusLoading: "קורא את תיקיית סביבת העבודה…",
   workspaceMissing: "התיקייה הזו אינה עדיין סביבת עבודה. חסרות: {folders}.",
   workspaceNotAFolder: "אלה קבצים במקום שבו סביבת העבודה צריכה תיקיות: {folders}. העבירו אותם או שנו את שמם קודם.",
+  workspaceListSeparator: ", ",
   workspaceCreate: "יצירת תיקיות סביבת העבודה",
   workspaceCreated: "תיקיות סביבת העבודה נוצרו.",
   workspaceCreateRefused:
     "לא ניתן היה ליצור את תיקיות האפליקציה כאן. בדקו את התיקייה שממנה הופעלה האפליקציה — ייתכן שאחד מהשמות האלה כבר בשימוש, או שאין לאפליקציה הרשאת כתיבה בה.",
-  workspaceCreateNotDone: "תיקיות סביבת העבודה לא נוצרו.",
+  workspaceCreateNotDone: "לא ניתן היה ליצור את כל תיקיות סביבת העבודה.",
   workspaceAnswerUnreadable: "לא ניתן היה לקרוא את התשובה מהאפליקציה, ולכן לא ידוע אם התיקיות נוצרו.",
 
   workspaceBackups: "גיבויים",
@@ -88,7 +91,7 @@ export const workspaceHebrew: Record<keyof typeof workspaceEnglish, string> = {
   workspaceRestore: "שחזור",
   workspaceRestoreLabel: "שחזור הגיבוי מ-{when}",
   workspaceRestored: "הגיבוי מ-{when} שוחזר. ״ביטול״ מחזיר את מה שהוחלף.",
-  workspaceRestoredPartly: "חלק מהגיבוי לא ניתן היה לקריאה והושמט.",
+  workspaceRestoredPartly: "חלק מהרשומות לא ניתנו לקריאה והושמטו.",
   workspaceRestoreUnchanged: "העבודה שלך כבר זהה לגיבוי מ-{when}, ולכן דבר לא השתנה.",
   workspaceRestoreStale: "העבודה שלך השתנתה במקום אחר מאז שהדף קרא אותה, ולכן הגיבוי לא שוחזר. הדף קורא אותה מחדש.",
   workspaceRestoreFileUnreadable: "לא ניתן היה לקרוא את הקובץ שבו העבודה שלך שמורה, ולכן הגיבוי לא שוחזר.",

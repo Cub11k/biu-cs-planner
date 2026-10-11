@@ -134,7 +134,8 @@ export function restoreBackup(
   return askApi<BackupsResult, { reason?: RestoreRefusal }, ServedRestore>(() => client.api.backups.restore.$post(request), {
     refused: ({ reason }) => ({ kind: "refused", of: "restore", reason }),
     served: (body) =>
-      typeof body.version === "string"
+      // `version` may be absent only on `unchanged` with no State File, which is still a revision to hold
+      typeof body.takenAt === "number"
         ? {
             kind: "served",
             snapshots: shown,
