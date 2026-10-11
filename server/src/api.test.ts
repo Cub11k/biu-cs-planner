@@ -6,7 +6,8 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { settingsSchema } from "@biu-cs-planner/core";
 import { BackupRefusedError, WorkspaceRefusedError, type Workspace } from "@biu-cs-planner/app";
-import { createApi, savedSettingsSchema } from "./api.ts";
+import { createApi } from "./api.ts";
+import { savedSettingsSchema } from "./history.api.ts";
 import { fileSystemWorkspace } from "./workspace.fs.ts";
 
 let root: string;
