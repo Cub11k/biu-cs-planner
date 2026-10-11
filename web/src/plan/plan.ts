@@ -10,7 +10,7 @@
  * redeclared here: `web` reaches the domain through the typed client alone (CLAUDE.md).
  */
 import type { InferRequestType, InferResponseType } from "hono/client";
-import { readBody, UNAUTHORIZED } from "../body.ts";
+import { askApi, askFor, type AnswerReaders } from "../body.ts";
 import type { ApiClient } from "../changes.ts";
 
 type PlanRoutes = ApiClient["api"]["plan"];
@@ -87,49 +87,32 @@ export type PlanResult =
   /** The request never arrived. */
   | { kind: "unreachable" };
 
-type Sent = Response & { ok: boolean; status: number };
-
 const isUnavailable = (reason: unknown): reason is LayoutUnavailable =>
   (LAYOUT_UNAVAILABLE as readonly unknown[]).includes(reason);
 
-async function read(answer: Sent): Promise<PlanResult> {
-  if (!answer.ok) {
-    // widened: the launch token guard answers before the route does (`../body.ts`)
-    const status: number = answer.status;
-    if (status === UNAUTHORIZED) return { kind: "unauthorized" };
-    const refused = await readBody(() => answer.json() as Promise<{ reason?: unknown }>);
-    if (!refused.readable) return { kind: "unreadable-answer" };
-    const reason = refused.body.reason;
-    // by `reason`, never the status: a stale revision is a 409 as well (#293)
-    if (isUnavailable(reason)) return { kind: "unavailable", reason };
-    return { kind: "refused", reason: reason as PlanRefusal | undefined };
-  }
-  const served = await readBody(() => answer.json() as Promise<ServedPlan & { summary?: LayoutSummary }>);
-  if (!served.readable) return { kind: "unreadable-answer" };
-  const body = served.body;
-  return {
-    kind: "served",
-    attempts: body.attempts,
-    attemptWarnings: body.attemptWarnings ?? [],
-    planWarnings: body.planWarnings ?? [],
-    semesterCredits: Array.isArray(body.semesterCredits) ? body.semesterCredits : [],
-    programWarnings: Array.isArray(body.programWarnings) ? body.programWarnings : [],
-    stateWarnings: body.warnings ?? [],
-    version: body.version,
-    ...(body.summary === undefined ? {} : { summary: body.summary }),
-  };
-}
+/** Every Plan answer read the same way: its refusal by `reason`, and a served Plan. */
+const plan: AnswerReaders<PlanResult, { reason?: unknown }, ServedPlan & { summary?: LayoutSummary }> = {
+  // by `reason`, never the status: a stale revision is a 409 as well (#293)
+  refused: ({ reason }) =>
+    isUnavailable(reason) ? { kind: "unavailable", reason } : { kind: "refused", reason: reason as PlanRefusal | undefined },
+  served: (body) =>
+    // the columns loop over the Attempts, and an answer without them is not a Plan (#382)
+    Array.isArray(body.attempts)
+      ? {
+          kind: "served",
+          attempts: body.attempts,
+          attemptWarnings: body.attemptWarnings ?? [],
+          planWarnings: body.planWarnings ?? [],
+          semesterCredits: Array.isArray(body.semesterCredits) ? body.semesterCredits : [],
+          programWarnings: Array.isArray(body.programWarnings) ? body.programWarnings : [],
+          stateWarnings: body.warnings ?? [],
+          version: body.version,
+          ...(body.summary === undefined ? {} : { summary: body.summary }),
+        }
+      : undefined,
+};
 
-/** Sends one request; only the request failing is the server not being there. */
-async function ask(send: () => Promise<Sent>): Promise<PlanResult> {
-  let answer: Sent;
-  try {
-    answer = await send();
-  } catch {
-    return { kind: "unreachable" };
-  }
-  return read(answer);
-}
+const ask = (send: () => Promise<Response>): Promise<PlanResult> => askApi(send, plan);
 
 /** The Plan: every Attempt, with the Warnings over them. */
 export function fetchPlan(client: ApiClient): Promise<PlanResult> {
@@ -207,24 +190,18 @@ export type Choices = { cohort: Cohort; programs: string[] };
  * The student's Cohort and Programs, or `undefined` when they could not be had. A read the screen
  * draws by and never edits through: both are set on the Progress screen (#331).
  */
-export async function fetchChoices(client: ApiClient): Promise<Choices | undefined> {
-  let answer: Sent;
-  try {
-    answer = await client.api.programs.$get();
-  } catch {
-    return undefined;
-  }
-  if (!answer.ok) return undefined;
-  const served = await readBody(
-    () => answer.json() as Promise<Extract<InferResponseType<ProgramsRoute>, { programs: unknown }>>,
+export function fetchChoices(client: ApiClient): Promise<Choices | undefined> {
+  return askFor(
+    () => client.api.programs.$get(),
+    (body: Extract<InferResponseType<ProgramsRoute>, { programs: unknown }>) => ({
+      cohort: body.cohort ?? null,
+      programs: Array.isArray(body.programs)
+        ? body.programs.flatMap((program) =>
+            typeof program?.requirementsFile === "string" ? [program.requirementsFile] : [],
+          )
+        : [],
+    }),
   );
-  if (!served.readable) return undefined;
-  const programs = Array.isArray(served.body.programs)
-    ? served.body.programs.flatMap((program) =>
-        typeof program?.requirementsFile === "string" ? [program.requirementsFile] : [],
-      )
-    : [];
-  return { cohort: served.body.cohort ?? null, programs };
 }
 
 /** One Course's name and credits, as far as the Workspace knows them. */
@@ -232,13 +209,8 @@ export type CourseFacts = InferResponseType<CoursesRoute>["courses"][number];
 
 /** Every Course the Workspace knows, or an empty list when they could not be had. */
 export async function fetchCourses(client: ApiClient): Promise<CourseFacts[]> {
-  let answer: Sent;
-  try {
-    answer = await client.api.courses.$get();
-  } catch {
-    return [];
-  }
-  if (!answer.ok) return [];
-  const served = await readBody(() => answer.json() as Promise<InferResponseType<CoursesRoute>>);
-  return served.readable && Array.isArray(served.body.courses) ? served.body.courses : [];
+  const courses = await askFor(() => client.api.courses.$get(), (body: InferResponseType<CoursesRoute>) =>
+    Array.isArray(body.courses) ? body.courses : undefined,
+  );
+  return courses ?? [];
 }

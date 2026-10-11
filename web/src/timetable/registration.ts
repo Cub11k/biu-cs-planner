@@ -6,11 +6,12 @@
  * Timetable edit is. The preview is a read of its own.
  */
 import type { InferRequestType, InferResponseType } from "hono/client";
-import { readBody } from "../body.ts";
+import { askApi, askFor } from "../body.ts";
 import type { ApiClient } from "./offerings.ts";
 import {
   ask,
   asRead,
+  timetable,
   positionOf,
   type PlanDiff,
   type StateFileVersion,
@@ -54,30 +55,21 @@ export async function fetchRegistration(client: ApiClient, query: TimetableQuery
           },
         }),
   } as InferRequestType<PreviewRoute>;
-  let answer: Response & { ok: boolean };
-  try {
-    answer = await client.api.timetable[":year"][":semester"].registration.$get(request);
-  } catch {
-    return { kind: "unavailable" };
-  }
-  if (!answer.ok) return { kind: "unavailable" };
-  const served = await readBody(() => answer.json() as Promise<ServedPreview>);
-  if (
-    !served.readable ||
-    !Array.isArray(served.body.planDiffs) ||
-    !Array.isArray(served.body.registers) ||
-    typeof served.body.digest !== "string"
-  ) {
-    return { kind: "unavailable" };
-  }
-  return {
-    kind: "served",
-    variantName: served.body.variantName,
-    planDiffs: served.body.planDiffs,
-    registers: served.body.registers,
-    digest: served.body.digest,
-    version: served.body.version,
-  };
+  const preview = await askFor(
+    () => client.api.timetable[":year"][":semester"].registration.$get(request),
+    (body: ServedPreview): RegistrationPreview | undefined =>
+      Array.isArray(body.planDiffs) && Array.isArray(body.registers) && typeof body.digest === "string"
+        ? {
+            kind: "served",
+            variantName: body.variantName,
+            planDiffs: body.planDiffs,
+            registers: body.registers,
+            digest: body.digest,
+            version: body.version,
+          }
+        : undefined,
+  );
+  return preview ?? { kind: "unavailable" };
 }
 
 /**
@@ -112,19 +104,16 @@ export async function markRegistered(
     ...asRead(query),
     json: { variant, ...positionOf(query), ...choice, basedOn },
   } as InferRequestType<RegisteredRoutes["$post"]>;
-  let answer: Response & { ok: boolean; status: number };
-  try {
-    answer = await client.api.timetable[":year"][":semester"].variants.registered.$post(request);
-  } catch {
-    return { kind: "unreachable" };
-  }
-  if (answer.status === CONFLICT || answer.status === NOT_FOUND) {
-    // read off a copy, so every other refusal is still read by the one reader the screen knows
-    const peek = await readBody(() => answer.clone().json() as Promise<{ reason?: unknown }>);
-    if (peek.readable && peek.body.reason === "plan-diff-stale") return { kind: "plan-diff-stale" };
-    if (peek.readable && peek.body.reason === "variant-not-found") return { kind: "variant-not-found" };
-  }
-  return ask(() => Promise.resolve(answer));
+  return askApi(() => client.api.timetable[":year"][":semester"].variants.registered.$post(request), {
+    refused: (body, status): MarkAnswer => {
+      if (status === CONFLICT || status === NOT_FOUND) {
+        if (body.reason === "plan-diff-stale") return { kind: "plan-diff-stale" };
+        if (body.reason === "variant-not-found") return { kind: "variant-not-found" };
+      }
+      return timetable.refused(body, status);
+    },
+    served: timetable.served,
+  });
 }
 
 /** Takes the registered mark off the Variant `variant` and `query.position` name, and nothing else. */

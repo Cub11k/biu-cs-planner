@@ -25,6 +25,19 @@
  * contract's types reach it; `api.ts` stays the module about making a request.
  *
  * The file name is #208's suggestion and the body is the part that needs guarding, so it is kept.
+ *
+ * **`askApi` is here for the same reason (#382).** Every reader in `web` was one copy of one
+ * skeleton — send inside a `try`, widen the status for the guard's 401, read the body through
+ * `readBody` — and every bug that skeleton produced was one copy getting a step wrong (#171,
+ * #206, #230). Those three steps are about an answer before the contract's types reach it, which
+ * is what this module is; what is left in each reader is its two callbacks.
+ *
+ * **Where the shape guard lives (#275).** There is no general schema check in `web`: it imports
+ * neither `core` nor `app`, and the answers come from our own typed server. But a served answer
+ * that lacks a list its render loops over is an answer this page cannot read, not one to pass on:
+ * each reader's `served` callback checks the fields it hands on without a `?? []` default, and
+ * returns `undefined` when one is missing, which `askApi` makes `unreadable-answer`. So the
+ * guard is in the reader, one field at a time, and the sentence is the one that path already says.
  */
 
 /**
@@ -98,3 +111,64 @@ const isObject = (value: unknown): boolean =>
  * claiming otherwise was written here and removed (#209's reviewer).
  */
 export const UNAUTHORIZED = 401;
+
+/** The three answers no route writes: the request never arrived, the guard refused it, or its body could not be read. */
+export type Transport = { kind: "unauthorized" } | { kind: "unreadable-answer" } | { kind: "unreachable" };
+
+/** What a reader makes of a body: a refusal in its area's own shape, and a served body. */
+export type AnswerReaders<R, Refused, Served> = {
+  /** A refusal's body, and its status for the two readers that tell one 409 from another. */
+  refused: (body: Refused, status: number) => R;
+  /** A served body, normalised; `undefined` when it lacks a field the render needs (#275). */
+  served: (body: Served) => R | undefined;
+};
+
+/**
+ * Sends one request and reads its answer, owning the three outcomes every reader shares (#382).
+ *
+ * The answer is read **outside** the catch: only the request failing is the server not being
+ * there. An answer this page then cannot read is a contract problem, and calling it
+ * "unreachable" would send the student to look at a server that answered them.
+ *
+ * The status is widened to `number` deliberately: the launch token guard answers before the route
+ * does, so 401 is not among the answers the contract knows about (`UNAUTHORIZED`).
+ *
+ * The bodies are cast to the callbacks' types and nothing more: `readBody` promises an object and
+ * no shape, and each `served` checks the one field it loops over.
+ */
+export async function askApi<R, Refused = Record<string, unknown>, Served = Record<string, unknown>>(
+  send: () => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>,
+  readers: AnswerReaders<R, Refused, Served>,
+): Promise<R | Transport> {
+  let answer: Awaited<ReturnType<typeof send>>;
+  try {
+    answer = await send();
+  } catch {
+    return { kind: "unreachable" };
+  }
+  const status: number = answer.status;
+  if (!answer.ok && status === UNAUTHORIZED) return { kind: "unauthorized" };
+  const read = await readBody(() => answer.json());
+  if (!read.readable) return { kind: "unreadable-answer" };
+  if (!answer.ok) return readers.refused(read.body as Refused, status);
+  return readers.served(read.body as Served) ?? { kind: "unreadable-answer" };
+}
+
+/**
+ * A read whose every failure is the same news — *not had* — as the reads a screen draws by and
+ * never acts through: the value `served` makes of the body, or `undefined` for a refusal, the
+ * guard, no server, a body that could not be read, or one `served` could not use.
+ */
+export async function askFor<T, Served = Record<string, unknown>>(
+  send: () => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>,
+  served: (body: Served) => T | undefined,
+): Promise<T | undefined> {
+  const answer = await askApi<{ kind: "had"; value: T } | undefined, unknown, Served>(send, {
+    refused: () => undefined,
+    served: (body) => {
+      const value = served(body);
+      return value === undefined ? undefined : { kind: "had", value };
+    },
+  });
+  return answer?.kind === "had" ? answer.value : undefined;
+}

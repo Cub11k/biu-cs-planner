@@ -8,7 +8,7 @@
  * "Architecture").
  */
 import type { InferRequestType, InferResponseType } from "hono/client";
-import { readBody, UNAUTHORIZED } from "../body.ts";
+import { askApi, type AnswerReaders } from "../body.ts";
 import type { ApiClient } from "./offerings.ts";
 import type { Semester } from "./catalog.ts";
 
@@ -156,71 +156,51 @@ export const positionOf = (query: TimetableQuery): { position?: number } =>
 export const variantOf = (query: TimetableQuery): { variant?: string; position?: number } =>
   query.variant === undefined ? {} : { variant: query.variant, ...positionOf(query) };
 
-/** Every answer read the same way, so one place decides what each status means. */
-async function read(
-  answer: Response & { ok: boolean; status: number },
-): Promise<TimetableResult> {
-  if (!answer.ok) {
-    // `status` is widened deliberately: the launch token guard rejects the request before
-    // the route runs, so 401 is not among the answers the contract knows about.
-    const status: number = answer.status;
-    if (status === UNAUTHORIZED) return { kind: "unauthorized" };
-
-    const refused = await readBody(
-      () =>
-        answer.json() as Promise<{
-          reason?: StateRefusal;
-          warnings?: StateWarning[];
-        }>,
-    );
-    if (!refused.readable) return { kind: "unreadable-answer" };
-    return {
-      kind: "refused",
-      reason: refused.body.reason,
-      warnings: refused.body.warnings ?? [],
-    };
-  }
-
-  const served = await readBody(() => answer.json() as Promise<ServedTimetable>);
-  if (!served.readable) return { kind: "unreadable-answer" };
-  const body = served.body;
-  return {
-    kind: "served",
-    variantName: body.variantName,
-    variantPosition: typeof body.variantPosition === "number" ? body.variantPosition : undefined,
-    // An older server, or a fake written before #281, sends neither: no tabs and no Warnings is
-    // what that answer is about, and the week it carries is still the week.
-    variants: body.variants ?? [],
-    variantWarnings: body.variantWarnings ?? [],
-    tray: body.tray ?? [],
-    blockedTimes: body.blockedTimes ?? [],
-    blockedTimeWarnings: body.blockedTimeWarnings ?? [],
-    // a server older than #295, or a fake written before it, has none to send: no Plan Diffs
-    planDiffs: body.planDiffs ?? [],
-    picks: body.picks,
-    clashes: body.clashes,
-    version: body.version,
-  };
-}
+/**
+ * Every Timetable answer read the same way, so one place decides what each body means. Exported
+ * for the edits that answer with the Timetable and tell one refusal of their own apart first
+ * (`./planDiffs.ts`, `./registration.ts`). `reason` is `unknown` here so they can compare it.
+ */
+export const timetable: AnswerReaders<
+  TimetableResult,
+  { reason?: unknown; warnings?: StateWarning[] },
+  ServedTimetable
+> = {
+  refused: (body) => ({
+    kind: "refused",
+    reason: body.reason as StateRefusal | undefined,
+    warnings: body.warnings ?? [],
+  }),
+  served: (body) =>
+    // The week loops over both, so an answer without them is not a week this page can draw:
+    // it is an unreadable answer, and the screen says so rather than crashing (#275).
+    Array.isArray(body.picks) && Array.isArray(body.clashes)
+      ? {
+          kind: "served",
+          variantName: body.variantName,
+          variantPosition: typeof body.variantPosition === "number" ? body.variantPosition : undefined,
+          // An older server, or a fake written before #281, sends neither: no tabs and no Warnings
+          // is what that answer is about, and the week it carries is still the week.
+          variants: body.variants ?? [],
+          variantWarnings: body.variantWarnings ?? [],
+          tray: body.tray ?? [],
+          blockedTimes: body.blockedTimes ?? [],
+          blockedTimeWarnings: body.blockedTimeWarnings ?? [],
+          // a server older than #295, or a fake written before it, has none to send: no Plan Diffs
+          planDiffs: body.planDiffs ?? [],
+          picks: body.picks,
+          clashes: body.clashes,
+          version: body.version,
+        }
+      : undefined,
+};
 
 /**
- * Sends one request, and reads the answer **outside** the catch: only the request failing
- * is the server not being there. An answer this module then cannot make sense of is a
- * contract problem, and calling it "unreachable" would send the student to look at a
- * server that answered them — so a body that is not JSON comes back as `unreadable-answer`
- * (see `read`) rather than as either a rejection or a lie about where the server is.
+ * Sends one request and reads its answer (`askApi` in ../body.ts): only the request failing is
+ * the server not being there, and a body that is not JSON comes back as `unreadable-answer`
+ * rather than as either a rejection or a lie about where the server is.
  */
-export async function ask(
-  send: () => Promise<Response & { ok: boolean; status: number }>,
-): Promise<TimetableResult> {
-  let answer: Response & { ok: boolean; status: number };
-  try {
-    answer = await send();
-  } catch {
-    return { kind: "unreachable" };
-  }
-  return read(answer);
-}
+export const ask = (send: () => Promise<Response>): Promise<TimetableResult> => askApi(send, timetable);
 
 /** What the student has picked in this Semester, and the Clashes among those Picks. */
 export async function fetchTimetable(

@@ -5,11 +5,11 @@
  * answer is the Timetable afterwards.
  */
 import type { InferRequestType } from "hono/client";
-import { readBody } from "../body.ts";
+import { askApi } from "../body.ts";
 import type { ApiClient } from "./offerings.ts";
 import {
-  ask,
   asRead,
+  timetable,
   variantOf,
   type PlanDiff,
   type StateFileVersion,
@@ -48,16 +48,11 @@ export async function applyPlanDiff(
     ...asRead(query),
     json: { ...variantOf(query), kind: diff.kind, courseNumber: diff.courseNumber, basedOn },
   } as InferRequestType<ApplyRoute>;
-  let answer: Response & { ok: boolean; status: number };
-  try {
-    answer = await client.api.timetable[":year"][":semester"]["plan-diffs"].apply.$post(request);
-  } catch {
-    return { kind: "unreachable" };
-  }
-  if (answer.status === CONFLICT) {
-    // read off a copy, so every other refusal is still read by the one reader the screen knows
-    const peek = await readBody(() => answer.clone().json() as Promise<{ reason?: unknown }>);
-    if (peek.readable && peek.body.reason === "plan-diff-stale") return { kind: "plan-diff-stale" };
-  }
-  return ask(() => Promise.resolve(answer));
+  return askApi(() => client.api.timetable[":year"][":semester"]["plan-diffs"].apply.$post(request), {
+    refused: (body, status): PlanDiffAnswer =>
+      status === CONFLICT && body.reason === "plan-diff-stale"
+        ? { kind: "plan-diff-stale" }
+        : timetable.refused(body, status),
+    served: timetable.served,
+  });
 }

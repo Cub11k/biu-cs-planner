@@ -7,7 +7,7 @@
  * redeclared here: `web` reaches the domain through the typed client alone (CLAUDE.md).
  */
 import type { InferRequestType, InferResponseType } from "hono/client";
-import { readBody, UNAUTHORIZED } from "../body.ts";
+import { askApi, askFor, type AnswerReaders } from "../body.ts";
 import type { ApiClient } from "../changes.ts";
 
 type ProgressRoutes = ApiClient["api"]["progress"];
@@ -64,43 +64,27 @@ export type ProgressResult =
   /** The request never arrived. */
   | { kind: "unreachable" };
 
-type Sent = Response & { ok: boolean; status: number };
+/** Every Progress answer read the same way: its refusal's `reason`, and served Progress. */
+const progress: AnswerReaders<ProgressResult, { reason?: ProgressRefusal }, ServedProgress> = {
+  refused: (body) => ({ kind: "refused", reason: body.reason }),
+  served: (body) =>
+    // the screen loops over the Programs, and an answer without them is not Progress (#382)
+    Array.isArray(body.programs)
+      ? {
+          kind: "served",
+          cohort: body.cohort ?? null,
+          programs: body.programs,
+          stoppedEarly: body.stoppedEarly,
+          solverWarnings: body.solverWarnings ?? [],
+          programWarnings: body.programWarnings ?? [],
+          pinWarnings: body.pinWarnings ?? [],
+          stateWarnings: body.warnings ?? [],
+          version: body.version,
+        }
+      : undefined,
+};
 
-async function read(answer: Sent): Promise<ProgressResult> {
-  if (!answer.ok) {
-    // widened: the launch token guard answers before the route does (`../body.ts`)
-    const status: number = answer.status;
-    if (status === UNAUTHORIZED) return { kind: "unauthorized" };
-    const refused = await readBody(() => answer.json() as Promise<{ reason?: ProgressRefusal }>);
-    if (!refused.readable) return { kind: "unreadable-answer" };
-    return { kind: "refused", reason: refused.body.reason };
-  }
-  const served = await readBody(() => answer.json() as Promise<ServedProgress>);
-  if (!served.readable) return { kind: "unreadable-answer" };
-  const body = served.body;
-  return {
-    kind: "served",
-    cohort: body.cohort ?? null,
-    programs: body.programs,
-    stoppedEarly: body.stoppedEarly,
-    solverWarnings: body.solverWarnings ?? [],
-    programWarnings: body.programWarnings ?? [],
-    pinWarnings: body.pinWarnings ?? [],
-    stateWarnings: body.warnings ?? [],
-    version: body.version,
-  };
-}
-
-/** Sends one request; only the request failing is the server not being there. */
-async function ask(send: () => Promise<Sent>): Promise<ProgressResult> {
-  let answer: Sent;
-  try {
-    answer = await send();
-  } catch {
-    return { kind: "unreachable" };
-  }
-  return read(answer);
-}
+const ask = (send: () => Promise<Response>): Promise<ProgressResult> => askApi(send, progress);
 
 /**
  * Progress for the student's chosen Programs, recomputed by the server now — or, given `whatIf`,
@@ -164,20 +148,13 @@ export type ListedRequirements = Extract<
 >["files"][number];
 
 /** The Requirements Files to choose a Program from, or `undefined` when they could not be had. */
-export async function fetchRequirementsFiles(
-  client: ApiClient,
-): Promise<ListedRequirements[] | undefined> {
-  let answer: Sent;
-  try {
-    answer = await client.api.requirements.$get();
-  } catch {
-    return undefined;
-  }
-  if (!answer.ok) return undefined;
-  const served = await readBody(
-    () => answer.json() as Promise<Extract<InferResponseType<RequirementsRoute>, { files: unknown }>>,
+export function fetchRequirementsFiles(client: ApiClient): Promise<ListedRequirements[] | undefined> {
+  return askFor(
+    () => client.api.requirements.$get(),
+    // the chooser loops over the files (#382)
+    (body: Extract<InferResponseType<RequirementsRoute>, { files: unknown }>) =>
+      Array.isArray(body.files) ? body.files : undefined,
   );
-  return served.readable ? served.body.files : undefined;
 }
 
 /** What choosing the Programs came to: saved, or why not. */
@@ -188,20 +165,15 @@ export type ProgramsChoice =
   | { kind: "unreadable-answer" }
   | { kind: "unreachable" };
 
-/** A save whose answer is not Progress: saved, or why not. Progress is read again after it. */
-async function saved(send: () => Promise<Sent>): Promise<ProgramsChoice> {
-  let answer: Sent;
-  try {
-    answer = await send();
-  } catch {
-    return { kind: "unreachable" };
-  }
-  if (answer.ok) return { kind: "saved" };
-  const status: number = answer.status;
-  if (status === UNAUTHORIZED) return { kind: "unauthorized" };
-  const refused = await readBody(() => answer.json() as Promise<{ reason?: ProgressRefusal }>);
-  return refused.readable ? { kind: "refused", reason: refused.body.reason } : { kind: "unreadable-answer" };
-}
+/**
+ * A save whose answer is not Progress: saved, or why not. Progress is read again after it, so the
+ * served body is read for being readable and nothing else.
+ */
+const saved = (send: () => Promise<Response>): Promise<ProgramsChoice> =>
+  askApi(send, {
+    refused: (body: { reason?: ProgressRefusal }): ProgramsChoice => ({ kind: "refused", reason: body.reason }),
+    served: (): ProgramsChoice => ({ kind: "saved" }),
+  });
 
 /** One Program as the student chooses it: a Requirements File by name, and maybe a Track of it. */
 export type ProgramChoice = { requirementsFile: string; track?: string };
