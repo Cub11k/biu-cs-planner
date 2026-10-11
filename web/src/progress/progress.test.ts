@@ -220,4 +220,5 @@ it("pairs a what-if's Requirements with the real ones by id, never by position",
 it("reads a served answer with no Programs as unreadable, and one with no files as nothing had", async () => {
   expect(await fetchProgress(client(() => Response.json({})).api)).toEqual({ kind: "unreadable-answer" });
   expect(await fetchRequirementsFiles(client(() => Response.json({})).api)).toBeUndefined();
+  expect(await fetchRequirementsFiles(client(() => Response.json({ files: "notes" })).api)).toBeUndefined();
 });
