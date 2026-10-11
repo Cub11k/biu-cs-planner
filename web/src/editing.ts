@@ -70,7 +70,9 @@ export function useEditing<T extends { kind: string }>(
     // `load` resolves for every answer the API can give: a rejection would be a client bug
     void load().then((fresh) => {
       if (shown.current !== mine) return;
-      // whatever this read brings, it is what the file says now
+      // whatever this read brings, it is what the file says now.
+      // shortcut: a re-read `keep` keeps off screen releases the gate too, leaving the spent revision
+      // editable; nothing passes `keep` yet, and #381 decides this when the Timetable moves on.
       setSpent(false);
       if (keepRef.current(fresh, onScreen.current)) setKept((count) => count + 1);
       else put(fresh);
