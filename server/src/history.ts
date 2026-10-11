@@ -196,7 +196,8 @@ export function editHistories(
    * **The last entry is never dropped.** A single snapshot past 8 MB means the student's
    * plan is that large, and the process is already holding a copy of it to have saved it;
    * dropping the edit they just made, so that the one thing they might want back is the one
-   * thing they cannot have, would be a worse answer than one stack of one large State.
+   * thing they cannot have, would be a worse answer than one stack of one large State. ADR-0013
+   * records the exception (#145): 8 MB bounds a long session, not a large document.
    *
    * Only ever bites the undo stack in practice, and that is a property rather than a
    * coincidence: an undo moves one entry from `undo` to `redo` and a redo moves it back, so

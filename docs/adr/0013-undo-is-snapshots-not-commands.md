@@ -25,6 +25,12 @@ Restoring a value cannot drift that way.
 - **It does not survive a restart.** The stack is in memory. `.backups/` is the durable record, and
   a second durable history of the same document would be a trap rather than a feature.
 - **It is bounded**: the last 100 edits, dropped sooner if the stack passes 8 MB.
+  **Amended 2026-10-11 (#145): the byte bound never drops the only entry.** The 8 MB protects the
+  process from a *long session*, a stack that grows an edit at a time without limit; it does not
+  protect it from a *large document*. The process already holds the document in order to have saved
+  it, so one snapshot of it costs no more than what is already in memory, and dropping it would make
+  the edit just made the one edit that cannot be taken back. An 8 MB State File is effectively
+  unreachable in any case. The count bound has no such exception.
 - **One API call is one entry.** The UI decides what an intent is, so a drag sends one call on drop
   and "apply all Plan Diffs" is a single labelled entry.
 - **One stack covers the document, minus settings.** Language and exam spacing are preferences that
