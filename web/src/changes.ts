@@ -33,6 +33,9 @@ const realRepeat: Repeat = (poll, everyMs) => {
   return () => clearInterval(handle);
 };
 
+/** What the poll makes of an answer the route wrote. */
+type Count = { kind: "counted"; changeCount: number } | { kind: "refused" };
+
 export type WorkspacePollOptions = {
   everyMs?: number;
   repeat?: Repeat;
@@ -79,11 +82,14 @@ export function workspaceChangePoll(
     if (asking) return; // a slow answer must not queue a second ask behind it
     asking = true;
     try {
-      const answer = await askApi(() => client.api.workspace.changes.$get(), {
-        refused: () => ({ kind: "refused" as const }),
-        served: (body: { changeCount: unknown }) =>
-          typeof body.changeCount === "number" ? { kind: "counted" as const, changeCount: body.changeCount } : undefined,
-      });
+      const answer = await askApi<Count, unknown, { changeCount: unknown }>(
+        () => client.api.workspace.changes.$get(),
+        {
+          refused: () => ({ kind: "refused" }),
+          served: (body) =>
+            typeof body.changeCount === "number" ? { kind: "counted", changeCount: body.changeCount } : undefined,
+        },
+      );
       if (answer.kind === "unauthorized") {
         if (refused) return;
         refused = true;
