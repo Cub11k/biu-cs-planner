@@ -235,6 +235,14 @@ moved (#371). Bare totals hide a wrong base until the merge comes in short, and 
 files short of the prediction, which took a hand-built `vitest list` diff in a temporary worktree to
 show was a misreported base rather than lost tests.
 
+**Your report is your last action: every background job you started has ended before you send
+it.** The harness counts an agent as alive while any job it started still runs, and a job left
+running can push to a branch after its pull request merged, which recreates the deleted branch.
+On 2026-10-05 #358's agent left one waiting on CI after reporting, and its task ran about 80
+minutes for about 28 minutes of work until the orchestrator stopped it by hand. **Waiting on CI
+is the orchestrator's part**, not yours: push, open the pull request, and report. The orchestrator
+waits on the checks before it merges (the next section).
+
 Budget is finite and it does not protect your progress — pushing does. Commit in coherent steps
 as you go. If you are going to run out, **push what you have, open a draft pull request, and say
 exactly where you stopped.** An agent once died mid-ticket and left a pushed commit with no pull
@@ -246,6 +254,9 @@ it; the run is not named there.
 Most of what is above is addressed to the agent. This section is not: it is for whoever dispatches
 the run and merges what comes back.
 
+- **The orchestrator waits on CI, not the agent.** An agent pushes, opens its pull request and
+  reports; waiting on the checks before the merge is done here, in the background, and a task still
+  running once its pull request has merged is stopped rather than left to push.
 - **Do not merge an agent's pull request until that agent has reported.** A green pull request is
   not a finished agent: its reviewers may still be running, and a review can change the diff.
   Merging early breaks the agent in two ways it cannot anticipate — a `git push` to the branch the
