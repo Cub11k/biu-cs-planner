@@ -51,11 +51,9 @@ export function backupsRoutes({ workspace, into }: RouteDependencies) {
      * itself a save that takes its own snapshot of what it replaced, so restoring twice leaves
      * a different folder behind the second time.
      *
-     * **The UI half is not wired.** The Workspace screen does not exist yet — only the
-     * Timetable does — so nothing calls this route today and nothing renders its refusals; #67
-     * builds the use case and the route and says so rather than building a screen it was not
-     * asked for. A page that reuses the Timetable's wording for these reasons would be wrong
-     * about them: `workspace-refused` there is worded as Picks that could not be read.
+     * The Workspace screen calls it (#238), with a sentence of its own for every refusal: a page
+     * that reused the Timetable's wording would be wrong about them, since `workspace-refused`
+     * there is worded as Picks that could not be read.
      *
      * `into` is passed because a restore is undoable and because the stacks have to hear the
      * revision every save wrote (ADR-0013). `unchanged` is a 200 and not a refusal: restoring
