@@ -23,13 +23,14 @@ import {
   type VariantWarning,
 } from "@biu-cs-planner/core";
 import {
-  editStateFile,
+  editAndAnswer,
   readStateFile,
   type EditHistory,
   type EditRefusal,
   type StateEditing,
 } from "./edit.ts";
-import { planDiffsOf, yearOfferings } from "./planDiffSources.ts";
+import { planDiffsOf } from "./planDiffSources.ts";
+import { strictReads, type ViewReads } from "./reads.ts";
 import type { Workspace } from "./workspace.ts";
 
 /**
@@ -193,30 +194,22 @@ export const variantEditedIn = (state: State, at: TimetableRef): VariantRef =>
  * every entry is simply `known: false`. **It is one read for the whole view** (#356): the year's
  * Catalog, from which the Tray takes this Semester's Offerings and the Plan Diffs every Semester's.
  *
- * **After a save, a Catalog read that fails in any way is that same `known: false`** (#324).
- * `yearOfferings` answers a refusal as no Catalog and lets anything else propagate, which for a read
- * is a 500 that changed nothing. Built after a save, the same throw used to answer 500 for an edit
- * that had landed, and the page told the student it failed. So `afterSave` reads the Catalog as
- * not there when the read throws: the answer carries the new revision and the parts it could read,
- * and the Tray says which part it could not.
+ * **After a save, a Catalog read that fails in any way is that same `known: false`** (#324): the
+ * degrading reads `editAndAnswer` hands an edit's answer say so (`./reads.ts`), so the answer
+ * carries the new revision and the parts it could read, and the Tray says which part it could not.
  */
-async function view(
-  workspace: Workspace,
-  state: State,
-  at: TimetableRef,
-  afterSave = false,
-): Promise<TimetableView> {
+async function view(reads: ViewReads, state: State, at: TimetableRef): Promise<TimetableView> {
   const shown = variantShownIn(state, at);
   const unread = trayEntries(state, shown, undefined);
   // One Catalog read per view (#356), the whole year: the Tray's chips take this Semester's
   // Offerings from it, and the Plan Diffs every Semester's.
-  const year = unread.length === 0 ? undefined : await yearOfferings(workspace, at.academicYear, afterSave);
+  const year = unread.length === 0 ? undefined : await reads.yearOfferings(at.academicYear);
   const tray =
     unread.length === 0
       ? unread
       : trayEntries(state, shown, year?.filter((offering) => offering.semesters.includes(at.semester)));
   // an empty Tray holds nothing planned here and nothing in the Variant, so nothing to diff
-  const planDiffs = unread.length === 0 ? [] : await planDiffsOf(workspace, state, shown, year, afterSave);
+  const planDiffs = unread.length === 0 ? [] : await planDiffsOf(reads, state, shown, year);
   return {
     variantName: shown.variant,
     variantPosition: shown.position,
@@ -247,7 +240,7 @@ export async function readTimetable(
 
   return {
     kind: "served",
-    view: await view(workspace, loaded.state, at),
+    view: await view(strictReads(workspace), loaded.state, at),
     version: loaded.version,
     warnings: loaded.warnings,
   };
@@ -257,7 +250,8 @@ export async function readTimetable(
  * Applies one edit to a Timetable and reports the Timetable afterwards.
  *
  * Every Timetable use case is this plus a `core` edit and a label — a Pick, a Variant, and the
- * rest of #298 — so each is one save through `editStateFile` and one undo step (ADR-0013).
+ * rest of #298 — so each is one save through `editAndAnswer` and `editStateFile`, and one undo
+ * step (ADR-0013).
  *
  * `answerAbout` is which Variant the answer shows, asked **after** the edit has been applied:
  * an edit that creates or renames a Variant only knows the name it wrote once it has run, and
@@ -270,23 +264,18 @@ export async function editTimetable(
   options: PickOptions,
   answerAbout: () => TimetableRef = () => at,
 ): Promise<TimetableResult> {
-  const outcome = await editStateFile(
+  return editAndAnswer(
     workspace,
     at.stateFile ?? DEFAULT_STATE_FILE,
     editing,
     options,
+    async (landed, reads): Promise<TimetableResult> => ({
+      kind: "served",
+      view: await view(reads, landed.state, answerAbout()),
+      version: landed.version,
+      warnings: landed.warnings,
+    }),
   );
-  if (outcome.kind === "refused") {
-    return { kind: "refused", reason: outcome.reason, warnings: outcome.warnings };
-  }
-
-  return {
-    kind: "served",
-    // the save has landed, so nothing read from here on may answer as if it had not (#324)
-    view: await view(workspace, outcome.state, answerAbout(), true),
-    version: outcome.version,
-    warnings: outcome.warnings,
-  };
 }
 
 /**
