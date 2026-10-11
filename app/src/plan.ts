@@ -24,15 +24,10 @@ import {
   type StateFileVersion,
   type StateFileWarning,
 } from "@biu-cs-planner/core";
-import {
-  editStateFile,
-  readStateFile,
-  type EditHistory,
-  type EditRefusal,
-  type StateEditing,
-} from "./edit.ts";
+import { editAndAnswer, readStateFile, type EditHistory, type EditRefusal, type Landed } from "./edit.ts";
 import { DEFAULT_STATE_FILE } from "./picks.ts";
-import { requirementsFiles, type ProgramsWarning } from "./programs.ts";
+import type { ProgramsWarning } from "./programs.ts";
+import { strictReads, type ViewReads } from "./reads.ts";
 import { loadRequirementsFiles } from "./requirements.ts";
 import type { Workspace } from "./workspace.ts";
 
@@ -40,7 +35,7 @@ import type { Workspace } from "./workspace.ts";
  * The Plan (#290): the student's Attempts, read in one domain read, and the four edits that make
  * them a plan — add, update, move, remove. The Plan is nothing but these Attempts (ADR-0009).
  *
- * Each edit is `core`'s pure function plus a label through `editStateFile`: one guarded save and
+ * Each edit is `core`'s pure function plus a label through `editAndAnswer`: one guarded save and
  * one undo step (ADR-0013), refused only when the file changed underneath (#90). Nothing a student
  * enters is refused; what looks wrong comes back as a Warning with the Attempts.
  *
@@ -112,13 +107,11 @@ const uuid = (): AttemptId => globalThis.crypto.randomUUID();
  * rather than passed off as a Plan with nothing to check (#357).
  */
 async function programsOf(
-  workspace: Workspace,
+  reads: ViewReads,
   state: State,
-  afterSave: boolean,
 ): Promise<{ programs: PlanProgram[]; unlisted: boolean }> {
   if (state.programs.length === 0) return { programs: [], unlisted: false };
-  // after a landed save a failed read is a listing that would not be made, never a 500 (#344)
-  const loaded = await requirementsFiles(workspace, afterSave);
+  const loaded = await reads.requirementsFiles();
   if (loaded.kind === "refused") return { programs: [], unlisted: true };
   const programs = state.programs.flatMap((choice): PlanProgram[] => {
     const file = loaded.files.find((entry) => entry.listed.name === choice.requirementsFile)?.file;
@@ -147,8 +140,8 @@ function pinsFor(state: State, programs: readonly PlanProgram[]): SolvePin[] {
   });
 }
 
-async function planOf(workspace: Workspace, state: State, now: () => number, afterSave = false): Promise<PlanView> {
-  const { programs, unlisted } = await programsOf(workspace, state, afterSave);
+async function planOf(reads: ViewReads, state: State, now: () => number): Promise<PlanView> {
+  const { programs, unlisted } = await programsOf(reads, state);
   return {
     attempts: state.attempts,
     attemptWarnings: attemptWarnings(state),
@@ -173,31 +166,21 @@ export async function readPlan(workspace: Workspace, options: PlanReadOptions = 
   }
   return {
     kind: "served",
-    view: await planOf(workspace, loaded.state, options.now ?? Date.now),
+    view: await planOf(strictReads(workspace), loaded.state, options.now ?? Date.now),
     version: loaded.version,
     warnings: loaded.warnings,
   };
 }
 
-async function edit(
-  workspace: Workspace,
-  editing: StateEditing,
-  options: PlanEditOptions,
-): Promise<PlanResult> {
-  const outcome = await editStateFile(workspace, options.stateFile ?? DEFAULT_STATE_FILE, editing, {
-    basedOn: options.basedOn,
-    ...(options.history ? { history: options.history } : {}),
-  });
-  if (outcome.kind === "refused") {
-    return { kind: "refused", reason: outcome.reason, warnings: outcome.warnings };
-  }
-  return {
+/** The answer every edit here gives: the Plan as it stands once the edit has landed. */
+const planAnswer =
+  (options: PlanEditOptions) =>
+  async (landed: Landed, reads: ViewReads): Promise<PlanResult> => ({
     kind: "served",
-    view: await planOf(workspace, outcome.state, options.now ?? Date.now, true),
-    version: outcome.version,
-    warnings: outcome.warnings,
-  };
-}
+    view: await planOf(reads, landed.state, options.now ?? Date.now),
+    version: landed.version,
+    warnings: landed.warnings,
+  });
 
 /**
  * Adds an Attempt: a passed Course with its grade, a planned one, an exemption, a retake. The
@@ -209,10 +192,12 @@ export async function addAttemptTo(
   options: PlanEditOptions,
 ): Promise<PlanResult & { added?: AttemptId }> {
   const id = (options.newId ?? uuid)();
-  const result = await edit(
+  const result = await editAndAnswer(
     workspace,
+    options.stateFile ?? DEFAULT_STATE_FILE,
     { label: "add-attempt", apply: (state) => addAttempt(state, fields, () => id) },
     options,
+    planAnswer(options),
   );
   return result.kind === "served" ? { ...result, added: id } : result;
 }
@@ -224,10 +209,12 @@ export async function updateAttemptOf(
   change: AttemptChange,
   options: PlanEditOptions,
 ): Promise<PlanResult> {
-  return edit(
+  return editAndAnswer(
     workspace,
+    options.stateFile ?? DEFAULT_STATE_FILE,
     { label: "update-attempt", apply: (state) => updateAttempt(state, id, change) },
     options,
+    planAnswer(options),
   );
 }
 
@@ -238,10 +225,12 @@ export async function moveAttemptTo(
   to: SemesterAt,
   options: PlanEditOptions,
 ): Promise<PlanResult> {
-  return edit(
+  return editAndAnswer(
     workspace,
+    options.stateFile ?? DEFAULT_STATE_FILE,
     { label: "move-attempt", apply: (state) => moveAttempt(state, id, to) },
     options,
+    planAnswer(options),
   );
 }
 
@@ -251,10 +240,12 @@ export async function removeAttemptFrom(
   id: AttemptId,
   options: PlanEditOptions,
 ): Promise<PlanResult> {
-  return edit(
+  return editAndAnswer(
     workspace,
+    options.stateFile ?? DEFAULT_STATE_FILE,
     { label: "remove-attempt", apply: (state) => removeAttempt(state, id) },
     options,
+    planAnswer(options),
   );
 }
 
@@ -298,7 +289,7 @@ export async function planFromSuggestedLayout(
   let unavailable: LayoutUnavailable | undefined;
   let summary: LayoutSummary = { created: [], skipped: [] };
 
-  const outcome = await editStateFile(
+  return editAndAnswer(
     workspace,
     options.stateFile ?? DEFAULT_STATE_FILE,
     {
@@ -323,18 +314,16 @@ export async function planFromSuggestedLayout(
         return made.state;
       },
     },
-    { basedOn: options.basedOn, ...(options.history ? { history: options.history } : {}) },
+    options,
+    async (landed, reads): Promise<LayoutResult> =>
+      unavailable !== undefined
+        ? { kind: "unavailable", reason: unavailable, version: landed.version }
+        : {
+            kind: "served",
+            view: await planOf(reads, landed.state, options.now ?? Date.now),
+            version: landed.version,
+            warnings: landed.warnings,
+            summary,
+          },
   );
-
-  if (outcome.kind === "refused") {
-    return { kind: "refused", reason: outcome.reason, warnings: outcome.warnings };
-  }
-  if (unavailable !== undefined) return { kind: "unavailable", reason: unavailable, version: outcome.version };
-  return {
-    kind: "served",
-    view: await planOf(workspace, outcome.state, options.now ?? Date.now, true),
-    version: outcome.version,
-    warnings: outcome.warnings,
-    summary,
-  };
 }

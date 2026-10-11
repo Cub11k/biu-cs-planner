@@ -23,6 +23,7 @@ import {
 } from "./picks.ts";
 import type { PlanDiffOptions } from "./planDiffs.ts";
 import { loadPlanDiffSources, loadPlanDiffSourcesForEdit, planDiffContext } from "./planDiffSources.ts";
+import { strictReads } from "./reads.ts";
 import type { Workspace } from "./workspace.ts";
 
 /**
@@ -96,7 +97,7 @@ export async function readRegistration(workspace: Workspace, at: TimetableRef): 
 
   const target = registrationTarget(loaded.state, at);
   if (target === undefined) return { kind: "variant-not-found", version: loaded.version, warnings: loaded.warnings };
-  const sources = await loadPlanDiffSources(workspace, at.academicYear, {
+  const sources = await loadPlanDiffSources(strictReads(workspace), at.academicYear, {
     wantRequirements: loaded.state.programs.length > 0,
   });
   const preview = registrationPreview(loaded.state, target, planDiffContext(loaded.state, sources));
