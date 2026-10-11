@@ -99,13 +99,30 @@ export async function bodyAs<T>(
   return { ok: true, value: parsed.data };
 }
 
-/** A use case's result with its refused arm taken off: what a route has to put on the wire. */
-export type Served<R> = Exclude<R, { kind: "refused" }>;
+/**
+ * A use case's result with its refused arm taken off, and the `no-view` of an edit whose view
+ * could not be built (#395): what a route has to put on the wire.
+ */
+export type Served<R> = Exclude<R, { kind: "refused" } | { kind: "no-view" }>;
 
-/** The refused arm of a use case's result, as its 409 carries it. */
+/**
+ * The refused arm of a use case's result, as its 409 carries it: with `reapply`, what clicking again
+ * would now do, where the arm has one (#104).
+ */
 type RefusalOf<R> = R extends { kind: "refused"; reason: infer Reason; warnings: infer W }
-  ? { reason: Reason; warnings: W }
+  ? { reason: Reason; warnings: W } & ("reapply" extends keyof R ? { reapply?: Exclude<R["reapply" & keyof R], undefined> } : unknown)
   : never;
+
+/**
+ * An edit that landed with no view (#395), as its 200 carries it: the revision and the Warnings,
+ * marked `noView` — without the mark the served body, which has both fields, would be a subtype of
+ * this one, and the contract's union would reduce to this. `B` where the result has no such arm.
+ */
+type NoViewOf<R, B> = [Extract<R, { kind: "no-view" }>] extends [never]
+  ? B
+  : Extract<R, { kind: "no-view" }> extends { version: infer V; warnings: infer W }
+    ? { noView: true; version: V; warnings: W }
+    : never;
 
 /**
  * `unknown` when every refused arm of `R` carries `reason` and `warnings`, and `never` otherwise,
@@ -119,7 +136,8 @@ type RefusedWithWarnings<R> = [Extract<R, { kind: "refused" }>] extends [{ reaso
 /**
  * The refusal mapping, once for every area: a use case's result as a response. Served is a 200
  * carrying what `served` makes of it — each area says which of its fields go on the wire — and
- * refused is the named 409 a refusal has always been, its reason and its Warnings.
+ * refused is the named 409 a refusal has always been, its reason and its Warnings. An edit that
+ * landed and has no view (`editAndAnswer`, #395) is a 200 with `noView`, the revision and Warnings.
  *
  * `state-file-changed` is among the reasons, and a 409 is right for it: the request is well
  * formed and conflicts with the state of the file (#90). The page reloads and says so.
@@ -134,10 +152,14 @@ export function answer<R extends { kind: string }, B>(
   served: (result: Served<R>) => B,
 ) {
   if (result.kind === "refused") {
-    const { reason, warnings } = result as unknown as RefusalOf<R>;
+    const { reason, warnings, reapply } = result as unknown as { reason: unknown; warnings: unknown; reapply?: unknown };
     // typed as the whole arm, not field by field: an indexed field of a type still generic here
     // is resolved to its constraint, and the 409 in `ApiType` would lose its reasons to `JSONValue`
-    return c.json({ reason, warnings } as RefusalOf<R>, 409);
+    return c.json((reapply === undefined ? { reason, warnings } : { reason, warnings, reapply }) as RefusalOf<R>, 409);
+  }
+  if (result.kind === "no-view") {
+    const { version, warnings } = result as unknown as { version: unknown; warnings: unknown };
+    return c.json({ noView: true, version, warnings } as NoViewOf<R, B>);
   }
   return c.json(served(result as Served<R>));
 }

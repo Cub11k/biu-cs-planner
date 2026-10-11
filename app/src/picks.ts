@@ -26,8 +26,9 @@ import {
   editAndAnswer,
   readStateFile,
   type EditHistory,
-  type EditRefusal,
+  type EditRefused,
   type StateEditing,
+  type NoView,
 } from "./edit.ts";
 import { planDiffsOf } from "./planDiffSources.ts";
 import { strictReads, type ViewReads } from "./reads.ts";
@@ -141,7 +142,9 @@ export type TimetableResult =
       version: StateFileVersion | undefined;
       warnings: StateFileWarning[];
     }
-  | { kind: "refused"; reason: EditRefusal; warnings: StateFileWarning[] };
+  | EditRefused
+  /** The edit landed and its view could not be built (#395). */
+  | NoView;
 
 export type PickOptions = {
   /** The revision the student's view was read from; see `EditOptions.basedOn`. */
@@ -291,7 +294,25 @@ export async function pickGroup(
   return editTimetable(
     workspace,
     at,
-    { label: "pick-group", apply: (state) => recordPick(state, variantEditedIn(state, at), pick) },
+    {
+      label: "pick-group",
+      apply: (state) => recordPick(state, variantEditedIn(state, at), pick),
+      // #104: re-picking would now replace a different Group in the slot, or remake a Variant that is
+      // gone. A page shows a Variant the file lacks only while its Timetable has none, so a Timetable
+      // holding Variants and not this one has lost it.
+      // shortcut: the refusal does not know what the page showed, so a Group the student was
+      // switching away from reads as a conflict too; send the Group the page saw if that misleads.
+      conflictsWith: (state) => {
+        const variant = variantAt(state, variantEditedIn(state, at));
+        if (variant === undefined) return (timetableAt(state, at)?.variants.length ?? 0) > 0;
+        return variant.picks.some(
+          (held) =>
+            held.courseNumber === pick.courseNumber &&
+            held.lessonType === pick.lessonType &&
+            held.groupNumber !== pick.groupNumber,
+        );
+      },
+    },
     options,
   );
 }

@@ -21,7 +21,7 @@ import {
   type StateFileWarning,
   type StudentCohort,
 } from "@biu-cs-planner/core";
-import { editAndAnswer, readStateFile, type EditHistory, type EditRefusal, type Landed } from "./edit.ts";
+import { editAndAnswer, readStateFile, type EditHistory, type EditRefused, type Landed, type NoView } from "./edit.ts";
 import { DEFAULT_STATE_FILE } from "./picks.ts";
 import { programsWarnings, type ProgramsWarning } from "./programs.ts";
 import { strictReads, type ViewReads } from "./reads.ts";
@@ -108,7 +108,9 @@ export type ProgressResult =
       version: StateFileVersion | undefined;
       warnings: StateFileWarning[];
     }
-  | { kind: "refused"; reason: EditRefusal; warnings: StateFileWarning[] };
+  | EditRefused
+  /** The edit landed and its view could not be built (#395). */
+  | NoView;
 
 export type ProgressReadOptions = {
   /** Defaults to `DEFAULT_STATE_FILE`; a State File is named, never a path. */

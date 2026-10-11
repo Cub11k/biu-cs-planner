@@ -129,6 +129,41 @@ export type StateEditing = {
   /** The use case's own word for this edit; ADR-0013 has the entry carry it. */
   label: string;
   apply(state: State): State;
+  /**
+   * Whether running `apply` on `state` would replace something the file now holds rather than only
+   * add the student's change (#104): a Pick into a Lesson Type the file fills with another Group, or
+   * into a Variant that is gone. Asked only of a refused edit, to say so; nothing is re-applied.
+   *
+   * **Also the opt-in to the report.** An edit without it gets no `reapply`, because `apply`
+   * handing the State back unchanged is "already done" only for an edit that does nothing when its
+   * change is already there — a rename of a Variant that is gone hands it back unchanged too.
+   */
+  conflictsWith?(state: State): boolean;
+};
+
+/**
+ * What the edit a `state-file-changed` refusal turned away would do on the State the file holds
+ * now (#104). Reported and never done: the student clicks again, and the app writes nothing on their
+ * behalf. `already-done` is the other writer having made the same change.
+ */
+export type Reapply = "still-possible" | "already-done" | "conflicts-now";
+
+/** Re-runs a refused edit on the newly read State. Cheap because an edit is a pure function (ADR-0013). */
+function reapplyOn(state: State, editing: StateEditing): Reapply | undefined {
+  if (editing.conflictsWith === undefined) return undefined;
+  try {
+    if (editing.apply(state) === state) return "already-done";
+    return editing.conflictsWith(state) ? "conflicts-now" : "still-possible";
+  } catch {
+    // a report about a refusal is not worth turning the refusal into a 500
+    return undefined;
+  }
+}
+
+/** A `state-file-changed` refusal, with what re-running the edit on `now` would do when there is one. */
+const changedUnder = (warnings: StateFileWarning[], editing: StateEditing, now: State | undefined): EditRefused => {
+  const reapply = now === undefined ? undefined : reapplyOn(now, editing);
+  return { kind: "refused", reason: "state-file-changed", warnings, ...(reapply === undefined ? {} : { reapply }) };
 };
 
 export type EditOptions = {
@@ -210,7 +245,18 @@ export type EditOutcome =
       version: StateFileVersion | undefined;
       warnings: StateFileWarning[];
     }
-  | { kind: "refused"; reason: EditRefusal; warnings: StateFileWarning[] };
+  | EditRefused;
+
+/**
+ * An edit that did not happen, and why. `reapply` comes with `state-file-changed` for an edit that
+ * opts in (`conflictsWith`) when the file as it now is could be read: what clicking again would do (#104).
+ */
+export type EditRefused = {
+  kind: "refused";
+  reason: EditRefusal;
+  warnings: StateFileWarning[];
+  reapply?: Reapply;
+};
 
 /**
  * A State File that is not there yet. Parsed rather than written out as a literal, so the
@@ -329,7 +375,7 @@ export async function editStateFile(
   // The view the edit was made from is gone: another tab, Dropbox, git or an editor wrote
   // the file since. Refused rather than applied, and the caller reloads (#90).
   if (loaded.version !== options.basedOn) {
-    return { kind: "refused", reason: "state-file-changed", warnings: loaded.warnings };
+    return changedUnder(loaded.warnings, editing, loaded.state);
   }
 
   const previous = loaded.state;
@@ -354,7 +400,10 @@ export async function editStateFile(
     // guard only the adapter can make. Distinct from a target it will not touch, and
     // checked first, because the two ask the student for different things.
     if (error instanceof StateFileChangedError) {
-      return { kind: "refused", reason: "state-file-changed", warnings: loaded.warnings };
+      // the State the edit would now meet is the one written in between, so it is read again;
+      // a file that cannot be read now has nothing to report on
+      const now = await readStateFile(workspace, name).catch(() => undefined);
+      return changedUnder(loaded.warnings, editing, now === undefined || "refused" in now ? undefined : now.state);
     }
     // Before the base class it extends, or it would be worded as the State File's refusal.
     if (error instanceof BackupRefusedError) {
@@ -403,6 +452,11 @@ export type Landed = Extract<EditOutcome, { kind: "saved" | "unchanged" }>;
  * `unchanged` is answered exactly as `saved` is, because the answer is what hands the page the
  * revision its next save is based on — a page told nothing would have nothing to base it on.
  * A refusal is passed on as the use case's own refused result.
+ *
+ * **Nor for a view that throws** (#395): a throw from `answer`'s own computation after the edit
+ * landed — the solver, a check — is answered `no-view`, the landed revision and Warnings without a
+ * view, on a 200 the server marks `noView`. No page reads that body yet: each takes it as an answer
+ * it cannot read, which already re-reads the file, so the student is never told the edit failed.
  */
 export async function editAndAnswer<Answer>(
   workspace: Workspace,
@@ -410,8 +464,15 @@ export async function editAndAnswer<Answer>(
   editing: StateEditing,
   options: EditOptions,
   answer: (landed: Landed, reads: ViewReads) => Promise<Answer>,
-): Promise<Answer | { kind: "refused"; reason: EditRefusal; warnings: StateFileWarning[] }> {
+): Promise<Answer | EditRefused | NoView> {
   const outcome = await editStateFile(workspace, name, editing, options);
   if (outcome.kind === "refused") return outcome;
-  return answer(outcome, degradingReads(workspace));
+  try {
+    return await answer(outcome, degradingReads(workspace));
+  } catch {
+    return { kind: "no-view", version: outcome.version, warnings: outcome.warnings };
+  }
 }
+
+/** An edit that landed and whose view could not be built (#395): what the file holds now, and no view. */
+export type NoView = { kind: "no-view"; version: StateFileVersion | undefined; warnings: StateFileWarning[] };
