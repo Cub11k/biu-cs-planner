@@ -143,6 +143,20 @@ it("reports a save the server refused because the file had changed", async () =>
   expect(result).toEqual({ kind: "refused", reason: "state-file-changed", warnings: [] });
 });
 
+/** #104: what clicking again would do travels with the refusal; a value this page does not know does not. */
+it.each([
+  ["conflicts-now", { reapply: "conflicts-now" }],
+  ["re-applied", {}],
+])("reads a refusal's reapply of %j", async (reapply, expected) => {
+  const { api } = client(() =>
+    Response.json({ reason: "state-file-changed", warnings: [], reapply }, { status: 409 }),
+  );
+
+  const result = await recordPick(api, FALL_2027, LECTURE, VERSION);
+
+  expect(result).toEqual({ kind: "refused", reason: "state-file-changed", warnings: [], ...expected });
+});
+
 it("names the slot, and only the slot, when removing a Pick", async () => {
   const { sent, api } = client(() => Response.json({ ...served, picks: [] }));
 

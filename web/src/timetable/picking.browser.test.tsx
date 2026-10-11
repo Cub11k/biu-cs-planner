@@ -94,6 +94,8 @@ let version: number;
  * on the revision the refusal already spent (#219).
  */
 let changedUnderneath: boolean;
+/** What that refusal says clicking again would do (#104); nothing, as an older server sent, when unset. */
+let reapplyNext: string | undefined;
 /** The Variants the fake's file holds, as the answer lists them; none until another writer adds one. */
 let variantsInFile: Array<{ name: string; primary: boolean }> | undefined;
 /**
@@ -234,6 +236,7 @@ beforeEach(() => {
   refuse = undefined;
   version = 0;
   changedUnderneath = false;
+  reapplyNext = undefined;
   variantsInFile = undefined;
   unreadableSave = undefined;
   unconfirmedSave = false;
@@ -291,7 +294,8 @@ beforeEach(() => {
           { name: "A", primary: true },
           { name: "B", primary: false },
         ];
-        return new Response(JSON.stringify({ reason: "state-file-changed", warnings: [] }), {
+        const reapply = reapplyNext === undefined ? {} : { reapply: reapplyNext };
+        return new Response(JSON.stringify({ reason: "state-file-changed", warnings: [], ...reapply }), {
           status: 409,
           headers: { "content-type": "application/json" },
         });
@@ -595,6 +599,30 @@ it("says a click was not saved when the file changed under the page, and keeps t
     }
   });
   expect(mounted.textContent, traffic()).not.toContain(t("en", "picksStale"));
+});
+
+/**
+ * #104: the refusal says what clicking again would do to the file as it now is, and the screen says
+ * that rather than the bare sentence. The click is not re-sent: the student makes it again or not.
+ */
+it.each([
+  ["still-possible", "picksStaleStillPossible"],
+  ["already-done", "picksStaleAlreadyDone"],
+  ["conflicts-now", "picksStaleConflicts"],
+] as const)("says a refused click is %s when the refusal says so", async (reapply, sentence) => {
+  const mounted = await openWeek();
+  changedUnderneath = true;
+  reapplyNext = reapply;
+  tileFor(mounted, "01").click();
+
+  await waitForText(mounted, t("en", sentence));
+  expect(mounted.textContent, traffic()).not.toContain(t("en", "picksStale"));
+  // the re-read lands and draws the other writer's Variant, and the click was not sent again
+  await vi.waitFor(() => {
+    if (mounted.querySelector('[role="tab"][data-variant="B"]') === null) throw new Error(traffic());
+  });
+  expect(sent.filter((request) => request.method === "POST").length, traffic()).toBe(1);
+  expect(tileFor(mounted, "01").classList.contains("is-picked"), traffic()).toBe(false);
 });
 
 /** The refused answer the screen has to say something honest about. */
