@@ -97,9 +97,9 @@ const isObject = (value: unknown): boolean =>
 /**
  * The launch token guard's refusal (ADR-0004).
  *
- * One of it, for the five sites that each wrote their own (#208). Two read it now: `askApi`
- * below, which every reader goes through (#382), and the poll closure in `changes.ts`. The status
- * is widened to `number` at both deliberately:
+ * One of it, for the five sites that each wrote their own (#208). One reads it now: `askApi`
+ * below, which every reader goes through (#382) and the poll in `changes.ts` too (#394). The status
+ * is widened to `number` there deliberately:
  * the guard answers before the route does, so 401 is not among the answers the contract knows
  * about, and nothing in `ApiType` will ever narrow a comparison against it.
  *

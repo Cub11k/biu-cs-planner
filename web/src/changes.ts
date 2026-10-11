@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, type createApiClient } from "./api.ts";
-import { UNAUTHORIZED } from "./body.ts";
+import { askApi } from "./body.ts";
 
 /*
  * How the page hears that the Workspace changed under it: a Catalog dropped into
@@ -32,6 +32,9 @@ const realRepeat: Repeat = (poll, everyMs) => {
   const handle = setInterval(poll, everyMs);
   return () => clearInterval(handle);
 };
+
+/** What the poll makes of an answer the route wrote. */
+type Count = { kind: "counted"; changeCount: number } | { kind: "refused" };
 
 export type WorkspacePollOptions = {
   everyMs?: number;
@@ -79,21 +82,27 @@ export function workspaceChangePoll(
     if (asking) return; // a slow answer must not queue a second ask behind it
     asking = true;
     try {
-      const answer = await client.api.workspace.changes.$get();
-      // widened deliberately: the launch token guard rejects the ask before the route runs, so
-      // 401 is not among the answers the contract knows about
-      const status: number = answer.status;
-      if (status === UNAUTHORIZED) {
+      const answer = await askApi<Count, unknown, { changeCount: unknown }>(
+        () => client.api.workspace.changes.$get(),
+        {
+          refused: () => ({ kind: "refused" }),
+          served: (body) =>
+            typeof body.changeCount === "number" ? { kind: "counted", changeCount: body.changeCount } : undefined,
+        },
+      );
+      if (answer.kind === "unauthorized") {
         if (refused) return;
         refused = true;
         onChanged();
         return;
       }
       // Any other refusal keeps the old silence, and leaves `refused` alone: a 500 from the
-      // route says nothing about this page's token, and nothing here can act on it.
-      if (!answer.ok) return;
+      // route says nothing about this page's token, and nothing here can act on it. Nor does a
+      // server that is not answering: the next ask tries again, and the page shows what it has
+      // rather than an error for something the student did not do.
+      if (answer.kind !== "counted") return;
 
-      const { changeCount } = await answer.json();
+      const { changeCount } = answer;
       const moved = seen !== undefined && changeCount !== seen;
       // This page can be heard again, which is news about the page in the same way the refusal
       // was: the screens are still showing whatever they could last read.
@@ -101,9 +110,6 @@ export function workspaceChangePoll(
       refused = false;
       seen = changeCount;
       if (moved || heard) onChanged();
-    } catch {
-      // the server is not answering: the next ask tries again, and the page shows what it
-      // has rather than an error for something the student did not do
     } finally {
       asking = false;
     }
