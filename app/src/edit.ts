@@ -397,8 +397,8 @@ export type Landed = Extract<EditOutcome, { kind: "saved" | "unchanged" }>;
 /**
  * `editStateFile`, then the answer a use case builds from what landed (#375). This is the one place
  * a use case that answers with a view turns the outcome into its result, so **a landed edit is never
- * answered with a 500**: `answer` is handed the degrading reads (`./reads.ts`), which cannot throw,
- * and no use case has a flag of its own to remember.
+ * answered with a 500 for a read that failed**: `answer` is handed the degrading reads
+ * (`./reads.ts`), which cannot throw, and no use case has a flag of its own to remember.
  *
  * `unchanged` is answered exactly as `saved` is, because the answer is what hands the page the
  * revision its next save is based on — a page told nothing would have nothing to base it on.

@@ -19,8 +19,8 @@ import type { Workspace } from "./workspace.ts";
 /**
  * The student's Cohort and Programs (#287): read them, and set either. Each set is `core`'s pure
  * edit plus a label through `editAndAnswer`, and so `editStateFile` — one guarded save and one undo
- * step each (ADR-0013) — and nothing here refuses a choice: a Program naming a file the Workspace does not hold, or a
- * Track that file does not define, is stored and comes back as a Warning.
+ * step each (ADR-0013) — and nothing here refuses a choice: a Program naming a file the Workspace
+ * does not hold, or a Track that file does not define, is stored and comes back as a Warning.
  */
 
 /**
