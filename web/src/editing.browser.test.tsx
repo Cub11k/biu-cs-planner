@@ -130,6 +130,8 @@ it.each([
   { fake: { kind: "refused", reason: "state-file-changed" } as Fake, mayHaveWritten: false },
   { fake: { kind: "refused", reason: "save-revision-unreadable" } as Fake, mayHaveWritten: true },
   { fake: { kind: "unreadable-answer" } as Fake, mayHaveWritten: true },
+  // the request may have reached the server before the connection failed (#397)
+  { fake: { kind: "unreachable" } as Fake, mayHaveWritten: true },
 ])("spends the revision on $fake.kind $fake.reason, sends nothing until the re-read is drawn", async ({ fake, mayHaveWritten }) => {
   await servedV1();
   const { heard } = await edit(fake);
@@ -190,7 +192,6 @@ it.each([
   { kind: "refused", reason: "backup-refused" } as Fake,
   { kind: "refused", reason: undefined } as Fake,
   { kind: "unauthorized" } as Fake,
-  { kind: "unreachable" } as Fake,
 ])("leaves the revision on screen live on $kind $reason, and only the screen hears it", async (fake) => {
   await servedV1();
   const { heard } = await edit(fake);
@@ -218,6 +219,20 @@ it("sends nothing before anything is served, or while an edit is in flight", asy
   expect(latest!.send(() => Promise.resolve(served("x")))).toBe(false);
   answer(served("v2"));
   await until((editing) => !editing.sending && onScreen(editing) === "v2");
+});
+
+it("sends one edit when two sends come in one batch, before the screen has re-rendered", async () => {
+  await servedV1();
+  const send = latest!.send;
+  const first = vi.fn(() => new Promise<Fake>(() => {}));
+  const second = vi.fn(() => Promise.resolve(served("x")));
+
+  // both from one render, as two handlers in one React batch would call them
+  expect(send(first)).toBe(true);
+  expect(send(second)).toBe(false);
+
+  expect(first).toHaveBeenCalledTimes(1);
+  expect(second).not.toHaveBeenCalled();
 });
 
 it("keeps a fresh answer off screen when `keep` says so, and counts the answers kept", async () => {
