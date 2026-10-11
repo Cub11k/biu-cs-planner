@@ -2,6 +2,7 @@ import { planEnglish, planHebrew } from "./plan.ts";
 import { progressEnglish, progressHebrew } from "./progress.ts";
 import { shellEnglish, shellHebrew } from "./shell.ts";
 import { timetableEnglish, timetableHebrew } from "./timetable.ts";
+import { workspaceEnglish, workspaceHebrew } from "./workspace.ts";
 
 /**
  * Every UI string goes through translation files, and right-to-left support is
@@ -21,16 +22,28 @@ export type Language = (typeof LANGUAGES)[number];
 
 /**
  * Every English string, composed from one table per screen (`./shell.ts`, `./plan.ts`,
- * `./progress.ts`, `./timetable.ts`), so a feature adds its strings to its own screen's file and
+ * `./progress.ts`, `./timetable.ts`, `./workspace.ts`), so a feature adds its strings to its own screen's file and
  * two features on two screens never edit one file (#366).
  */
-const english = { ...shellEnglish, ...planEnglish, ...progressEnglish, ...timetableEnglish } as const;
+const english = {
+  ...shellEnglish,
+  ...planEnglish,
+  ...progressEnglish,
+  ...timetableEnglish,
+  ...workspaceEnglish,
+} as const;
 
 /**
  * A key in two tables would be one string silently winning the spread over the other, so a key
  * in more than one is a compile error naming it.
  */
-type Tables = [typeof shellEnglish, typeof planEnglish, typeof progressEnglish, typeof timetableEnglish];
+type Tables = [
+  typeof shellEnglish,
+  typeof planEnglish,
+  typeof progressEnglish,
+  typeof timetableEnglish,
+  typeof workspaceEnglish,
+];
 type KeysOf<T> = T extends unknown ? keyof T : never;
 type InTwoTables<T extends readonly unknown[]> = T extends readonly [infer First, ...infer Rest]
   ? (keyof First & KeysOf<Rest[number]>) | InTwoTables<Rest>
@@ -47,7 +60,13 @@ export type StringKey = keyof typeof english;
 export const STRING_KEYS = Object.keys(english) as StringKey[];
 
 /** Typed against the English keys, so a missing Hebrew string is a compile error. */
-const hebrew: Record<StringKey, string> = { ...shellHebrew, ...planHebrew, ...progressHebrew, ...timetableHebrew };
+const hebrew: Record<StringKey, string> = {
+  ...shellHebrew,
+  ...planHebrew,
+  ...progressHebrew,
+  ...timetableHebrew,
+  ...workspaceHebrew,
+};
 
 const strings: Record<Language, Record<StringKey, string>> = { en: english, he: hebrew };
 

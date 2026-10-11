@@ -204,6 +204,7 @@ const EDIT_LABEL_STRING = new Map<string, StringKey>([
   ["move-attempt", "editMoveAttempt"],
   ["remove-attempt", "editRemoveAttempt"],
   ["plan-from-suggested-layout", "editPlanFromLayout"],
+  ["restore-backup", "editRestoreBackup"],
 ]);
 
 export function AppShell({
