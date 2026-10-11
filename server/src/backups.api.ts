@@ -34,7 +34,7 @@ export function backupsRoutes({ workspace, into }: RouteDependencies) {
      *
      * A refusal is the same named 409 every other Workspace route answers with, and it means
      * exactly one thing: `.backups/` is there and cannot be listed. It is **not** "the folder
-     * is not a Workspace yet" — that is an empty list, which the test below pins — and it is
+     * is not a Workspace yet" — that is an empty list, which a test in `./api.test.ts` pins — and it is
      * never "no backups", which is an empty list too and a perfectly good answer.
      */
     .get("/api/backups", async (c) => {

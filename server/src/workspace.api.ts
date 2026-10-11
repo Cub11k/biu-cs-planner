@@ -24,7 +24,7 @@ export function workspaceRoutes(workspace: Workspace, changes: Pick<WorkspaceCha
      * **A refused create is the same named 409 the other write routes answer with.** Until #141
      * this route was an unnamed 500: `createWorkspace` threw, the route had no arm for it, and
      * Hono's default handler answered with no body of this app's own. It was the only such route
-     * anyone had found, and the property "this file has no unnamed 500 path" is load-bearing for
+     * anyone had found, and the property "the API has no unnamed 500 path" is load-bearing for
      * #90's and #109's arguments — but that property is an argument made route by route and not
      * something a test asserts over all of them, so this comment claims only its own. The body is
      * the import route's to the character — `{ "reason": "workspace-refused" }` — because it is

@@ -108,6 +108,15 @@ type RefusalOf<R> = R extends { kind: "refused"; reason: infer Reason; warnings:
   : never;
 
 /**
+ * `unknown` when every refused arm of `R` carries `reason` and `warnings`, and `never` otherwise,
+ * so a result whose refusal is `{ reason }` alone — `listBackups`, `createWorkspace` — is a compile
+ * error at the call rather than a 409 typed `never` that sends no `warnings`.
+ */
+type RefusedWithWarnings<R> = [Extract<R, { kind: "refused" }>] extends [{ reason: unknown; warnings: unknown }]
+  ? unknown
+  : never;
+
+/**
  * The refusal mapping, once for every area: a use case's result as a response. Served is a 200
  * carrying what `served` makes of it — each area says which of its fields go on the wire — and
  * refused is the named 409 a refusal has always been, its reason and its Warnings.
@@ -121,7 +130,7 @@ type RefusalOf<R> = R extends { kind: "refused"; reason: infer Reason; warnings:
  */
 export function answer<R extends { kind: string }, B>(
   c: Context,
-  result: R,
+  result: R & RefusedWithWarnings<R>,
   served: (result: Served<R>) => B,
 ) {
   if (result.kind === "refused") {

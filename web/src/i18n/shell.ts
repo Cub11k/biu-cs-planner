@@ -272,11 +272,11 @@ export const shellEnglish = {
    *
    * **Neither key names a pane**, and `tokenMissing` was `catalogUnauthorized` until #217.
    * It was named when the Catalog was the only pane with a 401 to report; `unauthorizedSaid`
-   * in `../timetable/TimetableScreen.tsx` now says one of these two for all four of the
+   * in `../AppShell.tsx` now says one of these two for all four of the Timetable
    * screen's 401 sites (#197), so three of the four were reading a key that named a pane the
    * sentence is not about. Both are about this page's Launch Token, which is what they are
-   * named after. They sit below the `catalog*` block only because that is where the first of
-   * them was written.
+   * named after. They are here, among the strings every screen shares, and not beside the
+   * `catalog*` block in `./timetable.ts` where the first of them was written (#366).
    */
   tokenMissing:
     "This page has no launch token. Start the app from a terminal and open the address it prints.",

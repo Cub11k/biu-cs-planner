@@ -54,7 +54,7 @@ These hold regardless of what the table says:
   `web/src/timetable/TimetableScreen.tsx` sat in every lane, and from the fourth run on each brief
   declared them shared as an exception to this section. A lane now claims:
   - a resource's routes: `server/src/<resource>.api.ts` (`workspace`, `catalog`, `progress`, `plan`,
-    `timetable`, `backups`, `history`);
+    `timetable`, `backups`, and `history` for undo, redo and settings);
   - a screen's strings: `web/src/i18n/<screen>.ts` (`shell`, `plan`, `progress`, `timetable`), each
     carrying both languages;
   - a Timetable pane: its own component file in `web/src/timetable/`.
