@@ -44,6 +44,12 @@ When your output names a domain concept (in an issue title, a refactor proposal,
 
 If the concept you need isn't in the glossary yet, that's a signal: either you're inventing language the project doesn't use (reconsider) or there's a real gap (note it for `/domain-modeling`).
 
+**A glossary change agreed outside an implementation goes into a ticket.** `/domain-modeling` edits
+`GLOSSARY.md` as soon as a term is settled, but a grilling or an architecture review runs in the
+main checkout, which holds no work (`worktrees.md`). Write the exact sentence into the ticket the
+decision produced, or a ticket of its own, and the worktree that implements it makes the edit.
+#378's "spent revision" sentence is the shape.
+
 ## Flag ADR conflicts
 
 If your output contradicts an existing ADR, surface it explicitly rather than silently overriding:
