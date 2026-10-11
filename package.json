@@ -55,7 +55,8 @@
     "review": "node tools/pr-review/main.ts",
     "lanes": "node tools/lanes/main.ts",
     "mutate": "node tools/mutate/main.ts",
-    "test:repeat": "node tools/test-repeat/main.ts"
+    "test:repeat": "node tools/test-repeat/main.ts",
+    "test:counts": "node tools/test-counts/main.ts"
   },
   "devDependencies": {
     "@anthropic-ai/sdk": "^0.126.0",

@@ -27,4 +27,4 @@ The body carries `Closes #<n>` on its own line for the parent and for every chil
 
 Your report is your last action: every background job you started has ended before you send it. The orchestrator waits on CI, so push and report rather than watching checks.
 
-Final report: PR number, what you did and why, decisions you made that the tickets left open, what you measured (mutation checks included), test file and test counts with the dev commit they include, anything deliberately left undone, any file outside your row, and anything that belongs in a new ticket.
+Final report: PR number, what you did and why, decisions you made that the tickets left open, what you measured (mutation checks included), test file and test counts with the dev commit they include and the per-file delta against it (`npm run test:counts -- --diff <that commit> HEAD`), anything deliberately left undone, any file outside your row, and anything that belongs in a new ticket.

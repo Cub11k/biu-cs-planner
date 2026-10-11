@@ -229,6 +229,12 @@ found that belongs in a separate ticket. If an acceptance criterion is unmet, sa
 could not measure something, say that rather than implying you did. A wrong claim in a pull
 request body costs more to undo than an open question costs to answer.
 
+**Report the dev commit your branch contains and your per-file test delta against it**, not only
+the totals: `npm run test:counts -- --diff <that commit> HEAD` prints exactly the files whose counts
+moved (#371). Bare totals hide a wrong base until the merge comes in short, and PR #317's did: two
+files short of the prediction, which took a hand-built `vitest list` diff in a temporary worktree to
+show was a misreported base rather than lost tests.
+
 Budget is finite and it does not protect your progress — pushing does. Commit in coherent steps
 as you go. If you are going to run out, **push what you have, open a draft pull request, and say
 exactly where you stopped.** An agent once died mid-ticket and left a pushed commit with no pull
@@ -261,7 +267,9 @@ the run and merges what comes back.
 - **Predict both counts before merging, and check them after** — test files and tests, summed from
   each branch's own measurement. That batch reached its predicted total exactly, which is what made
   it obvious the three failures were a collision rather than a lost test file. It is the cheapest
-  signal there is that a merge lost or gained something nobody meant.
+  signal there is that a merge lost or gained something nobody meant. On a mismatch,
+  `npm run test:counts -- --diff <dev before> <dev after>` names the files that moved, to set beside
+  the per-file delta the agent reported.
 - **`gh pr merge --delete-branch` can leave the remote branch behind.** It tries the local branch
   first, fails while a worktree still holds it, and aborts before deleting the remote, so the flag
   reports nothing unusual — #116's was still there afterwards. Clean up in the order that works:
