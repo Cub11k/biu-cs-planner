@@ -132,7 +132,8 @@ it("refuses a save based on a revision another writer has already replaced", asy
     { basedOn: seenByBothTabs },
   );
 
-  expect(outcome).toMatchObject({ kind: "refused", reason: "state-file-changed" });
+  // and re-running it on what tab A left would still do something (#104): nothing re-ran it
+  expect(outcome).toMatchObject({ kind: "refused", reason: "state-file-changed", reapply: "still-possible" });
   // tab A's Pick is still the one in the file
   const held = await readStateFile(workspace, ALICE);
   if ("refused" in held) throw new Error("the file became unreadable");
@@ -331,7 +332,49 @@ it("reports the adapter's refusal when the file changes between the read and the
     { basedOn: current },
   );
 
-  expect(outcome).toMatchObject({ kind: "refused", reason: "state-file-changed" });
+  // what the edit would meet is what was written in between, read again for the report (#104)
+  expect(outcome).toMatchObject({ kind: "refused", reason: "state-file-changed", reapply: "still-possible" });
+});
+
+/**
+ * #104: a refused save says what clicking again would do, from the refused edit re-run on the State
+ * the file now holds. Reported only: the file is written by nobody but the other writer.
+ */
+describe("what a refused edit would do now", () => {
+  async function refusedAfter(otherWriter: StateEditing, mine: StateEditing) {
+    const workspace = ready();
+    await editStateFile(workspace, ALICE, picking(LECTURE), { basedOn: undefined });
+    const seen = await versionOf(workspace);
+    await editStateFile(workspace, ALICE, otherWriter, { basedOn: seen });
+    const between = await versionOf(workspace);
+    const outcome = await editStateFile(workspace, ALICE, mine, { basedOn: seen });
+    // nothing was re-applied on the student's behalf
+    expect(await versionOf(workspace)).toBe(between);
+    return outcome;
+  }
+
+  it("is already done when the other writer made the same change", async () => {
+    const second = { ...LECTURE, groupNumber: "02" };
+    expect(await refusedAfter(picking(second), picking(second))).toMatchObject({ reapply: "already-done" });
+  });
+
+  it("conflicts now when the edit says the State it would meet is one it would overwrite", async () => {
+    const mine = { ...picking({ ...LECTURE, groupNumber: "03" }), conflictsWith: (state: State) => state.timetables.length > 0 };
+    expect(await refusedAfter(picking({ ...LECTURE, groupNumber: "02" }), mine)).toMatchObject({
+      reapply: "conflicts-now",
+    });
+  });
+
+  it("says nothing of it when re-running the edit throws, and is still the refusal", async () => {
+    const throwing: StateEditing = {
+      label: "pick-group",
+      apply: () => {
+        throw new Error("a bug in an edit");
+      },
+    };
+    const outcome = await refusedAfter(picking({ ...LECTURE, groupNumber: "02" }), throwing);
+    expect(outcome).toEqual({ kind: "refused", reason: "state-file-changed", warnings: [] });
+  });
 });
 
 /**
@@ -524,7 +567,21 @@ describe("editAndAnswer", () => {
       return { kind: "served" as const };
     });
 
-    expect(answer).toEqual({ kind: "refused", reason: "state-file-changed", warnings: [] });
+    // the file already holds this very Pick, so clicking again would change nothing (#104)
+    expect(answer).toEqual({ kind: "refused", reason: "state-file-changed", warnings: [], reapply: "already-done" });
     expect(answered).toBe(false);
+  });
+
+  it("answers the landed revision without a view when the view itself throws (#395)", async () => {
+    const base = ready();
+
+    const answer = await editAndAnswer(base, ALICE, picking(LECTURE), { basedOn: undefined }, async () => {
+      throw new Error("the solver failed");
+    });
+
+    const written = await versionOf(base);
+    expect(written).toBeDefined();
+    expect(answer).toEqual({ kind: "no-view", version: written, warnings: [] });
+    expect((await read(base)).timetables[0]?.variants[0]?.picks).toEqual([LECTURE]);
   });
 });

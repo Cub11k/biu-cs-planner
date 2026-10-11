@@ -24,7 +24,7 @@ import {
   type StateFileVersion,
   type StateFileWarning,
 } from "@biu-cs-planner/core";
-import { editAndAnswer, readStateFile, type EditHistory, type EditRefusal, type Landed } from "./edit.ts";
+import { editAndAnswer, readStateFile, type EditHistory, type EditRefused, type Landed, type NoView } from "./edit.ts";
 import { DEFAULT_STATE_FILE } from "./picks.ts";
 import type { ProgramsWarning } from "./programs.ts";
 import { strictReads, type ViewReads } from "./reads.ts";
@@ -82,7 +82,9 @@ export type PlanResult =
       version: StateFileVersion | undefined;
       warnings: StateFileWarning[];
     }
-  | { kind: "refused"; reason: EditRefusal; warnings: StateFileWarning[] };
+  | EditRefused
+  /** The edit landed and its view could not be built (#395). */
+  | NoView;
 
 export type PlanReadOptions = {
   /** Defaults to `DEFAULT_STATE_FILE`; a State File is named, never a path. */
@@ -267,7 +269,7 @@ export type LayoutUnavailable =
 export type LayoutResult =
   | (Extract<PlanResult, { kind: "served" }> & { summary: LayoutSummary })
   | { kind: "unavailable"; reason: LayoutUnavailable; version: StateFileVersion | undefined }
-  | Extract<PlanResult, { kind: "refused" }>;
+  | Extract<PlanResult, { kind: "refused" | "no-view" }>;
 
 /**
  * New Plan from Suggested Layout (#293): planned Attempts for every Course of the layout of one of
