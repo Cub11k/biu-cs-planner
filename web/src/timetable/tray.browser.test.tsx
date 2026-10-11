@@ -183,7 +183,10 @@ it("shows a Tray entry's Groups as pencil options when it is selected", async ()
 it("fills a chip when its Lesson Type is picked, and clears the incomplete mark once all are", async () => {
   const mounted = await openWeek();
   addButton(mounted, "89-110").click();
-  await until(() => tile(mounted, "89-110 · Lecture · 01"));
+  // The entry, not the tile: the add selects the Course at once, so its Groups are on the week
+  // before the add's answer is. A Pick sent then is based on the revision the add is spending,
+  // and comes back refused as stale (#396).
+  await until(() => expect(trayCourses(mounted)).toEqual(["89-110"]));
 
   tile(mounted, "89-110 · Lecture · 01").click();
   await until(() => expect(chips(mounted, "89-110")).toEqual(["הרצאה:01", "תרגיל:—"]));

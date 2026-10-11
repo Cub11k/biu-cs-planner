@@ -585,12 +585,12 @@ describe("limits", () => {
   afterEach(() => vi.restoreAllMocks());
 
   /** Many interchangeable Courses and Requirements: a search far larger than one iteration. */
-  function wide() {
-    const numbers = Array.from({ length: 12 }, (_, i) => `89-${300 + i}`);
+  function wide(courses = 12, requirements = 6) {
+    const numbers = Array.from({ length: courses }, (_, i) => `89-${300 + i}`);
     const file = program({
       courses: numbers.map((number) => ({ number, credits: 2 })),
       pools: [{ id: "adv", kind: "prefix", prefix: "89-3" }],
-      requirements: Array.from({ length: 6 }, (_, i) => ({
+      requirements: Array.from({ length: requirements }, (_, i) => ({
         id: `r${i}`,
         kind: "credits",
         min: 4 + i,
@@ -648,7 +648,10 @@ describe("limits", () => {
   it("has a default iteration cap, and no time cap without a clock", () => {
     expect(DEFAULT_SOLVE_LIMITS).toEqual({ maxIterations: 20_000, maxMillis: 250 });
 
-    const { file, attempts } = wide();
+    // Nine Courses and four Requirements finish in about 50,000 iterations, past the cap but cheap
+    // per iteration; the twelve-by-six search spent its 20,000 slowly enough to pass vitest's five
+    // seconds under CPU load (#396).
+    const { file, attempts } = wide(9, 4);
     const input: SolveInput = { programs: [{ file }], attempts };
     const solution = solveAssignment(input);
     // A time cap of nothing at all would stop at once, if there were a clock to measure it by.
@@ -658,7 +661,8 @@ describe("limits", () => {
       limits: { maxMillis: 0 },
     });
 
-    expect(solution.assignments[0]!.completed).toHaveLength(12);
+    expect(solution.stoppedEarly).toBe(true);
+    expect(solution.assignments[0]!.completed).toHaveLength(9);
     expect(untimed.stoppedEarly).toBe(false);
   });
 });
