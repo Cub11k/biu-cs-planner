@@ -130,7 +130,6 @@ function progressFields(result: Served<ProgressResult>) {
   };
 }
 
-
 /**
  * The Progress and requirements routes: the Requirements Files, the student's Cohort and Programs,
  * Progress with its what-if, Pins and ticks.

@@ -59,7 +59,6 @@ const SEMESTER_STRING = {
   summer: "semesterSummer",
 } as const satisfies Record<Semester, StringKey>;
 
-
 /**
  * A click waiting for the first Timetable answer, and the week it was made on.
  *

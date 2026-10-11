@@ -65,7 +65,9 @@ These hold regardless of what the table says:
   resource, a new screen or a shared helper, so one row owns each and another row's edit there is
   one declared line. **`TimetableScreen.tsx` still holds the handler of every Timetable edit**,
   because they all go through its save-and-hold machinery; it is shared only with one named owner
-  and the other rows limited to declared edits in their own handlers.
+  and the other rows limited to declared edits in their own handlers. **`server/src/api.test.ts` is
+  not split yet** either: most route tests still live in it, so a route lane appends its own `it`
+  blocks there as a declared edit, or puts them in a `<resource>.api.test.ts` beside its module.
 - **Other worktrees are not yours.** `git worktree list` will show them. Never run a command
   with `-C` pointing at another worktree, and never run a repo-wide command from the main
   checkout, which stays on `dev`.
