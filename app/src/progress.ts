@@ -21,15 +21,10 @@ import {
   type StateFileWarning,
   type StudentCohort,
 } from "@biu-cs-planner/core";
-import {
-  editStateFile,
-  readStateFile,
-  type EditHistory,
-  type EditRefusal,
-  type StateEditing,
-} from "./edit.ts";
+import { editAndAnswer, readStateFile, type EditHistory, type EditRefusal, type Landed } from "./edit.ts";
 import { DEFAULT_STATE_FILE } from "./picks.ts";
-import { programsWarnings, requirementsFiles, type ProgramsWarning } from "./programs.ts";
+import { programsWarnings, type ProgramsWarning } from "./programs.ts";
+import { strictReads, type ViewReads } from "./reads.ts";
 import type { LoadedRequirements } from "./requirements.ts";
 import type { Workspace } from "./workspace.ts";
 
@@ -38,7 +33,7 @@ import type { Workspace } from "./workspace.ts";
  * recomputed from the State File and the Requirements Files on every read — nothing is cached in
  * the State File — and the four edits the Progress screen makes: Pin a Course to a Requirement,
  * unpin it, tick a Manual Requirement, untick it. Each edit is `core`'s pure function plus a label
- * through `editStateFile`, one guarded save and one undo step (ADR-0013), and answers with Progress
+ * through `editAndAnswer`, one guarded save and one undo step (ADR-0013), and answers with Progress
  * as it stands afterwards.
  *
  * **One read runs the solver once for every Program together, then the evaluation per Program**,
@@ -140,14 +135,8 @@ export type ProgressEditOptions = ProgressReadOptions & {
 };
 
 /** Progress for a State, against the Requirements Files `requirements/` holds right now. */
-async function progressOf(
-  workspace: Workspace,
-  state: State,
-  now: () => number,
-  afterSave = false,
-): Promise<ProgressView> {
-  // after a landed save a failed read is a listing that would not be made, never a 500 (#344)
-  const loaded = await requirementsFiles(workspace, afterSave);
+async function progressOf(reads: ViewReads, state: State, now: () => number): Promise<ProgressView> {
+  const loaded = await reads.requirementsFiles();
   const programWarnings = programsWarnings(state, loaded);
   const byName = new Map<string, LoadedRequirements>(
     loaded.kind === "served" ? loaded.files.map((entry) => [entry.listed.name, entry]) : [],
@@ -257,31 +246,21 @@ export async function readProgress(
   const state = options.whatIf === undefined ? loaded.state : setPrograms(loaded.state, options.whatIf);
   return {
     kind: "served",
-    view: await progressOf(workspace, state, options.now ?? Date.now),
+    view: await progressOf(strictReads(workspace), state, options.now ?? Date.now),
     version: loaded.version,
     warnings: loaded.warnings,
   };
 }
 
-async function edit(
-  workspace: Workspace,
-  editing: StateEditing,
-  options: ProgressEditOptions,
-): Promise<ProgressResult> {
-  const outcome = await editStateFile(workspace, options.stateFile ?? DEFAULT_STATE_FILE, editing, {
-    basedOn: options.basedOn,
-    ...(options.history ? { history: options.history } : {}),
-  });
-  if (outcome.kind === "refused") {
-    return { kind: "refused", reason: outcome.reason, warnings: outcome.warnings };
-  }
-  return {
+/** The answer every edit here gives: Progress as it stands once the edit has landed. */
+const progressAnswer =
+  (options: ProgressEditOptions) =>
+  async (landed: Landed, reads: ViewReads): Promise<ProgressResult> => ({
     kind: "served",
-    view: await progressOf(workspace, outcome.state, options.now ?? Date.now, true),
-    version: outcome.version,
-    warnings: outcome.warnings,
-  };
-}
+    view: await progressOf(reads, landed.state, options.now ?? Date.now),
+    version: landed.version,
+    warnings: landed.warnings,
+  });
 
 /** Pins a Course to a Requirement, replacing the Pin it had in that Program. */
 export async function pinCourseTo(
@@ -289,7 +268,13 @@ export async function pinCourseTo(
   pin: PinRef,
   options: ProgressEditOptions,
 ): Promise<ProgressResult> {
-  return edit(workspace, { label: "pin-course", apply: (state) => pinCourse(state, pin) }, options);
+  return editAndAnswer(
+    workspace,
+    options.stateFile ?? DEFAULT_STATE_FILE,
+    { label: "pin-course", apply: (state) => pinCourse(state, pin) },
+    options,
+    progressAnswer(options),
+  );
 }
 
 /** Removes a Pin, so the solver decides where the Course counts again. */
@@ -298,7 +283,13 @@ export async function unpinCourseFrom(
   pin: PinRef,
   options: ProgressEditOptions,
 ): Promise<ProgressResult> {
-  return edit(workspace, { label: "unpin-course", apply: (state) => unpinCourse(state, pin) }, options);
+  return editAndAnswer(
+    workspace,
+    options.stateFile ?? DEFAULT_STATE_FILE,
+    { label: "unpin-course", apply: (state) => unpinCourse(state, pin) },
+    options,
+    progressAnswer(options),
+  );
 }
 
 /** Ticks a Manual Requirement the student has met. */
@@ -307,7 +298,13 @@ export async function tickManualRequirement(
   tick: RequirementRef,
   options: ProgressEditOptions,
 ): Promise<ProgressResult> {
-  return edit(workspace, { label: "tick-manual", apply: (state) => tickManual(state, tick) }, options);
+  return editAndAnswer(
+    workspace,
+    options.stateFile ?? DEFAULT_STATE_FILE,
+    { label: "tick-manual", apply: (state) => tickManual(state, tick) },
+    options,
+    progressAnswer(options),
+  );
 }
 
 /** Unticks a Manual Requirement. */
@@ -316,9 +313,11 @@ export async function untickManualRequirement(
   tick: RequirementRef,
   options: ProgressEditOptions,
 ): Promise<ProgressResult> {
-  return edit(
+  return editAndAnswer(
     workspace,
+    options.stateFile ?? DEFAULT_STATE_FILE,
     { label: "untick-manual", apply: (state) => untickManual(state, tick) },
     options,
+    progressAnswer(options),
   );
 }

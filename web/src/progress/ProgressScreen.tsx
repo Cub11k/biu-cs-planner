@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "../api.ts";
 import { unauthorizedSaid, type ScreenDefinition, type ScreenProps } from "../AppShell.tsx";
+import { useEditing } from "../editing.ts";
 import { t, type Language, type StringKey } from "../i18n/strings.ts";
 import { academicYearOf, academicYearSpan } from "../timetable/calendar.ts";
 import {
@@ -127,26 +128,7 @@ function walk(
   return nodes.flatMap((node) => [{ node, level }, ...walk(node.children, level + 1)]);
 }
 
-/** Re-asks whenever the question or the Workspace changes, keeping the last answer on screen. */
-function useProgress(changes: number): [ProgressState, (answer: ProgressResult) => void] {
-  const [answer, setAnswer] = useState<ProgressState>({ kind: "loading" });
-  const shown = useRef(0);
-  const show = useCallback((fresh: ProgressResult): void => {
-    shown.current += 1;
-    setAnswer(fresh);
-  }, []);
-  useEffect(() => {
-    const mine = (shown.current += 1);
-    void fetchProgress(api).then((fresh) => {
-      // an answer older than what is on screen — an edit's own, say — is dropped
-      if (shown.current === mine) setAnswer(fresh);
-    });
-    return () => {
-      shown.current += 1;
-    };
-  }, [changes]);
-  return [answer, show];
-}
+const readProgress = (): Promise<ProgressResult> => fetchProgress(api);
 
 /** The Requirements Files to choose from, re-read when the Workspace changes. */
 function useRequirementsFiles(workspaceChanges: number): ListedRequirements[] | undefined | "loading" {
@@ -223,13 +205,13 @@ export function ProgressScreen({
   onRevision,
   notices,
 }: ScreenProps): React.JSX.Element {
-  const [rereads, setRereads] = useState(0);
-  const [progress, setProgress] = useProgress(workspaceChanges + stepRereads + rereads);
+  const editing = useEditing(readProgress, workspaceChanges + stepRereads, onEdited);
+  const progress = editing.answer;
   const [lens, setLens] = useState<Lens>("completed");
   /** That the last edit was refused, and why; retired by the next edit or a step. */
   const [editRefused, setEditRefused] = useState<StringKey | undefined>(undefined);
-  /** An edit is in flight: the controls wait for its answer, which carries the next revision. */
-  const [sending, setSending] = useState(false);
+  /** No edit may be sent: one is in flight, or the revision on screen is spent (#377). */
+  const sending = editing.sending || editing.spent;
   const files = useRequirementsFiles(workspaceChanges);
 
   useEffect(() => {
@@ -262,43 +244,20 @@ export function ProgressScreen({
 
   /**
    * One edit on the view on screen, answered with Progress as it stands afterwards; `then` runs
-   * once it is saved and served.
+   * once it is saved and served. The hook takes the answer; this says what the student is owed.
    */
   const send = (edit: (basedOn: string | undefined) => Promise<ProgressResult>, then?: () => void): void => {
-    if (progress.kind !== "served" || sending) return;
+    const sent = editing.send(edit, (answer) => {
+      if (answer.kind === "served") then?.();
+      else if (answer.kind === "refused")
+        setEditRefused(answer.reason === undefined ? "progressNotDone" : REFUSAL_STRING[answer.reason]);
+      else if (answer.kind === "unreadable-answer") setEditRefused("progressAnswerUnreadable");
+      else if (answer.kind === "unreachable") setEditRefused("apiUnreachable");
+      else if (answer.kind === "unauthorized") setEditRefused(tokenHeld ? "tokenRetired" : "tokenMissing");
+    });
+    if (!sent) return;
     onActed();
     setEditRefused(undefined);
-    setSending(true);
-    void edit(progress.version).then((answer) => {
-      setSending(false);
-      if (answer.kind === "served") {
-        setProgress(answer);
-        onEdited();
-        then?.();
-        return;
-      }
-      if (answer.kind === "refused") {
-        setEditRefused(answer.reason === undefined ? "progressNotDone" : REFUSAL_STRING[answer.reason]);
-        // the file is not what the screen shows: keep it on screen and go and look
-        if (answer.reason === "state-file-changed") setRereads((count) => count + 1);
-        // The save was made and its revision could not be read (#326), so it may have landed: as
-        // with an answer nobody could read, everything holding a revision goes and looks (#344).
-        if (answer.reason === "save-revision-unreadable") {
-          setRereads((count) => count + 1);
-          onEdited();
-        }
-        return;
-      }
-      if (answer.kind === "unreadable-answer") {
-        // not the claim that nothing was written: everything holding a revision goes and looks
-        setEditRefused("progressAnswerUnreadable");
-        setRereads((count) => count + 1);
-        onEdited();
-        return;
-      }
-      setEditRefused(answer.kind === "unreachable" ? "apiUnreachable" : undefined);
-      if (answer.kind === "unauthorized") setEditRefused(tokenHeld ? "tokenRetired" : "tokenMissing");
-    });
   };
 
   const said = statusSaid(language, progress, tokenHeld);

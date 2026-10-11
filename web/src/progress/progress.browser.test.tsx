@@ -37,6 +37,10 @@ let pins: Array<{ courseNumber: string; requirementId: string }>;
 let ticked: boolean;
 let version: number;
 let refuseNextEdit: string | undefined;
+/** While set, a read of Progress waits on it, so a test can look at the screen mid-re-read (#377). */
+let heldRead: Promise<void> | undefined;
+/** The reason the next read of Progress is refused with, rather than served. */
+let refuseNextRead: string | undefined;
 let stoppedEarly: boolean;
 let onlyUnreadableFiles: boolean;
 let canUndo: boolean;
@@ -151,6 +155,8 @@ beforeEach(() => {
   ticked = false;
   version = 1;
   refuseNextEdit = undefined;
+  heldRead = undefined;
+  refuseNextRead = undefined;
   stoppedEarly = false;
   onlyUnreadableFiles = false;
   canUndo = false;
@@ -177,7 +183,15 @@ beforeEach(() => {
       previews.push(whatIf);
       return json(progressBody(whatIf, false));
     }
-    if (pathname === "/api/progress") return json(progressBody());
+    if (pathname === "/api/progress") {
+      if (heldRead !== undefined) await heldRead;
+      if (refuseNextRead !== undefined) {
+        const reason = refuseNextRead;
+        refuseNextRead = undefined;
+        return json({ reason, warnings: [] }, 409);
+      }
+      return json(progressBody());
+    }
     if (pathname === "/api/requirements" && onlyUnreadableFiles) {
       return json({ files: [{ name: "notes", status: "not-requirements", warnings: [{ kind: "file-unreadable" }] }] });
     }
@@ -216,6 +230,8 @@ beforeEach(() => {
       const reason = refuseNextEdit;
       refuseNextEdit = undefined;
       version += 1; // somebody else wrote the file
+      // an answer nobody can read, which is not the claim that nothing was written
+      if (reason === "unreadable-answer") return new Response("<html>", { status: 502 });
       return json({ reason, warnings: [] }, 409);
     }
     if (pathname === "/api/programs" && method === "PUT") {
@@ -488,6 +504,90 @@ it("reads the screen again when a tick may have been saved and its revision coul
     if (box().checked) throw new Error("the untick was not drawn");
   });
   expect(lastSent("/api/progress/ticks")).toMatchObject({ method: "DELETE", body: { basedOn: "v2" } });
+});
+
+/** Holds every read of Progress until the function it hands back is called. */
+function holdReads(): () => void {
+  let release!: () => void;
+  heldRead = new Promise((resolve) => (release = resolve));
+  return () => {
+    heldRead = undefined;
+    release();
+  };
+}
+
+const said = (mounted: HTMLElement): string => mounted.querySelector('[role="status"]')?.textContent ?? "";
+const realReads = () => sent.filter((request) => request.pathname === "/api/progress").length;
+
+/**
+ * #377: an answer that says the file moved, or may have, spends the revision on screen. Until the
+ * re-read it starts is drawn the controls stay disabled, as while an edit is in flight, so nothing
+ * is sent on it; the next edit is based on the revision the re-read brought.
+ */
+it.each([
+  { reason: "state-file-changed", sentence: "progressStale" },
+  { reason: "save-revision-unreadable", sentence: "saveUnconfirmed" },
+  { reason: "unreadable-answer", sentence: "progressAnswerUnreadable" },
+] as const)("sends nothing on a spent revision after $reason, until the re-read is drawn", async ({ reason, sentence }) => {
+  const mounted = await mount();
+  await served(mounted);
+  refuseNextEdit = reason;
+  const box = (): HTMLInputElement => mounted.querySelector<HTMLInputElement>('input[data-tick="hebrew"]')!;
+  const release = holdReads();
+  const reads = realReads();
+
+  box().click();
+
+  await vi.waitFor(() => {
+    if (!said(mounted).includes(t("en", sentence))) throw new Error("the answer was not said");
+  });
+  await vi.waitFor(() => {
+    if (realReads() <= reads) throw new Error("the screen did not read again");
+  });
+  // the re-read is in flight: the revision on screen is spent, and every control waits for it
+  expect(box().disabled).toBe(true);
+  const edits = sent.filter((request) => request.method !== "GET").length;
+  box().click();
+  expect(sent.filter((request) => request.method !== "GET")).toHaveLength(edits);
+
+  release();
+  await vi.waitFor(() => {
+    if (box().disabled) throw new Error("the controls were not released");
+  });
+  const was = box().checked;
+  box().click();
+  await vi.waitFor(() => {
+    if (box().checked === was) throw new Error("the edit was not drawn");
+  });
+  expect(lastSent("/api/progress/ticks")).toMatchObject({ body: { basedOn: "v2" } });
+});
+
+it("releases the controls when the re-read after a spent revision is not served", async () => {
+  const mounted = await mount();
+  await served(mounted);
+  refuseNextEdit = "state-file-changed";
+  refuseNextRead = "state-file-unreadable";
+  const box = (): HTMLInputElement | null => mounted.querySelector<HTMLInputElement>('input[data-tick="hebrew"]');
+  const release = holdReads();
+
+  box()!.click();
+  await vi.waitFor(() => {
+    if (!said(mounted).includes(t("en", "progressStale"))) throw new Error("the refusal was not said");
+  });
+  release();
+  await vi.waitFor(() => {
+    if (!said(mounted).includes(t("en", "progressFileUnreadable"))) throw new Error("the re-read was not drawn");
+  });
+
+  // the next read is served, and is edited on as soon as it is drawn
+  await mount("en", 1);
+  await served(mounted);
+  expect(box()!.disabled).toBe(false);
+  box()!.click();
+  await vi.waitFor(() => {
+    if (!box()!.checked) throw new Error("the edit was not drawn");
+  });
+  expect(lastSent("/api/progress/ticks")).toMatchObject({ method: "POST", body: { basedOn: "v2" } });
 });
 
 it("moves between the nodes of the tree with the arrow keys", async () => {
