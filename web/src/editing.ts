@@ -91,10 +91,10 @@ export function useEditing<T extends { kind: string }>(
   }, [load, changes, rereads]);
 
   const send: Editing<T>["send"] = (edit, settle) => {
-    const on = onScreen.current;
-    if (on.kind !== "served" || gate.current.sending || gate.current.spent) return false;
+    // the revision is the rendered one: a handler builds its edit from what the student saw
+    if (answer.kind !== "served" || gate.current.sending || gate.current.spent) return false;
     setGate({ sending: true });
-    void edit((on as unknown as { version: RevisionOf<T> }).version).then((settled) => {
+    void edit((answer as unknown as { version: RevisionOf<T> }).version).then((settled) => {
       setGate({ sending: false });
       const reason = settled.kind === "refused" ? (settled as { reason?: unknown }).reason : undefined;
       if (settled.kind === "served") {
