@@ -1088,7 +1088,7 @@ it("serves the schema's defaults before any State File exists, and writes none",
 
   expect(response.status).toBe(200);
   await expect(response.json()).resolves.toEqual({
-    language: "en",
+    language: null,
     examSpacingDays: 3,
     creditLoadLimit: 24,
     warnings: [],
@@ -1501,7 +1501,7 @@ it("refuses to write a preference into a folder that is not a Workspace yet", as
   expect(refused.status).toBe(409);
   await expect(refused.json()).resolves.toMatchObject({ reason: "workspace-not-ready" });
   // and reading is still served, so a student who has not accepted the layout sees a language
-  await expect((await get(SETTINGS)).json()).resolves.toMatchObject({ language: "en" });
+  await expect((await get(SETTINGS)).json()).resolves.toMatchObject({ language: null });
 });
 
 it("will not overwrite a State File it could not read for the sake of one preference", async () => {

@@ -49,7 +49,7 @@ async function stored(workspace: MemoryWorkspace): Promise<unknown> {
 
 /** The settings the use case serves, or a failure naming what came back instead. */
 async function served(workspace: MemoryWorkspace): Promise<{
-  language: string;
+  language: string | null;
   examSpacingDays: number;
   version: StateFileVersion | undefined;
 }> {
@@ -94,7 +94,7 @@ it("serves the schema's defaults when there is no State File yet", async () => {
 
   // The defaults `core/src/state/schema.ts` sets, reached without a file having been written:
   // nothing is created by a read (docs/design.md, "Storage").
-  expect(settings).toEqual({ language: "en", examSpacingDays: 3, creditLoadLimit: 24, version: undefined });
+  expect(settings).toEqual({ language: null, examSpacingDays: 3, creditLoadLimit: 24, version: undefined });
   expect(await versionOf(workspace)).toBeUndefined();
 });
 
@@ -104,7 +104,7 @@ it("serves the defaults for a State File written before settings existed", async
   // written before the field was added.
   workspace.seed(REF, { schemaVersion: CURRENT_STATE_SCHEMA_VERSION });
 
-  expect(await served(workspace)).toMatchObject({ language: "en", examSpacingDays: 3 });
+  expect(await served(workspace)).toMatchObject({ language: null, examSpacingDays: 3 });
 });
 
 /**
@@ -151,7 +151,7 @@ it("reads and writes the credit load limit by the same mechanism, leaving the ot
   const set = await setSettings(workspace, { creditLoadLimit: 18 }, { ...AT, basedOn: await versionOf(workspace) });
 
   expect(set.kind === "served" && set.settings.creditLoadLimit).toBe(18);
-  expect(await served(workspace)).toMatchObject({ language: "en", examSpacingDays: 6, creditLoadLimit: 18 });
+  expect(await served(workspace)).toMatchObject({ language: null, examSpacingDays: 6, creditLoadLimit: 18 });
 });
 
 it("sets both preferences in one save", async () => {
@@ -288,7 +288,7 @@ it("still serves the defaults from a folder that is not a Workspace yet", async 
 
   expect(await readSettings(workspace, AT)).toMatchObject({
     kind: "served",
-    settings: { language: "en" },
+    settings: { language: null },
   });
 });
 
