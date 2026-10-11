@@ -133,3 +133,10 @@ it.each([200, 409])("makes an answer of a %i whose body is null", async (status)
 
   expect(result).toEqual({ kind: "unreadable-answer" });
 });
+
+/** The sidebar loops over the Offerings, so a served answer without them is unreadable (#275). */
+it("reads a served answer with no Offerings as unreadable", async () => {
+  const { api } = client(() => Response.json({}));
+
+  expect(await fetchOfferings(api, { academicYear: 2027, semester: "fall" })).toEqual({ kind: "unreadable-answer" });
+});

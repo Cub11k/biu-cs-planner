@@ -34,7 +34,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api.ts";
-import { readBody, UNAUTHORIZED } from "./body.ts";
+import { askApi } from "./body.ts";
 import type { ApiClient } from "./changes.ts";
 import { LANGUAGES, type Language } from "./i18n/strings.ts";
 import type { InferRequestType, InferResponseType } from "hono/client";
@@ -135,50 +135,30 @@ export const FIRST_PAINT_LANGUAGE: Language = "en";
 const languageOf = (served: string): Language | undefined =>
   LANGUAGES.find((known) => known === served);
 
-/** Every answer read the same way, so one place decides what each status means. */
-async function read(answer: Response & { ok: boolean; status: number }): Promise<SettingsResult> {
-  // widened deliberately: the launch token guard rejects before the route runs, so 401 is not
-  // among the answers the contract knows about
-  const status: number = answer.status;
-  if (status === UNAUTHORIZED) return { kind: "unauthorized" };
-
-  const answered = await readBody((): Promise<unknown> => answer.json());
-  if (!answered.readable) return { kind: "unreadable-answer" };
-  const body = answered.body;
-
-  if (!answer.ok) {
-    const refused = body as { reason?: SettingsRefusal; warnings?: SettingsWarning[] };
-    return { kind: "refused", reason: refused.reason, warnings: refused.warnings ?? [] };
-  }
-
-  const served = body as ServedSettings;
-  return {
-    kind: "served",
-    language: languageOf(served.language),
-    examSpacingDays: served.examSpacingDays,
-    version: served.version,
-    warnings: served.warnings,
-  };
-}
-
 /**
- * Sends one request and reads the answer **outside** the catch: only the request failing is the
- * server not being there. An answer this module cannot make sense of is a contract problem, and
- * calling it "unreachable" would send the student to look at a server that answered them — so a
- * body that is not JSON comes back as `unreadable-answer` (see `SettingsResult`) rather than as
- * either a rejection or a lie about where the server is.
+ * Sends one request and reads its answer, every one the same way (`askApi` in ./body.ts): a body
+ * that is not JSON comes back as `unreadable-answer` (see `SettingsResult`) rather than as either a
+ * rejection or a lie about where the server is.
  */
-async function ask(
-  send: () => Promise<Response & { ok: boolean; status: number }>,
-): Promise<SettingsResult> {
-  let answer: Response & { ok: boolean; status: number };
-  try {
-    answer = await send();
-  } catch {
-    return { kind: "unreachable" };
-  }
-  return read(answer);
-}
+const ask = (send: () => Promise<Response>): Promise<SettingsResult> =>
+  askApi(send, {
+    refused: (body: { reason?: SettingsRefusal; warnings?: SettingsWarning[] }): SettingsResult => ({
+      kind: "refused",
+      reason: body.reason,
+      warnings: body.warnings ?? [],
+    }),
+    served: (body: ServedSettings): SettingsResult | undefined =>
+      // the screen lists the Warnings, and an answer without them is not one to show (#382)
+      Array.isArray(body.warnings)
+        ? {
+            kind: "served",
+            language: languageOf(body.language),
+            examSpacingDays: body.examSpacingDays,
+            version: body.version,
+            warnings: body.warnings,
+          }
+        : undefined,
+  });
 
 /** The preferences the State File holds, and the revision a change has to be based on. */
 export async function fetchSettings(client: ApiClient): Promise<SettingsResult> {
