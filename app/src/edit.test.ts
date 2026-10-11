@@ -1,12 +1,15 @@
 import { recordPick, type GroupPick, type State } from "@biu-cs-planner/core";
-import { expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
+  editAndAnswer,
   editStateFile,
   readStateFile,
   restoring,
+  type Landed,
   type StateEdit,
   type StateEditing,
 } from "./edit.ts";
+import type { ViewReads } from "./reads.ts";
 import { choosing } from "./settings.ts";
 import { memoryWorkspace, type MemoryWorkspace } from "./workspace.memory.ts";
 import { WorkspaceRefusedError, type Workspace } from "./workspace.ts";
@@ -448,4 +451,80 @@ it("refuses to hand on a revision a save answers with that is not a well-formed 
   expect("state" in after && after.state.timetables[0]?.variants[0]?.picks[0]?.groupNumber).toBe("02");
   // the stack believes nothing the adapter said about this save
   expect(heard).toEqual([]);
+});
+
+/**
+ * `editAndAnswer` (#375): once the save has landed, the answer is built from reads that cannot
+ * throw, so a Catalog and a `requirements/` that fail from then on still serve the new revision.
+ */
+describe("editAndAnswer", () => {
+  const failingCatalogAndRequirements = (base: MemoryWorkspace): Workspace => ({
+    ...base,
+    read: async (ref) => {
+      if (ref.kind === "catalog" || ref.kind === "requirements") throw new Error("the disk is failing");
+      return base.read(ref);
+    },
+    list: async () => {
+      throw new Error("the disk is failing");
+    },
+  });
+
+  const answering = async (landed: Landed, reads: ViewReads) => ({
+    kind: "served" as const,
+    version: landed.version,
+    listing: await reads.requirementsFiles(),
+    offerings: await reads.yearOfferings(2027),
+  });
+
+  it("serves the revision a saved edit wrote when the Catalog and requirements/ then throw", async () => {
+    const base = ready();
+
+    const answer = await editAndAnswer(
+      failingCatalogAndRequirements(base),
+      ALICE,
+      picking(LECTURE),
+      { basedOn: undefined },
+      answering,
+    );
+
+    const written = await versionOf(base);
+    expect(written).toBeDefined();
+    expect(answer).toEqual({
+      kind: "served",
+      version: written,
+      listing: { kind: "refused", reason: "workspace-refused" },
+      offerings: undefined,
+    });
+  });
+
+  it("serves the revision the file still holds for an unchanged edit when the reads throw", async () => {
+    const base = ready();
+    await editStateFile(base, ALICE, picking(LECTURE), { basedOn: undefined });
+    const held = await versionOf(base);
+
+    const answer = await editAndAnswer(
+      failingCatalogAndRequirements(base),
+      ALICE,
+      { label: "nothing", apply: (state) => state },
+      { basedOn: held },
+      answering,
+    );
+
+    expect(answer).toMatchObject({ kind: "served", version: held });
+    expect(await versionOf(base)).toBe(held);
+  });
+
+  it("passes a refusal on as the use case's result, and answers nothing", async () => {
+    const base = ready();
+    await editStateFile(base, ALICE, picking(LECTURE), { basedOn: undefined });
+    let answered = false;
+
+    const answer = await editAndAnswer(base, ALICE, picking(LECTURE), { basedOn: undefined }, async () => {
+      answered = true;
+      return { kind: "served" as const };
+    });
+
+    expect(answer).toEqual({ kind: "refused", reason: "state-file-changed", warnings: [] });
+    expect(answered).toBe(false);
+  });
 });

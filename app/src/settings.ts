@@ -174,6 +174,9 @@ export async function readSettings(
  *
  * An unchanged save is served rather than refused: it carries the revision the file still
  * holds, so the caller's next save has something to be based on.
+ *
+ * On `editStateFile` rather than `editAndAnswer` (#375): it builds no view and reads nothing after
+ * its save, so it has no read that could fail once the edit has landed.
  */
 export async function setSettings(
   workspace: Workspace,

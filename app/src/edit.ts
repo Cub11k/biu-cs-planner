@@ -7,6 +7,7 @@ import {
   type StateFileVersion,
   type StateFileWarning,
 } from "@biu-cs-planner/core";
+import { degradingReads, type ViewReads } from "./reads.ts";
 import {
   BackupRefusedError,
   isStateFileRevision,
@@ -388,4 +389,29 @@ export async function editStateFile(
   if (movedOutsideSettings(previous, next)) options.history?.push(edit);
 
   return { kind: "saved", state: next, version, edit, warnings: loaded.warnings };
+}
+
+/** An edit that went through, saved or unchanged: the State it left and the revision the file holds. */
+export type Landed = Extract<EditOutcome, { kind: "saved" | "unchanged" }>;
+
+/**
+ * `editStateFile`, then the answer a use case builds from what landed (#375). This is the one place
+ * a use case that answers with a view turns the outcome into its result, so **a landed edit is never
+ * answered with a 500 for a read that failed**: `answer` is handed the degrading reads
+ * (`./reads.ts`), which cannot throw, and no use case has a flag of its own to remember.
+ *
+ * `unchanged` is answered exactly as `saved` is, because the answer is what hands the page the
+ * revision its next save is based on — a page told nothing would have nothing to base it on.
+ * A refusal is passed on as the use case's own refused result.
+ */
+export async function editAndAnswer<Answer>(
+  workspace: Workspace,
+  name: string,
+  editing: StateEditing,
+  options: EditOptions,
+  answer: (landed: Landed, reads: ViewReads) => Promise<Answer>,
+): Promise<Answer | { kind: "refused"; reason: EditRefusal; warnings: StateFileWarning[] }> {
+  const outcome = await editStateFile(workspace, name, editing, options);
+  if (outcome.kind === "refused") return outcome;
+  return answer(outcome, degradingReads(workspace));
 }
