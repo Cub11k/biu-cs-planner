@@ -150,7 +150,7 @@ When the graph checks are what you need, call them rather than the script: `modu
 judges your change, without the part that talks to GitHub.
 
 Green is not the claim. The claim is that the test would fail if the behaviour regressed, and the
-way to know is to delete the implementation and watch it fail.
+way to know is to break the implementation and watch it fail.
 
 A `:focus-visible` assertion once passed because Chromium draws its own focus ring, so removing
 the rule under test changed nothing the test could see. It had never tested anything. #97 records
@@ -159,39 +159,34 @@ it, and PR #137 restates it in the same terms as something this repo "has been b
 returns six commits, PR #137's own among them, and the pass that went looking (on PR #221's thread)
 proposed none of them rather than guess.
 
-**Commit before you mutate.** `git checkout -- <file>` reverts to the last commit, not to where
-you were, so using it to undo a deliberate mutation discards any uncommitted work in that file —
-including the review fixes you are in the middle of. Three agents hit this across two runs in
-September 2026 (#136, #137, #153), and one of them then took two mutation results off a file it
-had silently reverted before catching it and re-running from a committed tree. All three caught it
-themselves and reported it unprompted — #136 and #153 on their own threads, while **PR #137 records
-nothing of it**: the account of that third one, the two mutation results included, is #175's body,
-written from run reports this repository does not hold, and #175 names the three by their tickets
-(#123, #114, #144) rather than by the pull requests cited here. Commit, then mutate, then revert.
+**`npm run mutate -- <spec.json>` is how** (#364). The spec lists mutations, each a `name`, a
+`file`, a literal `from` that occurs exactly once in it, a `to`, and the repo-relative paths of the
+`tests` that should catch it (a failure in any other file does not count), with
+`"expected": "survives"` on one you expect to go unnoticed, saying why in the report:
 
-**The restore has to name `HEAD:` — `git show :<path>` reads the index.** One character apart, and
-the index form is the one that can hand back something you did not ask for: `git stash` followed by
-`git stash pop` restores the working tree and leaves the **index at `HEAD`**, so a later
-`git show :<path> > <path>` writes the committed file over your work while reading exactly like
-`git show HEAD:<path>`, the revert the next paragraph names. On 2026-10-04 #209's agent lost an
-uncommitted `web/src/history.ts` that way and re-applied it from its own patch script. It was
-following the rule as written: the file named two spellings and the one sitting between them
-behaves like neither. The occurrence is recorded on #226; PR #222, which that run landed as, does
-not mention it. The conclusion is the one the paragraph above already draws, reached by a different
-command — restore only from something you committed, and check that the thing you restore from is
-the thing you think it is.
+```json
+{ "mutations": [{ "name": "the guard goes", "file": "core/src/<module>.ts",
+  "from": "if (stale) return refused;", "to": "", "tests": ["core/src/<module>.test.ts"] }] }
+```
 
-**Revert with `git show HEAD:<path> > <path>`.** It writes the committed content back over the file,
-which is all the step needs, and it is the form that runs when `git checkout -- <file>` does not.
-The redirect overwrites the working file exactly as `checkout` does, so it is no safer with
-uncommitted work in that file and the commit-first step above still applies in full; what it is, is
-one file written out of the object store rather than a command that reaches for the index and the
-tree. It is not `checkout` spelled to slip past a denial. On 2026-10-04 #179's agent had that
-`checkout` denied by the permission classifier as "Irreversible Local Destruction" and built its two
-commits through the index instead, reverting each mutation from `HEAD`; PR #196 records the shape
-("commit first, then mutate, then restore from `HEAD`") and the denial itself is on #200. Three
-other agents in the same run ran `git checkout --` and were not blocked, so the denial is not
-uniform, and an agent meeting it needs a step it can take rather than a judgement to make.
+It prints each mutation as caught, with the first test that failed, or survived, and exits non-zero
+when one survived unannounced. Keep the spec in your scratch files and put the table in the report.
+Before the command existed every agent built its own harness in the scratchpad, each slightly
+different, and their results could not be compared.
+
+**It refuses a tree with uncommitted changes, and restores every file as it read it**, after each
+mutation and on an interrupt. Both are what three agents across two runs in September 2026 learned
+by hand (#136, #137, #153): a revert to the last commit discards whatever was not committed in that
+file, and one of them took two mutation results off a file it had silently reverted. So commit,
+then mutate. A restore by hand, when you need one, is `git show HEAD:<path> > <path>` — `HEAD:`,
+not `:<path>`, which reads the index and once handed back a stale file after a `git stash pop`
+(#226).
+
+**`npm run test:repeat -- <test file> --times N --load` is the search for a race.** It runs one
+file N times with a CPU-burning process on every core, prints exact pass and fail counts, and keeps
+the first failure's reporter output and failure screenshots in a folder it names. Run it on a
+browser test around an async answer before reporting, and say how many runs passed. CI's `report`
+job runs the suite under coverage, which is slower, and catches races a normal run hides.
 
 **A denied command is not permission to skip the mutation**, and not a thing to route around.
 Report that it was denied and what you did instead. Do not hunt for a spelling that gets past it,
@@ -234,6 +229,20 @@ found that belongs in a separate ticket. If an acceptance criterion is unmet, sa
 could not measure something, say that rather than implying you did. A wrong claim in a pull
 request body costs more to undo than an open question costs to answer.
 
+**Report the dev commit your branch contains and your per-file test delta against it**, not only
+the totals: `npm run test:counts -- --diff <that commit> HEAD` prints exactly the files whose counts
+moved (#371). Bare totals hide a wrong base until the merge comes in short, and PR #317's did: two
+files short of the prediction, which took a hand-built `vitest list` diff in a temporary worktree to
+show was a misreported base rather than lost tests.
+
+**Your report is your last action: every background job you started has ended before you send
+it.** The harness counts an agent as alive while any job it started still runs, and a job left
+running can push to a branch after its pull request merged, which recreates the deleted branch.
+On 2026-10-05 #358's agent left one waiting on CI after reporting, and its task ran about 80
+minutes for about 28 minutes of work until the orchestrator stopped it by hand. **Waiting on CI
+is the orchestrator's part**, not yours: push, open the pull request, and report. The orchestrator
+waits on the checks before it merges (the next section).
+
 Budget is finite and it does not protect your progress — pushing does. Commit in coherent steps
 as you go. If you are going to run out, **push what you have, open a draft pull request, and say
 exactly where you stopped.** An agent once died mid-ticket and left a pushed commit with no pull
@@ -245,6 +254,9 @@ it; the run is not named there.
 Most of what is above is addressed to the agent. This section is not: it is for whoever dispatches
 the run and merges what comes back.
 
+- **The orchestrator waits on CI, not the agent.** An agent pushes, opens its pull request and
+  reports; waiting on the checks before the merge is done here, in the background, and a task still
+  running once its pull request has merged is stopped rather than left to push.
 - **Do not merge an agent's pull request until that agent has reported.** A green pull request is
   not a finished agent: its reviewers may still be running, and a review can change the diff.
   Merging early breaks the agent in two ways it cannot anticipate — a `git push` to the branch the
@@ -266,7 +278,9 @@ the run and merges what comes back.
 - **Predict both counts before merging, and check them after** — test files and tests, summed from
   each branch's own measurement. That batch reached its predicted total exactly, which is what made
   it obvious the three failures were a collision rather than a lost test file. It is the cheapest
-  signal there is that a merge lost or gained something nobody meant.
+  signal there is that a merge lost or gained something nobody meant. On a mismatch,
+  `npm run test:counts -- --diff <dev before> <dev after>` names the files that moved, to set beside
+  the per-file delta the agent reported.
 - **`gh pr merge --delete-branch` can leave the remote branch behind.** It tries the local branch
   first, fails while a worktree still holds it, and aborts before deleting the remote, so the flag
   reports nothing unusual — #116's was still there afterwards. Clean up in the order that works:

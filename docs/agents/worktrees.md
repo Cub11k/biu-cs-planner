@@ -25,7 +25,21 @@ overwrite each other's files, or read a file mid-edit by someone else.
 git worktree add ../biu-cs-planner-<issue> -b <issue>-<slug> dev
 cd ../biu-cs-planner-<issue>
 npm install            # a worktree has its own node_modules
+codegraph init .       # and its own CodeGraph index: the main checkout's describes dev
 ```
+
+`.codegraph/` is gitignored, so `git worktree add` does not bring an index along, and the CodeGraph
+MCP server is rooted at the main checkout. Asked from a worktree without saying which, it answers
+with `dev`'s files and line numbers while you edit your branch's copy. So point it at the worktree:
+
+- the MCP tool with `projectPath` set to the worktree's absolute path, or
+- the shell, from inside the worktree: `codegraph explore|query|node … -p .`
+
+Nothing watches a worktree's files the way the background process watches the main checkout's, so
+**run `codegraph sync .` after an edit**: until then a symbol the edit added is not found. `sync`
+takes the path as an argument and refuses `-p` (codegraph 1.6.2), unlike `explore`, `query` and
+`node`. `init` took about 7.5 s and 26 MB on 2026-10-11 (#388), and under a full CPU load about a
+minute.
 
 Work, commit, push, open the pull request. Once it merges:
 
@@ -33,6 +47,9 @@ Work, commit, push, open the pull request. Once it merges:
 git worktree remove ../biu-cs-planner-<issue>
 git branch -d <issue>-<slug>
 ```
+
+Removing the worktree removes its index too, since `.codegraph/` lives inside it; there is no
+separate cleanup step.
 
 - Name the directory after the issue, so `git worktree list` reads as a list of what is in
   flight.
