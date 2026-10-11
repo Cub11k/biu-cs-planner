@@ -71,7 +71,7 @@ When an agent reports, **land** its PR:
 
 1. **Predict** the counts: `dev`'s current counts plus the branch's delta over the `dev` commit it contains. Take that commit from the report. If it is older than `dev`, the second-lander rule applies (step 8).
 2. Wait for checks with `gh pr checks <n> --watch` as a background command, never with a foreground sleep. Confirm MERGEABLE, that the PR head equals the worktree's `HEAD`, that the worktree is clean, and that `closingIssuesReferences` names the parent and every child. That list can take a minute to fill.
-3. A red check: read its log. A test failing only in the slower `report` (coverage) job is a timing race. Send it back to the agent (`SendMessage`) to reproduce under load and fix whatever races. Never merge a flaky test.
+3. A red check: read its log. A test failing only in the slower `report` (coverage) job is a timing race. Send it back to the agent (`SendMessage`) to reproduce under load (`npm run test:repeat -- <file> --load`) and fix whatever races. Never merge a flaky test.
 4. Merge, pull `dev`, run `npm run typecheck && npm test`, and compare against the prediction. On a mismatch, diff per-file test counts between the two commits before concluding anything was lost.
 5. Clean up in the order `orchestration.md` gives (worktree, then branch, then the remote branch, verified with `git ls-remote`), and check every closed issue by number.
 6. If the agent's task still shows as running after its PR merged, stop it with `TaskStop`, and confirm no branch was recreated.

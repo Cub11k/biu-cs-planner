@@ -13,9 +13,9 @@ Make your own worktree: `git worktree add ../biu-cs-planner-<parent> -b <parent>
 
 Test baseline on clean dev at dispatch ({{DEV_COMMIT}}): **{{FILES}} test files, {{TESTS}} tests**, typecheck green. Report your branch's counts **and the dev commit your branch contains**.
 
-A browser test waits on a visible state change. If your change adds interaction tests around async answers, run them repeatedly under CPU load before reporting. CI's `report` job runs the suite under coverage, which is slower, and catches races that a normal run hides.
+A browser test waits on a visible state change. If your change adds interaction tests around async answers, run each such file with `npm run test:repeat -- <file> --times 20 --load` before reporting, and report the counts. CI's `report` job runs the suite under coverage, which is slower, and catches races that a normal run hides.
 
-Scratch files go in {{SCRATCHPAD}}, prefixed `<parent>-impl-`. After your checks pass, spawn two independent reviewers: one against the tickets' acceptance criteria, one against CLAUDE.md guardrails. Tell each in those words that it is **read-only** (no git stash/reset/checkout/add, no edits) and give them the scratch prefixes `<parent>-review-1-` and `<parent>-review-2-`. `npm run review` is CI's alone. Commit before you mutate, and revert with `git show HEAD:<path> > <path>`. If you might run out of budget, push and open a draft PR saying where you stopped.
+Scratch files go in {{SCRATCHPAD}}, prefixed `<parent>-impl-`. After your checks pass, spawn two independent reviewers: one against the tickets' acceptance criteria, one against CLAUDE.md guardrails. Tell each in those words that it is **read-only** (no git stash/reset/checkout/add, no edits) and give them the scratch prefixes `<parent>-review-1-` and `<parent>-review-2-`. `npm run review` is CI's alone. Prove your tests with `npm run mutate -- <spec.json>` (commit first: it refuses a dirty tree, and restores each file as it read it), and put its table in your report. If you might run out of budget, push and open a draft PR saying where you stopped.
 
 Commit messages end with:
 {{COMMIT_ATTRIBUTION}}
