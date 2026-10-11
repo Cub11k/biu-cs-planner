@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { readBody } from "./body.ts";
+import { askApi, askFor, readBody } from "./body.ts";
 
 /**
  * Reading one answer's body, and the one status the contract does not describe.
@@ -53,4 +53,51 @@ it.each([
   await expect(readBody(() => Response.json(value).json())).resolves.toEqual({
     readable: false,
   });
+});
+
+/**
+ * `askApi` (#382): the three outcomes every reader shares, each once, and the two callbacks it
+ * hands the rest to. The readers' own tests cover each reader's callbacks.
+ */
+const readers = {
+  refused: (body: { reason?: string }, status: number) => ({ kind: "refused", reason: body.reason, status }),
+  served: (body: { picks?: unknown }) => (Array.isArray(body.picks) ? { kind: "served" } : undefined),
+};
+
+it("says a send that throws is unreachable", async () => {
+  const answer = await askApi(() => Promise.reject(new TypeError("fetch failed")), readers);
+
+  expect(answer).toEqual({ kind: "unreachable" });
+});
+
+it("says the guard's 401 is unauthorized, without reading its body", async () => {
+  const answer = await askApi(async () => new Response("not json", { status: 401 }), readers);
+
+  expect(answer).toEqual({ kind: "unauthorized" });
+});
+
+it("says a body that is not JSON is an unreadable answer", async () => {
+  const answer = await askApi(async () => new Response("<html>", { status: 500 }), readers);
+
+  expect(answer).toEqual({ kind: "unreadable-answer" });
+});
+
+it("hands a refusal's body and status to `refused`", async () => {
+  const answer = await askApi(async () => Response.json({ reason: "state-file-changed" }, { status: 409 }), readers);
+
+  expect(answer).toEqual({ kind: "refused", reason: "state-file-changed", status: 409 });
+});
+
+it("says a served body `served` cannot use is an unreadable answer (#275)", async () => {
+  expect(await askApi(async () => Response.json({}), readers)).toEqual({ kind: "unreadable-answer" });
+  expect(await askApi(async () => Response.json({ picks: [] }), readers)).toEqual({ kind: "served" });
+});
+
+it("folds every failure of a read into nothing had, and hands back what it could use", async () => {
+  const courses = (body: { courses?: unknown }) => (Array.isArray(body.courses) ? body.courses : undefined);
+
+  expect(await askFor(async () => Response.json({ courses: [1] }), courses)).toEqual([1]);
+  expect(await askFor(async () => Response.json({}), courses)).toBeUndefined();
+  expect(await askFor(async () => Response.json({ courses: [1] }, { status: 409 }), courses)).toBeUndefined();
+  expect(await askFor(() => Promise.reject(new TypeError("fetch failed")), courses)).toBeUndefined();
 });

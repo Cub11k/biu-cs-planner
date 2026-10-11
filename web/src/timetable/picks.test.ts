@@ -308,3 +308,14 @@ it.each([200, 409])("makes an answer of a %i whose body is null", async (status)
     removePick(api, FALL_2027, { courseNumber: "89-110", lessonType: "הרצאה" }, VERSION),
   ).resolves.toEqual({ kind: "unreadable-answer" });
 });
+
+/** The week loops over the Picks and the Clashes, so an answer missing either is unreadable (#275). */
+it("reads a served answer with no Picks or no Clashes as unreadable", async () => {
+  const { picks: _picks, ...noPicks } = served;
+  const { clashes: _clashes, ...noClashes } = served;
+  for (const body of [{}, noPicks, noClashes]) {
+    expect(await fetchTimetable(client(() => Response.json(body)).api, FALL_2027)).toEqual({
+      kind: "unreadable-answer",
+    });
+  }
+});

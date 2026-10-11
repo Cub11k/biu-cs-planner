@@ -7,7 +7,7 @@
  */
 import type { InferRequestType, InferResponseType } from "hono/client";
 import type { createApiClient } from "../api.ts";
-import { readBody, UNAUTHORIZED } from "../body.ts";
+import { askApi } from "../body.ts";
 import type { Offering, Semester } from "./catalog.ts";
 
 export type ApiClient = ReturnType<typeof createApiClient>;
@@ -63,35 +63,16 @@ export async function fetchOfferings(
     query: { semester: query.semester },
   } as InferRequestType<OfferingsRoute>;
 
-  let answer: Awaited<ReturnType<OfferingsRoute>>;
-  try {
-    answer = await client.api.catalog[":year"].offerings.$get(request);
-  } catch {
-    return { kind: "unreachable" };
-  }
-
-  if (!answer.ok) {
-    // `status` is widened deliberately: the launch token guard rejects the request before
-    // the route runs, so 401 is not among the answers the contract knows about.
-    const status: number = answer.status;
-    if (status === UNAUTHORIZED) return { kind: "unauthorized" };
-
-    // `Answer` named explicitly, because `json()` on an answer narrowed to `!ok` is a union of
-    // signatures and inference off one of them would pick a single arm of the body's type.
-    //
-    // It is **wider** than what the direct `await answer.json()` gave here, not the same: hono
-    // narrows the body by `.ok` — which is what lets the served read below name `ServedCatalog` —
-    // so naming the whole union puts the served arm back. Nothing is read off it but
-    // `"warnings" in body`, and `ServedCatalog` has no `warnings`, so the widening cannot make
-    // this branch claim a Warning that is not there.
-    const refused = await readBody<Answer>(() => answer.json());
-    if (!refused.readable) return { kind: "unreadable-answer" };
-    const body = refused.body;
-    if ("kind" in body && body.kind === "refused") return { kind: "refused" };
-    return { kind: "not-served", warnings: "warnings" in body ? body.warnings : [] };
-  }
-
-  const served = await readBody<ServedCatalog>(() => answer.json());
-  if (!served.readable) return { kind: "unreadable-answer" };
-  return { kind: "served", offerings: served.body.offerings };
+  return askApi(() => client.api.catalog[":year"].offerings.$get(request), {
+    // `Answer` named whole, so the refusal and the Warnings arm are both in it. Nothing is read
+    // off it but `kind` and `"warnings" in body`, and `ServedCatalog` has no `warnings`, so the
+    // served arm in the union cannot make this branch claim a Warning that is not there.
+    refused: (body: Answer): OfferingsResult => {
+      if ("kind" in body && body.kind === "refused") return { kind: "refused" };
+      return { kind: "not-served", warnings: "warnings" in body ? body.warnings : [] };
+    },
+    // the sidebar loops over the Offerings, so an answer without them is not a Catalog (#275)
+    served: (body: ServedCatalog): OfferingsResult | undefined =>
+      Array.isArray(body.offerings) ? { kind: "served", offerings: body.offerings } : undefined,
+  });
 }

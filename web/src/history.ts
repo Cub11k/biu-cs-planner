@@ -15,7 +15,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api.ts";
-import { readBody, UNAUTHORIZED } from "./body.ts";
+import { askApi, askFor } from "./body.ts";
 import type { ApiClient } from "./changes.ts";
 import type { InferRequestType, InferResponseType } from "hono/client";
 
@@ -108,87 +108,52 @@ const unnamed = (warnings: HistoryWarning[]): HistoryStep => ({
  * it. Both read as a disabled button, and only one of them is honest about why.
  *
  * **An unreadable body is folded into `undefined` here, where below it gets an arm and a
- * sentence.** Both sites guard the parse — `readBody` in ./body.ts has a catch of its own — so
- * the difference is not the mechanism but what each does with the result. This is an ask and not
+ * sentence.** Both sites guard the parse the same way — `askFor` here and `askApi`
+ * below, in ./body.ts — so the difference is not the mechanism but what each does with the result. This is an ask and not
  * an act: nobody pressed anything, so there is nothing the student is owed an account of, and an
  * unreadable answer to it is one more way of not knowing, which `undefined` already says. An act
  * gets an account, an ask does not (#171, #206).
  */
-export async function fetchAvailability(
-  client: ApiClient,
-): Promise<HistoryAvailability | undefined> {
-  try {
-    const answer = await client.api.history.$get();
-    if (!answer.ok) return undefined;
-
-    const body = await answer.json();
+export function fetchAvailability(client: ApiClient): Promise<HistoryAvailability | undefined> {
+  return askFor(() => client.api.history.$get(), (body: Partial<HistoryAvailability>) =>
     // The contract says both are booleans; a body that is not this one is not an answer to
     // trust a button with, and `undefined` is what "nobody has said yet" already means.
-    return typeof body.canUndo === "boolean" && typeof body.canRedo === "boolean"
+    typeof body.canUndo === "boolean" && typeof body.canRedo === "boolean"
       ? { canUndo: body.canUndo, canRedo: body.canRedo }
-      : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-/** One step, read the way `timetable/picks.ts` reads a save: one place decides each status. */
-async function read(answer: Response & { ok: boolean; status: number }): Promise<HistoryStep> {
-  if (!answer.ok) {
-    // widened deliberately: the launch token guard rejects before the route runs, so 401 is
-    // not among the answers the contract knows about
-    const status: number = answer.status;
-    if (status === UNAUTHORIZED) return { kind: "unauthorized" };
-
-    const refused = await readBody(() => answer.json() as Promise<Partial<Refused>>);
-    if (!refused.readable) return { kind: "unreadable-answer" };
-    const body = refused.body;
-    const warnings = body.warnings ?? [];
-    if (body.reason === undefined) return unnamed(warnings);
-
-    return {
-      kind: "refused",
-      reason: body.reason,
-      warnings,
-      available:
-        typeof body.canUndo === "boolean" && typeof body.canRedo === "boolean"
-          ? { canUndo: body.canUndo, canRedo: body.canRedo }
-          : undefined,
-    };
-  }
-
-  const moved = await readBody(() => answer.json() as Promise<Moved>);
-  if (!moved.readable) return { kind: "unreadable-answer" };
-  const body = moved.body;
-  // `at` and `version` are on the answer and are deliberately not carried: nothing shows when
-  // an edit happened, and the revision on screen comes from the read that follows a step
-  // rather than from the step — a page holding its own second opinion about which revision it
-  // is on is the mistake `timetable/picks.ts` refuses to make.
-  return {
-    kind: "moved",
-    label: body.label,
-    available: { canUndo: body.canUndo, canRedo: body.canRedo },
-  };
+      : undefined,
+  );
 }
 
 /**
- * Sends one request and reads the answer **outside** the catch: only the request failing is
- * the server not being there. An answer this module cannot make sense of is a contract
- * problem, and calling it "unreachable" would send the student to look at a server that
- * answered them — so a body that is not JSON comes back as `unreadable-answer` rather than as
- * either a rejection or a lie about where the server is (#206).
+ * One step, read the way `timetable/picks.ts` reads a save, through `askApi` in ./body.ts: a body
+ * that is not JSON comes back as `unreadable-answer` rather than as either a rejection or a lie
+ * about where the server is (#206).
  */
-async function ask(
-  send: () => Promise<Response & { ok: boolean; status: number }>,
-): Promise<HistoryStep> {
-  let answer: Response & { ok: boolean; status: number };
-  try {
-    answer = await send();
-  } catch {
-    return { kind: "unreachable" };
-  }
-  return read(answer);
-}
+const ask = (send: () => Promise<Response>): Promise<HistoryStep> =>
+  askApi(send, {
+    refused: (body: Partial<Refused>): HistoryStep => {
+      const warnings = body.warnings ?? [];
+      if (body.reason === undefined) return unnamed(warnings);
+      return {
+        kind: "refused",
+        reason: body.reason,
+        warnings,
+        available:
+          typeof body.canUndo === "boolean" && typeof body.canRedo === "boolean"
+            ? { canUndo: body.canUndo, canRedo: body.canRedo }
+            : undefined,
+      };
+    },
+    // `at` and `version` are on the answer and are deliberately not carried: nothing shows when
+    // an edit happened, and the revision on screen comes from the read that follows a step
+    // rather than from the step — a page holding its own second opinion about which revision it
+    // is on is the mistake `timetable/picks.ts` refuses to make. Nothing here is looped over.
+    served: (body: Moved): HistoryStep => ({
+      kind: "moved",
+      label: body.label,
+      available: { canUndo: body.canUndo, canRedo: body.canRedo },
+    }),
+  });
 
 /**
  * One step in either direction. The route is the only difference, which is why this takes
