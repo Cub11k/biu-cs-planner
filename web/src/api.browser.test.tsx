@@ -59,6 +59,8 @@ const plainTextNotFound = (): Response => new Response("404 Not Found", { status
 
 /** Which paths answer with a body the page cannot read, and with which of the two shapes. */
 let unreadable: { offerings?: boolean; timetablePost?: boolean; timetableGet?: boolean };
+/** Which paths answer a served `{}`: JSON, an object, and none of the lists a render loops over (#275). */
+let empty: { offerings?: boolean; timetableGet?: boolean };
 /** The Picks the fake's State File holds, so a click on a Group is a real write. */
 let picks: unknown[];
 let version: number;
@@ -73,6 +75,7 @@ const json = (body: unknown): Response =>
 
 beforeEach(() => {
   unreadable = {};
+  empty = {};
   picks = [];
   version = 1;
   changeCount = 0;
@@ -100,10 +103,13 @@ beforeEach(() => {
         version += 1;
       } else if (unreadable.timetableGet === true) {
         return plainTextNotFound();
+      } else if (empty.timetableGet === true) {
+        return json({});
       }
       return json({ variantName: "A", picks, clashes: [], version: `v${version}`, warnings: [] });
     }
     if (unreadable.offerings === true) return htmlFiveHundred();
+    if (empty.offerings === true) return json({});
     return json({ offerings: [OFFERING] });
   }) as typeof fetch;
 });
@@ -242,4 +248,30 @@ it("has a sentence for each pane, in both languages", () => {
     expect(t(language, "catalogAnswerUnreadable")).not.toBe(t(language, "picksAnswerUnreadable"));
   }
   expect(t("he", "picksAnswerUnreadable")).not.toBe(t("en", "picksAnswerUnreadable"));
+});
+
+/**
+ * A served `{}` (#275): readable JSON, and no list a render can loop over. Each path says the
+ * sentence it already says for an answer it cannot read, rather than handing the render an
+ * `undefined` to throw on — a render that threw would leave neither sentence on screen.
+ */
+it("says the week's unreadable sentence when the week is served as {}", async () => {
+  empty.timetableGet = true;
+
+  const mounted = mount();
+
+  await vi.waitFor(() => {
+    expect(said(mounted)).toContain(t("en", "picksAnswerUnreadable"));
+  });
+  expect(said(mounted)).not.toContain(t("en", "picksNone"));
+});
+
+it("says the Catalog's unreadable sentence when the Offerings are served as {}", async () => {
+  empty.offerings = true;
+
+  const mounted = mount();
+
+  await vi.waitFor(() => {
+    expect(mounted.querySelector("aside")?.textContent).toBe(t("en", "catalogAnswerUnreadable"));
+  });
 });

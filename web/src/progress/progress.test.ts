@@ -215,3 +215,9 @@ it("pairs a what-if's Requirements with the real ones by id, never by position",
   expect(whatIfChanges(real, whatIf, "projected")).toEqual({ satisfied: [], missing: ["ai"], dropped: ["robotics"] });
   expect(whatIfChanges(real, real, "completed")).toEqual({ satisfied: [], missing: [], dropped: [] });
 });
+
+/** The screen loops over the Programs and the chooser over the files, so neither may be missing (#382). */
+it("reads a served answer with no Programs as unreadable, and one with no files as nothing had", async () => {
+  expect(await fetchProgress(client(() => Response.json({})).api)).toEqual({ kind: "unreadable-answer" });
+  expect(await fetchRequirementsFiles(client(() => Response.json({})).api)).toBeUndefined();
+});

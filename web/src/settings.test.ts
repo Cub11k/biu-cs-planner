@@ -266,3 +266,10 @@ it.each([200, 409])("reads a %i whose body is null as unreadable", async (status
     kind: "unreadable-answer",
   });
 });
+
+/** The screen lists the Warnings, so preferences served without them are not an answer to show (#382). */
+it("reads a served answer with no Warnings as unreadable", async () => {
+  expect(await fetchSettings(client(() => Response.json({ language: "he", version: VERSION })).api)).toEqual({
+    kind: "unreadable-answer",
+  });
+});
