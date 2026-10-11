@@ -60,6 +60,10 @@ export type PickSlot = { courseNumber: string; lessonType: string };
 /** What the API would not do, in one word: the reason it sends with a refusal. */
 export type StateRefusal = Extract<Answer, { reason: unknown }>["reason"];
 
+/** What clicking again would do to the file as it now is, sent with `state-file-changed` (#104). */
+export type Reapply = NonNullable<Extract<Answer, { reason: unknown }>["reapply"]>;
+const REAPPLIES: readonly unknown[] = ["still-possible", "already-done", "conflicts-now"] satisfies Reapply[];
+
 /** Why the API would not serve or edit the State File. */
 export type StateWarning = Extract<Answer, { reason: unknown }>["warnings"][number];
 
@@ -107,7 +111,7 @@ export type TimetableResult =
    * the Warnings both travel with it: a refusal nobody can act on is not a refusal, and
    * the three ask the student for three different things.
    */
-  | { kind: "refused"; reason: StateRefusal | undefined; warnings: StateWarning[] }
+  | { kind: "refused"; reason: StateRefusal | undefined; warnings: StateWarning[]; reapply?: Reapply }
   /** This page has no launch token, so the server will not talk to it (ADR-0004). */
   | { kind: "unauthorized" }
   /**
@@ -163,13 +167,15 @@ export const variantOf = (query: TimetableQuery): { variant?: string; position?:
  */
 export const timetable: AnswerReaders<
   TimetableResult,
-  { reason?: unknown; warnings?: StateWarning[] },
+  { reason?: unknown; warnings?: StateWarning[]; reapply?: unknown },
   ServedTimetable
 > = {
   refused: (body) => ({
     kind: "refused",
     reason: body.reason as StateRefusal | undefined,
     warnings: body.warnings ?? [],
+    // one this page does not know is no report, rather than a sentence for something else
+    ...(REAPPLIES.includes(body.reapply) ? { reapply: body.reapply as Reapply } : {}),
   }),
   served: (body) =>
     // The week loops over both, so an answer without them is not a week this page can draw:

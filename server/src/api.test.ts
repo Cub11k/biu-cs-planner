@@ -654,8 +654,27 @@ it("refuses a save based on a revision the file no longer holds", async () => {
   const refused = await post(PICKS, { ...CLASHING, basedOn: stale });
 
   expect(refused.status).toBe(409);
-  await expect(refused.json()).resolves.toEqual({ reason: "state-file-changed", warnings: [] });
+  // with what clicking again would do to the file as it now is (#104): it is another Course's slot
+  await expect(refused.json()).resolves.toEqual({ reason: "state-file-changed", warnings: [], reapply: "still-possible" });
   // the other writer's Pick is the one in the file: nothing of theirs was overwritten
+  await expect((await get(TIMETABLE)).json()).resolves.toMatchObject({
+    picks: [{ ...LECTURE, groupNumber: "09" }],
+  });
+});
+
+/** #104: the refusal says when clicking again would replace what the other writer picked. */
+it("says a refused Pick conflicts now when its Lesson Type holds the other writer's Group", async () => {
+  await post("/api/workspace", {});
+  await post(PICKS, LECTURE);
+  const stale = await currentVersion();
+  const file = join(root, "me.state.json");
+  await writeFile(file, (await readFile(file, "utf8")).replace('"01"', '"09"'), "utf8");
+
+  const refused = await post(PICKS, { ...OTHER_LECTURE, basedOn: stale });
+
+  expect(refused.status).toBe(409);
+  await expect(refused.json()).resolves.toMatchObject({ reason: "state-file-changed", reapply: "conflicts-now" });
+  // reported, never done: the other writer's Group is still the one in the file
   await expect((await get(TIMETABLE)).json()).resolves.toMatchObject({
     picks: [{ ...LECTURE, groupNumber: "09" }],
   });
@@ -1088,7 +1107,7 @@ it("serves the schema's defaults before any State File exists, and writes none",
 
   expect(response.status).toBe(200);
   await expect(response.json()).resolves.toEqual({
-    language: "en",
+    language: null,
     examSpacingDays: 3,
     creditLoadLimit: 24,
     warnings: [],
@@ -1501,7 +1520,7 @@ it("refuses to write a preference into a folder that is not a Workspace yet", as
   expect(refused.status).toBe(409);
   await expect(refused.json()).resolves.toMatchObject({ reason: "workspace-not-ready" });
   // and reading is still served, so a student who has not accepted the layout sees a language
-  await expect((await get(SETTINGS)).json()).resolves.toMatchObject({ language: "en" });
+  await expect((await get(SETTINGS)).json()).resolves.toMatchObject({ language: null });
 });
 
 it("will not overwrite a State File it could not read for the sake of one preference", async () => {

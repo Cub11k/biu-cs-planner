@@ -59,6 +59,20 @@ export const timetableEnglish = {
   picksStale:
     "The file changed since this page read it, so your click was not saved. " +
     "The week is the file as it is now — click again if you still want it.",
+  /**
+   * `picksStale` with what clicking again would do to the file as it now is (#104), which the
+   * server works out by re-running the refused edit. The app re-applies nothing: the student does.
+   */
+  picksStaleStillPossible:
+    "The file changed since this page read it, so your click was not saved. " +
+    "It would still work on the file as it is now — click again if you still want it.",
+  picksStaleAlreadyDone:
+    "The file changed since this page read it, so your click was not saved — " +
+    "but the file already has that change, so there is nothing to click again.",
+  picksStaleConflicts:
+    "The file changed since this page read it, so your click was not saved. " +
+    "Clicking again now would replace what the file holds — the Group now in that Lesson Type, " +
+    "or a Variant that was removed. Check the week before you do.",
   /** `historyBackupRefused`'s sentence, for a click on a Group. */
   picksBackupRefused:
     "The app could not make a backup of your saved work before changing it, so your click was " +
@@ -265,6 +279,16 @@ export const timetableHebrew: Record<keyof typeof timetableEnglish, string> = {
   picksStale:
     "הקובץ השתנה מאז שהדף קרא אותו, ולכן הלחיצה לא נשמרה. " +
     "השבוע מוצג כפי שהקובץ נראה עכשיו — לחצו שוב אם עדיין תרצו את הבחירה.",
+  picksStaleStillPossible:
+    "הקובץ השתנה מאז שהדף קרא אותו, ולכן הלחיצה לא נשמרה. " +
+    "היא עדיין תעבוד על הקובץ כפי שהוא עכשיו — לחצו שוב אם עדיין תרצו אותה.",
+  picksStaleAlreadyDone:
+    "הקובץ השתנה מאז שהדף קרא אותו, ולכן הלחיצה לא נשמרה — " +
+    "אבל השינוי הזה כבר נמצא בקובץ, כך שאין צורך ללחוץ שוב.",
+  picksStaleConflicts:
+    "הקובץ השתנה מאז שהדף קרא אותו, ולכן הלחיצה לא נשמרה. " +
+    "לחיצה נוספת עכשיו תחליף את מה שנמצא בקובץ — את הקבוצה שנמצאת עכשיו באותו סוג שיעור, " +
+    "או חלופה שנמחקה. בדקו את השבוע לפני כן.",
   picksBackupRefused:
     "היישום לא הצליח ליצור גיבוי של העבודה השמורה שלכם לפני שינויה, ולכן הלחיצה לא נשמרה.",
   picksHeld: "הבחירות השמורות עדיין נטענות. הלחיצה שלכם ממתינה להן.",

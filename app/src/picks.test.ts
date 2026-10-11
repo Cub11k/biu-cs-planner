@@ -245,3 +245,53 @@ it("refuses to pick into a folder that is not a Workspace yet", async () => {
     view: { picks: [] },
   });
 });
+
+/*
+ * #104: a Pick refused because the file moved says what clicking again would now do. `conflicts-now`
+ * is the two ways re-picking would overwrite what another writer saved; nothing is re-applied.
+ */
+
+/** Another writer's Pick lands after the page read `basedOn`; the page's own Pick is then refused. */
+async function staleAfter(workspace: MemoryWorkspace, at: TimetableRef, theirs: GroupPick, mine: GroupPick) {
+  const seen = await basedOnNow(workspace, at);
+  await pick(workspace, at, theirs);
+  return pickGroup(workspace, at, mine, seen);
+}
+
+it("says a refused Pick is still possible when the other writer touched another Lesson Type", async () => {
+  const workspace = ready();
+  expect(await staleAfter(workspace, FALL_2027, CLASHING, LECTURE)).toMatchObject({
+    kind: "refused",
+    reason: "state-file-changed",
+    reapply: "still-possible",
+  });
+});
+
+it("says a refused Pick is already done when the other writer made the same Pick", async () => {
+  const workspace = ready();
+  expect(await staleAfter(workspace, FALL_2027, LECTURE, LECTURE)).toMatchObject({ reapply: "already-done" });
+});
+
+it("says a refused Pick conflicts now when its Lesson Type holds a different Group", async () => {
+  const workspace = ready();
+  expect(await staleAfter(workspace, FALL_2027, OTHER_LECTURE, LECTURE)).toMatchObject({ reapply: "conflicts-now" });
+});
+
+it("says a refused Pick conflicts now when the Variant it was for is gone", async () => {
+  const workspace = ready();
+  const variant = (name: string, primary: boolean) => ({ name, primary, picks: [], tray: [] });
+  const timetable = (...variants: ReturnType<typeof variant>[]) => ({
+    schemaVersion: 1,
+    timetables: [{ ...FALL_2027, variants }],
+  });
+  workspace.seed(REF, timetable(variant("A", true), variant("B", false)));
+  const onB = { ...FALL_2027, variant: "B", position: 1 };
+  const seen = await basedOnNow(workspace, onB);
+  // another tab deletes B
+  workspace.seed(REF, timetable(variant("A", true)));
+
+  const result = await pickGroup(workspace, onB, LECTURE, seen);
+
+  expect(result).toMatchObject({ kind: "refused", reason: "state-file-changed", reapply: "conflicts-now" });
+  expect((await stored(workspace))?.timetables[0]?.variants.map((held) => held.name)).toEqual(["A"]);
+});

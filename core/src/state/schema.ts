@@ -260,7 +260,14 @@ export const studentCohortSchema = z.object({
 });
 
 export const settingsSchema = z.object({
-  language: z.enum(["en", "he"]).default("en"),
+  /**
+   * The language the student chose, or `null` for **never chosen** (#173). Without `null` nothing
+   * above `core` could tell *never chosen* from *chose English*, so a first run could not be guessed.
+   * `web` guesses from the browser for display only and never writes the guess; a choice is stored
+   * and always wins (ADR-0014). Not a migration: every value a file held before is still accepted,
+   * so `CURRENT_STATE_SCHEMA_VERSION` stays where it is.
+   */
+  language: z.enum(["en", "he"]).nullable().default(null),
   /**
    * Exams closer together than this many calendar days raise a spacing Warning
    * (`docs/design.md`, "Exams"). Bounded the way a count of days is bounded: whole, and never

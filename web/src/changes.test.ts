@@ -232,6 +232,23 @@ it("reports a refusal on the first ask, when there is no baseline yet", async ()
   expect(changed).toBe(1);
 });
 
+/** An answer without a count is not one, and is not taken as the baseline either. */
+it("reports nothing for an answer it cannot read a count from", async () => {
+  let body: unknown = { changeCount: 3 };
+  const fetchImpl = (async () => Response.json(body)) as typeof fetch;
+  let changed = 0;
+  const poll = workspaceChangePoll(createApiClient(() => TOKEN, fetchImpl), () => (changed += 1));
+
+  await poll();
+  body = { changeCount: "4" };
+  await poll();
+  expect(changed).toBe(0);
+
+  body = { changeCount: 3 };
+  await poll();
+  expect(changed).toBe(0);
+});
+
 /** The server not being there is not a change either, and never an unhandled rejection. */
 it("survives the server not answering at all", async () => {
   const server = servingRevision();

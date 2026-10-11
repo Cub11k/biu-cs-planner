@@ -2,7 +2,7 @@ import { t, type Language, type StringKey } from "../i18n/strings.ts";
 import { unauthorizedSaid } from "../AppShell.tsx";
 import { courseName, type Offering } from "./catalog.ts";
 import { lessonTypeName } from "./lessonType.ts";
-import type { Clash, StateRefusal, TimetableResult, VariantWarning } from "./picks.ts";
+import type { Clash, Reapply, StateRefusal, TimetableResult, VariantWarning } from "./picks.ts";
 
 /** What the screen holds of the Timetable: nothing read yet, or the API's latest answer. */
 export type TimetableState = { kind: "loading" } | TimetableResult;
@@ -23,6 +23,19 @@ export const REFUSAL_STRING = {
   // says nothing changed. `settle` keeps the week and re-reads on it.
   "save-revision-unreadable": "saveUnconfirmed",
 } as const satisfies Record<NonNullable<StateRefusal>, StringKey>;
+
+/**
+ * A click refused `state-file-changed`, said with what clicking again would now do (#104), and as
+ * `picksStale` when the answer did not say.
+ */
+const STALE_SAID = {
+  "still-possible": "picksStaleStillPossible",
+  "already-done": "picksStaleAlreadyDone",
+  "conflicts-now": "picksStaleConflicts",
+} as const satisfies Record<Reapply, StringKey>;
+
+export const staleSaid = (reapply: Reapply | undefined): StringKey =>
+  reapply === undefined ? "picksStale" : STALE_SAID[reapply];
 
 /**
  * The hint line above the week: what to do next, and in one live region every account the screen
@@ -55,7 +68,8 @@ export function TimetableNotices({
   heldWaiting: boolean;
   heldEditCount: number;
   heldLost: boolean;
-  staleSave: boolean;
+  /** The sentence for a click refused because the file had changed, while it is the account owed. */
+  staleSave: StringKey | undefined;
   planDiffStale: boolean;
   unknownSave: StringKey | undefined;
   readsKept: number;
@@ -86,7 +100,7 @@ export function TimetableNotices({
         {/* an edit waiting for the re-read a refusal asked for (#334) */}
         {heldEditCount > 0 && <span>{t(language, "picksHeldForReread")}</span>}
         {heldLost && <span>{t(language, "picksHeldLost")}</span>}
-        {staleSave && <span>{t(language, "picksStale")}</span>}
+        {staleSave !== undefined && <span>{t(language, staleSave)}</span>}
         {planDiffStale && <span>{t(language, "planDiffStale")}</span>}
         {unknownSave !== undefined && <span>{t(language, unknownSave)}</span>}
         {/* the week is the last one read, kept over an answer nobody could read (#218) */}

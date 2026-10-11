@@ -29,7 +29,7 @@ import {
   type ScreenProps,
 } from "../AppShell.tsx";
 import { CatalogPane, type CatalogState } from "./CatalogPane.tsx";
-import { REFUSAL_STRING, TimetableNotices, type TimetableState } from "./TimetableNotices.tsx";
+import { REFUSAL_STRING, staleSaid, TimetableNotices, type TimetableState } from "./TimetableNotices.tsx";
 import { addToTray, removeFromTray } from "./tray.ts";
 import { TrayColumn } from "./TrayColumn.tsx";
 import { PlanDiffsPanel } from "./PlanDiffsPanel.tsx";
@@ -247,10 +247,12 @@ export function TimetablePane({
    * Cleared by the click and not by a later success, because more than one save can be in
    * flight at once — a held click draining while the student makes another — and a success
    * that cleared this would swallow the refusal of the click beside it, leaving a refused
-   * click with no account at all. Whose refusal it was is not distinguished; that is
-   * #104's question, and one sentence for "a click was refused" is the honest floor.
+   * click with no account at all. Whose refusal it was is not distinguished.
+   *
+   * Held as the sentence, because the refusal says what clicking again would now do (#104): still
+   * possible, already done, or a conflict with what was saved since. The latest refusal's is said.
    */
-  const [staleSave, setStaleSave] = useState(false);
+  const [staleSave, setStaleSave] = useState<StringKey | undefined>(undefined);
   /**
    * That a click's answer arrived and could not be read, so whether it was saved is not known
    * (#231). Its own flag rather than the answer put on screen as the week, for the reason
@@ -454,7 +456,7 @@ export function TimetablePane({
     // re-read: replacing it with the refusal would blank a week the student can still
     // see, and would throw away the revision the next click needs.
     if (answer.kind === "refused" && answer.reason === "state-file-changed") {
-      setStaleSave(true);
+      setStaleSave(staleSaid(answer.reapply));
       // and until the re-read lands, an edit made on this answer waits for it (#334)
       keptWhenRereadBegan.current = readsKeptNow.current;
       setRereadingFrom(sentOn);
@@ -554,7 +556,7 @@ export function TimetablePane({
    */
   useEffect(() => {
     if (steps === 0) return;
-    setStaleSave(false);
+    setStaleSave(undefined);
     setPlanDiffStale(false);
     setUnknownSave(undefined);
     setHeldLost(false);
@@ -590,7 +592,7 @@ export function TimetablePane({
   /** Whatever became of the last click or press, the one being made now is the account owed. */
   const retireNotices = (): void => {
     setHeldLost(false);
-    setStaleSave(false);
+    setStaleSave(undefined);
     setPlanDiffStale(false);
     setUnknownSave(undefined);
     onActed();
@@ -832,7 +834,7 @@ export function TimetablePane({
       return fetchTimetable(api, query);
     }
     if (answer.kind === "variant-not-found") {
-      setStaleSave(true);
+      setStaleSave("picksStale");
       return fetchTimetable(api, query);
     }
     return answer;
@@ -936,8 +938,8 @@ export function TimetablePane({
     // this Pick then that is already so: there is nothing to send, and sending it anyway
     // would write a Pick over itself and spend an undo entry doing it.
     //
-    // This is where reconciling stops and #104 begins: nothing here re-applies an edit the
-    // server answered. A held click was never sent, and it goes out on the revision the
+    // This is where reconciling stops: nothing here re-applies an edit the server
+    // answered, and #104 only reports what clicking again would do. A held click was never sent, and it goes out on the revision the
     // first answer carries, so the guard has nothing to refuse it for.
     if (isPicked(timetable.picks, next.group)) {
       setHeld((waiting) => waiting.slice(1));

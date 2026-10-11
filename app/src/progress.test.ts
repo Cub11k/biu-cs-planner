@@ -74,7 +74,7 @@ const versionOf = async (workspace: MemoryWorkspace) =>
   (await workspace.readStateFile(REF))?.version;
 
 function served(result: ProgressResult) {
-  if (result.kind !== "served") throw new Error(`Progress came back ${result.reason}`);
+  if (result.kind !== "served") throw new Error(`Progress came back ${"reason" in result ? result.reason : result.kind}`);
   return result.view;
 }
 
