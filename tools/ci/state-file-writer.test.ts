@@ -4,6 +4,7 @@ import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SOURCE_DIRS as COLLECTED_DIRS } from "../pr-report/collect.ts";
 import {
+  CONTRACT,
   METHOD,
   RULE,
   SOURCE_DIRS,
@@ -123,7 +124,10 @@ describe("the State File writers in this repository", () => {
     ]);
 
     const production = everyMention().filter(
-      (mention) => mention.kind === "call" && moduleUnderTest(mention.file) === undefined,
+      (mention) =>
+        mention.kind === "call" &&
+        moduleUnderTest(mention.file) === undefined &&
+        mention.file !== CONTRACT,
     );
 
     expect(production.map((mention) => mention.file)).toEqual([WRITER]);
@@ -146,6 +150,8 @@ describe("the State File writers in this repository", () => {
       "app/src/workspace.memory.test.ts",
       "server/src/workspace.fs.test.ts",
     ]);
+    // and the suite both of them run, which is the port's test rather than either adapter's
+    expect(filesOfKind("call")).toContain(CONTRACT);
   });
 
   // Prose naming the method is prose, and this repository writes plenty of it. The files are
@@ -435,6 +441,11 @@ describe("mayCall", () => {
 
   it("lets the test of an adapter call it, because that test is testing the port", () => {
     expect(mayCall("server/src/workspace.fs.test.ts", adapters)).toBe(true);
+  });
+
+  it("lets the port's contract suite call it, and no other file named like it", () => {
+    expect(mayCall(CONTRACT, adapters)).toBe(true);
+    expect(mayCall("app/src/plan.contract.ts", adapters)).toBe(false);
   });
 
   it("lets a third adapter's test call it without anything being listed", () => {
