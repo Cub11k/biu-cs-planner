@@ -22,6 +22,9 @@ type Answer = InferResponseType<ReadRoute>;
 /** The answer that carries Picks; the other carries the Warnings and no Variant. */
 type ServedTimetable = Extract<Answer, { picks: unknown }>;
 
+/** An edit that landed and whose Timetable could not be built (#395): every edit route can answer it. */
+type NoViewed = Extract<InferResponseType<PickRoute>, { noView: true }>;
+
 /**
  * A Pick as the API hands it over. `GroupPick` and not `Pick`, because a type named `Pick`
  * shadows TypeScript's built-in `Pick<T, K>` for everything that imports it — the term is
@@ -112,6 +115,8 @@ export type TimetableResult =
    * the three ask the student for three different things.
    */
   | { kind: "refused"; reason: StateRefusal | undefined; warnings: StateWarning[]; reapply?: Reapply }
+  /** The edit was saved at `version` and no week came with it, so the screen reads it again (#414). */
+  | { kind: "no-view"; version: StateFileVersion; warnings: StateWarning[] }
   /** This page has no launch token, so the server will not talk to it (ADR-0004). */
   | { kind: "unauthorized" }
   /**
@@ -168,7 +173,8 @@ export const variantOf = (query: TimetableQuery): { variant?: string; position?:
 export const timetable: AnswerReaders<
   TimetableResult,
   { reason?: unknown; warnings?: StateWarning[]; reapply?: unknown },
-  ServedTimetable
+  ServedTimetable,
+  NoViewed
 > = {
   refused: (body) => ({
     kind: "refused",
@@ -199,6 +205,7 @@ export const timetable: AnswerReaders<
           version: body.version,
         }
       : undefined,
+  noView: (body) => ({ kind: "no-view", version: body.version, warnings: body.warnings ?? [] }),
 };
 
 /**

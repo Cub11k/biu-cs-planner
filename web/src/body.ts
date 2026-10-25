@@ -115,12 +115,17 @@ export const UNAUTHORIZED = 401;
 /** The three answers no route writes: the request never arrived, the guard refused it, or its body could not be read. */
 export type Transport = { kind: "unauthorized" } | { kind: "unreadable-answer" } | { kind: "unreachable" };
 
-/** What a reader makes of a body: a refusal in its area's own shape, and a served body. */
-export type AnswerReaders<R, Refused, Served> = {
+/**
+ * What a reader makes of a body: a refusal in its area's own shape, a served body, and — for an
+ * area whose edits can answer it — the 200 of an edit that landed with no view (#395, #414).
+ */
+export type AnswerReaders<R, Refused, Served, NoViewed = never> = {
   /** A refusal's body, and its status for the two readers that tell one 409 from another. */
   refused: (body: Refused, status: number) => R;
   /** A served body, normalised; `undefined` when it lacks a field the render needs (#275). */
   served: (body: Served) => R | undefined;
+  /** A 200 marked `noView`: the save landed at its `version`, and the page reads again. */
+  noView?: ((body: NoViewed) => R) | undefined;
 };
 
 /**
@@ -136,9 +141,9 @@ export type AnswerReaders<R, Refused, Served> = {
  * The bodies are cast to the callbacks' types and nothing more: `readBody` promises an object and
  * no shape, and each `served` checks the one field it loops over.
  */
-export async function askApi<R, Refused, Served>(
+export async function askApi<R, Refused, Served, NoViewed = never>(
   send: () => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>,
-  readers: AnswerReaders<R, Refused, Served>,
+  readers: AnswerReaders<R, Refused, Served, NoViewed>,
 ): Promise<R | Transport> {
   let answer: Awaited<ReturnType<typeof send>>;
   try {
@@ -151,6 +156,9 @@ export async function askApi<R, Refused, Served>(
   const read = await readBody(() => answer.json());
   if (!read.readable) return { kind: "unreadable-answer" };
   if (!answer.ok) return readers.refused(read.body as Refused, status);
+  if (readers.noView !== undefined && (read.body as { noView?: unknown }).noView === true) {
+    return readers.noView(read.body as NoViewed);
+  }
   return readers.served(read.body as Served) ?? { kind: "unreadable-answer" };
 }
 

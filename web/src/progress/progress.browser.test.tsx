@@ -46,6 +46,8 @@ let onlyUnreadableFiles: boolean;
 let canUndo: boolean;
 /** While set, the server is not there: every request to the API fails as a fetch does (#406). */
 let down: boolean;
+/** While set, the next tick lands and is answered with no view (#414). */
+let noViewNext: boolean;
 let stateWarnings: unknown[];
 
 const json = (body: unknown, status = 200): Response =>
@@ -163,6 +165,7 @@ beforeEach(() => {
   onlyUnreadableFiles = false;
   canUndo = false;
   down = false;
+  noViewNext = false;
   stateWarnings = [];
   ROOT.lang = "en";
   ROOT.dir = "ltr";
@@ -259,6 +262,10 @@ beforeEach(() => {
     if (pathname === "/api/progress/ticks") {
       ticked = method === "POST";
       version += 1;
+      if (noViewNext) {
+        noViewNext = false;
+        return json({ noView: true, version: `v${version}`, warnings: [] });
+      }
       return json(progressBody());
     }
     throw new Error(`the fake was not arranged for ${method} ${pathname}`);
@@ -1179,4 +1186,28 @@ it("keeps Progress as last read when the server is down, says so once, and recov
     if (mounted.querySelector("[data-progress-stale]") !== null) throw new Error("the stale tree was not replaced");
   });
   expect(box().disabled).toBe(false);
+});
+
+/**
+ * #414: a tick that landed and came back with no view is said as saved, never as unknown, and
+ * Progress is read again to show it; the next edit is based on the revision that re-read brought.
+ */
+it("says a tick answered with no view was saved, and draws it from the re-read", async () => {
+  const mounted = await mount();
+  await served(mounted);
+  noViewNext = true;
+  const box = (): HTMLInputElement => mounted.querySelector<HTMLInputElement>('input[data-tick="hebrew"]')!;
+
+  box().click();
+
+  await vi.waitFor(() => {
+    if (!box().checked || box().disabled) throw new Error("the re-read did not draw the tick");
+  });
+  expect(said(mounted)).toContain(t("en", "editSavedRereading"));
+  expect(said(mounted)).not.toContain(t("en", "progressAnswerUnreadable"));
+  box().click();
+  await vi.waitFor(() => {
+    if (box().checked) throw new Error("the untick was not drawn");
+  });
+  expect(lastSent("/api/progress/ticks")).toMatchObject({ method: "DELETE", body: { basedOn: "v2" } });
 });

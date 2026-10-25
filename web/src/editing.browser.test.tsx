@@ -14,7 +14,8 @@ type Fake =
   | { kind: "refused"; reason: string | undefined }
   | { kind: "unreadable-answer" }
   | { kind: "unauthorized" }
-  | { kind: "unreachable" };
+  | { kind: "unreachable" }
+  | { kind: "no-view"; version: string };
 
 /** An answer the test hands over when it chooses. */
 type Pending = { answer: (fake: Fake) => void };
@@ -132,6 +133,8 @@ it.each([
   { fake: { kind: "unreadable-answer" } as Fake, mayHaveWritten: true },
   // the request may have reached the server before the connection failed (#397)
   { fake: { kind: "unreachable" } as Fake, mayHaveWritten: true },
+  // saved, with no view to draw (#414): the re-read is what shows it, and its revision is the next base
+  { fake: { kind: "no-view", version: "v2" } as Fake, mayHaveWritten: true },
 ])("spends the revision on $fake.kind $fake.reason, sends nothing until the re-read is drawn", async ({ fake, mayHaveWritten }) => {
   await servedV1();
   const { heard } = await edit(fake);

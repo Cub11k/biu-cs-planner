@@ -54,5 +54,6 @@ export async function applyPlanDiff(
         ? { kind: "plan-diff-stale" }
         : timetable.refused(body, status),
     served: timetable.served,
+    noView: timetable.noView,
   });
 }

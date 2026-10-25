@@ -35,7 +35,7 @@ export type Editing<T> = {
  * it triggers can answer after the edit's own answer is on screen.
  *
  * **The spent-revision gate** (#377): from an answer that starts a re-read — `state-file-changed`,
- * `save-revision-unreadable`, `unreadable-answer`, `unreachable` — until that re-read's answer is on
+ * `save-revision-unreadable`, `unreadable-answer`, `unreachable`, `no-view` — until that re-read's answer is on
  * screen, served or not, `send` sends nothing. Nor does it while an edit is in flight. The gate is
  * held in refs rather than read off the render (#394), so two `send`s in one batch send one edit.
  *
@@ -109,6 +109,8 @@ export function useEditing<T extends { kind: string }>(
         reason === "state-file-changed" ||
         reason === "save-revision-unreadable" ||
         settled.kind === "unreadable-answer" ||
+        // saved, with no view to show (#414): the re-read draws what the save wrote
+        settled.kind === "no-view" ||
         // the request may have reached the server and written before the connection failed (#397)
         settled.kind === "unreachable"
       ) {

@@ -281,6 +281,9 @@ export function PlanScreen({
         case "refused":
           setRefused({ key: answer.reason === undefined ? "planNotDone" : REFUSAL_STRING[answer.reason] });
           return;
+        case "no-view":
+          setRefused({ key: "editSavedRereading" });
+          return;
         case "unreadable-answer":
           setRefused({ key: "planAnswerUnreadable" });
           return;

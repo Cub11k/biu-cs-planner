@@ -56,6 +56,8 @@ let layout: { create: FakeAttempt[]; skipped: unknown[] } | { unavailable: strin
 let canUndo: boolean;
 /** While set, the server is not there: every request to the API fails as a fetch does (#406). */
 let down: boolean;
+/** While set, the next edit to an Attempt lands and is answered with no view (#414). */
+let noViewNext: boolean;
 
 const COURSES = [
   { courseNumber: "89-110", name: { he: "מבוא למדעי המחשב", en: "Introduction to CS" }, credits: 6 },
@@ -97,6 +99,7 @@ beforeEach(() => {
   layout = { create: [], skipped: [] };
   canUndo = false;
   down = false;
+  noViewNext = false;
   ROOT.lang = "en";
   ROOT.dir = "ltr";
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -169,6 +172,10 @@ beforeEach(() => {
         });
       }
       version += 1;
+      if (noViewNext) {
+        noViewNext = false;
+        return json({ noView: true, version: `v${version}`, warnings: [] });
+      }
       return json(planBody());
     }
     throw new Error(`the fake was not arranged for ${method} ${pathname}`);
@@ -944,4 +951,30 @@ it("keeps the board as last read when the server is down, says so once, and reco
     if (mounted.querySelector("[data-plan-stale]") !== null) throw new Error("the stale board was not replaced");
   });
   expect(removeButton(mounted, "a2").disabled).toBe(false);
+});
+
+/**
+ * #414: an edit that landed and came back with no view is said as saved, never as unknown, and the
+ * board is read again to show it; the next edit is based on the revision that re-read brought.
+ */
+it("says an edit answered with no view was saved, and draws it from the re-read", async () => {
+  const mounted = await mount();
+  await served(mounted);
+  noViewNext = true;
+
+  removeButton(mounted, "a1").click();
+
+  await vi.waitFor(() => {
+    if (card(mounted, "a1") !== null) throw new Error("the re-read did not draw the removal");
+  });
+  expect(status(mounted)).toContain(t("en", "editSavedRereading"));
+  expect(status(mounted)).not.toContain(t("en", "planAnswerUnreadable"));
+  await vi.waitFor(() => {
+    if (removeButton(mounted, "a2").disabled) throw new Error("the revision was not released");
+  });
+  removeButton(mounted, "a2").click();
+  await vi.waitFor(() => {
+    if (card(mounted, "a2") !== null) throw new Error("the next edit was not drawn");
+  });
+  expect(lastSent("DELETE", "/api/plan/attempts/a2")?.body).toEqual({ basedOn: "v2" });
 });

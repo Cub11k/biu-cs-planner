@@ -251,6 +251,7 @@ export function ProgressScreen({
       if (answer.kind === "served") then?.();
       else if (answer.kind === "refused")
         setEditRefused(answer.reason === undefined ? "progressNotDone" : REFUSAL_STRING[answer.reason]);
+      else if (answer.kind === "no-view") setEditRefused("editSavedRereading");
       else if (answer.kind === "unreadable-answer") setEditRefused("progressAnswerUnreadable");
       else if (answer.kind === "unreachable") setEditRefused("apiUnreachable");
       else if (answer.kind === "unauthorized") setEditRefused(tokenHeld ? "tokenRetired" : "tokenMissing");
