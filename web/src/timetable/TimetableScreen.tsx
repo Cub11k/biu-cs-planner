@@ -477,12 +477,18 @@ export function TimetablePane({
     // routing a direct click into `held` instead would change what it means, since a held
     // click asks for a Pick and a click on ink asks for its removal. Left as an open window
     // here; the `state-file-changed` arm above closes it for its own re-read (#334).
+    // A save that landed with no week to show (#414) is re-read the same way, and said as saved.
     if (
       answer.kind === "unreadable-answer" ||
+      answer.kind === "no-view" ||
       (answer.kind === "refused" && answer.reason === "save-revision-unreadable")
     ) {
       setUnknownSave(
-        answer.kind === "unreadable-answer" ? "picksSaveAnswerUnreadable" : "saveUnconfirmed",
+        answer.kind === "unreadable-answer"
+          ? "picksSaveAnswerUnreadable"
+          : answer.kind === "no-view"
+            ? "editSavedRereading"
+            : "saveUnconfirmed",
       );
       // and the undo buttons wait for that re-read, as they do after a step: a press sent
       // on a revision this click may have spent would come back `historyStale`
@@ -680,7 +686,7 @@ export function TimetablePane({
    */
   const formEdit = (edit: TimetableEdit): Promise<FormAnswer> =>
     sendEdit(edit).then((answer) =>
-      answer?.kind === "served"
+      answer?.kind === "served" || answer?.kind === "no-view"
         ? { landed: true }
         : { landed: false, said: answer === undefined ? undefined : notSavedSaid(language, answer, tokenHeld) },
     );
@@ -957,7 +963,8 @@ export function TimetablePane({
         (answer.kind === "refused" &&
           (answer.reason === "state-file-changed" ||
             answer.reason === "save-revision-unreadable")) ||
-        answer.kind === "unreadable-answer"
+        answer.kind === "unreadable-answer" ||
+        answer.kind === "no-view"
       ) {
         keptWhenRefused.current = readsKeptNow.current;
         refusedOn.current = sentOn;

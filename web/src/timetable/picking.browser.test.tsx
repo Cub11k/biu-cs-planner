@@ -109,6 +109,8 @@ let unreadableSave: number | undefined;
  * write landed and the revision it brought back could not be read, which is #326's case.
  */
 let unconfirmedSave: boolean;
+/** Set to answer the next save with no view **after** the fake has accepted it (#414). */
+let noViewSave: boolean;
 /** Set to answer the next read of the Timetable with a body nobody can read, or a refusal (#218). */
 let nextRead: "unreadable" | "refused" | undefined;
 /** How many times the screen told its host that the file's revision may have moved. */
@@ -240,6 +242,7 @@ beforeEach(() => {
   variantsInFile = undefined;
   unreadableSave = undefined;
   unconfirmedSave = false;
+  noViewSave = false;
   nextRead = undefined;
   edits = 0;
   readHeld = undefined;
@@ -354,6 +357,11 @@ beforeEach(() => {
       const status = unreadableSave;
       unreadableSave = undefined;
       return new Response("<!doctype html>", { status, headers: { "content-type": "text/html" } });
+    }
+
+    if (noViewSave && (method === "POST" || method === "DELETE")) {
+      noViewSave = false;
+      return json({ noView: true, version: `v${version}`, warnings: [] });
     }
 
     // the two Groups that overlap in this fixture, once both are picked
@@ -1266,6 +1274,32 @@ it("sends the rest of the queue on the re-read, not on the revision just refused
   expect(tileFor(mounted, "01").classList.contains("is-picked")).toBe(false);
   expect(mounted.textContent).toContain(FILE_CHANGED);
   expect(mounted.textContent).toContain(t("en", "picksCountOne"));
+});
+
+/**
+ * #414: a click that landed and came back with no week is said as saved, never as unknown, and the
+ * week is read again to show it; the next click goes out on the revision that re-read brought.
+ */
+it("says a click answered with no view was saved, and draws it from the re-read", async () => {
+  const mounted = await openWeek();
+
+  noViewSave = true;
+  tileFor(mounted, "01").click();
+
+  await waitForText(mounted, t("en", "editSavedRereading"));
+  for (const claim of ["picksSaveAnswerUnreadable", "picksAnswerUnreadable", "saveUnconfirmed"] as const) {
+    expect(mounted.textContent, `${claim} says what the server did not`).not.toContain(t("en", claim));
+  }
+  await vi.waitFor(() => {
+    if (!tileFor(mounted, "01").classList.contains("is-picked")) throw new Error("the re-read never drew the Pick");
+  });
+  tileFor(mounted, "01").click();
+  await vi.waitFor(() => {
+    if (tileFor(mounted, "01").classList.contains("is-picked")) throw new Error("the next click was not drawn");
+  });
+  expect(sent.filter((request) => request.method === "DELETE").map((request) => request.body)).toMatchObject([
+    { basedOn: "v1" },
+  ]);
 });
 
 /**

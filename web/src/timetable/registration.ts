@@ -113,6 +113,7 @@ export async function markRegistered(
       return timetable.refused(body, status);
     },
     served: timetable.served,
+    noView: timetable.noView,
   });
 }
 

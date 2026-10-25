@@ -28,6 +28,8 @@ type Answer = InferResponseType<ReadRoute>;
 type ServedPlan = Extract<Answer, { attempts: unknown }>;
 type LayoutAnswer = InferResponseType<LayoutRoute>;
 type ServedLayout = Extract<LayoutAnswer, { summary: unknown }>;
+/** An edit that landed and whose Plan could not be built (#395): every edit route can answer it. */
+type NoViewed = Extract<InferResponseType<AddRoute>, { noView: true }>;
 
 /** One Attempt, named by its id. */
 export type Attempt = ServedPlan["attempts"][number];
@@ -78,6 +80,8 @@ export type PlanResult =
       summary?: LayoutSummary;
     }
   | { kind: "refused"; reason: PlanRefusal | undefined }
+  /** The edit was saved at `version` and no Plan came with it, so the screen reads it again (#414). */
+  | { kind: "no-view"; version: NoViewed["version"]; stateWarnings: NoViewed["warnings"] }
   /** New Plan from Suggested Layout could not run, and why; nothing was written (#293). */
   | { kind: "unavailable"; reason: LayoutUnavailable }
   /** This page has no launch token, so the server will not talk to it (ADR-0004). */
@@ -91,7 +95,7 @@ const isUnavailable = (reason: unknown): reason is LayoutUnavailable =>
   (LAYOUT_UNAVAILABLE as readonly unknown[]).includes(reason);
 
 /** Every Plan answer read the same way: its refusal by `reason`, and a served Plan. */
-const plan: AnswerReaders<PlanResult, { reason?: unknown }, ServedPlan & { summary?: LayoutSummary }> = {
+const plan: AnswerReaders<PlanResult, { reason?: unknown }, ServedPlan & { summary?: LayoutSummary }, NoViewed> = {
   // by `reason`, never the status: a stale revision is a 409 as well (#293)
   refused: ({ reason }) =>
     isUnavailable(reason) ? { kind: "unavailable", reason } : { kind: "refused", reason: reason as PlanRefusal | undefined },
@@ -112,6 +116,7 @@ const plan: AnswerReaders<PlanResult, { reason?: unknown }, ServedPlan & { summa
           ...(body.summary === undefined ? {} : { summary: body.summary }),
         }
       : undefined,
+  noView: (body) => ({ kind: "no-view", version: body.version, stateWarnings: body.warnings ?? [] }),
 };
 
 const ask = (send: () => Promise<Response>): Promise<PlanResult> => askApi(send, plan);
@@ -209,10 +214,9 @@ export function fetchChoices(client: ApiClient): Promise<Choices | undefined> {
 /** One Course's name and credits, as far as the Workspace knows them. */
 export type CourseFacts = InferResponseType<CoursesRoute>["courses"][number];
 
-/** Every Course the Workspace knows, or an empty list when they could not be had. */
-export async function fetchCourses(client: ApiClient): Promise<CourseFacts[]> {
-  const courses = await askFor(() => client.api.courses.$get(), (body: InferResponseType<CoursesRoute>) =>
+/** Every Course the Workspace knows, or `undefined` when they could not be had. */
+export function fetchCourses(client: ApiClient): Promise<CourseFacts[] | undefined> {
+  return askFor(() => client.api.courses.$get(), (body: InferResponseType<CoursesRoute>) =>
     Array.isArray(body.courses) ? body.courses : undefined,
   );
-  return courses ?? [];
 }

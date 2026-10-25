@@ -22,6 +22,8 @@ type RequirementsRoute = ApiClient["api"]["requirements"]["$get"];
 
 type Answer = InferResponseType<ReadRoute>;
 type ServedProgress = Extract<Answer, { programs: unknown }>;
+/** An edit that landed and whose Progress could not be built (#395): every edit route can answer it. */
+type NoViewed = Extract<InferResponseType<PinRoute>, { noView: true }>;
 
 /** One chosen Program, evaluated or not, as the API serves it. */
 export type ProgramProgress = ServedProgress["programs"][number];
@@ -57,6 +59,8 @@ export type ProgressResult =
       version: ProgressVersion;
     }
   | { kind: "refused"; reason: ProgressRefusal | undefined }
+  /** The edit was saved at `version` and no Progress came with it, so the screen reads it again (#414). */
+  | NoViewProgress
   /** This page has no launch token, so the server will not talk to it (ADR-0004). */
   | { kind: "unauthorized" }
   /** An answer arrived whose body this page cannot read; nothing is known about the file. */
@@ -64,8 +68,15 @@ export type ProgressResult =
   /** The request never arrived. */
   | { kind: "unreachable" };
 
+type NoViewProgress = { kind: "no-view"; version: NoViewed["version"]; stateWarnings: NoViewed["warnings"] };
+const noView = (body: NoViewed): NoViewProgress => ({
+  kind: "no-view",
+  version: body.version,
+  stateWarnings: body.warnings ?? [],
+});
+
 /** Every Progress answer read the same way: its refusal's `reason`, and served Progress. */
-const progress: AnswerReaders<ProgressResult, { reason?: ProgressRefusal }, ServedProgress> = {
+const progress: AnswerReaders<ProgressResult, { reason?: ProgressRefusal }, ServedProgress, NoViewed> = {
   refused: (body) => ({ kind: "refused", reason: body.reason }),
   served: (body) =>
     // the screen loops over the Programs, and an answer without them is not Progress (#382)
@@ -82,6 +93,7 @@ const progress: AnswerReaders<ProgressResult, { reason?: ProgressRefusal }, Serv
           version: body.version,
         }
       : undefined,
+  noView,
 };
 
 const ask = (send: () => Promise<Response>): Promise<ProgressResult> => askApi(send, progress);
@@ -160,6 +172,7 @@ export function fetchRequirementsFiles(client: ApiClient): Promise<ListedRequire
 /** What choosing the Programs came to: saved, or why not. */
 export type ProgramsChoice =
   | { kind: "saved" }
+  | NoViewProgress
   | { kind: "refused"; reason: ProgressRefusal | undefined }
   | { kind: "unauthorized" }
   | { kind: "unreadable-answer" }
@@ -173,6 +186,7 @@ const saved = (send: () => Promise<Response>): Promise<ProgramsChoice> =>
   askApi(send, {
     refused: (body: { reason?: ProgressRefusal }): ProgramsChoice => ({ kind: "refused", reason: body.reason }),
     served: (): ProgramsChoice => ({ kind: "saved" }),
+    noView,
   });
 
 /** One Program as the student chooses it: a Requirements File by name, and maybe a Track of it. */

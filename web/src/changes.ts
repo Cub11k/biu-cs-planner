@@ -48,7 +48,9 @@ export type WorkspacePollOptions = {
  *
  * A count, never a value with meaning: the server restarts it at 0, so only the movement
  * says anything. An unanswered ask changes nothing and leaves the baseline alone — the
- * server being briefly away is not a change to the folder.
+ * server being briefly away is not a change to the folder. **Its coming back is reported once**,
+ * whatever the count: a screen whose re-read never arrived is showing what it last read, and a
+ * server restarted at the count the page last saw would otherwise never send it to look (#406).
  *
  * **A refused ask is the one exception, and it is #126's whole remedy.** A poll that fails is
  * not news about the Workspace, which is why every other failure here is silent; a poll that
@@ -77,6 +79,8 @@ export function workspaceChangePoll(
   let asking = false;
   /** That the last answered ask was refused, so the next thing either way is worth reporting. */
   let refused = false;
+  /** That the last ask never arrived: a screen may be keeping what it last read, labelled stale (#406). */
+  let away = false;
 
   return async (): Promise<void> => {
     if (asking) return; // a slow answer must not queue a second ask behind it
@@ -100,14 +104,17 @@ export function workspaceChangePoll(
       // route says nothing about this page's token, and nothing here can act on it. Nor does a
       // server that is not answering: the next ask tries again, and the page shows what it has
       // rather than an error for something the student did not do.
+      if (answer.kind === "unreachable") away = true;
       if (answer.kind !== "counted") return;
 
       const { changeCount } = answer;
       const moved = seen !== undefined && changeCount !== seen;
       // This page can be heard again, which is news about the page in the same way the refusal
       // was: the screens are still showing whatever they could last read.
-      const heard = refused;
+      // So is a server answering again, which may have restarted at the count this page last saw.
+      const heard = refused || away;
       refused = false;
+      away = false;
       seen = changeCount;
       if (moved || heard) onChanged();
     } finally {

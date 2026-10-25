@@ -1,7 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useState } from "react";
 import { api } from "../api.ts";
 import { unauthorizedSaid, type ScreenDefinition, type ScreenProps } from "../AppShell.tsx";
-import { useEditing } from "../editing.ts";
+import { keepOverUnreachable, useEditing } from "../editing.ts";
 import { LANGUAGES, t, type Language, type StringKey } from "../i18n/strings.ts";
 import { academicYearOf, academicYearSpan, semesterOf } from "../timetable/calendar.ts";
 import { columnCredits, gradeOf, planYears, retakeSemester } from "./columns.ts";
@@ -199,13 +199,16 @@ function warningSaid(language: Language, warning: AnyWarning, attempts: Readonly
   }
 }
 
-/** One read the screen draws with and never edits through, re-asked as the Plan is. */
-function useRead<T>(changes: number, read: () => Promise<T>, initial: T): T {
+/**
+ * One read the screen draws with and never edits through, re-asked as the Plan is. One that could
+ * not be had keeps what was last read, as the Plan kept over it does (#406).
+ */
+function useRead<T>(changes: number, read: () => Promise<T | undefined>, initial: T): T {
   const [value, setValue] = useState<T>(initial);
   useEffect(() => {
     let current = true;
     void read().then((fresh) => {
-      if (current) setValue(fresh);
+      if (current && fresh !== undefined) setValue(fresh);
     });
     return () => {
       current = false;
@@ -217,7 +220,7 @@ function useRead<T>(changes: number, read: () => Promise<T>, initial: T): T {
 
 const readPlan = (): Promise<PlanResult> => fetchPlan(api);
 const readChoices = (): Promise<Choices | undefined> => fetchChoices(api);
-const readCourses = (): Promise<CourseFacts[]> => fetchCourses(api);
+const readCourses = (): Promise<CourseFacts[] | undefined> => fetchCourses(api);
 
 export function PlanScreen({
   language,
@@ -231,7 +234,7 @@ export function PlanScreen({
   onRevision,
   notices,
 }: ScreenProps): React.JSX.Element {
-  const editing = useEditing(readPlan, workspaceChanges + stepRereads, onEdited);
+  const editing = useEditing(readPlan, workspaceChanges + stepRereads, onEdited, keepOverUnreachable);
   const plan = editing.answer;
   /** No edit may be sent: one is in flight, or the revision on screen is spent (#377). */
   const sending = editing.sending || editing.spent;
@@ -280,6 +283,9 @@ export function PlanScreen({
           return;
         case "refused":
           setRefused({ key: answer.reason === undefined ? "planNotDone" : REFUSAL_STRING[answer.reason] });
+          return;
+        case "no-view":
+          setRefused({ key: "editSavedRereading" });
           return;
         case "unreadable-answer":
           setRefused({ key: "planAnswerUnreadable" });
@@ -382,6 +388,7 @@ export function PlanScreen({
         {/* every account of what just happened, the shell's and this screen's */}
         <span role="status" className="flex basis-full flex-wrap items-center gap-x-3 gap-y-1">
           {said === undefined ? null : <span>{said}</span>}
+          {editing.kept > 0 && served !== undefined && <span data-plan-stale>{t(language, "readStale")}</span>}
           {refused === undefined ? null : <span data-plan-refused>{t(language, refused.key, refused.values)}</span>}
           {summary === undefined ? null : <SummarySaid language={language} summary={summary} />}
           {notices}

@@ -7,14 +7,15 @@
  */
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { useEditing, type Editing } from "./editing.ts";
+import { keepOverUnreachable, RETRY_MS, useEditing, type Editing } from "./editing.ts";
 
 type Fake =
   | { kind: "served"; version: string }
   | { kind: "refused"; reason: string | undefined }
   | { kind: "unreadable-answer" }
   | { kind: "unauthorized" }
-  | { kind: "unreachable" };
+  | { kind: "unreachable" }
+  | { kind: "no-view"; version: string };
 
 /** An answer the test hands over when it chooses. */
 type Pending = { answer: (fake: Fake) => void };
@@ -132,6 +133,8 @@ it.each([
   { fake: { kind: "unreadable-answer" } as Fake, mayHaveWritten: true },
   // the request may have reached the server before the connection failed (#397)
   { fake: { kind: "unreachable" } as Fake, mayHaveWritten: true },
+  // saved, with no view to draw (#414): the re-read is what shows it, and its revision is the next base
+  { fake: { kind: "no-view", version: "v2" } as Fake, mayHaveWritten: true },
 ])("spends the revision on $fake.kind $fake.reason, sends nothing until the re-read is drawn", async ({ fake, mayHaveWritten }) => {
   await servedV1();
   const { heard } = await edit(fake);
@@ -164,6 +167,45 @@ it.each([
   reads[1]!.answer(reread);
 
   await until((editing) => !editing.spent && editing.answer.kind === reread.kind);
+});
+
+function KeepingOverUnreachable(): null {
+  latest = useEditing(load, 0, () => {
+    edited += 1;
+  }, keepOverUnreachable);
+  return null;
+}
+
+/**
+ * #406: with `keepOverUnreachable`, a re-read that never arrived says nothing about the file, so the
+ * served answer stays, counted as kept for the screen to label stale, and the revision stays spent.
+ * Nothing else may move while the server is away, so the hook asks again on its own until it hears.
+ */
+it("keeps the served answer over an unreachable re-read, the revision spent, and asks again", async () => {
+  root!.render(<KeepingOverUnreachable />);
+  await vi.waitFor(() => expect(reads).toHaveLength(1));
+  reads[0]!.answer(served("v1"));
+  await until((editing) => onScreen(editing) === "v1");
+  await edit({ kind: "unreachable" });
+  await vi.waitFor(() => expect(reads).toHaveLength(2));
+
+  reads[1]!.answer({ kind: "unreachable" });
+
+  await until((editing) => editing.kept === 1);
+  expect(onScreen(latest!)).toBe("v1");
+  expect(latest!.spent).toBe(true);
+  expect(latest!.send(() => Promise.resolve(served("never")))).toBe(false);
+
+  await vi.waitFor(() => expect(reads).toHaveLength(3), { timeout: RETRY_MS * 2 });
+  reads[2]!.answer(served("v2"));
+  await until((editing) => !editing.spent && editing.kept === 0 && onScreen(editing) === "v2");
+});
+
+it("shows an unreachable first read even with `keepOverUnreachable`, with nothing served to keep", async () => {
+  root!.render(<KeepingOverUnreachable />);
+  await vi.waitFor(() => expect(reads).toHaveLength(1));
+  reads[0]!.answer({ kind: "unreachable" });
+  await until((editing) => editing.answer.kind === "unreachable" && editing.kept === 0);
 });
 
 it("drops a read already in flight when an answer spends the revision, so only the re-read releases", async () => {

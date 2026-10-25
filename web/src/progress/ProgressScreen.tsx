@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "../api.ts";
 import { unauthorizedSaid, type ScreenDefinition, type ScreenProps } from "../AppShell.tsx";
-import { useEditing } from "../editing.ts";
+import { keepOverUnreachable, useEditing } from "../editing.ts";
 import { t, type Language, type StringKey } from "../i18n/strings.ts";
 import { academicYearOf, academicYearSpan } from "../timetable/calendar.ts";
 import {
@@ -205,7 +205,7 @@ export function ProgressScreen({
   onRevision,
   notices,
 }: ScreenProps): React.JSX.Element {
-  const editing = useEditing(readProgress, workspaceChanges + stepRereads, onEdited);
+  const editing = useEditing(readProgress, workspaceChanges + stepRereads, onEdited, keepOverUnreachable);
   const progress = editing.answer;
   const [lens, setLens] = useState<Lens>("completed");
   /** That the last edit was refused, and why; retired by the next edit or a step. */
@@ -251,6 +251,7 @@ export function ProgressScreen({
       if (answer.kind === "served") then?.();
       else if (answer.kind === "refused")
         setEditRefused(answer.reason === undefined ? "progressNotDone" : REFUSAL_STRING[answer.reason]);
+      else if (answer.kind === "no-view") setEditRefused("editSavedRereading");
       else if (answer.kind === "unreadable-answer") setEditRefused("progressAnswerUnreadable");
       else if (answer.kind === "unreachable") setEditRefused("apiUnreachable");
       else if (answer.kind === "unauthorized") setEditRefused(tokenHeld ? "tokenRetired" : "tokenMissing");
@@ -287,6 +288,7 @@ export function ProgressScreen({
         {/* every account of what just happened, the shell's and this screen's */}
         <span role="status" className="flex flex-wrap items-center gap-x-3 gap-y-1">
           {said === undefined ? null : <span>{said}</span>}
+          {editing.kept > 0 && progress.kind === "served" && <span data-progress-stale>{t(language, "readStale")}</span>}
           {editRefused === undefined ? null : <span>{t(language, editRefused)}</span>}
           {progress.kind === "served" && progress.stoppedEarly && (
             <span>{t(language, "progressStoppedEarly")}</span>

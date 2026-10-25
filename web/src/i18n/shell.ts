@@ -10,6 +10,16 @@
  */
 export const shellEnglish = {
   apiUnreachable: "API unreachable",
+  /**
+   * A re-read that never arrived, over a screen the page had read (#406): the screen stays as it
+   * was last read, as the Timetable's week does (`picksReadStale`), and this says so.
+   */
+  readStale: "The file could not be read again just now, so this is what it held when last read. It may be out of date.",
+  /**
+   * An edit that landed and came back with no view (#395, #414): saved, which the server said, and
+   * the screen is read again to show it. Never "it is unknown whether it saved".
+   */
+  editSavedRereading: "Your change was saved, and the page is reading the file again to show it.",
 
   /**
    * The app's name, which the document title follows when the language changes (#310).
@@ -382,6 +392,8 @@ export const shellEnglish = {
 
 export const shellHebrew: Record<keyof typeof shellEnglish, string> = {
   apiUnreachable: "ה-API אינו זמין",
+  readStale: "לא ניתן היה לקרוא שוב את הקובץ כרגע, ולכן זה מה שהכיל כשנקרא לאחרונה. ייתכן שאינו עדכני.",
+  editSavedRereading: "השינוי שלכם נשמר, והדף קורא שוב את הקובץ כדי להציג אותו.",
 
   appName: "מתכנן מדעי המחשב בר־אילן",
 

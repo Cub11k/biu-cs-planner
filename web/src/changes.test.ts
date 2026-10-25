@@ -262,6 +262,29 @@ it("survives the server not answering at all", async () => {
 });
 
 /**
+ * #406: a screen whose re-read never arrived is showing what it last read, and a server restarted
+ * at the count the page last saw would never send it to look. So its answering again is reported
+ * once, as the end of a refusal is.
+ */
+it("reports once when the server answers again after not answering, even with the count unmoved", async () => {
+  const server = servingRevision();
+  let changed = 0;
+  const poll = workspaceChangePoll(server.client, () => (changed += 1));
+
+  await poll();
+  server.refuseToAnswer();
+  await poll();
+  await poll();
+  expect(changed).toBe(0);
+
+  server.answerAgain();
+  await poll();
+  expect(changed).toBe(1);
+  await poll();
+  expect(changed).toBe(1);
+});
+
+/**
  * The baseline is taken as the page loads, not one interval later: a file that changes in
  * that first interval would otherwise be read into the baseline and never reported.
  */
