@@ -177,6 +177,7 @@ it("returns the sittings in date order, each with the day gap to the previous on
       date: "2027-01-21",
       time: "09:00",
       daysSincePrevious: undefined,
+      yearLong: false,
     },
     {
       courseNumber: "89-114",
@@ -184,6 +185,7 @@ it("returns the sittings in date order, each with the day gap to the previous on
       date: "2027-02-04",
       time: "09:00",
       daysSincePrevious: 14,
+      yearLong: false,
     },
     {
       courseNumber: "89-110",
@@ -191,6 +193,7 @@ it("returns the sittings in date order, each with the day gap to the previous on
       date: "2027-02-18",
       time: "09:00",
       daysSincePrevious: 14,
+      yearLong: false,
     },
   ]);
 });
@@ -340,5 +343,49 @@ it("puts the Clashes first, then the crowded Exams in rail order", () => {
     { kind: "exam-spacing", sitting: { courseNumber: "89-110" }, nearbyCount: 1 },
     { kind: "exam-spacing", sitting: { courseNumber: "89-112" }, nearbyCount: 1 },
     { kind: "exam-spacing", sitting: { courseNumber: "89-114" }, nearbyCount: 2 },
+  ]);
+});
+
+/** A Year-long Offering: one row naming both Semesters, its sittings with no Semester on them (#214). */
+const yearLong = (courseNumber: string, sittings: { moed: string; date: string }[]): Offering => ({
+  ...offering(courseNumber, sittings),
+  semesters: ["fall", "spring"],
+});
+
+it("raises no spacing Warning about a Year-long sitting, which may be in another Semester (#214)", () => {
+  const result = checkExams([
+    offering("89-110", [{ moed: "מועד א", date: "2027-01-21" }]),
+    yearLong("89-385", [{ moed: "מועד א", date: "2027-01-22" }]),
+  ]);
+
+  expect(result.warnings).toEqual([]);
+  expect(result.sittings.map((s) => [s.courseNumber, s.yearLong])).toEqual([
+    ["89-110", false],
+    ["89-385", true],
+  ]);
+});
+
+it("still calls a Year-long sitting on the same day a Clash: one calendar day is one Semester (#214)", () => {
+  const result = checkExams([
+    offering("89-110", [{ moed: "מועד א", date: "2027-01-21" }]),
+    yearLong("89-385", [{ moed: "מועד א", date: "2027-01-21" }]),
+  ]);
+
+  expect(result.warnings).toMatchObject([{ kind: "exam-clash", date: "2027-01-21" }]);
+});
+
+it("spaces the Semester's sittings past a Year-long one, which carries no gap of its own (#214)", () => {
+  const result = checkExams([
+    offering("89-110", [
+      { moed: "מועד א", date: "2027-01-21" },
+      { moed: "מועד ב", date: "2027-02-11" },
+    ]),
+    yearLong("89-385", [{ moed: "מועד א", date: "2027-02-01" }]),
+  ]);
+
+  expect(result.sittings.map((s) => [s.date, s.daysSincePrevious])).toEqual([
+    ["2027-01-21", undefined],
+    ["2027-02-01", undefined],
+    ["2027-02-11", 21],
   ]);
 });

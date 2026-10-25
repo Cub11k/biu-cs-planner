@@ -123,14 +123,15 @@ function sourcesFor(courseNumbers: readonly string[], offerings: readonly ExamSo
  * rail — and a Catalog the Workspace would not touch rides as `catalogRefused`, apart from the
  * Warnings (#149).
  *
- * **One limit this cannot honour, and it is the data model rather than this function.** The
- * Semester filters *Offerings* and cannot filter *sittings*: a Catalog `Exam` is `{ moed, date,
- * time }` with no Semester on it (`core/src/catalog/schema.ts`), so a Year-long Offering picked in
- * Fall hands over all of its sittings and a Fall rail can carry a Spring date. Narrowing it would
- * mean either guessing a Semester from a date — a date-to-Semester calendar this project does not
- * have — or the Shoham Importer recording which Semester a sitting belongs to, which is a change
- * to the Catalog. Said here rather than papered over, because a reader of the rail would otherwise
- * take the breadth for a bug in it.
+ * **A Year-long Offering's sittings carry no Semester, and the rail says so** (#214, the
+ * maintainer's stopgap of 2026-10-04). A Catalog `Exam` is `{ moed, date, time }` and the Raw Crawl
+ * has nothing Semester-shaped to fill one from (`docs/research/shoham-raw-shape.md`, "A sitting
+ * carries no Semester"), so a Year-long Offering picked in Fall hands over its Spring sittings too.
+ * The Offering's own `semesters` travels into `checkExams`, which marks those sittings `yearLong`:
+ * the rail lists them as Year-long with no Semester recorded, and the spacing check leaves them out,
+ * so no Warning is raised across the boundary between two exam periods. Narrowing them to one
+ * Semester is still open: a date-to-Semester calendar the app does not have, or the Shoham Importer
+ * recording a sitting's Semester, which is a Catalog schema change (ADR-0006, ADR-0010).
  */
 export async function readExams(workspace: Workspace, at: TimetableRef): Promise<ExamsResult> {
   const loaded = await readStateFile(workspace, at.stateFile ?? DEFAULT_STATE_FILE);

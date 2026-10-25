@@ -139,8 +139,8 @@ it("serves the sittings in date order, so the rail can space its marks", async (
   const read = await readExams(workspace, AT);
 
   expect(read.kind === "served" && read.exams.sittings).toEqual([
-    { courseNumber: "89-110", moed: "מועד א", date: "2027-01-21", time: "09:00", daysSincePrevious: undefined },
-    { courseNumber: "89-112", moed: "מועד א", date: "2027-01-23", time: "09:00", daysSincePrevious: 2 },
+    { courseNumber: "89-110", moed: "מועד א", date: "2027-01-21", time: "09:00", daysSincePrevious: undefined, yearLong: false },
+    { courseNumber: "89-112", moed: "מועד א", date: "2027-01-23", time: "09:00", daysSincePrevious: 2, yearLong: false },
   ]);
 });
 
@@ -289,4 +289,29 @@ it("refuses when the State File cannot be read, as the week does", async () => {
     reason: "state-file-unreadable",
     warnings: [{ kind: "schema-version-too-new", found: 99 }],
   });
+});
+
+/**
+ * #214's stopgap, end to end: the Catalog's own `semesters` is what marks an Offering Year-long, so a
+ * Year-long Course picked in Fall reaches the rail labelled so — with its Spring dates still listed —
+ * and raises no spacing Warning across the boundary between the two exam periods.
+ */
+it("hands a Year-long Offering's sittings to the rail as Year-long, outside the spacing check (#214)", async () => {
+  const workspace = await twoExams(TWO_DAYS);
+  workspace.seed(
+    { kind: "catalog", academicYear: 2027 },
+    catalog([
+      offering("89-110", ["2027-01-21"]),
+      { ...offering("89-112", [TWO_DAYS, "2027-06-30"]), semesters: ["fall", "spring"] },
+    ]),
+  );
+
+  const read = await readExams(workspace, AT);
+
+  expect(read.kind === "served" && read.exams.sittings.map((s) => [s.date, s.yearLong])).toEqual([
+    ["2027-01-21", false],
+    [TWO_DAYS, true],
+    ["2027-06-30", true],
+  ]);
+  expect(read.kind === "served" && read.exams.warnings).toEqual([]);
 });

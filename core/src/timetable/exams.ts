@@ -24,6 +24,12 @@ export interface ExamSource {
   courseNumber: string;
   /** `known: false` means no part has published this Offering's Exams yet. */
   exams: { known: boolean; sittings: readonly Exam[] };
+  /**
+   * The Semesters the Offering is given in, as a Catalog `Offering` names them. Two or more is a
+   * Year-long Offering, whose sittings carry no Semester of their own (#214); absent is one
+   * Semester, which is what a caller with no Catalog at hand is asking about.
+   */
+  semesters?: readonly string[];
 }
 
 /** One sitting, told apart from every other by the Course it belongs to. */
@@ -36,8 +42,21 @@ export interface ExamSitting {
 
 /** A sitting as the exam rail draws it: in date order, carrying the gap behind it. */
 export interface RailSitting extends ExamSitting {
-  /** Calendar days since the sitting before it, and `undefined` for the first. */
+  /**
+   * Calendar days since the Semester's sitting before it, and `undefined` for the first — and for
+   * every Year-long one, which is not on the Semester's axis at all.
+   */
   daysSincePrevious: number | undefined;
+  /**
+   * A sitting of a Year-long Offering (#214, the maintainer's stopgap of 2026-10-04). A Catalog
+   * `Exam` records no Semester and nothing in the Raw Crawl could supply one
+   * (`docs/research/shoham-raw-shape.md`, "A sitting carries no Semester"), so such a sitting may
+   * be either Semester's. It is listed as Year-long with no Semester recorded, never spaced
+   * against the Semester's own sittings, and **left out of the spacing check**, which would
+   * otherwise measure gaps across the boundary between two exam periods. It still Clashes: two
+   * Exams on one calendar day are in one Semester whichever it is.
+   */
+  yearLong: boolean;
 }
 
 export type ExamWarning =
@@ -121,16 +140,18 @@ function identity(sitting: ExamSitting): string {
  * Offerings of one Course whose Exams genuinely differ both survive, because the whole
  * sitting is the key and not the course number.
  */
-function distinctSittings(offerings: readonly ExamSource[]): ExamSitting[] {
-  const seen = new Map<string, ExamSitting>();
+function distinctSittings(offerings: readonly ExamSource[]): Array<ExamSitting & { yearLong: boolean }> {
+  const seen = new Map<string, ExamSitting & { yearLong: boolean }>();
   for (const offering of offerings) {
     if (!offering.exams.known) continue;
+    const yearLong = (offering.semesters?.length ?? 0) > 1;
     for (const exam of offering.exams.sittings) {
-      const sitting: ExamSitting = {
+      const sitting = {
         courseNumber: offering.courseNumber,
         moed: exam.moed,
         date: exam.date,
         time: exam.time,
+        yearLong,
       };
       const key = identity(sitting);
       if (!seen.has(key)) seen.set(key, sitting);
@@ -138,6 +159,9 @@ function distinctSittings(offerings: readonly ExamSource[]): ExamSitting[] {
   }
   return [...seen.values()].sort(byWhenThenWhose);
 }
+
+/** A sitting as a Warning names it: who and when, without the rail's own fields. */
+const plain = ({ courseNumber, moed, date, time }: ExamSitting): ExamSitting => ({ courseNumber, moed, date, time });
 
 /** Courses nobody has published Exams for, counted once however often one is handed in. */
 function countCoursesWithUnknownExams(offerings: readonly ExamSource[]): number {
@@ -183,10 +207,10 @@ export function checkExams(
       const b = sittings[second]!;
       const gap = days[second]! - days[first]!;
       if (gap === 0) {
-        clashes.push({ kind: "exam-clash", date: a.date, sittings: [a, b] });
-      } else if (gap < spacingDays) {
-        nearby[first]!.push(b);
-        nearby[second]!.push(a);
+        clashes.push({ kind: "exam-clash", date: a.date, sittings: [plain(a), plain(b)] });
+      } else if (gap < spacingDays && !a.yearLong && !b.yearLong) {
+        nearby[first]!.push(plain(b));
+        nearby[second]!.push(plain(a));
       }
     }
   }
@@ -195,14 +219,18 @@ export function checkExams(
   for (const [index, sitting] of sittings.entries()) {
     const near = nearby[index]!;
     if (near.length === 0) continue;
-    spacing.push({ kind: "exam-spacing", sitting, nearbyCount: near.length, nearby: near });
+    spacing.push({ kind: "exam-spacing", sitting: plain(sitting), nearbyCount: near.length, nearby: near });
   }
 
+  /** The day of the Semester's sitting before, which a Year-long sitting never is. */
+  let previous: number | undefined;
   return {
-    sittings: sittings.map((sitting, index) => ({
-      ...sitting,
-      daysSincePrevious: index === 0 ? undefined : days[index]! - days[index - 1]!,
-    })),
+    sittings: sittings.map((sitting, index) => {
+      if (sitting.yearLong) return { ...sitting, daysSincePrevious: undefined };
+      const since = previous === undefined ? undefined : days[index]! - previous;
+      previous = days[index]!;
+      return { ...sitting, daysSincePrevious: since };
+    }),
     warnings: [...clashes, ...spacing],
     coursesWithUnknownExams: countCoursesWithUnknownExams(offerings),
   };

@@ -238,6 +238,28 @@ first lecture Group carries both Moadim, while the second lecture Group and both
 **no exam table element on the page at all** — not an empty one. So an absent Exam list is silence,
 never a statement that the Offering has no Exam.
 
+### A sitting carries no Semester
+
+**Checked for #214 on 2026-10-25, against the 2026-09-13 Raw Crawl: no.** Every one of the 320
+sittings in its `details` and `sections` blocks has exactly three fields, `type`, `date` and
+`hour`, and the `type` is only ever `מועד א'` or `מועד ב'` — no `סמסטר א'` in the label and no
+other field beside it. A Year-long record carries the sittings of both exam periods in one list.
+Of the 57 Year-long records (those whose `hours` names two Semesters), two carry Exams, and both
+are 89-1100, read twice (once per block):
+
+```
+891100 Year-long: [ מועד א' 21/01/2027, מועד ב' 11/02/2027, מועד א' 30/06/2027, מועד ב' 25/07/2027 ]
+```
+
+Two `מועד א'` and two `מועד ב'`, told apart by nothing but their dates. The order happens to be
+Fall's pair then Spring's, but an order is not a field, and nothing says it holds for every page.
+So the Shoham Importer has nothing to record a sitting's Semester from, and the only route left
+is a date-to-Semester calendar — which the app does not have. The live `CourseDetails.aspx` page
+was not re-read for this; the crawl is that page's exam table as the crawler parsed it.
+
+Until one of those exists, the rail lists a Year-long Offering's sittings as Year-long with no
+Semester recorded and leaves them out of the spacing check (the maintainer's stopgap on #214).
+
 ## The raw files on hand
 
 The raw files for 2027 live in the sibling crawl repo, and they are not interchangeable:
