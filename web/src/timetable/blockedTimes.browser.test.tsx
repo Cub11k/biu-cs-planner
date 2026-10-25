@@ -252,7 +252,7 @@ it("keeps Blocked Times on screen whichever Variant is shown", async () => {
   mounted.querySelector<HTMLButtonElement>('[role="tab"][data-variant="B"]')!.click();
 
   await until(() =>
-    expect(mounted.querySelector('[role="tab"][aria-selected="true"]')?.getAttribute("data-variant")).toBe("B"),
+    expect(mounted.querySelector('[role="tab"][data-variant][aria-selected="true"]')?.getAttribute("data-variant")).toBe("B"),
   );
   expect(blocks(mounted)).toHaveLength(1);
 });

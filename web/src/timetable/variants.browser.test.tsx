@@ -111,7 +111,7 @@ async function openWeek(language: Language = "en"): Promise<HTMLElement> {
 }
 
 const tabs = (mounted: HTMLElement): HTMLButtonElement[] => [
-  ...mounted.querySelectorAll<HTMLButtonElement>('[role="tab"]'),
+  ...mounted.querySelectorAll<HTMLButtonElement>('[role="tab"][data-variant]'),
 ];
 
 const tabNames = (mounted: HTMLElement): string[] =>
@@ -312,7 +312,8 @@ it("falls back to the primary when another window deleted the tab chosen", async
   expect(selectedTab(mounted)).toBe("B");
   // and stops asking for the Variant that is gone
   render("en", 2);
-  await until(() => expect(fake.sent.at(-1)?.search).toBe(""));
+  // the week's own read; the exam rail's beside it names the Variant the week came back about
+  await until(() => expect(fake.sent.filter((request) => request.pathname.endsWith("/fall")).at(-1)?.search).toBe(""));
 });
 
 it("refuses a Variant edit made on a stale page, and says so", async () => {
@@ -371,7 +372,8 @@ it("makes the week the tabpanel the tabs control, labelled by the tab shown", as
   const mounted = await openWeek();
   await until(() => expect(selectedTab(mounted)).toBe("B"));
 
-  const panel = mounted.querySelector<HTMLElement>('[role="tabpanel"]');
+  // the innermost: the Semester tabs' panel holds this one (#418)
+  const panel = [...mounted.querySelectorAll<HTMLElement>('[role="tabpanel"]')].at(-1) ?? null;
   expect(panel).not.toBeNull();
   expect(panel!.contains(mounted.querySelector(".day-column"))).toBe(true);
   for (const each of tabs(mounted)) expect(each.getAttribute("aria-controls")).toBe(panel!.id);
@@ -479,7 +481,7 @@ it("opens the primary after a reload when the tab that was open is gone", async 
 
 it("still takes the Launch Token out of the fragment, and opens the tab the URL names", async () => {
   const token = "a-launch-token-long-enough-to-pass-the-pattern-0123456789";
-  history.replaceState(null, "", `${location.pathname}?variant=A&position=0#t=${token}`);
+  history.replaceState(null, "", `${location.pathname}?year=2027&semester=fall&variant=A&position=0#t=${token}`);
   try {
     // what `main.tsx` does before anything renders
     expect(claimLaunchToken(window)).toBe(token);

@@ -101,7 +101,7 @@ const answer = (mounted: HTMLElement, which: "apply" | "mark" | "cancel"): HTMLB
   confirmation(mounted)!.querySelector<HTMLButtonElement>(`button[data-registration="${which}"]`)!;
 
 const marks = (mounted: HTMLElement): string[] =>
-  [...mounted.querySelectorAll<HTMLElement>('[role="tab"]')]
+  [...mounted.querySelectorAll<HTMLElement>('[role="tab"][data-variant]')]
     .filter((tab) => tab.querySelector("[data-registered-mark]") !== null)
     .map((tab) => tab.dataset.variant ?? "");
 

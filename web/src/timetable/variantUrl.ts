@@ -3,7 +3,10 @@
  *
  * View state and nothing more: not a State File edit, and not a Device Preference — a second tab
  * or a bookmark opens the Variant its own URL names. The query carries the name and its position,
- * the position being what tells two Variants of one name apart (#322).
+ * the position being what tells two Variants of one name apart (#322), and the Academic Year and
+ * Semester the tabs above the week chose (#418) — so a reload opens that Semester, and a Variant
+ * is looked for only in the Semester it was shown in (#345's item 3): one Semester's "B" is not
+ * another's.
  *
  * **The Launch Token comes first.** `claimToken` in `../main.tsx` takes the token out of the
  * fragment before anything renders, and keeps the query as it was (`../token.ts`); this reads the
@@ -14,8 +17,13 @@
  * the primary, which is where a Semester opens anyway.
  */
 
+import type { Semester } from "./catalog.ts";
+
 /** What a URL can name: a Variant by name, and the position of the one meant among those of it. */
 export type VariantInUrl = { name: string; position: number | undefined };
+
+/** Which Timetable a URL names: a Semester of an Academic Year. */
+export type SemesterInUrl = { academicYear: number; semester: Semester };
 
 export type VariantUrlBrowser = {
   location: Pick<Location, "pathname" | "search" | "hash">;
@@ -24,11 +32,33 @@ export type VariantUrlBrowser = {
 
 const NAME = "variant";
 const POSITION = "position";
+const YEAR = "year";
+const SEMESTER = "semester";
+const SEMESTERS: readonly string[] = ["fall", "spring", "summer"] satisfies Semester[];
 
-/** The Variant the URL names, or `undefined` for none — the primary. */
-export function variantInUrl(browser: VariantUrlBrowser | undefined): VariantInUrl | undefined {
+/** The Semester the URL names, or `undefined` when it names none this page can read. */
+export function semesterInUrl(browser: VariantUrlBrowser | undefined): SemesterInUrl | undefined {
   try {
     if (browser === undefined) return undefined;
+    const query = new URLSearchParams(browser.location.search);
+    const year = Number(query.get(YEAR) ?? Number.NaN);
+    const semester = query.get(SEMESTER);
+    if (!Number.isInteger(year) || year < 1000 || year > 9999 || semester === null) return undefined;
+    return SEMESTERS.includes(semester) ? { academicYear: year, semester: semester as Semester } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The Variant the URL names for the Semester `at`, or `undefined` for none — the primary. A Variant
+ * the URL stored with another Semester, or with none, is not this Semester's to open.
+ */
+export function variantInUrl(browser: VariantUrlBrowser | undefined, at: SemesterInUrl): VariantInUrl | undefined {
+  try {
+    if (browser === undefined) return undefined;
+    const stored = semesterInUrl(browser);
+    if (stored?.academicYear !== at.academicYear || stored.semester !== at.semester) return undefined;
     const query = new URLSearchParams(browser.location.search);
     const name = query.get(NAME);
     if (name === null || name.trim() === "") return undefined;
@@ -40,16 +70,24 @@ export function variantInUrl(browser: VariantUrlBrowser | undefined): VariantInU
 }
 
 /**
- * Puts the Variant shown into the URL, replacing the history entry rather than adding one: showing
- * a tab is not a place the back button should step through.
+ * Puts the Semester and the Variant shown into the URL — no Variant while none is shown yet —
+ * replacing the history entry rather than adding one: showing a tab is not a place the back button
+ * should step through.
  */
-export function keepVariantInUrl(browser: VariantUrlBrowser | undefined, shown: VariantInUrl): void {
+export function keepVariantInUrl(
+  browser: VariantUrlBrowser | undefined,
+  at: SemesterInUrl,
+  shown: VariantInUrl | undefined,
+): void {
   try {
     if (browser === undefined) return;
     const { pathname, search, hash } = browser.location;
     const query = new URLSearchParams(search);
-    query.set(NAME, shown.name);
-    if (shown.position === undefined) query.delete(POSITION);
+    query.set(YEAR, String(at.academicYear));
+    query.set(SEMESTER, at.semester);
+    if (shown === undefined) query.delete(NAME);
+    else query.set(NAME, shown.name);
+    if (shown?.position === undefined) query.delete(POSITION);
     else query.set(POSITION, String(shown.position));
     const next = `?${query.toString()}`;
     if (next === search) return;

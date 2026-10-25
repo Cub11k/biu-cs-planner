@@ -13,6 +13,34 @@ export const timetableEnglish = {
   semesterSpring: "Semester B",
   semesterSummer: "Summer",
 
+  /** The Semester tabs and the year control above the week (#418). */
+  semesterTabs: "Semesters",
+  yearControl: "Academic year",
+  yearPrevious: "Previous academic year",
+  yearNext: "Next academic year",
+
+  /**
+   * The exam rail in the side pane (#419). Every sentence here is about an answer that carried the
+   * exam period: one that did not is `examRailUnread`, never an empty rail (#184's ruling).
+   */
+  examRailHeading: "Exam period",
+  examRailLoading: "Reading the exam dates…",
+  examRailUnread: "The exam dates could not be read, so none are shown.",
+  examRailNone: "None of the picked courses has a published exam.",
+  examSitting: "{course}, {moed}: {date} at {time}",
+  examGap: "{days} days after the one before",
+  examGapOne: "1 day after the one before",
+  examSpacing: "Fewer than {spacing} days from {count} other exams.",
+  examSpacingOne: "Fewer than {spacing} days from another exam.",
+  examClash: "Exam clash on {date}: {first} and {second}.",
+  examUnknown: "{count} picked courses have no published exams yet, so this is not the whole exam period.",
+  examUnknownOne: "1 picked course has no published exams yet, so this is not the whole exam period.",
+  /** #214's stopgap: a Catalog Exam records no Semester, so a Year-long Course's sittings are listed apart. */
+  examYearLongHeading: "Year-long courses, no semester recorded",
+  examYearLongWhy:
+    "The catalog does not say which semester each of these sittings is in, so they are listed here " +
+    "and left out of the spacing check.",
+
   catalogHeading: "Courses in the catalog",
   catalogSearch: "Search by name or number",
   catalogLoading: "Loading the catalog…",
@@ -247,6 +275,28 @@ export const timetableHebrew: Record<keyof typeof timetableEnglish, string> = {
   semesterFall: "סמסטר א",
   semesterSpring: "סמסטר ב",
   semesterSummer: "קיץ",
+
+  semesterTabs: "סמסטרים",
+  yearControl: "שנה אקדמית",
+  yearPrevious: "השנה האקדמית הקודמת",
+  yearNext: "השנה האקדמית הבאה",
+
+  examRailHeading: "תקופת הבחינות",
+  examRailLoading: "קורא את מועדי הבחינות…",
+  examRailUnread: "לא ניתן היה לקרוא את מועדי הבחינות, ולכן אף אחד מהם אינו מוצג.",
+  examRailNone: "לאף אחד מהקורסים שנבחרו אין בחינה שפורסמה.",
+  examSitting: "{course}, {moed}: {date} בשעה {time}",
+  examGap: "{days} ימים אחרי הקודמת",
+  examGapOne: "יום אחד אחרי הקודמת",
+  examSpacing: "פחות מ־{spacing} ימים מ־{count} בחינות אחרות.",
+  examSpacingOne: "פחות מ־{spacing} ימים מבחינה אחרת.",
+  examClash: "התנגשות בחינות ב־{date}: {first} וגם {second}.",
+  examUnknown: "ל־{count} מהקורסים שנבחרו עדיין לא פורסמו בחינות, ולכן זו אינה כל תקופת הבחינות.",
+  examUnknownOne: "לקורס אחד שנבחר עדיין לא פורסמו בחינות, ולכן זו אינה כל תקופת הבחינות.",
+  examYearLongHeading: "קורסים שנתיים, ללא סמסטר",
+  examYearLongWhy:
+    "הקטלוג אינו מציין לאיזה סמסטר שייך כל אחד מהמועדים האלה, ולכן הם מוצגים כאן ואינם נכללים " +
+    "בבדיקת המרווח בין הבחינות.",
 
   catalogHeading: "קורסים בקטלוג",
   catalogSearch: "חיפוש לפי שם או מספר",
