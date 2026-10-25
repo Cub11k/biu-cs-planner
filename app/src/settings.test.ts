@@ -320,6 +320,36 @@ it("carries one settings-unreadable Warning for settings that are not an object 
 });
 
 /**
+ * #215's ruling: a refused setting is normalised by the next write, even one about something else,
+ * and the Warning is what says so. Both fields, because the ruling covers all of `settings`.
+ */
+it("stores the defaults over refused settings at the next unrelated write", async () => {
+  const workspace = ready();
+  workspace.seed(REF, {
+    schemaVersion: CURRENT_STATE_SCHEMA_VERSION,
+    settings: { language: "fr", examSpacingDays: 2.5 },
+  });
+  const opened = await readSettings(workspace, AT);
+  if (opened.kind !== "served") throw new Error(`the settings came back ${opened.reason}`);
+  expect(opened.warnings).toEqual([
+    { kind: "settings-unreadable", field: "language" },
+    { kind: "settings-unreadable", field: "examSpacingDays" },
+  ]);
+
+  await editStateFile(
+    workspace,
+    ALICE,
+    { label: "pick-group", apply: (state) => recordPick(state, FALL_2027_A, LECTURE) },
+    { basedOn: opened.version },
+  );
+
+  expect(await stored(workspace)).toMatchObject({
+    settings: { language: null, examSpacingDays: 3 },
+  });
+  expect((await readSettings(workspace, AT)).warnings).toEqual([]);
+});
+
+/**
  * A file this build cannot read at all is refused rather than replaced. Writing a preference
  * into a new empty State File over it would cost the student everything in it, silently, for
  * the sake of one field (#109, and `readStateFile`'s own rule).

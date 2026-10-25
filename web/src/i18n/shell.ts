@@ -249,10 +249,12 @@ export const shellEnglish = {
    */
   settingsUnreadable:
     "Some of your saved preferences could not be read, so they are showing their defaults " +
-    "instead. Nothing else in your saved work was affected.",
+    "instead, and your next change will save those defaults over them. Nothing else in your " +
+    "saved work was affected.",
   settingsUnreadableNamed:
     "A saved preference could not be read: {setting}. It is showing its default instead, and " +
-    "nothing else in your saved work was affected.",
+    "your next change will save that default over it. Nothing else in your saved work was " +
+    "affected.",
   /** The names of the two preferences, for the Warning above to substitute. */
   settingLanguage: "language",
   settingExamSpacing: "exam spacing",
@@ -465,11 +467,11 @@ export const shellHebrew: Record<keyof typeof shellEnglish, string> = {
   settingsUnreread:
     "לא ניתן היה לקרוא את ההעדפות השמורות שלכם כרגע, ולכן מוצגת הגרסה האחרונה שהדף קרא.",
   settingsUnreadable:
-    "לא ניתן היה לקרוא חלק מההעדפות השמורות שלכם, ולכן הן מוצגות כברירת המחדל. " +
-    "שאר העבודה השמורה לא נפגעה.",
+    "לא ניתן היה לקרוא חלק מההעדפות השמורות שלכם, ולכן הן מוצגות כברירת המחדל, " +
+    "והשינוי הבא שלכם ישמור את ברירות המחדל במקומן. שאר העבודה השמורה לא נפגעה.",
   settingsUnreadableNamed:
     "לא ניתן היה לקרוא העדפה שמורה: {setting}. היא מוצגת כברירת המחדל, " +
-    "ושאר העבודה השמורה לא נפגעה.",
+    "והשינוי הבא שלכם ישמור את ברירת המחדל במקומה. שאר העבודה השמורה לא נפגעה.",
   settingLanguage: "שפה",
   settingExamSpacing: "מרווח בין בחינות",
   tokenMissing:

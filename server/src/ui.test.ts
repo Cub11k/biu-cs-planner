@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
@@ -148,6 +149,7 @@ describe("the entry document the build produces", () => {
 
   let built: string;
   let served: string;
+  let policy: string | null;
 
   beforeAll(async () => {
     built = await mkdtemp(join(tmpdir(), "biu-ui-build-"));
@@ -172,6 +174,7 @@ describe("the entry document the build produces", () => {
     // rather than letting the assertions below read an empty string and agree with each other.
     expect(response.status).toBe(200);
     served = await response.text();
+    policy = response.headers.get("Content-Security-Policy");
   }, 180_000);
 
   afterAll(async () => {
@@ -219,6 +222,38 @@ describe("the entry document the build produces", () => {
     // whitespace, because re-indenting is a build's business and rewriting is not: should Vite
     // ever start minifying this script, this line is what asks someone to look.
     expect(squashed(body)).toBe(squashed(source[0]?.body ?? ""));
+  });
+
+  /**
+   * #170: the strict CSP, sent with the document it governs. The hash is taken here from the
+   * stamp the build *served*, byte for byte as a browser hashes it, so an edit to the script that
+   * left `ui.ts`'s hash behind fails here rather than as a stamp the browser silently refuses.
+   * And the document carries nothing else inline that `style-src 'self'` or `script-src` would
+   * refuse: no second script, no `<style>` element, no `style` attribute.
+   */
+  it("is sent a strict CSP that allows its one inline script by hash, and nothing inline besides", () => {
+    const [stamp] = inline(served);
+    const hash = createHash("sha256").update(stamp?.body ?? "").digest("base64");
+
+    expect(policy).toBe(
+      `default-src 'self'; script-src 'self' 'sha256-${hash}'; style-src 'self'; frame-ancestors 'none'`,
+    );
+    expect(served).not.toMatch(/<style[\s>]/i);
+    expect(served).not.toMatch(/\sstyle=/i);
+  });
+
+  /**
+   * `web/src/csp.browser.test.tsx` proves the stamp and the grid under its own copy of this policy,
+   * since `web` may not import `server`. This holds that copy to the header, so a change to one is
+   * a failure until the other follows.
+   */
+  it("is the policy the browser test proves the stamp and the grid under", async () => {
+    const proof = await readFile(join(WEB, "src", "csp.browser.test.tsx"), "utf8");
+    const copy = /`(default-src[^`]*)`/.exec(proof)?.[1];
+    expect(copy).toBeDefined();
+    expect(policy?.replace(/; frame-ancestors 'none'$/, "")).toBe(
+      copy?.replace("${hash}", /'(sha256-[^']*)'/.exec(policy ?? "")?.[1]?.slice("sha256-".length) ?? ""),
+    );
   });
 
   it("runs that stamp in <head>, ahead of the module the build emitted", async () => {

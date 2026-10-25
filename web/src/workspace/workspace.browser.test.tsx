@@ -26,8 +26,11 @@ let canUndo: boolean;
 let status: { ready: boolean; missing: string[]; notAFolder?: string[] };
 /** The reason the next restore is refused with, rather than made. */
 let refuseRestore: string | undefined;
-/** The reason the listing is refused with while set. */
+/** The reason the listing is refused with while set, and whether it is the State File's. */
 let refuseList: string | undefined;
+let refuseListOf: "backups" | "state-file";
+/** The State File cannot be read (#412): settings refuse it, a restore replaces it. */
+let fileUnreadable: boolean;
 /** What the next restore is served as, when it is not a plain restore that moved the file. */
 let restoreServed: Record<string, unknown> | undefined;
 /** The reasons the next creates are refused with, one per create. */
@@ -44,6 +47,8 @@ beforeEach(() => {
   status = { ready: true, missing: [] };
   refuseRestore = undefined;
   refuseList = undefined;
+  refuseListOf = "backups";
+  fileUnreadable = false;
   refuseCreates = [];
   restoreServed = undefined;
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -61,7 +66,10 @@ beforeEach(() => {
       version += 1;
       return json({ label: "restore-backup", at: 1, version: `v${version}`, canUndo: false, canRedo: true, warnings: [] });
     }
-    if (pathname === "/api/settings") return json({ settings: {}, version: `v${version}`, warnings: [] });
+    if (pathname === "/api/settings") {
+      if (fileUnreadable) return json({ reason: "state-file-unreadable", warnings: [{ kind: "file-unreadable" }] }, 409);
+      return json({ settings: {}, version: `v${version}`, warnings: [] });
+    }
     if (pathname === "/api/workspace" && method === "GET") return json(status);
     if (pathname === "/api/workspace") {
       const reason = refuseCreates.shift();
@@ -70,8 +78,8 @@ beforeEach(() => {
       return json(status);
     }
     if (pathname === "/api/backups") {
-      if (refuseList !== undefined) return json({ reason: refuseList }, 409);
-      return json({ snapshots: snapshots.map((takenAt) => ({ takenAt })) });
+      if (refuseList !== undefined) return json({ reason: refuseList, of: refuseListOf }, 409);
+      return json({ snapshots: snapshots.map((takenAt) => ({ takenAt })), version: `v${version}` });
     }
     if (pathname === "/api/backups/restore") {
       if (refuseRestore !== undefined) {
@@ -84,8 +92,11 @@ beforeEach(() => {
       if (restoreServed !== undefined) return json({ takenAt, version: `v${version}`, ...restoreServed });
       snapshots = [2_100_000_000_000, ...snapshots];
       version += 1;
-      canUndo = true;
-      return json({ kind: "restored", takenAt, version: `v${version}`, warnings: [] });
+      // a restore over an unreadable file has no State to put on the stack (#412)
+      canUndo = !fileUnreadable;
+      const replacedUnreadable = fileUnreadable;
+      fileUnreadable = false;
+      return json({ kind: "restored", takenAt, version: `v${version}`, warnings: [], replacedUnreadable });
     }
     throw new Error(`the fake was not arranged for ${method} ${pathname}`);
   }) as typeof fetch;
@@ -139,6 +150,38 @@ it("lists the backups newest first, restores one on the revision on screen, and 
   });
   expect(rows(mounted)).toEqual(["2100000000000", "2000000000000", "1900000000000"]);
   await saysSo(mounted, "workspaceRestored");
+});
+
+/**
+ * #412: the State File cannot be read, so `GET /api/settings` refuses it, and the screen still
+ * offers Restore on the revision the listing serves, says the replaced file is kept with the
+ * backups, and offers no undo.
+ */
+it("restores over a State File that cannot be read, on the revision the listing serves", async () => {
+  fileUnreadable = true;
+  const mounted = mount();
+  (await restoreButton(mounted, 1_900_000_000_000)).click();
+
+  await saysSo(mounted, "workspaceRestoredOverUnreadable");
+  expect(sent.find((request) => request.pathname === "/api/backups/restore")?.body).toEqual({
+    takenAt: 1_900_000_000_000,
+    basedOn: "v1",
+  });
+  // not the ordinary sentence, which promises an undo
+  expect(said(mounted)).not.toContain(t("en", "workspaceRestored").split(". ")[1]!);
+  await vi.waitFor(() => {
+    if (rows(mounted).length !== 3) throw new Error("the copy of the unreadable file was not listed");
+  });
+  expect(mounted.querySelector<HTMLButtonElement>('button[data-history="undo"]')?.disabled ?? true).toBe(true);
+});
+
+it("says a State File whose bytes cannot be got at costs the restore, and offers none", async () => {
+  refuseList = "workspace-refused";
+  refuseListOf = "state-file";
+  const mounted = mount();
+  await saysSo(mounted, "workspaceStateFileUnreadable");
+  expect(said(mounted)).not.toContain(t("en", "workspaceBackupsUnreadable"));
+  expect(mounted.querySelector("button[data-restore]")).toBeNull();
 });
 
 it("is undone from the shell, which names it as a restore", async () => {

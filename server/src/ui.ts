@@ -48,18 +48,43 @@ const CONTENT_TYPES: Readonly<Record<string, string>> = {
 };
 
 /**
+ * The one inline script the entry document carries, `web/index.html`'s blocking scheme stamp
+ * (#146), allowed by the SHA-256 of its exact bytes (#170). A hash and not a nonce, because the
+ * entry document is served as a static file and a nonce would mean templating it per response.
+ *
+ * Coupled to the built artefact on purpose, and checked against it: `./ui.test.ts` builds the UI
+ * and fails when the served stamp no longer hashes to this. The stamp's explanatory comment sits
+ * outside the script for that reason, so only a change to the code is a CSP change.
+ */
+const STAMP_HASH = "sha256-al06+OdyTkRF0tkx8V1kEp5i9m8zI4iAeJoPGZ72/1k=";
+
+/**
+ * The strict CSP of docs/design.md's UI hardening, built here because this is where the entry
+ * document is served (#170).
+ *
+ * Two things the UI does inline, and what each needs:
+ *
+ *   - **the stamp**, the only inline script, allowed by `STAMP_HASH` above;
+ *   - **the Timetable grid's positions**, which React sets as `style={{…}}`. React writes those
+ *     through the CSSOM (`element.style`), which CSP does not govern; only `style` attributes in
+ *     served markup and `<style>` elements need `'unsafe-inline'`, and the built document has
+ *     neither. So `style-src 'self'` holds without it, and `web/src/csp.browser.test.tsx` proves
+ *     both the stamp and the grid under this policy.
+ *
+ * `frame-ancestors 'none'` keeps the planner out of anyone else's page, the clickjacking half.
+ */
+const CONTENT_SECURITY_POLICY =
+  `default-src 'self'; script-src 'self' '${STAMP_HASH}'; style-src 'self'; frame-ancestors 'none'`;
+
+/**
  * Sent with every file.
  *
  * `nosniff` stops a browser from deciding a file is something more interesting than its
- * declared type, and `frame-ancestors 'none'` keeps the planner out of anyone else's
- * page — the clickjacking half of the UI hardening in docs/design.md. The rest of that
- * strict CSP belongs with the screens it constrains, not here: `default-src 'self'`
- * also governs inline `style` attributes, which the agreed Timetable grid positions
- * blocks with, and that is a decision for the ticket that builds it.
+ * declared type; the CSP is above.
  */
 const SECURITY_HEADERS: Readonly<Record<string, string>> = {
   "X-Content-Type-Options": "nosniff",
-  "Content-Security-Policy": "frame-ancestors 'none'",
+  "Content-Security-Policy": CONTENT_SECURITY_POLICY,
   "Referrer-Policy": "no-referrer",
 };
 

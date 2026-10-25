@@ -31,12 +31,7 @@ type BackupsState = { kind: "loading" } | BackupsResult;
 
 /** Why the State File's revision could not be had, said as what it costs here: no restore. */
 const STATE_FILE_STRING = {
-  "workspace-not-ready": "workspaceNotReady",
-  "state-file-unreadable": "workspaceStateFileUnreadable",
-  "state-file-changed": "workspaceStateFileUnreadable",
   "workspace-refused": "workspaceStateFileUnreadable",
-  "backup-refused": "workspaceStateFileUnreadable",
-  "save-revision-unreadable": "workspaceStateFileUnreadable",
 } as const satisfies Record<NonNullable<StateFileRefusal>, StringKey>;
 
 /**
@@ -140,9 +135,16 @@ export function WorkspaceScreen({
       (basedOn) => restoreBackup(api, takenAt, basedOn, shown.snapshots),
       (answer) => {
         if (answer.kind === "served" && answer.restored !== undefined) {
-          const { moved, warned } = answer.restored;
+          const { moved, warned, overUnreadable } = answer.restored;
           setRestored([
-            { key: moved ? "workspaceRestored" : "workspaceRestoreUnchanged", takenAt },
+            {
+              key: !moved
+                ? "workspaceRestoreUnchanged"
+                : overUnreadable
+                  ? "workspaceRestoredOverUnreadable"
+                  : "workspaceRestored",
+              takenAt,
+            },
             ...(warned ? [{ key: "workspaceRestoredPartly" as const }] : []),
           ]);
           // the restore took a snapshot of what it replaced, which the listing on screen lacks

@@ -1,0 +1,2 @@
+# The CSP in server/src/ui.ts hashes the inline script in this file byte for byte (#170).
+web/index.html text eol=lf

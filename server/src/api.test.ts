@@ -1684,9 +1684,37 @@ it("restores a snapshot and answers with the revision it wrote", async () => {
     takenAt,
     version: await currentVersion(),
     warnings: [],
+    replacedUnreadable: false,
   });
   // the week is back to the one Pick the snapshot held
   await expect((await get(TIMETABLE)).json()).resolves.toMatchObject({ picks: [LECTURE] });
+});
+
+/**
+ * #412: a State File an editor or a sync left unreadable is when a backup is most needed. The
+ * listing serves that file's revision, a restore based on it goes through, and the bytes it
+ * replaced are the newest backup.
+ */
+it("restores over a State File that cannot be read, and keeps that file as a backup", async () => {
+  await post("/api/workspace", {});
+  await post(PICKS, LECTURE);
+  await save(PICKS, CLASHING);
+  await writeFile(join(root, "me.state.json"), "{ not json at all", "utf8");
+
+  const listed = (await (await get(BACKUPS)).json()) as { snapshots: { takenAt: number }[]; version: string };
+  expect(listed.snapshots).toHaveLength(1);
+  expect(listed.version).toEqual(expect.any(String));
+
+  const restored = await post(RESTORE, { takenAt: listed.snapshots[0]!.takenAt, basedOn: listed.version });
+
+  expect(restored.status).toBe(200);
+  await expect(restored.json()).resolves.toMatchObject({ kind: "restored", replacedUnreadable: true, warnings: [] });
+  await expect((await get(TIMETABLE)).json()).resolves.toMatchObject({ picks: [LECTURE] });
+  const kept = await readdir(join(root, ".backups"));
+  const copies = await Promise.all(kept.map((name) => readFile(join(root, ".backups", name), "utf8")));
+  expect(copies).toContain("{ not json at all");
+  // nothing to undo to: the stack holds no State for a file that could not be read
+  await expect((await get("/api/history")).json()).resolves.toMatchObject({ canUndo: false });
 });
 
 /** A restore is an edit, so it is on the undo stack like any other (ADR-0013). */
@@ -2210,7 +2238,7 @@ it("names no path when the snapshots folder is there and cannot be listed", asyn
 
   expect(refused.status).toBe(409);
   const body = await refused.text();
-  expect(JSON.parse(body)).toEqual({ reason: "workspace-refused" });
+  expect(JSON.parse(body)).toEqual({ reason: "workspace-refused", of: "backups" });
   await namesNoPath(body, "GET backups");
 });
 

@@ -41,11 +41,19 @@ export const workspaceEnglish = {
   workspaceBackupsUnreadable: "The backups folder could not be read, so no backups can be listed.",
   workspaceBackupsAnswerUnreadable: "The answer about your backups could not be read.",
   /** The State File could not be read, so there is no revision a restore could be based on. */
-  workspaceStateFileUnreadable: "The file your work is saved in could not be read, so no backup can be restored over it.",
+  workspaceStateFileUnreadable: "The file your work is saved in could not be opened, so no backup can be restored over it.",
   workspaceRestore: "Restore",
   /** The accessible name of one backup's Restore button; `{when}` is the moment it was taken. */
   workspaceRestoreLabel: "Restore the backup from {when}",
   workspaceRestored: "Restored the backup from {when}. Undo puts back what it replaced.",
+  /**
+   * A restore over a State File that could not be read (#412). Undo cannot put that file back, so
+   * the sentence says where it is instead: the save copied it into `.backups/` first, so it is
+   * listed with the rest — and pruned like the rest, which is why it says "now".
+   */
+  workspaceRestoredOverUnreadable:
+    "Restored the backup from {when}. The file it replaced could not be read, so undo cannot put it back; " +
+    "a copy of it is now among your backups.",
   /** Raised by the snapshot or by the State File it replaced: the restore answer does not say which. */
   workspaceRestoredPartly: "Some entries could not be read and were left out.",
   workspaceRestoreUnchanged: "Your work already matches the backup from {when}, so nothing changed.",
@@ -87,10 +95,13 @@ export const workspaceHebrew: Record<keyof typeof workspaceEnglish, string> = {
   workspaceBackupsNone: "אין עדיין גיבויים.",
   workspaceBackupsUnreadable: "לא ניתן היה לקרוא את תיקיית הגיבויים, ולכן אי אפשר להציג גיבויים.",
   workspaceBackupsAnswerUnreadable: "לא ניתן היה לקרוא את התשובה על הגיבויים שלך.",
-  workspaceStateFileUnreadable: "לא ניתן היה לקרוא את הקובץ שבו העבודה שלך שמורה, ולכן אי אפשר לשחזר אליו גיבוי.",
+  workspaceStateFileUnreadable: "לא ניתן היה לפתוח את הקובץ שבו העבודה שלך שמורה, ולכן אי אפשר לשחזר אליו גיבוי.",
   workspaceRestore: "שחזור",
   workspaceRestoreLabel: "שחזור הגיבוי מ-{when}",
   workspaceRestored: "הגיבוי מ-{when} שוחזר. ״ביטול״ מחזיר את מה שהוחלף.",
+  workspaceRestoredOverUnreadable:
+    "הגיבוי מ-{when} שוחזר. לא ניתן היה לקרוא את הקובץ שהוחלף, ולכן ״ביטול״ לא יחזיר אותו; " +
+    "עותק שלו נמצא עכשיו בין הגיבויים שלך.",
   workspaceRestoredPartly: "חלק מהרשומות לא ניתנו לקריאה והושמטו.",
   workspaceRestoreUnchanged: "העבודה שלך כבר זהה לגיבוי מ-{when}, ולכן דבר לא השתנה.",
   workspaceRestoreStale: "העבודה שלך השתנתה במקום אחר מאז שהדף קרא אותה, ולכן הגיבוי לא שוחזר. הדף קורא אותה מחדש.",

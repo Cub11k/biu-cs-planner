@@ -60,11 +60,12 @@ it("lists the snapshots of the State File, newest first", async () => {
   const time = clock(NOON);
   const workspace = memoryWorkspace({ created: true, now: time.now });
 
-  expect(await listBackups(workspace)).toEqual({ kind: "served", snapshots: [] });
+  // no State File yet, so no revision: a restore now would claim there is none
+  expect(await listBackups(workspace)).toEqual({ kind: "served", snapshots: [], version: undefined });
 
   let version = await saved(workspace, ["80001"]);
   // the first save replaced nothing, so it left nothing to copy
-  expect(await listBackups(workspace)).toEqual({ kind: "served", snapshots: [] });
+  expect(await listBackups(workspace)).toEqual({ kind: "served", snapshots: [], version });
 
   time.advance(1000);
   const first = time.now();
@@ -78,6 +79,7 @@ it("lists the snapshots of the State File, newest first", async () => {
   expect(await listBackups(workspace)).toEqual({
     kind: "served",
     snapshots: [{ takenAt: second }, { takenAt: first }],
+    version: (await workspace.readStateFile(ME))?.version,
   });
 });
 
@@ -95,7 +97,85 @@ it("answers a refusal rather than an empty list when the folder cannot be looked
       ),
   };
 
-  expect(await listBackups(workspace)).toEqual({ kind: "refused", reason: "workspace-refused" });
+  expect(await listBackups(workspace)).toEqual({ kind: "refused", reason: "workspace-refused", of: "backups" });
+});
+
+it("answers the listing's revision refused, not the listing, when the State File cannot be got at", async () => {
+  const workspace: MemoryWorkspace = {
+    ...memoryWorkspace({ created: true }),
+    readStateFile: () =>
+      Promise.reject(
+        new WorkspaceRefusedError(
+          { reason: "unreadable", subject: { kind: "state", name: DEFAULT_STATE_FILE } },
+          "refusing the State File: it is there and cannot be read (EACCES)",
+        ),
+      ),
+  };
+
+  expect(await listBackups(workspace)).toEqual({ kind: "refused", reason: "workspace-refused", of: "state-file" });
+});
+
+/**
+ * #412: the State File cannot be read, which is when a backup is most needed. The listing serves
+ * its revision anyway, a restore based on it goes through, the unreadable bytes are kept as a
+ * backup first, and nothing goes on the undo stack because there is no State to put back.
+ */
+it("restores over a State File that cannot be read, keeping its bytes as a backup", async () => {
+  const time = clock(NOON);
+  const workspace = memoryWorkspace({ created: true, now: time.now });
+  const pushed: StateEdit[] = [];
+  const wrote: { basedOn: StateFileVersion | undefined; version: StateFileVersion }[] = [];
+  const history = { push: (edit: StateEdit) => void pushed.push(edit), wrote: (save: (typeof wrote)[number]) => void wrote.push(save) };
+
+  const hebrew = await editStateFile(
+    workspace,
+    DEFAULT_STATE_FILE,
+    { label: "set-settings", apply: (state) => ({ ...state, settings: { ...state.settings, language: "he" } }) },
+    { basedOn: undefined },
+  );
+  const version = hebrew.kind === "saved" ? hebrew.version : undefined;
+  time.advance(1000);
+  const takenAt = time.now();
+  await editStateFile(workspace, DEFAULT_STATE_FILE, pinning("80001"), { basedOn: version });
+  workspace.seed(ME, "{ an editor left this half-written");
+  const unreadable = (await workspace.readStateFile(ME))?.version;
+
+  const listed = await listBackups(workspace);
+  expect(listed).toEqual({ kind: "served", snapshots: [{ takenAt }], version: unreadable });
+
+  time.advance(1000);
+  const restored = await restoreBackup(workspace, { takenAt, basedOn: unreadable, history });
+
+  expect(restored).toMatchObject({ kind: "restored", replacedUnreadable: true, warnings: [] });
+  const held = await workspace.readStateFile(ME);
+  // the snapshot held no Pin and a Hebrew reader; with no readable settings to keep, its own come back
+  expect(parseStateFile(held?.data).state).toMatchObject({ pins: [], settings: { language: "he" } });
+  // the unreadable bytes are the newest backup, so nothing was lost
+  const kept = await workspace.readBackup({ kind: "backup", name: DEFAULT_STATE_FILE, takenAt: takenAt + 1000 });
+  expect(kept).toBe("{ an editor left this half-written");
+  expect(pushed).toEqual([]);
+  expect(wrote).toEqual([{ basedOn: unreadable, version: held?.version }]);
+});
+
+it("still refuses a restore over an unreadable State File the page did not read", async () => {
+  const workspace = memoryWorkspace({ created: true, now: () => NOON });
+  await saved(workspace, ["80001", "80002"]);
+  workspace.seed(ME, "not a State File");
+
+  const outcome = await restoreBackup(workspace, { takenAt: NOON, basedOn: undefined });
+
+  expect(outcome.kind === "refused" && outcome.reason).toBe("state-file-changed");
+  expect((await workspace.readStateFile(ME))?.data).toBe("not a State File");
+});
+
+it("leaves every other edit refused over a State File that cannot be read", async () => {
+  const workspace = memoryWorkspace({ created: true, now: () => NOON });
+  workspace.seed(ME, "not a State File");
+  const basedOn = (await workspace.readStateFile(ME))?.version;
+
+  const outcome = await editStateFile(workspace, DEFAULT_STATE_FILE, pinning("80001"), { basedOn });
+
+  expect(outcome.kind === "refused" && outcome.reason).toBe("state-file-unreadable");
 });
 
 it("restores a snapshot, and the file holds what the snapshot held", async () => {
@@ -405,6 +485,7 @@ it("names a State File, never a path, and defaults to the one the app works in",
   expect(await listBackups(workspace, { stateFile: "../alice" })).toEqual({
     kind: "refused",
     reason: "workspace-refused",
+    of: "backups",
   });
   expect(
     await restoreBackup(workspace, { takenAt: NOON, basedOn: undefined, stateFile: "../alice" }),
@@ -418,5 +499,6 @@ it("names a State File, never a path, and defaults to the one the app works in",
   expect(await listBackups(workspace)).toEqual({
     kind: "served",
     snapshots: [{ takenAt: NOON }],
+    version: (await workspace.readStateFile(ME))?.version,
   });
 });

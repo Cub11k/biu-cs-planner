@@ -20,36 +20,22 @@ function client(answer: (request: Request) => Response | Promise<Response>) {
 
 const path = (request: Request): string => `${request.method} ${new URL(request.url).pathname}`;
 
-it("lists the backups beside the State File's revision, read from the settings", async () => {
-  const { sent, api } = client((request) =>
-    new URL(request.url).pathname === "/api/backups"
-      ? Response.json({ snapshots: [{ takenAt: 2 }, { takenAt: 1 }] })
-      : Response.json({ settings: {}, version: "v1", warnings: [] }),
-  );
+it("lists the backups and the State File's revision in one read, not from the settings (#412)", async () => {
+  const { sent, api } = client(() => Response.json({ snapshots: [{ takenAt: 2 }, { takenAt: 1 }], version: "v1" }));
 
   expect(await fetchBackups(api)).toEqual({ kind: "served", snapshots: [{ takenAt: 2 }, { takenAt: 1 }], version: "v1" });
-  expect(sent.map(path).sort()).toEqual(["GET /api/backups", "GET /api/settings"]);
+  expect(sent.map(path)).toEqual(["GET /api/backups"]);
   expect(sent[0]!.headers.get("Authorization")).toBe(`Bearer ${TOKEN}`);
 });
 
 it("tells a listing it could not have from a State File it could not read", async () => {
-  const listing = client((request) =>
-    new URL(request.url).pathname === "/api/backups"
-      ? Response.json({ reason: "workspace-refused" }, { status: 409 })
-      : Response.json({ settings: {}, version: "v1", warnings: [] }),
-  );
+  const listing = client(() => Response.json({ reason: "workspace-refused", of: "backups" }, { status: 409 }));
   expect(await fetchBackups(listing.api)).toEqual({ kind: "refused", of: "backups", reason: "workspace-refused" });
 
-  const file = client((request) =>
-    new URL(request.url).pathname === "/api/backups"
-      ? Response.json({ snapshots: [] })
-      : Response.json({ reason: "state-file-unreadable", warnings: [] }, { status: 409 }),
-  );
-  expect(await fetchBackups(file.api)).toEqual({ kind: "refused", of: "state-file", reason: "state-file-unreadable" });
+  const file = client(() => Response.json({ reason: "workspace-refused", of: "state-file" }, { status: 409 }));
+  expect(await fetchBackups(file.api)).toEqual({ kind: "refused", of: "state-file", reason: "workspace-refused" });
 
-  const noList = client((request) =>
-    new URL(request.url).pathname === "/api/backups" ? Response.json({}) : Response.json({ version: "v1" }),
-  );
+  const noList = client(() => Response.json({ version: "v1" }));
   expect(await fetchBackups(noList.api)).toEqual({ kind: "unreadable-answer" });
 });
 
@@ -62,7 +48,7 @@ it("restores by the moment and the revision, and keeps the listing it was sent f
     kind: "served",
     snapshots: [{ takenAt: 1 }],
     version: "v2",
-    restored: { takenAt: 1, moved: true, warned: true },
+    restored: { takenAt: 1, moved: true, warned: true, overUnreadable: false },
   });
   expect(path(sent[0]!)).toBe("POST /api/backups/restore");
   expect(await sent[0]!.json()).toEqual({ takenAt: 1, basedOn: "v1" });
@@ -78,6 +64,9 @@ it("reads a restore's refusals by reason, and an unchanged restore as one that m
 
   const unchanged = client(() => Response.json({ kind: "unchanged", takenAt: 1, version: "v1", warnings: [] }));
   expect(await restoreBackup(unchanged.api, 1, "v1", [])).toMatchObject({ restored: { moved: false, warned: false } });
+
+  const over = client(() => Response.json({ kind: "restored", takenAt: 1, version: "v2", warnings: [], replacedUnreadable: true }));
+  expect(await restoreBackup(over.api, 1, "v1", [])).toMatchObject({ restored: { moved: true, overUnreadable: true } });
 
   const gone = client(() => {
     throw new TypeError("fetch failed");
