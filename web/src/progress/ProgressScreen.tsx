@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "../api.ts";
 import { unauthorizedSaid, type ScreenDefinition, type ScreenProps } from "../AppShell.tsx";
-import { useEditing } from "../editing.ts";
+import { keepOverUnreachable, useEditing } from "../editing.ts";
 import { t, type Language, type StringKey } from "../i18n/strings.ts";
 import { academicYearOf, academicYearSpan } from "../timetable/calendar.ts";
 import {
@@ -205,7 +205,7 @@ export function ProgressScreen({
   onRevision,
   notices,
 }: ScreenProps): React.JSX.Element {
-  const editing = useEditing(readProgress, workspaceChanges + stepRereads, onEdited);
+  const editing = useEditing(readProgress, workspaceChanges + stepRereads, onEdited, keepOverUnreachable);
   const progress = editing.answer;
   const [lens, setLens] = useState<Lens>("completed");
   /** That the last edit was refused, and why; retired by the next edit or a step. */

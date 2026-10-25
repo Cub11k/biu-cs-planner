@@ -926,7 +926,7 @@ it("keeps a grade half typed on a card when a re-read brings the same grade back
 /**
  * #406: with the server down, an edit answers `unreachable` and so does the re-read it starts. The
  * board the student was looking at stays, labelled as last read, and the status line says the API
- * is unreachable once; the server answering again is a re-read (`changes.ts`), which replaces it.
+ * is unreachable once; the server answering again is a re-read, which replaces it.
  */
 it("keeps the board as last read when the server is down, says so once, and recovers", async () => {
   const mounted = await mount();
@@ -940,16 +940,22 @@ it("keeps the board as last read when the server is down, says so once, and reco
   });
   expect(card(mounted, "a1")).not.toBeNull();
   expect(card(mounted, "a2")).not.toBeNull();
+  // and what the board is drawn by is kept with it: the Courses' names, the columns
+  expect(card(mounted, "a1")?.querySelector("[data-course-name]")).not.toBeNull();
+  expect(column(mounted, "2027-fall")).not.toBeNull();
   expect(status(mounted).split(t("en", "apiUnreachable"))).toHaveLength(2);
   expect(status(mounted)).toContain(t("en", "readStale"));
   // the revision is still the spent one (#397): nothing is sent on it
   expect(removeButton(mounted, "a2").disabled).toBe(true);
 
+  // nothing else moves: the hook asks again on its own (`RETRY_MS`)
   down = false;
-  await mount("en", 1);
-  await vi.waitFor(() => {
-    if (mounted.querySelector("[data-plan-stale]") !== null) throw new Error("the stale board was not replaced");
-  });
+  await vi.waitFor(
+    () => {
+      if (mounted.querySelector("[data-plan-stale]") !== null) throw new Error("the stale board was not replaced");
+    },
+    { timeout: 5000 },
+  );
   expect(removeButton(mounted, "a2").disabled).toBe(false);
 });
 

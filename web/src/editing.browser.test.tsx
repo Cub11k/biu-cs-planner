@@ -7,7 +7,7 @@
  */
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { useEditing, type Editing } from "./editing.ts";
+import { keepOverUnreachable, RETRY_MS, useEditing, type Editing } from "./editing.ts";
 
 type Fake =
   | { kind: "served"; version: string }
@@ -156,6 +156,7 @@ it.each([
 
 it.each([
   { kind: "refused", reason: "state-file-unreadable" } as Fake,
+  { kind: "unreachable" } as Fake,
   { kind: "unreadable-answer" } as Fake,
 ])("releases the gate when the re-read answers $kind rather than serving", async (reread) => {
   await servedV1();
@@ -168,12 +169,23 @@ it.each([
   await until((editing) => !editing.spent && editing.answer.kind === reread.kind);
 });
 
+function KeepingOverUnreachable(): null {
+  latest = useEditing(load, 0, () => {
+    edited += 1;
+  }, keepOverUnreachable);
+  return null;
+}
+
 /**
- * #406: a re-read that never arrived says nothing about the file, so the served answer stays, counted
- * as kept for the screen to label stale, and the revision stays spent until a re-read is drawn.
+ * #406: with `keepOverUnreachable`, a re-read that never arrived says nothing about the file, so the
+ * served answer stays, counted as kept for the screen to label stale, and the revision stays spent.
+ * Nothing else may move while the server is away, so the hook asks again on its own until it hears.
  */
-it("keeps the served answer over a re-read that answers unreachable, the revision still spent", async () => {
-  await servedV1();
+it("keeps the served answer over an unreachable re-read, the revision spent, and asks again", async () => {
+  root!.render(<KeepingOverUnreachable />);
+  await vi.waitFor(() => expect(reads).toHaveLength(1));
+  reads[0]!.answer(served("v1"));
+  await until((editing) => onScreen(editing) === "v1");
   await edit({ kind: "unreachable" });
   await vi.waitFor(() => expect(reads).toHaveLength(2));
 
@@ -184,14 +196,13 @@ it("keeps the served answer over a re-read that answers unreachable, the revisio
   expect(latest!.spent).toBe(true);
   expect(latest!.send(() => Promise.resolve(served("never")))).toBe(false);
 
-  mount(1);
-  await vi.waitFor(() => expect(reads).toHaveLength(3));
+  await vi.waitFor(() => expect(reads).toHaveLength(3), { timeout: RETRY_MS * 2 });
   reads[2]!.answer(served("v2"));
   await until((editing) => !editing.spent && editing.kept === 0 && onScreen(editing) === "v2");
 });
 
-it("shows an unreachable first read, with nothing served to keep", async () => {
-  mount();
+it("shows an unreachable first read even with `keepOverUnreachable`, with nothing served to keep", async () => {
+  root!.render(<KeepingOverUnreachable />);
   await vi.waitFor(() => expect(reads).toHaveLength(1));
   reads[0]!.answer({ kind: "unreachable" });
   await until((editing) => editing.answer.kind === "unreachable" && editing.kept === 0);

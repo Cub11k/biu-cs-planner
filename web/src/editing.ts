@@ -40,16 +40,16 @@ export type Editing<T> = {
  * held in refs rather than read off the render (#394), so two `send`s in one batch send one edit.
  *
  * `load` is the question: memoise it. `keep` decides that a fresh answer is **not** put on screen,
- * the one on screen kept instead (#218); by default a read that never arrived keeps a served answer,
- * which the screen labels stale (#184, #406). A kept re-read leaves the gate shut: the revision on
- * screen is still the spent one, and the changes poll asks again once the server answers. `onEdited`
- * is told when an edit wrote the file, or may have.
+ * the one on screen kept instead (#218); Plan and Progress pass `keepOverUnreachable` and label what
+ * is kept stale (#184, #406). A kept re-read leaves the gate shut, the revision on screen being the
+ * spent one, and asks again every `RETRY_MS` until a read is drawn. `onEdited` is told when an edit
+ * wrote the file, or may have.
  */
 export function useEditing<T extends { kind: string }>(
   load: () => Promise<T>,
   changes: number,
   onEdited: () => void,
-  keep: (fresh: T, onScreen: Loading | T) => boolean = keepOverUnreachable,
+  keep: (fresh: T, onScreen: Loading | T) => boolean = () => false,
 ): Editing<T> {
   const [answer, setAnswer] = useState<Loading | T>({ kind: "loading" });
   const [kept, setKept] = useState(0);
@@ -78,11 +78,14 @@ export function useEditing<T extends { kind: string }>(
 
   useEffect(() => {
     const mine = (shown.current += 1);
+    let retry: ReturnType<typeof setTimeout> | undefined;
     // `load` resolves for every answer the API can give: a rejection would be a client bug
     void load().then((fresh) => {
       if (shown.current !== mine) return;
       if (keepRef.current(fresh, onScreen.current)) {
         setKept((count) => count + 1);
+        // nothing else may move while the server is away, and the screen cannot edit until it does
+        if (gate.current.spent) retry = setTimeout(() => setRereads((count) => count + 1), RETRY_MS);
         return;
       }
       // whatever this read brings, it is what the file says now
@@ -91,6 +94,7 @@ export function useEditing<T extends { kind: string }>(
     });
     return () => {
       shown.current += 1;
+      clearTimeout(retry);
     };
   }, [load, changes, rereads]);
 
@@ -129,6 +133,9 @@ export function useEditing<T extends { kind: string }>(
   return { answer, send, sending, spent, rereads, kept };
 }
 
-/** The default `keep`: an answer that never arrived says nothing about the file a served answer showed. */
-const keepOverUnreachable = (fresh: { kind: string }, onScreen: { kind: string }): boolean =>
+/** How long a kept re-read on a spent revision waits before asking again: the changes poll's interval. */
+export const RETRY_MS = 2000;
+
+/** A `keep` for a screen that labels what it keeps: an answer that never arrived says nothing about the file. */
+export const keepOverUnreachable = (fresh: { kind: string }, onScreen: { kind: string }): boolean =>
   fresh.kind === "unreachable" && onScreen.kind === "served";

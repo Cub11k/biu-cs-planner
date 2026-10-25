@@ -214,10 +214,9 @@ export function fetchChoices(client: ApiClient): Promise<Choices | undefined> {
 /** One Course's name and credits, as far as the Workspace knows them. */
 export type CourseFacts = InferResponseType<CoursesRoute>["courses"][number];
 
-/** Every Course the Workspace knows, or an empty list when they could not be had. */
-export async function fetchCourses(client: ApiClient): Promise<CourseFacts[]> {
-  const courses = await askFor(() => client.api.courses.$get(), (body: InferResponseType<CoursesRoute>) =>
+/** Every Course the Workspace knows, or `undefined` when they could not be had. */
+export function fetchCourses(client: ApiClient): Promise<CourseFacts[] | undefined> {
+  return askFor(() => client.api.courses.$get(), (body: InferResponseType<CoursesRoute>) =>
     Array.isArray(body.courses) ? body.courses : undefined,
   );
-  return courses ?? [];
 }

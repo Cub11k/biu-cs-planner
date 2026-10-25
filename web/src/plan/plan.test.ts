@@ -153,21 +153,21 @@ it("reads the Cohort and the Programs off the Programs route, and nothing when t
   ).toBeUndefined();
 });
 
-it("reads the Courses, and an empty list when they cannot be had", async () => {
+it("reads the Courses, and nothing when they cannot be had", async () => {
   const courses = [{ courseNumber: "89-110", name: { he: "מבוא" }, credits: 6 }];
   const served = client(() => Response.json({ courses }));
   expect(await fetchCourses(served.api)).toEqual(courses);
   expect(new URL(served.sent[0]!.url).pathname).toBe("/api/courses");
 
-  expect(await fetchCourses(client(() => new Response("nope", { status: 500 })).api)).toEqual([]);
-  expect(await fetchCourses(client(() => new Response("nope")).api)).toEqual([]);
+  expect(await fetchCourses(client(() => new Response("nope", { status: 500 })).api)).toBeUndefined();
+  expect(await fetchCourses(client(() => new Response("nope")).api)).toBeUndefined();
   expect(
     await fetchCourses(
       client(() => {
         throw new TypeError("fetch failed");
       }).api,
     ),
-  ).toEqual([]);
+  ).toBeUndefined();
 });
 
 const years = (input: Parameters<typeof planYears>[0]) =>
