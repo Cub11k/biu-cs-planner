@@ -116,7 +116,7 @@ export type TimetableResult =
    */
   | { kind: "refused"; reason: StateRefusal | undefined; warnings: StateWarning[]; reapply?: Reapply }
   /** The edit was saved at `version` and no week came with it, so the screen reads it again (#414). */
-  | { kind: "no-view"; version: StateFileVersion; warnings: StateWarning[] }
+  | { kind: "no-view"; version: NoViewed["version"]; warnings: StateWarning[] }
   /** This page has no launch token, so the server will not talk to it (ADR-0004). */
   | { kind: "unauthorized" }
   /**
