@@ -71,7 +71,11 @@ export default defineConfig({
           browser: {
             enabled: true,
             headless: true,
-            provider: playwright(),
+            // The one place the browser's language is pinned (#410): with no stored choice the
+            // page shows `navigator.languages`' first match (#173), so an unpinned run on a
+            // Hebrew host would render Hebrew where a test expects English. Tests that want a
+            // Hebrew browser override `navigator.languages` themselves.
+            provider: playwright({ contextOptions: { locale: "en-US" } }),
             // A desk, not a phone: the default 414px viewport leaves a five-column week
             // about a hundred pixels to live in, and every geometry assertion would then
             // be measuring a collapsed grid rather than the one a student sees. Wide
