@@ -144,7 +144,17 @@ export const choosing = (change: SettingsChange): StateEditing => ({
   },
 });
 
-/** The preferences the State File holds now, and the revision they were read from. */
+/**
+ * The preferences the State File holds now, and the revision they were read from.
+ *
+ * **A field `core` refused on read is normalised by the next write, whatever that write is**
+ * (#215, ruled 2026-10-04, for every field of `settings`, `language` included). The served
+ * settings carry the default in its place, every edit saves the whole State it read, so the next
+ * Pick or Variant stores that default over the refused value. Preserving the value instead is ruled
+ * out: `core` would have to carry values its own schema rejects through every edit. What keeps that
+ * honest is the `settings-unreadable` Warning, whose sentence (`web/src/i18n/shell.ts`) tells the
+ * student their next change saves the default.
+ */
 export async function readSettings(
   workspace: Workspace,
   options: { stateFile?: string } = {},
