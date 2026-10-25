@@ -260,7 +260,7 @@ The rejected options (cookies, TLS, sockets) are in [ADR 0004](adr/0004-localhos
 5. **UI hardening:**
    - no `dangerouslySetInnerHTML`
    - links from data allowed only with `https:`
-   - strict CSP (`default-src 'self'`, no inline scripts)
+   - strict CSP, built in `server/src/ui.ts` (#170): `default-src 'self'`; the one inline script in the entry document, the scheme stamp, allowed by its hash — see `web/index.html`; `style-src 'self'` without `'unsafe-inline'`, since the Timetable grid's `style={{…}}` goes through the CSSOM, which CSP does not govern
    - `frame-ancestors 'none'`
    - `X-Content-Type-Options: nosniff`
 6. The "check for data updates" fetch happens on the server, as described under [Data repo](#data-repo).
