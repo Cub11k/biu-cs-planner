@@ -38,3 +38,12 @@ Restoring a value cannot drift that way.
   language.
 - **The save path is the undo path**, so the State File writer takes the revision it is based on and
   the external-edit guard applies equally to an undo. A file changed on disk invalidates the stack.
+- **Amended 2026-10-25 (#412): a restore over a State File that cannot be read is not on the
+  stack.** It is the one edit allowed to replace such a file, because putting a backup back is the
+  remedy for exactly that file. There is no previous value to keep: the file was never a State, and
+  a snapshot of `newState()` would make an undo empty the document rather than put the file back.
+  The unreadable bytes are kept in `.backups/` instead, by the same guarded save that keeps every
+  replaced file, and the Workspace screen says so rather than offering an undo. The stack is
+  emptied too, by the rule above: the save was based on a revision the stack never wrote. And it
+  brings the snapshot's `settings` back, the one restore that does: there are no current settings
+  to keep, and the defaults would flip a Hebrew reader's page to English.

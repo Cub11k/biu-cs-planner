@@ -180,6 +180,16 @@ export type EditOptions = {
    */
   basedOn: StateFileVersion | undefined;
   history?: EditHistory;
+  /**
+   * Replace a State File this build cannot read instead of refusing it (#412): a restore's alone,
+   * since putting a backup back is the remedy for exactly that file. The edit is applied to the
+   * State given here in place of the file — the snapshot itself, so its `settings` come back too,
+   * there being no current ones to keep — and the save is still based on the unreadable file's
+   * revision (ADR-0015 hashes any bytes). The guarded save keeps those bytes in `.backups/` as it
+   * keeps whatever it replaces. Nothing goes on the undo stack: there is no State to put back
+   * (ADR-0013).
+   */
+  overUnreadable?: State;
 };
 
 /**
@@ -233,6 +243,8 @@ export type EditOutcome =
        */
       edit: StateEdit;
       warnings: StateFileWarning[];
+      /** The save replaced a file that could not be read (`EditOptions.overUnreadable`), so `edit` is not on the stack. */
+      replacedUnreadable?: true;
     }
   /**
    * The edit changed nothing, so nothing was written and there is nothing to undo. It still
@@ -272,7 +284,8 @@ export type StateFileLoad =
    * File is based on no revision, which is what a first save has to carry.
    */
   | { state: State; version: StateFileVersion | undefined; warnings: StateFileWarning[] }
-  | { refused: EditRefusal; warnings: StateFileWarning[] };
+  /** `version` comes with `state-file-unreadable` only: unreadable bytes still have a revision (#412). */
+  | { refused: EditRefusal; warnings: StateFileWarning[]; version?: StateFileVersion };
 
 /**
  * Reading is not guarded on the layout and writing is: a folder that is not a Workspace
@@ -286,7 +299,9 @@ export type StateFileLoad =
  * Reads the State File, or hands back a new one when there is none.
  *
  * A file this build cannot read at all is **not** overwritten: it may be hand-edited, and
- * saving over it would cost the student everything in it, silently. That is the rule
+ * saving over it would cost the student everything in it, silently. The one exception is a
+ * restore of a backup (`EditOptions.overUnreadable`, #412), whose save keeps those bytes in
+ * `.backups/` first. That is the rule
  * `importCrawl` already follows for a stored Catalog (docs/design.md, "Storage").
  *
  * Two ways a file is unreadable, and both end here rather than in a new empty State. Bytes
@@ -325,7 +340,7 @@ export async function readStateFile(
 
   // a file is untrusted input whoever wrote it, so every read goes through the schema
   const parsed = parseStateFile(data);
-  if (!parsed.state) return { refused: "state-file-unreadable", warnings: parsed.warnings };
+  if (!parsed.state) return { refused: "state-file-unreadable", warnings: parsed.warnings, version };
 
   return { state: parsed.state, version, warnings: parsed.warnings };
 }
@@ -367,15 +382,19 @@ export async function editStateFile(
     return { kind: "refused", reason: "workspace-not-ready", warnings: [] };
   }
 
-  const loaded = await readStateFile(workspace, name);
-  if ("refused" in loaded) {
-    return { kind: "refused", reason: loaded.refused, warnings: loaded.warnings };
+  const read = await readStateFile(workspace, name);
+  const unreadable =
+    "refused" in read && read.refused === "state-file-unreadable" && options.overUnreadable !== undefined;
+  if ("refused" in read && !unreadable) {
+    return { kind: "refused", reason: read.refused, warnings: read.warnings };
   }
+  const loaded =
+    "refused" in read ? { state: options.overUnreadable ?? newState(), version: read.version, warnings: read.warnings } : read;
 
   // The view the edit was made from is gone: another tab, Dropbox, git or an editor wrote
   // the file since. Refused rather than applied, and the caller reloads (#90).
   if (loaded.version !== options.basedOn) {
-    return changedUnder(loaded.warnings, editing, loaded.state);
+    return changedUnder(loaded.warnings, editing, unreadable ? undefined : loaded.state);
   }
 
   const previous = loaded.state;
@@ -435,9 +454,16 @@ export async function editStateFile(
   const edit: StateEdit = { label: editing.label, at: Date.now(), previous: snapshotOf(previous) };
   // An edit that only set a preference is not on the stack: ADR-0013 keeps `settings` off
   // it, and an entry for one would undo to a document identical but for the language.
-  if (movedOutsideSettings(previous, next)) options.history?.push(edit);
+  if (!unreadable && movedOutsideSettings(previous, next)) options.history?.push(edit);
 
-  return { kind: "saved", state: next, version, edit, warnings: loaded.warnings };
+  return {
+    kind: "saved",
+    state: next,
+    version,
+    edit,
+    warnings: loaded.warnings,
+    ...(unreadable ? { replacedUnreadable: true as const } : {}),
+  };
 }
 
 /** An edit that went through, saved or unchanged: the State it left and the revision the file holds. */

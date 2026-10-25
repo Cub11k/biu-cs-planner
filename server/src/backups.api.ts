@@ -35,13 +35,19 @@ export function backupsRoutes({ workspace, into }: RouteDependencies) {
      * A refusal is the same named 409 every other Workspace route answers with, and it means
      * exactly one thing: `.backups/` is there and cannot be listed. It is **not** "the folder
      * is not a Workspace yet" — that is an empty list, which a test in `./api.test.ts` pins — and it is
-     * never "no backups", which is an empty list too and a perfectly good answer.
+     * never "no backups", which is an empty list too and a perfectly good answer. The one other
+     * refusal is the same reason with `of: "state-file"`: the listing was fine and the State File's
+     * bytes could not be got at, so there is no revision to restore over.
+     *
+     * `version` is the State File's revision, the one a restore is based on, and absent when there
+     * is no State File (#412). Served for a State File that cannot be read too: a restore is how
+     * that file is replaced, and its revision is a hash of its bytes like any other (ADR-0015).
      */
     .get("/api/backups", async (c) => {
       const result = await listBackups(workspace);
-      if (result.kind === "refused") return c.json({ reason: result.reason }, 409);
+      if (result.kind === "refused") return c.json({ reason: result.reason, of: result.of }, 409);
 
-      return c.json({ snapshots: result.snapshots });
+      return c.json({ snapshots: result.snapshots, version: result.version });
     })
 
     /**
@@ -78,6 +84,8 @@ export function backupsRoutes({ workspace, into }: RouteDependencies) {
         takenAt: restored.takenAt,
         version: restored.version,
         warnings: restored.warnings,
+        // a restore over a file that could not be read has nothing to undo to (#412)
+        replacedUnreadable: restored.kind === "restored" && restored.replacedUnreadable,
       }));
     });
 }

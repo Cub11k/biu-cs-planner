@@ -15,7 +15,6 @@ type StatusRoute = ApiClient["api"]["workspace"]["$get"];
 type CreateRoute = ApiClient["api"]["workspace"]["$post"];
 type BackupsRoute = ApiClient["api"]["backups"]["$get"];
 type RestoreRoute = ApiClient["api"]["backups"]["restore"]["$post"];
-type SettingsRoute = ApiClient["api"]["settings"]["$get"];
 
 /** Whether the folder is a Workspace, and which parts of the Workspace Layout are missing or not folders. */
 export type WorkspaceStatus = Extract<InferResponseType<StatusRoute>, { ready: unknown }>;
@@ -59,11 +58,13 @@ export function createWorkspace(client: ApiClient): Promise<CreateResult> {
 /** One snapshot of the State File, named by the moment it was taken (ADR-0002). */
 export type Snapshot = Extract<InferResponseType<BackupsRoute>, { snapshots: unknown }>["snapshots"][number];
 
-/** Why the backups could not be listed: `.backups/` is there and cannot be read. */
-export type ListRefusal = Extract<InferResponseType<BackupsRoute>, { reason: unknown }>["reason"];
+type BackupsRefused = Extract<InferResponseType<BackupsRoute>, { reason: unknown }>;
 
-/** Why the State File's revision could not be had, so no restore can be based on one. */
-export type StateFileRefusal = Extract<InferResponseType<SettingsRoute>, { reason: unknown }>["reason"];
+/** Why the backups could not be listed: `.backups/` is there and cannot be read. */
+export type ListRefusal = BackupsRefused["reason"];
+
+/** Why the State File's revision could not be had, so no restore can be based on one; told apart by `of`. */
+export type StateFileRefusal = BackupsRefused["reason"];
 
 /** Why a restore was not made: every refusal of a save, and the two of the snapshot's own. */
 export type RestoreRefusal = Extract<InferResponseType<RestoreRoute>, { reason: unknown }>["reason"];
@@ -79,7 +80,7 @@ export type BackupsResult =
       snapshots: Snapshot[];
       version: BackupsVersion;
       /** The restore this answer is the account of, on a restore's own answer only. */
-      restored?: { takenAt: number; moved: boolean; warned: boolean };
+      restored?: { takenAt: number; moved: boolean; warned: boolean; overUnreadable: boolean };
     }
   /** The listing was refused. */
   | { kind: "refused"; of: "backups"; reason: ListRefusal | undefined }
@@ -92,31 +93,20 @@ export type BackupsResult =
 /**
  * The backups, newest first, and the revision of the State File a restore of one is based on.
  *
- * **Two reads, because the listing carries no revision** and a restore is a save that must carry
- * one (ADR-0013). The revision is the one `GET /api/settings` serves, which reads the State File
- * and nothing else; the settings themselves are not looked at. Asked together, so the screen draws
- * once; a refusal of either is the answer, the listing's first.
+ * One read: the listing carries the revision (#412), including that of a State File that cannot be
+ * read, which a restore may replace. Until then the screen took it from `GET /api/settings`, which
+ * refuses exactly that file, so a corrupted State File was the one a backup could not be put over.
  */
-export async function fetchBackups(client: ApiClient): Promise<BackupsResult> {
-  const [listed, revision] = await Promise.all([
-    askApi<BackupsResult | { kind: "listed"; snapshots: Snapshot[] }, { reason?: ListRefusal }, { snapshots: Snapshot[] }>(
-      () => client.api.backups.$get(),
-      {
-        refused: ({ reason }) => ({ kind: "refused", of: "backups", reason }),
-        served: (body) => (Array.isArray(body.snapshots) ? { kind: "listed", snapshots: body.snapshots } : undefined),
-      },
-    ),
-    askApi<BackupsResult | { kind: "read"; version: BackupsVersion }, { reason?: StateFileRefusal }, { version?: string }>(
-      () => client.api.settings.$get(),
-      {
-        refused: ({ reason }) => ({ kind: "refused", of: "state-file", reason }),
-        served: (body) => ({ kind: "read", version: body.version }),
-      },
-    ),
-  ]);
-  if (listed.kind !== "listed") return listed;
-  if (revision.kind !== "read") return revision;
-  return { kind: "served", snapshots: listed.snapshots, version: revision.version };
+export function fetchBackups(client: ApiClient): Promise<BackupsResult> {
+  return askApi<BackupsResult, Partial<BackupsRefused>, { snapshots: Snapshot[]; version?: string }>(
+    () => client.api.backups.$get(),
+    {
+      refused: ({ reason, of }) =>
+        of === "state-file" ? { kind: "refused", of: "state-file", reason } : { kind: "refused", of: "backups", reason },
+      served: (body) =>
+        Array.isArray(body.snapshots) ? { kind: "served", snapshots: body.snapshots, version: body.version } : undefined,
+    },
+  );
 }
 
 /**
@@ -144,6 +134,7 @@ export function restoreBackup(
               takenAt: body.takenAt,
               moved: body.kind === "restored",
               warned: Array.isArray(body.warnings) && body.warnings.length > 0,
+              overUnreadable: body.kind === "restored" && body.replacedUnreadable === true,
             },
           }
         : undefined,

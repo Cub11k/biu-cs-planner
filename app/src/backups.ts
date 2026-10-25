@@ -1,6 +1,7 @@
 import { parseStateFile, type StateFileVersion, type StateFileWarning } from "@biu-cs-planner/core";
 import {
   editStateFile,
+  readStateFile,
   restoring,
   snapshotOf,
   type EditHistory,
@@ -29,7 +30,11 @@ import { WorkspaceRefusedError, type Workspace } from "./workspace.ts";
  *   - **It backs up what it replaced**, because every save does. A student who restored the
  *     wrong snapshot has a snapshot of what they were looking at a moment ago.
  *   - **It is undoable**, because the wrapper puts the previous document on the undo stack
- *     under the label below, exactly as a Pick is.
+ *     under the label below, exactly as a Pick is — **except over a State File that cannot be
+ *     read** (#412). A restore is the one edit that may replace one, based on that file's
+ *     revision; the bytes are kept in `.backups/` by the first point, and there is no document to
+ *     put on the stack, so that restore is not undoable, and brings the snapshot's settings
+ *     back with it, since the file held none this build could read (ADR-0013).
  *   - **It is guarded**, because the wrapper carries the revision the restore was based on, so
  *     a restore over somebody else's edit is refused rather than silently winning.
  *
@@ -50,7 +55,12 @@ export type BackupSnapshot = {
 };
 
 export type BackupsResult =
-  | { kind: "served"; snapshots: BackupSnapshot[] }
+  /**
+   * `version` is the State File's revision, `undefined` when there is none: what a restore is
+   * based on. Served with the listing so the Workspace screen needs no second read (#412), and
+   * served for a file that cannot be read too, since a restore is how that file is replaced.
+   */
+  | { kind: "served"; snapshots: BackupSnapshot[]; version: StateFileVersion | undefined }
   /**
    * `.backups/` is there and cannot be listed — a mode bit, or a plain file standing where the
    * folder belongs.
@@ -62,7 +72,13 @@ export type BackupsResult =
    * from the API's side. Said here because an earlier version of this comment claimed the
    * other thing, which was a doc describing a branch the code cannot take (found in review).
    */
-  | { kind: "refused"; reason: "workspace-refused" };
+  | { kind: "refused"; reason: "workspace-refused"; of: "backups" }
+  /**
+   * The listing was fine and the State File's bytes could not be got at, so there is no revision a
+   * restore could be based on. The same reason every route answers a port's refusal with, and `of`
+   * to tell it from the listing's, since the page says something different about each.
+   */
+  | { kind: "refused"; reason: "workspace-refused"; of: "state-file" };
 
 /**
  * The snapshots of one State File, newest first.
@@ -78,10 +94,18 @@ export async function listBackups(
   const name = options.stateFile ?? DEFAULT_STATE_FILE;
   try {
     const snapshots = await workspace.listBackups({ kind: "state", name });
-    return { kind: "served", snapshots: snapshots.map(({ takenAt }) => ({ takenAt })) };
+    const read = await readStateFile(workspace, name);
+    if ("refused" in read && read.refused !== "state-file-unreadable") {
+      return { kind: "refused", reason: "workspace-refused", of: "state-file" };
+    }
+    return {
+      kind: "served",
+      snapshots: snapshots.map(({ takenAt }) => ({ takenAt })),
+      version: read.version,
+    };
   } catch (error) {
     if (error instanceof WorkspaceRefusedError) {
-      return { kind: "refused", reason: "workspace-refused" };
+      return { kind: "refused", reason: "workspace-refused", of: "backups" };
     }
     throw error;
   }
@@ -109,6 +133,11 @@ export type RestoreResult =
       label: string;
       at: number;
       warnings: StateFileWarning[];
+      /**
+       * It replaced a State File that could not be read (#412): those bytes are in `.backups/`,
+       * and there is nothing to undo to, so nothing went on the stack.
+       */
+      replacedUnreadable: boolean;
     }
   /**
    * The edit moved nothing, so nothing was written and there is nothing to undo. Still carries
@@ -193,12 +222,21 @@ export async function restoreBackup(
     workspace,
     name,
     restoring(RESTORE_LABEL, snapshotOf(parsed.state)),
-    { basedOn: options.basedOn, ...(options.history ? { history: options.history } : {}) },
+    {
+      basedOn: options.basedOn,
+      ...(options.history ? { history: options.history } : {}),
+      // a restore is the remedy for a file that cannot be read, so it may replace one (#412), and
+      // with no current settings to keep, the snapshot's own come back
+      overUnreadable: parsed.state,
+    },
   );
 
   // The snapshot's own Warnings first, then the State File's: both are about files the student
-  // may have to go and look at, and which file is which is the news.
-  const warnings = [...parsed.warnings, ...outcome.warnings];
+  // may have to go and look at, and which file is which is the news. A file the restore replaced
+  // unread is said by `replacedUnreadable` instead: its Warnings describe a document now only in
+  // `.backups/`, and "some entries were left out" would be false of the restore.
+  const replacedUnreadable = outcome.kind === "saved" && outcome.replacedUnreadable === true;
+  const warnings = replacedUnreadable ? parsed.warnings : [...parsed.warnings, ...outcome.warnings];
 
   switch (outcome.kind) {
     case "saved":
@@ -209,6 +247,7 @@ export async function restoreBackup(
         label: outcome.edit.label,
         at: outcome.edit.at,
         warnings,
+        replacedUnreadable,
       };
     case "unchanged":
       return { kind: "unchanged", takenAt, version: outcome.version, warnings };
