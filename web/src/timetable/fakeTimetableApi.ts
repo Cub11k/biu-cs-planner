@@ -9,6 +9,10 @@
  * about the Variant the server says it is about. The domain rules themselves are `core`'s and are
  * tested there; this holds only as much of them as a page can see.
  *
+ * It holds the Fall 2027 Timetable on the object it returns, and any other Semester in `semesters`,
+ * so the Semester tabs can be tested against Timetables that differ (#418), and serves each
+ * Semester's exam period as a test sets it (#419) — the check itself is `core`'s.
+ *
  * Test-only. It lives beside the screen because three browser test files share it.
  */
 import type { Offering } from "./catalog.ts";
@@ -40,9 +44,37 @@ export type FakePlanDiffs = Record<string, PlanDiff[]>;
 
 export type FakeRequest = { method: string; pathname: string; search: string; body: unknown };
 
-export type FakeApi = {
+/** The exam period a Semester is served with, as `checkExams` would answer, or an unreadable answer. */
+export type FakeExams =
+  | {
+      sittings: Array<{
+        courseNumber: string;
+        moed: string;
+        date: string;
+        time: string;
+        daysSincePrevious: number | undefined;
+        yearLong: boolean;
+      }>;
+      warnings: unknown[];
+      coursesWithUnknownExams: number;
+    }
+  | "unreadable";
+
+/** One Semester's Timetable as the fake holds it. */
+export type FakeSemester = {
+  variants: FakeVariant[];
+  blockedTimes: FakeBlockedTime[];
+  planDiffs: FakePlanDiffs;
+  exams?: FakeExams;
+};
+
+export type FakeApi = FakeSemester & {
   /** The Fall 2027 Timetable the fake holds. */
   variants: FakeVariant[];
+  /** Every other Semester, keyed `year/semester`, made empty when first asked about. */
+  semesters: Map<string, FakeSemester>;
+  /** While set, every save waits for it before it is answered: an edit in flight (#418). */
+  saveGate: Promise<void> | undefined;
   blockedTimes: FakeBlockedTime[];
   /** Blocked Times copied to another Semester, keyed `year/semester`. */
   copied: Map<string, FakeBlockedTime[]>;
@@ -87,14 +119,14 @@ const NEXT_DAY: Record<string, FakeBlockedTime["day"] | undefined> = {
 };
 
 /** The wrap rule `core/src/state/blocked.ts` keeps, as far as a page can see it. */
-function split(range: Omit<FakeBlockedTime, "semester">): FakeBlockedTime[] {
+function split(range: Omit<FakeBlockedTime, "semester">, semester: FakeBlockedTime["semester"]): FakeBlockedTime[] {
   const start = clock(range.start, false);
   const end = clock(range.end, true);
-  if (end >= start) return [{ ...range, semester: "fall" }];
+  if (end >= start) return [{ ...range, semester }];
   const next = NEXT_DAY[range.day];
   return [
-    { ...range, semester: "fall", end: "00:00" },
-    ...(next === undefined ? [] : [{ ...range, semester: "fall" as const, day: next, start: "00:00" }]),
+    { ...range, semester, end: "00:00" },
+    ...(next === undefined ? [] : [{ ...range, semester, day: next, start: "00:00" }]),
   ];
 }
 
@@ -110,6 +142,12 @@ export function installFakeApi(options: {
   planned?: string[];
   /** What "apply all" would register, by Variant name, for the registration preview (#297). */
   registers?: Record<string, string[]>;
+  /** The Fall 2027 exam period; none given is an empty one. */
+  exams?: FakeExams;
+  /** Other Semesters' Timetables, keyed `year/semester`. */
+  semesters?: Record<string, Partial<FakeSemester>>;
+  /** Other Semesters' Catalogs, keyed `year/semester`; `null` is no Catalog for it. */
+  catalogs?: Record<string, Offering[] | null>;
 }): FakeApi {
   const realFetch = globalThis.fetch;
   const fake: FakeApi = {
@@ -117,6 +155,14 @@ export function installFakeApi(options: {
     blockedTimes: options.blockedTimes ?? [],
     copied: new Map(),
     planDiffs: options.planDiffs ?? {},
+    ...(options.exams === undefined ? {} : { exams: options.exams }),
+    semesters: new Map(
+      Object.entries(options.semesters ?? {}).map(([key, held]) => [
+        key,
+        { variants: [], blockedTimes: [], planDiffs: {}, ...held },
+      ]),
+    ),
+    saveGate: undefined,
     registrationGate: undefined,
     sent: [],
     labels: [],
@@ -127,10 +173,12 @@ export function installFakeApi(options: {
     },
   };
 
+  /** The helpers below, over one Semester's Timetable. */
+  const on = (s: FakeSemester) => {
   /** The Variant a name addresses — of two sharing it, the one at `position` (#322). */
   const named = (name: string, position: number | undefined): FakeVariant | undefined => {
-    const at = position === undefined ? undefined : fake.variants[position];
-    return at?.name === name ? at : fake.variants.find((v) => v.name === name);
+    const at = position === undefined ? undefined : s.variants[position];
+    return at?.name === name ? at : s.variants.find((v) => v.name === name);
   };
 
   const resolve = (requested: string | null | undefined, position?: number): string =>
@@ -138,11 +186,11 @@ export function installFakeApi(options: {
 
   const resolved = (requested: string | null | undefined, position?: number): FakeVariant | undefined =>
     (requested ? named(requested, position) : undefined) ??
-    fake.variants.find((v) => v.primary) ??
-    fake.variants[0];
+    s.variants.find((v) => v.primary) ??
+    s.variants[0];
 
   const freeName = (): string =>
-    [..."ABCDEFGHIJKLMNOPQRSTUVWXYZ"].find((letter) => !fake.variants.some((v) => v.name === letter)) ??
+    [..."ABCDEFGHIJKLMNOPQRSTUVWXYZ"].find((letter) => !s.variants.some((v) => v.name === letter)) ??
     "A2";
 
   /** The Variant an edit names, made if it is not there — as a first Pick makes it. */
@@ -150,8 +198,8 @@ export function installFakeApi(options: {
     const name = requested ?? resolve(undefined);
     let variant = named(name, requested === undefined ? undefined : position);
     if (variant === undefined) {
-      variant = { name, primary: fake.variants.length === 0, picks: [], tray: [] };
-      fake.variants.push(variant);
+      variant = { name, primary: s.variants.length === 0, picks: [], tray: [] };
+      s.variants.push(variant);
     }
     return variant;
   };
@@ -192,7 +240,7 @@ export function installFakeApi(options: {
     const picks = variant?.picks ?? [];
     const clashes = picks.flatMap((pick) =>
       pick.meetings.flatMap((meeting) =>
-        fake.blockedTimes
+        s.blockedTimes
           .map((blocked, blockedTimeIndex) => ({ blocked, blockedTimeIndex }))
           .filter(({ blocked }) => overlaps(meeting, blocked))
           .map(({ blocked, blockedTimeIndex }) => ({
@@ -210,19 +258,19 @@ export function installFakeApi(options: {
       ),
     );
     const seen = new Set<string>();
-    const variantWarnings: Array<Record<string, unknown>> = fake.variants.flatMap((v) => {
+    const variantWarnings: Array<Record<string, unknown>> = s.variants.flatMap((v) => {
       if (!seen.has(v.name)) {
         seen.add(v.name);
         return [];
       }
       return [{ kind: "variant-name-not-unique", name: v.name }];
     });
-    const registered = fake.variants.filter((v) => v.registered === true).length;
+    const registered = s.variants.filter((v) => v.registered === true).length;
     if (registered > 1) variantWarnings.push({ kind: "registered-variant-not-unique", registered });
     return {
       variantName: name,
-      variantPosition: variant === undefined ? undefined : fake.variants.indexOf(variant),
-      variants: fake.variants.map((v) => ({
+      variantPosition: variant === undefined ? undefined : s.variants.indexOf(variant),
+      variants: s.variants.map((v) => ({
         name: v.name,
         primary: v.primary,
         ...(v.registered === true ? { registered: true } : {}),
@@ -230,17 +278,30 @@ export function installFakeApi(options: {
       variantWarnings,
       picks,
       clashes,
-      blockedTimes: fake.blockedTimes,
-      blockedTimeWarnings: fake.blockedTimes.flatMap((blocked, index) =>
+      blockedTimes: s.blockedTimes,
+      blockedTimeWarnings: s.blockedTimes.flatMap((blocked, index) =>
         clock(blocked.end, true) > clock(blocked.start, false)
           ? []
           : [{ kind: "blocked-time-does-not-advance", index, start: blocked.start, end: blocked.end }],
       ),
       tray: trayOf(variant),
-      planDiffs: fake.planDiffs[name] ?? [],
+      planDiffs: s.planDiffs[name] ?? [],
       version: `v${fake.version}`,
       warnings: [],
     };
+  };
+    return { named, resolve, resolved, freeName, edited, view };
+  };
+
+  /** The Semester a path names: Fall 2027 is the fake itself, any other is made when first asked about. */
+  const storeOf = (key: string): FakeSemester => {
+    if (key === "2027/fall") return fake;
+    let held = fake.semesters.get(key);
+    if (held === undefined) {
+      held = { variants: [], blockedTimes: [], planDiffs: {} };
+      fake.semesters.set(key, held);
+    }
+    return held;
   };
 
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -257,9 +318,29 @@ export function installFakeApi(options: {
     if (pathname === "/api/settings") {
       return json({ language: "en", examSpacingDays: 3, version: `v${fake.version}`, warnings: [] });
     }
-    if (!pathname.startsWith("/api/timetable")) return json({ offerings: options.offerings, warnings: [] });
+    if (!pathname.startsWith("/api/timetable")) {
+      const catalogKey = `${pathname.split("/")[3]}/${url.searchParams.get("semester")}`;
+      const catalog = options.catalogs?.[catalogKey];
+      if (catalog === null) return json({ warnings: [{ kind: "no-catalog-for-year" }] }, 404);
+      return json({ offerings: catalog ?? options.offerings, warnings: [] });
+    }
 
-    const route = pathname.replace("/api/timetable/2027/fall", "");
+    const [, year, semester, route = ""] = /^\/api\/timetable\/(\d+)\/(\w+)(.*)$/.exec(pathname) ?? [];
+    const s = storeOf(`${year}/${semester}`);
+    const { resolve, resolved, freeName, edited, view } = on(s);
+    if (method === "GET" && route === "/exams") {
+      if (s.exams === "unreadable") return new Response("<html>500</html>", { status: 500 });
+      const position = url.searchParams.get("position");
+      return json({
+        variantName: resolve(url.searchParams.get("variant"), position === null ? undefined : Number(position)),
+        exams: s.exams ?? { sittings: [], warnings: [], coursesWithUnknownExams: 0 },
+        spacingDays: 3,
+        version: `v${fake.version}`,
+        warnings: [],
+        catalogWarnings: [],
+        catalogRefused: null,
+      });
+    }
     if (method === "GET" && route === "/registration") {
       await fake.registrationGate;
       const position = url.searchParams.get("position");
@@ -267,11 +348,11 @@ export function installFakeApi(options: {
       const name = variant?.name ?? "A";
       return json({
         variantName: name,
-        variantPosition: variant === undefined ? undefined : fake.variants.indexOf(variant),
-        planDiffs: fake.planDiffs[name] ?? [],
+        variantPosition: variant === undefined ? undefined : s.variants.indexOf(variant),
+        planDiffs: s.planDiffs[name] ?? [],
         registers: options.registers?.[name] ?? [],
         // the fake's digest is the list as JSON: like the server's, it changes exactly when the list does (#355)
-        digest: JSON.stringify(fake.planDiffs[name] ?? []),
+        digest: JSON.stringify(s.planDiffs[name] ?? []),
         version: `v${fake.version}`,
         warnings: [],
       });
@@ -287,6 +368,7 @@ export function installFakeApi(options: {
       position?: number;
     };
     const at = request.position;
+    await fake.saveGate;
     if (fake.changeUnderneath) {
       fake.changeUnderneath = false;
       fake.version += 1;
@@ -300,17 +382,17 @@ export function installFakeApi(options: {
     // an apply of a Plan Diff the Variant is no longer served with writes nothing (#295)
     if (key === "POST /plan-diffs/apply") {
       const name = resolve(request.variant, at);
-      const held = fake.planDiffs[name] ?? [];
+      const held = s.planDiffs[name] ?? [];
       const applied = held.find((d) => d.kind === request.kind && d.courseNumber === request.courseNumber);
       if (applied === undefined) {
         return json({ reason: "plan-diff-stale", version: `v${fake.version}`, warnings: [] }, 409);
       }
-      fake.planDiffs[name] = held.filter((d) => d !== applied);
+      s.planDiffs[name] = held.filter((d) => d !== applied);
     }
     // "apply all" of a list that is not the one served now writes nothing (#355)
     if (key === "POST /variants/registered" && request.applyDiffs === true) {
       const name = resolve(request.variant, at);
-      if (request.digest !== JSON.stringify(fake.planDiffs[name] ?? [])) {
+      if (request.digest !== JSON.stringify(s.planDiffs[name] ?? [])) {
         return json({ reason: "plan-diff-stale", version: `v${fake.version}`, warnings: [] }, 409);
       }
     }
@@ -341,17 +423,17 @@ export function installFakeApi(options: {
       }
       case "POST /variants": {
         const name = (request.name as string | undefined) ?? freeName();
-        fake.variants.push({ name, primary: fake.variants.length === 0, picks: [], tray: [] });
+        s.variants.push({ name, primary: s.variants.length === 0, picks: [], tray: [] });
         answerAbout = name;
-        answerAt = fake.variants.length - 1;
+        answerAt = s.variants.length - 1;
         fake.labels.push("create-variant");
         break;
       }
       case "POST /variants/duplicate": {
         const source = edited(request.variant, at);
         const name = (request.name as string | undefined) ?? freeName();
-        answerAt = fake.variants.indexOf(source) + 1;
-        fake.variants.splice(answerAt, 0, {
+        answerAt = s.variants.indexOf(source) + 1;
+        s.variants.splice(answerAt, 0, {
           name,
           primary: false,
           picks: [...source.picks],
@@ -365,21 +447,21 @@ export function installFakeApi(options: {
         const renamed = edited(request.variant, at);
         renamed.name = request.name as string;
         answerAbout = request.name as string;
-        answerAt = fake.variants.indexOf(renamed);
+        answerAt = s.variants.indexOf(renamed);
         fake.labels.push("rename-variant");
         break;
       }
       case "POST /variants/primary": {
         const chosen = edited(request.variant, at);
-        for (const v of fake.variants) v.primary = v === chosen;
+        for (const v of s.variants) v.primary = v === chosen;
         fake.labels.push("set-primary-variant");
         break;
       }
       case "DELETE /variants": {
         const gone = edited(request.variant, at);
-        fake.variants = fake.variants.filter((v) => v !== gone);
-        if (gone.primary && fake.variants[0] !== undefined && !fake.variants.some((v) => v.primary)) {
-          fake.variants[0].primary = true;
+        s.variants = s.variants.filter((v) => v !== gone);
+        if (gone.primary && s.variants[0] !== undefined && !s.variants.some((v) => v.primary)) {
+          s.variants[0].primary = true;
         }
         answerAbout = undefined;
         fake.labels.push("delete-variant");
@@ -402,13 +484,13 @@ export function installFakeApi(options: {
       }
       case "POST /variants/registered": {
         const chosen = edited(request.variant, at);
-        for (const v of fake.variants) {
+        for (const v of s.variants) {
           v.primary = v === chosen;
           v.registered = v === chosen;
         }
         // "apply all": every actionable Plan Diff is applied, so only the not-offered ones are left
         if (request.applyDiffs === true) {
-          fake.planDiffs[chosen.name] = (fake.planDiffs[chosen.name] ?? []).filter((d) => d.kind === "not-offered");
+          s.planDiffs[chosen.name] = (s.planDiffs[chosen.name] ?? []).filter((d) => d.kind === "not-offered");
         }
         fake.labels.push("mark-variant-registered");
         break;
@@ -423,22 +505,22 @@ export function installFakeApi(options: {
         break;
       }
       case "POST /blocked-times": {
-        fake.blockedTimes = [...fake.blockedTimes, ...split(request as never)];
+        s.blockedTimes = [...s.blockedTimes, ...split(request as never, semester as FakeBlockedTime["semester"])];
         fake.labels.push("add-blocked-time");
         break;
       }
       case "PUT /blocked-times": {
         const index = request.index as number;
-        fake.blockedTimes = [
-          ...fake.blockedTimes.slice(0, index),
-          ...split(request as never),
-          ...fake.blockedTimes.slice(index + 1),
+        s.blockedTimes = [
+          ...s.blockedTimes.slice(0, index),
+          ...split(request as never, semester as FakeBlockedTime["semester"]),
+          ...s.blockedTimes.slice(index + 1),
         ];
         fake.labels.push("replace-blocked-time");
         break;
       }
       case "DELETE /blocked-times": {
-        fake.blockedTimes = fake.blockedTimes.filter((_, index) => index !== request.index);
+        s.blockedTimes = s.blockedTimes.filter((_, index) => index !== request.index);
         fake.labels.push("remove-blocked-time");
         break;
       }
@@ -446,7 +528,7 @@ export function installFakeApi(options: {
         const target = `${String(request.toYear)}/${String(request.toSemester)}`;
         fake.copied.set(target, [
           ...(fake.copied.get(target) ?? []),
-          ...fake.blockedTimes.map((b) => ({ ...b, semester: request.toSemester as FakeBlockedTime["semester"] })),
+          ...s.blockedTimes.map((b) => ({ ...b, semester: request.toSemester as FakeBlockedTime["semester"] })),
         ]);
         fake.labels.push("copy-blocked-times");
         break;

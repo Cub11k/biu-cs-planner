@@ -392,12 +392,16 @@ beforeEach(() => {
   }) as typeof fetch;
 });
 
+/** The page's URL as the file started: the Semester shown is kept in it (#418), and must not leak. */
+const urlAtStart = `${location.pathname}${location.search}${location.hash}`;
+
 afterEach(() => {
   root?.unmount();
   host?.remove();
   root = undefined;
   host = undefined;
   globalThis.fetch = realFetch;
+  history.replaceState(null, "", urlAtStart);
 });
 
 /**
@@ -924,9 +928,6 @@ const STILL_LOADING = t("en", "picksHeld");
 const NOT_SAVED = t("en", "picksHeldLost");
 const FILE_CHANGED = t("en", "picksStale");
 
-/** March 2027: the Spring Semester of the same Academic Year, which is another week. */
-const ANOTHER_SEMESTER = new Date(2027, 2, 15);
-
 /** Waits for a sentence to reach the screen, and says which one was missing when it does not. */
 async function waitForText(mounted: HTMLElement, wanted: string): Promise<void> {
   await vi.waitFor(() => {
@@ -1134,10 +1135,8 @@ it("drops a held click when the screen is asked about another week, and says so"
   tileFor(mounted, "01").click();
   await waitForText(mounted, STILL_LOADING);
 
-  // the same mounted screen, now asked about the Spring Semester
-  root?.render(
-    <TimetableScreen language="en" onLanguage={() => {}} today={ANOTHER_SEMESTER} />,
-  );
+  // the same mounted screen, now showing the Spring Semester (#418)
+  mounted.querySelector<HTMLButtonElement>('[role="tab"][data-semester="spring"]')!.click();
   release();
 
   await waitForText(mounted, NOT_SAVED);

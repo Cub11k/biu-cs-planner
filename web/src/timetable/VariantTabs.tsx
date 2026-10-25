@@ -53,6 +53,22 @@ export function shownTabIndex(
   return variants.findIndex((variant) => variant.name === shown.name);
 }
 
+/**
+ * Where an arrow key moves the focus in a row of `count` tabs: the visual direction, so in Hebrew
+ * the right arrow goes to the tab on the right, which is the previous one; Home and End go to the
+ * ends. `undefined` for any other key. Shared with the Semester tabs (`./SemesterTabs.tsx`).
+ */
+export function tabKeyTarget(language: Language, from: number, count: number, key: string): number | undefined {
+  const forward = DIRECTION[language] === "rtl" ? "ArrowLeft" : "ArrowRight";
+  const backward = DIRECTION[language] === "rtl" ? "ArrowRight" : "ArrowLeft";
+  const last = count - 1;
+  if (key === forward) return from === last ? 0 : from + 1;
+  if (key === backward) return from === 0 ? last : from - 1;
+  if (key === "Home") return 0;
+  if (key === "End") return last;
+  return undefined;
+}
+
 /** The id of the tab at this position, for the panel's `aria-labelledby`. */
 export const variantTabId = (panelId: string, index: number): string => `${panelId}-tab-${index}`;
 
@@ -88,19 +104,7 @@ export function VariantTabs({
   const focusable = Math.max(0, shownAt);
 
   const moveFocus = (from: number, key: string): void => {
-    const forward = DIRECTION[language] === "rtl" ? "ArrowLeft" : "ArrowRight";
-    const backward = DIRECTION[language] === "rtl" ? "ArrowRight" : "ArrowLeft";
-    const last = variants.length - 1;
-    const to =
-      key === forward
-        ? from === last ? 0 : from + 1
-        : key === backward
-          ? from === 0 ? last : from - 1
-          : key === "Home"
-            ? 0
-            : key === "End"
-              ? last
-              : undefined;
+    const to = tabKeyTarget(language, from, variants.length, key);
     if (to !== undefined) tabs.current[to]?.focus();
   };
 

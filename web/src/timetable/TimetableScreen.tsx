@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from
 import { api } from "../api.ts";
 import { t, type Language, type StringKey } from "../i18n/strings.ts";
 import { academicYearOf, academicYearSpan, semesterOf } from "./calendar.ts";
+import { SemesterTabs, semesterTabId } from "./SemesterTabs.tsx";
 import { courseName, type Semester } from "./catalog.ts";
 import { fetchOfferings } from "./offerings.ts";
 import {
@@ -50,14 +51,16 @@ import {
   replaceBlockedTime,
 } from "./blockedTimes.ts";
 import { shownTabIndex, VariantTabs, variantTabId } from "./VariantTabs.tsx";
-import { keepVariantInUrl, variantInUrl, type VariantUrlBrowser } from "./variantUrl.ts";
+import {
+  keepVariantInUrl,
+  semesterInUrl,
+  variantInUrl,
+  type SemesterInUrl,
+  type VariantUrlBrowser,
+} from "./variantUrl.ts";
 import { WeekGrid } from "./WeekGrid.tsx";
-
-const SEMESTER_STRING = {
-  fall: "semesterFall",
-  spring: "semesterSpring",
-  summer: "semesterSummer",
-} as const satisfies Record<Semester, StringKey>;
+import { ExamRail, type ExamRailState } from "./ExamRail.tsx";
+import { fetchExams } from "./exams.ts";
 
 /**
  * A click waiting for the first Timetable answer, and the week it was made on.
@@ -198,20 +201,70 @@ export function TimetableScreen(props: TimetableScreenProps): React.JSX.Element 
   return <AppShell screens={TIMETABLE_SCREENS} {...props} />;
 }
 
-/** The Timetable's entry in the screen registry: the landing screen, at the root path. */
+/**
+ * The Timetable's entry in the screen registry: the landing screen, at the root path. No subtitle:
+ * the header used to name today's Semester, and since the Semester tabs (#418) the Semester shown is
+ * whichever the student chose, which the tabs and the year control already say.
+ */
 export const TIMETABLE_SCREEN: ScreenDefinition = {
   path: "/",
   label: "timetable",
-  // one spelling of the year on the whole screen, the header's and the sidebar's alike
-  subtitle: (language, today) =>
-    `${t(language, SEMESTER_STRING[semesterOf(today)])} · ${t(language, "academicYear", academicYearSpan(academicYearOf(today)))}`,
   render: (props) => <TimetablePane {...props} />,
 };
 
 const TIMETABLE_SCREENS: readonly ScreenDefinition[] = [TIMETABLE_SCREEN];
 
 /**
- * The landing screen: the week of one Semester of the current Academic Year, the Catalog to
+ * The landing screen: the Semester tabs and the year control (#418), and under them the Timetable
+ * of the Semester they chose. It opens on the Semester the URL names, and on today's when it names
+ * none, as it always did.
+ */
+export function TimetablePane(props: ScreenProps): React.JSX.Element {
+  const [shown, setShown] = useState<SemesterInUrl>(
+    () => semesterInUrl(pageUrl()) ?? { academicYear: academicYearOf(props.today), semester: semesterOf(props.today) },
+  );
+  const panelId = useId();
+  /** Whether the Semester shown holds a click or an edit not yet sent, which leaving it drops. */
+  const unsent = useRef<() => boolean>(() => false);
+  /** That leaving the last Semester dropped one, which the next says as `picksHeldLost` (#111). */
+  const [leftUnsent, setLeftUnsent] = useState(false);
+  const show = (academicYear: number, semester: Semester): void => {
+    const next = { academicYear, semester };
+    setLeftUnsent(unsent.current());
+    // the Semester goes into the URL at once, without a Variant: another Semester opens on its primary
+    keepVariantInUrl(pageUrl(), next, undefined);
+    setShown(next);
+  };
+  return (
+    <>
+      <SemesterTabs language={props.language} {...shown} onShow={show} panelId={panelId} />
+      <div
+        id={panelId}
+        role="tabpanel"
+        aria-labelledby={semesterTabId(panelId, shown.semester)}
+        className="flex min-h-0 flex-1 flex-col"
+      >
+        {/*
+          Keyed by the Semester, so another Semester is a fresh mount (#418). Everything a Semester's
+          Timetable holds — clicks held for the first read, edits held for a re-read, the Variant asked
+          for, the confirmation open — is about that Semester, and none of it may be sent for, or drawn
+          over, the next: an edit in flight when the tab changes answers into the Semester it was made
+          on, which is no longer mounted, and the one shown reads its own week.
+        */}
+        <SemesterTimetable
+          key={`${shown.academicYear}/${shown.semester}`}
+          {...props}
+          {...shown}
+          unsent={unsent}
+          leftUnsent={leftUnsent}
+        />
+      </div>
+    </>
+  );
+}
+
+/**
+ * The Timetable of one Semester of one Academic Year: the week, the Catalog to
  * choose a Course from, and the Picks the student has already made. Choosing a Course puts
  * its Groups on the week as options; clicking one Picks it, and clicking a Pick removes it.
  *
@@ -220,10 +273,11 @@ const TIMETABLE_SCREENS: readonly ScreenDefinition[] = [TIMETABLE_SCREEN];
  * are the shell's; this screen tells the shell which revision it is showing, and re-reads when a
  * step asks it to.
  */
-export function TimetablePane({
+function SemesterTimetable({
+  academicYear,
+  semester,
   language,
   tokenHeld,
-  today,
   workspaceChanges,
   stepRereads,
   steps,
@@ -231,10 +285,15 @@ export function TimetablePane({
   onActed,
   onRevision,
   notices,
-}: ScreenProps): React.JSX.Element {
-  const academicYear = academicYearOf(today);
-  const semester = semesterOf(today);
-
+  unsent,
+  leftUnsent,
+}: ScreenProps &
+  SemesterInUrl & {
+    /** Set to whether this Semester holds a click or an edit not yet sent, for `TimetablePane`. */
+    unsent: React.MutableRefObject<() => boolean>;
+    /** That the Semester shown before this one was left with one, so it was dropped unsent. */
+    leftUnsent: boolean;
+  }): React.JSX.Element {
   const [selected, setSelected] = useState<string | undefined>(undefined);
   /**
    * That a click was refused because the file had changed, and how many times this screen
@@ -300,8 +359,11 @@ export function TimetablePane({
    * a click on a Group is a small thing to have to make twice.
    */
   const [held, setHeld] = useState<readonly HeldClick[]>([]);
-  /** That held clicks had to be dropped, because the file could not be read at all. */
-  const [heldLost, setHeldLost] = useState(false);
+  /**
+   * That held clicks had to be dropped, because the file could not be read at all — or because the
+   * student showed another Semester while they waited, which drops them with the Semester (#418).
+   */
+  const [heldLost, setHeldLost] = useState(leftUnsent);
   /** That a held click is in flight, so the drain below sends one at a time. */
   const sending = useRef(false);
   /**
@@ -328,6 +390,9 @@ export function TimetablePane({
   const heldEdits = useRef<HeldEdit[]>([]);
   /** How many edits are held, so the screen can say so while they wait. */
   const [heldEditCount, setHeldEditCount] = useState(0);
+  useEffect(() => {
+    unsent.current = () => held.length > 0 || heldEdits.current.length > 0;
+  });
 
   /**
    * The Variant tab the student chose, or `undefined` for the primary — which is what a Semester
@@ -352,7 +417,7 @@ export function TimetablePane({
   const seeded = useRef(false);
   if (!seeded.current) {
     seeded.current = true;
-    variantWanted.current = variantInUrl(pageUrl());
+    variantWanted.current = variantInUrl(pageUrl(), { academicYear, semester });
   }
   /** The week, as the panel the Variant tabs control (#324). */
   const weekPanelId = useId();
@@ -566,8 +631,10 @@ export function TimetablePane({
   const shownName = timetable.kind === "served" ? timetable.variantName : undefined;
   const shownPosition = timetable.kind === "served" ? timetable.variantPosition : undefined;
   useEffect(() => {
-    if (shownName !== undefined) keepVariantInUrl(pageUrl(), { name: shownName, position: shownPosition });
-  }, [shownName, shownPosition]);
+    if (shownName !== undefined) {
+      keepVariantInUrl(pageUrl(), { academicYear, semester }, { name: shownName, position: shownPosition });
+    }
+  }, [shownName, shownPosition, academicYear, semester]);
 
   /**
    * Which revision the shell may step from: the one on screen, once the State File has been read
@@ -796,6 +863,34 @@ export function TimetablePane({
   const planDiffs = timetable.kind === "served" ? timetable.planDiffs : [];
 
   /**
+   * The exam rail's read (#419), and which Variant it is about. Asked again for every Timetable
+   * answer that lands — a Pick, a step, a Workspace change, another tab — because the exam period
+   * is the Picks' and every one of those is a new account of them. The rail on screen stays until
+   * the next read arrives, but only over the Variant it was read for.
+   */
+  const [examRead, setExamRead] = useState<{ variantName: string; state: ExamRailState } | undefined>(undefined);
+  const examAsked = useRef(0);
+  /** The rail is drawn while the Semester has picked Courses: an unread week has none to draw by. */
+  const railShown = timetable.kind === "served" && timetable.picks.length > 0;
+  useEffect(() => {
+    if (timetable.kind !== "served" || timetable.picks.length === 0) return;
+    const mine = (examAsked.current += 1);
+    const about = timetable.variantName;
+    void fetchExams(api, { academicYear, semester, variant: about, position: timetable.variantPosition }).then(
+      (period) => {
+        // an older read answering after a newer one was asked is not the account on screen
+        if (examAsked.current !== mine) return;
+        setExamRead({ variantName: about, state: period === undefined ? { kind: "unread" } : { kind: "served", period } });
+      },
+    );
+  }, [timetable, academicYear, semester]);
+  const railState: ExamRailState =
+    examRead !== undefined && timetable.kind === "served" && examRead.variantName === timetable.variantName
+      ? examRead.state
+      : { kind: "loading" };
+  const sidePane = planDiffs.length > 0 || railShown;
+
+  /**
    * The student's answer to the confirmation. "Apply all" is sent on the revision the preview was
    * read from, so what is applied is what was listed: a file that moved since is refused rather
    * than applied differently. "Only mark" touches no Plan, so it goes on the revision on screen.
@@ -972,11 +1067,11 @@ export function TimetablePane({
 
   return (
     <>
-      {/* the side panel is there only while there are Plan Diffs: a Timetable with no Plan is laid
-          out exactly as it was (ADR-0008) */}
+      {/* the side panel is there only while it holds something: Plan Diffs, or the exam rail of a
+          Semester with picked Courses — a Timetable with neither is laid out exactly as it was (ADR-0008) */}
       <div
         className={`grid min-h-0 flex-1 ${
-          planDiffs.length === 0 ? "grid-cols-[18rem_minmax(0,1fr)]" : "grid-cols-[18rem_minmax(0,1fr)_16rem]"
+          sidePane ? "grid-cols-[18rem_minmax(0,1fr)_16rem]" : "grid-cols-[18rem_minmax(0,1fr)]"
         }`}
       >
         {/*
@@ -1095,10 +1190,13 @@ export function TimetablePane({
           </div>
         </section>
 
-        {/* The side panel, Layout E: the Plan Diffs of the Variant shown (#296). */}
-        {planDiffs.length > 0 && (
+        {/* The side panel, Layout E: the Plan Diffs of the Variant shown (#296), and its exam rail (#419). */}
+        {sidePane && (
           <aside className="flex min-h-0 flex-col gap-4 overflow-auto border-s border-rule bg-desk p-4">
-            <PlanDiffsPanel language={language} planDiffs={planDiffs} nameOf={nameOf} onApply={onApplyPlanDiff} />
+            {planDiffs.length > 0 && (
+              <PlanDiffsPanel language={language} planDiffs={planDiffs} nameOf={nameOf} onApply={onApplyPlanDiff} />
+            )}
+            {railShown && <ExamRail language={language} state={railState} nameOf={nameOf} />}
           </aside>
         )}
       </div>

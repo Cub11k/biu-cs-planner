@@ -54,8 +54,12 @@ A Group with no Meetings, such as an online course.
 _Avoid_: async course
 
 **Exam**:
-A dated sitting of an Offering, shared by all its Groups.
+A dated sitting of an Offering, shared by all its Groups. It records no Semester, and Shoham shows nothing to record one from, so a Year-long Offering's Exams are both its exam periods' in one list; until a sitting's Semester can be known, they are shown as Year-long with no Semester recorded and left out of the Exam spacing check (#214).
 _Avoid_: test, final
+
+**Exam Rail**:
+The exam period of the Variant shown, drawn in the Timetable's side pane as a vertical line with one mark per Exam, the distance between marks proportional to the days between them: a later Moed of a Course lighter, a gap the spacing Warning names in red with the Warning in words, an Exam Clash said in words, and the picked Courses with no published Exams counted rather than left out. It is drawn only from an answer that carries the exam period, never as an empty one in place of an answer that does not (#419, #184).
+_Avoid_: exam list, exam calendar
 
 **Moed**:
 One of an Offering's Exam sittings: מועד א, ב, sometimes ג.
