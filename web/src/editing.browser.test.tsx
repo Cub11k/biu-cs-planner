@@ -153,7 +153,6 @@ it.each([
 
 it.each([
   { kind: "refused", reason: "state-file-unreadable" } as Fake,
-  { kind: "unreachable" } as Fake,
   { kind: "unreadable-answer" } as Fake,
 ])("releases the gate when the re-read answers $kind rather than serving", async (reread) => {
   await servedV1();
@@ -164,6 +163,35 @@ it.each([
   reads[1]!.answer(reread);
 
   await until((editing) => !editing.spent && editing.answer.kind === reread.kind);
+});
+
+/**
+ * #406: a re-read that never arrived says nothing about the file, so the served answer stays, counted
+ * as kept for the screen to label stale, and the revision stays spent until a re-read is drawn.
+ */
+it("keeps the served answer over a re-read that answers unreachable, the revision still spent", async () => {
+  await servedV1();
+  await edit({ kind: "unreachable" });
+  await vi.waitFor(() => expect(reads).toHaveLength(2));
+
+  reads[1]!.answer({ kind: "unreachable" });
+
+  await until((editing) => editing.kept === 1);
+  expect(onScreen(latest!)).toBe("v1");
+  expect(latest!.spent).toBe(true);
+  expect(latest!.send(() => Promise.resolve(served("never")))).toBe(false);
+
+  mount(1);
+  await vi.waitFor(() => expect(reads).toHaveLength(3));
+  reads[2]!.answer(served("v2"));
+  await until((editing) => !editing.spent && editing.kept === 0 && onScreen(editing) === "v2");
+});
+
+it("shows an unreachable first read, with nothing served to keep", async () => {
+  mount();
+  await vi.waitFor(() => expect(reads).toHaveLength(1));
+  reads[0]!.answer({ kind: "unreachable" });
+  await until((editing) => editing.answer.kind === "unreachable" && editing.kept === 0);
 });
 
 it("drops a read already in flight when an answer spends the revision, so only the re-read releases", async () => {

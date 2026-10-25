@@ -54,6 +54,8 @@ let refuseNextRead: string | undefined;
 /** What New Plan from Suggested Layout answers: Attempts it creates, or a reason it cannot. */
 let layout: { create: FakeAttempt[]; skipped: unknown[] } | { unavailable: string };
 let canUndo: boolean;
+/** While set, the server is not there: every request to the API fails as a fetch does (#406). */
+let down: boolean;
 
 const COURSES = [
   { courseNumber: "89-110", name: { he: "מבוא למדעי המחשב", en: "Introduction to CS" }, credits: 6 },
@@ -94,12 +96,14 @@ beforeEach(() => {
   refuseNextRead = undefined;
   layout = { create: [], skipped: [] };
   canUndo = false;
+  down = false;
   ROOT.lang = "en";
   ROOT.dir = "ltr";
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = input instanceof Request ? input.url : String(input);
     const { pathname } = new URL(url, location.href);
     if (!pathname.startsWith("/api/")) return realFetch(input as RequestInfo, init);
+    if (down) throw new TypeError("Failed to fetch");
     const method = (input instanceof Request ? input.method : init?.method) ?? "GET";
     const text = input instanceof Request ? await input.clone().text() : init?.body;
     const body = typeof text === "string" && text !== "" ? (JSON.parse(text) as Record<string, unknown>) : undefined;
@@ -910,4 +914,34 @@ it("keeps a grade half typed on a card when a re-read brings the same grade back
     if (card(mounted, "x1") === null) throw new Error("not read again");
   });
   expect(card(mounted, "a1")!.querySelector<HTMLInputElement>("input[data-attempt-grade]")!.value).toBe("8");
+});
+
+/**
+ * #406: with the server down, an edit answers `unreachable` and so does the re-read it starts. The
+ * board the student was looking at stays, labelled as last read, and the status line says the API
+ * is unreachable once; the server answering again is a re-read (`changes.ts`), which replaces it.
+ */
+it("keeps the board as last read when the server is down, says so once, and recovers", async () => {
+  const mounted = await mount();
+  await served(mounted);
+  down = true;
+
+  removeButton(mounted, "a1").click();
+
+  await vi.waitFor(() => {
+    if (mounted.querySelector("[data-plan-stale]") === null) throw new Error("the board was not labelled stale");
+  });
+  expect(card(mounted, "a1")).not.toBeNull();
+  expect(card(mounted, "a2")).not.toBeNull();
+  expect(status(mounted).split(t("en", "apiUnreachable"))).toHaveLength(2);
+  expect(status(mounted)).toContain(t("en", "readStale"));
+  // the revision is still the spent one (#397): nothing is sent on it
+  expect(removeButton(mounted, "a2").disabled).toBe(true);
+
+  down = false;
+  await mount("en", 1);
+  await vi.waitFor(() => {
+    if (mounted.querySelector("[data-plan-stale]") !== null) throw new Error("the stale board was not replaced");
+  });
+  expect(removeButton(mounted, "a2").disabled).toBe(false);
 });

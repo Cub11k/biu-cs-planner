@@ -44,6 +44,8 @@ let refuseNextRead: string | undefined;
 let stoppedEarly: boolean;
 let onlyUnreadableFiles: boolean;
 let canUndo: boolean;
+/** While set, the server is not there: every request to the API fails as a fetch does (#406). */
+let down: boolean;
 let stateWarnings: unknown[];
 
 const json = (body: unknown, status = 200): Response =>
@@ -160,6 +162,7 @@ beforeEach(() => {
   stoppedEarly = false;
   onlyUnreadableFiles = false;
   canUndo = false;
+  down = false;
   stateWarnings = [];
   ROOT.lang = "en";
   ROOT.dir = "ltr";
@@ -167,6 +170,7 @@ beforeEach(() => {
     const url = input instanceof Request ? input.url : String(input);
     const { pathname, searchParams } = new URL(url, location.href);
     if (!pathname.startsWith("/api/")) return realFetch(input as RequestInfo, init);
+    if (down) throw new TypeError("Failed to fetch");
     const method = (input instanceof Request ? input.method : init?.method) ?? "GET";
     const text = input instanceof Request ? await input.clone().text() : init?.body;
     const body = typeof text === "string" && text !== "" ? (JSON.parse(text) as Record<string, unknown>) : undefined;
@@ -1145,4 +1149,34 @@ it("says a what-if of a Program held but not evaluated has nothing to compare wi
   expect(mounted.querySelector('[data-what-if-changes="cs-2027"]')?.textContent).toBe(
     t("en", "progressWhatIfOtherProgram", { file: "cs-2027" }),
   );
+});
+
+/**
+ * #406: with the server down, a tick answers `unreachable` and so does the re-read it starts. The
+ * tree the student was looking at stays, labelled as last read, and the status line says the API is
+ * unreachable once; the server answering again is a re-read (`changes.ts`), which replaces it.
+ */
+it("keeps Progress as last read when the server is down, says so once, and recovers", async () => {
+  const mounted = await mount();
+  await served(mounted);
+  const box = (): HTMLInputElement => mounted.querySelector<HTMLInputElement>('input[data-tick="hebrew"]')!;
+  down = true;
+
+  box().click();
+
+  await vi.waitFor(() => {
+    if (mounted.querySelector("[data-progress-stale]") === null) throw new Error("Progress was not labelled stale");
+  });
+  expect(treeItem(mounted, "intro").dataset.status).toBe("satisfied");
+  expect(said(mounted).split(t("en", "apiUnreachable"))).toHaveLength(2);
+  expect(said(mounted)).toContain(t("en", "readStale"));
+  // the revision is still the spent one (#397): nothing is sent on it
+  expect(box().disabled).toBe(true);
+
+  down = false;
+  await mount("en", 1);
+  await vi.waitFor(() => {
+    if (mounted.querySelector("[data-progress-stale]") !== null) throw new Error("the stale tree was not replaced");
+  });
+  expect(box().disabled).toBe(false);
 });

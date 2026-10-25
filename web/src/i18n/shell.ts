@@ -10,6 +10,11 @@
  */
 export const shellEnglish = {
   apiUnreachable: "API unreachable",
+  /**
+   * A re-read that never arrived, over a screen the page had read (#406): the screen stays as it
+   * was last read, as the Timetable's week does (`picksReadStale`), and this says so.
+   */
+  readStale: "The file could not be read again just now, so this is what it held when last read. It may be out of date.",
 
   /**
    * The app's name, which the document title follows when the language changes (#310).
@@ -382,6 +387,7 @@ export const shellEnglish = {
 
 export const shellHebrew: Record<keyof typeof shellEnglish, string> = {
   apiUnreachable: "ה-API אינו זמין",
+  readStale: "לא ניתן היה לקרוא שוב את הקובץ כרגע, ולכן זה מה שהכיל כשנקרא לאחרונה. ייתכן שאינו עדכני.",
 
   appName: "מתכנן מדעי המחשב בר־אילן",
 

@@ -287,6 +287,7 @@ export function ProgressScreen({
         {/* every account of what just happened, the shell's and this screen's */}
         <span role="status" className="flex flex-wrap items-center gap-x-3 gap-y-1">
           {said === undefined ? null : <span>{said}</span>}
+          {editing.kept > 0 && progress.kind === "served" && <span data-progress-stale>{t(language, "readStale")}</span>}
           {editRefused === undefined ? null : <span>{t(language, editRefused)}</span>}
           {progress.kind === "served" && progress.stoppedEarly && (
             <span>{t(language, "progressStoppedEarly")}</span>

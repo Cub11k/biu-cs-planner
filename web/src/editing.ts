@@ -40,13 +40,16 @@ export type Editing<T> = {
  * held in refs rather than read off the render (#394), so two `send`s in one batch send one edit.
  *
  * `load` is the question: memoise it. `keep` decides that a fresh answer is **not** put on screen,
- * the one on screen kept instead (#218). `onEdited` is told when an edit wrote the file, or may have.
+ * the one on screen kept instead (#218); by default a read that never arrived keeps a served answer,
+ * which the screen labels stale (#184, #406). A kept re-read leaves the gate shut: the revision on
+ * screen is still the spent one, and the changes poll asks again once the server answers. `onEdited`
+ * is told when an edit wrote the file, or may have.
  */
 export function useEditing<T extends { kind: string }>(
   load: () => Promise<T>,
   changes: number,
   onEdited: () => void,
-  keep: (fresh: T, onScreen: Loading | T) => boolean = () => false,
+  keep: (fresh: T, onScreen: Loading | T) => boolean = keepOverUnreachable,
 ): Editing<T> {
   const [answer, setAnswer] = useState<Loading | T>({ kind: "loading" });
   const [kept, setKept] = useState(0);
@@ -78,12 +81,13 @@ export function useEditing<T extends { kind: string }>(
     // `load` resolves for every answer the API can give: a rejection would be a client bug
     void load().then((fresh) => {
       if (shown.current !== mine) return;
-      // whatever this read brings, it is what the file says now.
-      // shortcut: a re-read `keep` keeps off screen releases the gate too, leaving the spent revision
-      // editable; nothing passes `keep` yet, and #381 decides this when the Timetable moves on.
+      if (keepRef.current(fresh, onScreen.current)) {
+        setKept((count) => count + 1);
+        return;
+      }
+      // whatever this read brings, it is what the file says now
       setGate({ spent: false });
-      if (keepRef.current(fresh, onScreen.current)) setKept((count) => count + 1);
-      else put(fresh);
+      put(fresh);
     });
     return () => {
       shown.current += 1;
@@ -122,3 +126,7 @@ export function useEditing<T extends { kind: string }>(
 
   return { answer, send, sending, spent, rereads, kept };
 }
+
+/** The default `keep`: an answer that never arrived says nothing about the file a served answer showed. */
+const keepOverUnreachable = (fresh: { kind: string }, onScreen: { kind: string }): boolean =>
+  fresh.kind === "unreachable" && onScreen.kind === "served";
