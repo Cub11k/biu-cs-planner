@@ -171,6 +171,8 @@ it("steps the Academic Year, and says a year with no Catalog has none", async ()
   await until(() => expect(selectedVariant(mounted)).toBe("A"));
 
   mounted.querySelector<HTMLButtonElement>('[data-year-step="next"]')!.click();
+  // in the URL at once, before anything about that year is read, and with no Variant of the last one
+  expect([url().get("year"), url().get("semester"), url().get("variant")]).toEqual(["2028", "fall", null]);
 
   const next = t("en", "academicYear", { first: "2027", second: "28" });
   await until(() => expect(yearShown(mounted)).toBe(next));
